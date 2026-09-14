@@ -1,0 +1,4470 @@
+package com.bankpricemovement;
+
+import com.bankpricemovement.PriceService.Status;
+import java.awt.BorderLayout;
+import java.awt.CardLayout;
+import java.awt.Color;
+import java.awt.Component;
+import java.awt.Container;
+import java.awt.Cursor;
+import java.awt.FlowLayout;
+import java.awt.GridLayout;
+import java.awt.event.ComponentAdapter;
+import java.awt.event.ComponentEvent;
+import java.awt.event.FocusAdapter;
+import java.awt.event.FocusEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
+import java.text.ParseException;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.EnumMap;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.function.Consumer;
+import java.util.function.LongSupplier;
+import javax.annotation.Nullable;
+import javax.swing.Box;
+import javax.swing.BoxLayout;
+import javax.swing.ImageIcon;
+import javax.swing.JButton;
+import javax.swing.JCheckBoxMenuItem;
+import javax.swing.JComponent;
+import javax.swing.JLabel;
+import javax.swing.JMenuItem;
+import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
+import javax.swing.JScrollBar;
+import javax.swing.JScrollPane;
+import javax.swing.ScrollPaneConstants;
+import javax.swing.SwingConstants;
+import javax.swing.SwingUtilities;
+import javax.swing.Timer;
+import javax.swing.border.CompoundBorder;
+import javax.swing.border.EmptyBorder;
+import javax.swing.border.MatteBorder;
+import javax.swing.event.PopupMenuEvent;
+import javax.swing.event.PopupMenuListener;
+import net.runelite.client.game.ItemManager;
+import net.runelite.client.ui.ColorScheme;
+import net.runelite.client.ui.PluginPanel;
+import net.runelite.client.ui.components.PluginErrorPanel;
+import net.runelite.client.util.AsyncBufferedImage;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * The Bank Portfolio Tracker sidebar (contract C28-C33, presentation per addendum N's "Ticker" look - sections 2
+ * and 4 of {@code docs/bank-price-movement-addendum-N-2026-09-09.md} - which addendum O made the ONLY look,
+ * {@code docs/bank-price-movement-addendum-O-2026-09-09.md} line O1): a pinned header over a scrolling list
+ * of {@link MovementRowPanel}s, one per bank item the {@link PriceService} publishes.
+ *
+ * <pre>
+ * +# Bank value                        Refresh +   hero card: caption row with the "Refresh" text link
+ * |# 275m                                    (*)|   the bank total, 28 bold white          [show / hide, O3]
+ * |#                                            |   ...with the options gear at its right end (Q1)
+ * |# v -950k   -0.3%                           |   triangle + gp move + percent, 18 bold  [show / hide, O3]
+ * |#   1d    7d    30d    90d   180d           |   the window strip, the lit one bold orange, underlined
+ * |# 1d vs 08 Sep - bank 09:00                 |   the provenance footnote; the LIVE day while live   [U3]
+ * |# Item prices update every 24hrs            |   the update line, its own tooltip saying why      [S1, S2]
+ * |#   ...or "Live prices on - thin items daily"|  ...while the live switch is on                    [T5]
+ * +--------------------------------------------+
+ * Percent change v                 All items v   control row: the sort column and its arrow, the band button
+ * ---------------------------------------------
+ * [ All | 100k+ | 1m+ | 10m+ ]  [min gp] [max gp] x  the price fold, while open
+ * Refreshed 12 s ago - wait                      the problem row, while there is one
+ * </pre>
+ *
+ * <p><b>The header</b> is a {@code DynamicGridLayout} column whose rows are ADDED and REMOVED, never hidden
+ * (playbook 7.5): the hero card, the control row, the fold while open and the problem row while there is one
+ * - and with no bank loaded (the LOGIN and NO_BANK cards) it is emptied, because there is nothing to value or
+ * order. The four sort COLUMNS ({@link SortMode}) live in one {@link JPopupMenu}; the price fold carries
+ * its presets; the "Show &lt;remainder&gt; more" row sits under the rows; the EMPTY card offers "Clear price
+ * range" when a band hid everything.
+ *
+ * <p><b>The hero card's three figures show or hide</b> (O2-O4). A {@link HeroVisibility} says which of the
+ * bank TOTAL, its gp MOVE and its PERCENTAGE are drawn. The caption row, the chips, the footnote and the
+ * update line (S1) never hide; with the total off its 28 px line is REMOVED from the card and the card
+ * shrinks; with the gp off the move line drops the gp figure, with the percent off it drops the percentage,
+ * and with both off the move line goes and the triangle with it. The coloured left edge stays - it is a
+ * direction hint, not a figure - and the card's tooltip lists ONLY the figures that are shown (with everything
+ * hidden it carries the status sentence alone, which is not a figure, so no exact gp is on screen anywhere).
+ * The initial choice comes from {@link Prefs#loadHero} (the plugin's three config items); the plugin forwards
+ * {@code ConfigChanged} for the three keys to
+ * {@link #applyHeroVisibility}, which repaints and saves nothing; and the card's right-click menu carries three
+ * check items that go through {@link #setHeroVisibility}, which repaints AND writes {@link Prefs#saveHero} so
+ * the STORED config follows - the same round trip the filter widgets make.
+ *
+ * <p><b>The gear, and the menu behind it</b> (addendum Q, lines Q1-Q2;
+ * {@code docs/bank-price-movement-addendum-Q-2026-09-11.md}). A 12 px gear drawn in code
+ * ({@link Widgets#gearIcon}) sits at the right end of the total's line, directly under the "Refresh" link, and
+ * opens the panel's one settings menu on a LEFT click: Refresh, then the card's three show / hide items, then
+ * the five view switches of {@link ViewOptions} - use live prices (addendum T, line T1), include coins and
+ * platinum tokens, include untradeable items, include inventory and worn gear (addendum Y, line Y1;
+ * {@code docs/bank-price-movement-addendum-Y-2026-09-13.md}), show stack value on rows, every one of them in the
+ * plain words of Y4. The card's right-click menu is GONE with it: the same menu behind an invisible
+ * gesture was the only way to reach any of this, and a settings menu a reader cannot see is a setting they do
+ * not have. The gear is drawn whatever the three hero switches say, which is why the total's LINE stays in the
+ * card even when the total does not.
+ *
+ * <p><b>The price presets are edited at the foot of that menu</b> (addendum Z, lines Z1-Z3;
+ * {@code docs/bank-price-movement-addendum-Z-2026-09-13.md}): three boxes under a "Preset price ranges"
+ * caption (line Z7, renamed by addendum AB line AB3), with
+ * "Reset to default" beneath them, holding the three quick bands the price fold's chips offer. They are the one
+ * thing in the menu that is typed into rather than ticked, and the one that edits a control elsewhere on the
+ * panel - a bank whose interesting end is 10m+ has three bands ("100k+", "1m+", "10m+") that say nothing about
+ * it, and the fold itself has no room for a setting of its own. They are carried by {@link BandPresets}, seeded
+ * from {@link Prefs#loadPresets}, written back by {@link Prefs#savePresets} and never touch the reader's own
+ * Min / Max band.
+ *
+ * <p><b>And the menu opens, and closes, on the gear</b> (addendum AB, lines AB1-AB2;
+ * {@code docs/bank-price-movement-addendum-AB-2026-09-13.md}). A press on the gear while the menu stands closes
+ * it and opens nothing: the popup is already gone by the time the gear's listener runs (RuneLite's popups are
+ * heavy-weight and {@code MouseGrabber} cancels them on any outside press), so the panel remembers WHEN it went
+ * ({@link #GEAR_REOPEN_GUARD_MILLIS}) instead of asking whether it is open. Under "Reset to default" the menu's
+ * last row carries one small "OK" button at its right end, which commits the boxes and takes the menu down -
+ * the only way out of it that is drawn rather than guessed.
+ *
+ * <p><b>And the fold they fill stands OPEN</b> (addendum AA, line AA1;
+ * {@code docs/bank-price-movement-addendum-AA-2026-09-13.md}). The user asked for it in one sentence - "can you
+ * by default have 'All items' expanded too so the user can see the quick price presets on the main tab?
+ * currently it starts minimized" - and the reason is the presets themselves: a setting a reader can edit in the
+ * gear menu but never see on the panel is a setting they will not know they have. So the fold is open on a
+ * fresh install ({@link Prefs#loadFoldOpen}, null reading as open), the band button's press
+ * ({@link #pressFold}) writes what it left behind, and the settings page's own change arrives at
+ * {@link #setFoldOpen}. Nothing about the fold's CONTENTS moved: the chips, the two fields, their red rule and
+ * the band button's text are addendum Z's, to the pixel.
+ *
+ * <p><b>The view switches are not the card's.</b> {@link HeroVisibility} says what is PAINTED and costs the
+ * service nothing; {@link ViewOptions} says what the figures MEAN - which price series an actively traded stack
+ * is read from (T1), whether cash is in the bank value, whether
+ * untradeable stacks are listed at their alch value, whether what the player is carrying and wearing is counted
+ * and listed at all (Y1), whether a row prints the stack or the item - so the plugin
+ * hands the same value to the service ({@code PriceService.setOptions}) and to {@link #applyOptions} here. The
+ * gear menu writes through {@link Prefs#saveOptions}, exactly as its three card items write through
+ * {@link Prefs#saveHero}, and the settings page's own change comes back through {@link #applyOptions}.
+ *
+ * <p><b>What "the config follows" does not mean.</b> RuneLite builds a {@code ConfigPanel} once and subscribes
+ * it to {@code ExternalPluginsChanged} and {@code ProfileChanged} only ({@code ConfigPanel.java:835-850}), so a
+ * settings page left open beside the sidebar does NOT repaint when this panel writes a value - it shows the new
+ * one the next time it is entered from the plugin list. That holds for every value the sidebar writes: the three
+ * hero switches and D13's filter alike. The other direction is live, because the plugin forwards
+ * {@code ConfigChanged} straight into the panel.
+ *
+ * <p><b>Wiring for the plugin.</b> No {@code @Inject}: construct it with explicit dependencies from
+ * {@code startUp} (RuneLite's PluginManager runs startUp / shutDown on the EDT and asserts so), hand it to a
+ * {@code NavigationButton} and, in {@code shutDown}, {@code removeNavigation} then {@link #stop()}.
+ *
+ * <p><b>One filter, three owners.</b> The user's five choices (gp band, sort, direction, window) live in a
+ * {@link RowFilter}. A click here builds the next filter from the current one, {@link Prefs#save saves} it
+ * (the plugin's config) and hands it to {@link PriceService#setFilter}; the config panel changing the same
+ * setting comes back through {@link #applyFilter}, which only repaints the widgets - the {@code updating}
+ * guard keeps that from saving again, so the config and the sidebar are the same switch without a loop
+ * (design D13). The hero switches are NOT part of the filter: they say how the card is painted, not what the
+ * list contains.
+ *
+ * <p><b>The list.</b> The service's listener fires on the EDT (contract C20) with the filtered, sorted rows
+ * and a {@link Status}. Rows are rebuilt only when the row list, the window, the baseline day or the sort
+ * column changed - the last three are one value, {@link ListContext}, which also answers whether the reader
+ * ASKED for the new list; a status-only publish touches the hero, the control row and the problem row alone (C30),
+ * so the list does not flicker every five minutes. Rows are built one page of {@link #ROWS_PER_PAGE} at a
+ * time (C32), and a rebuild that only re-states the SAME list - a deposit, a withdrawal, new prices, a new
+ * baseline day - keeps the pages the reader opened and the place they had scrolled to; only a list the reader
+ * ASKED for - a new window, ordering, direction or gp band - starts again at the top of page one (B107, see
+ * {@link #rebuildRows}).
+ *
+ * <p><b>Type and colour.</b> Every label here sets its font through {@link Widgets#sans} /
+ * {@link Widgets#sansBold} (RuneLiteLAF installs the 16 px bitmap face as the default, and the type scale is
+ * 28 / 18 / 14 / 13 / 12 / 11 of one family), and every colour is a {@link ColorScheme} constant or its
+ * {@code darker()} (N section 2).
+ *
+ * <p><b>Threading.</b> Everything here is EDT-only. The listener is called through the service's
+ * {@code edt} consumer already; a call arriving on any other thread is re-posted with
+ * {@code SwingUtilities.invokeLater}. {@code ItemManager.getImage} is called from the EDT while building a
+ * page (C31) - it answers a cached, possibly still-blank {@link AsyncBufferedImage} that fills itself in
+ * later ({@code ItemManager.java:527-529}).
+ */
+public class BankPriceMovementPanel extends PluginPanel
+{
+	/**
+	 * Where the filter and the hero card's three show / hide switches are kept between sessions - the plugin's
+	 * config, or a memory in the tests (contract C28; the hero half is addendum O, line O2).
+	 *
+	 * <p>The two hero methods have defaults so a caller with nothing to remember - the renderer, a throwaway
+	 * test seam - need not care: every figure is then shown and nothing is written. The plugin MUST override
+	 * both over {@code ConfigManager}, so a right-click toggle on the card ({@link #setHeroVisibility}) is
+	 * written where the config panel READS it - this panel follows on the {@code ConfigChanged} that write posts,
+	 * and the settings page shows it the next time it is opened (O4; see the class javadoc) - without them the
+	 * card would repaint and forget the choice on the next launch.
+	 */
+	public interface Prefs
+	{
+		/** The saved filter; null means "fresh install" and reads as {@link RowFilter#DEFAULT}. */
+		@Nullable
+		RowFilter load();
+
+		void save(RowFilter filter);
+
+		/**
+		 * The saved switches (the config's {@code showBankValue} / {@code showBankMoveGp} /
+		 * {@code showBankMovePct}); null reads as {@link HeroVisibility#ALL} (O2).
+		 */
+		@Nullable
+		default HeroVisibility loadHero()
+		{
+			return null;
+		}
+
+		/** Writes the three switches the card's right-click menu chose, so the stored config follows (O4). */
+		default void saveHero(HeroVisibility visibility)
+		{
+		}
+
+		/**
+		 * The saved view switches - the config's {@code countCash} / {@code countUntradeables} /
+		 * {@code holdingOnRows} (addendum Q, line Q3), {@code livePrices} (addendum T, line T1) and
+		 * {@code countInventory} (addendum Y, line Y1); null reads as {@link ViewOptions#DEFAULT}.
+		 *
+		 * <p>Five keys, ONE value: a switch is added to {@link ViewOptions} and to the plugin's implementation of
+		 * this pair, and every reader of the menu, the card and the rows follows without a new seam.
+		 *
+		 * <p>Defaulted for the same reason the hero pair is: the renderer and a throwaway test seam have nothing
+		 * to remember, and a plugin that overrides neither draws the sidebar exactly as it drew before addendum Q.
+		 */
+		@Nullable
+		default ViewOptions loadOptions()
+		{
+			return null;
+		}
+
+		/** Writes the five switches the gear menu chose, so the stored config follows (Q2, T1, Y1). */
+		default void saveOptions(ViewOptions options)
+		{
+		}
+
+		/**
+		 * The saved quick bands - the config's {@code bandPresets}, already read off its shorthand (addendum Z,
+		 * line Z1; {@code docs/bank-price-movement-addendum-Z-2026-09-13.md}).
+		 *
+		 * <p>Null reads as {@link BandPresets#DEFAULT}, and that is the ONLY answer a stored string which does not
+		 * name three distinct positive amounts may give: {@link BandPresets#parse} answers null for such a string,
+		 * so an implementation hands that null straight on and the panel opens on 100k / 1m / 10m. A config value
+		 * is a thing a user can type into, so it is read as a wish and never as a promise.
+		 *
+		 * <p>Defaulted for the same reason the hero and option pairs are: the headless renderer and a throwaway
+		 * test seam have nothing to remember, and a {@code Prefs} that overrides neither draws the fold exactly as
+		 * it drew before addendum Z.
+		 */
+		@Nullable
+		default BandPresets loadPresets()
+		{
+			return null;
+		}
+
+		/** Writes the three the gear menu's boxes chose, so the stored config follows (Z1, Z2). */
+		default void savePresets(BandPresets presets)
+		{
+		}
+
+		/**
+		 * Whether the price fold stands OPEN under the control row - the config's {@code foldOpen} (addendum AA,
+		 * line AA1; {@code docs/bank-price-movement-addendum-AA-2026-09-13.md}).
+		 *
+		 * <p>Null reads as OPEN, which is the shipped default and the answer for a fresh install: the user asked
+		 * for the quick presets to be on the main tab rather than behind a gesture ("can you by default have 'All
+		 * items' expanded too so the user can see the quick price presets on the main tab?"). A {@code Boolean}
+		 * rather than a {@code boolean} for exactly that reason - "nothing stored" and "stored false" are different
+		 * answers, and only the first may be overridden by the default.
+		 *
+		 * <p>Defaulted for the same reason every pair since the filter is: the headless renderer and a throwaway
+		 * test seam have nothing to remember, and they get the shipped sidebar.
+		 */
+		@Nullable
+		default Boolean loadFoldOpen()
+		{
+			return null;
+		}
+
+		/** Writes the state the band button's press left the fold in, so the stored config follows (AA1). */
+		default void saveFoldOpen(boolean open)
+		{
+		}
+	}
+
+	/** Rows built per page (contract C32, design D11). */
+	public static final int ROWS_PER_PAGE = 250;
+
+	public static final String CARD_LOGIN = "LOGIN";
+	public static final String CARD_NO_BANK = "NO_BANK";
+	public static final String CARD_EMPTY = "EMPTY";
+	public static final String CARD_LIST = "LIST";
+
+	public static final String TITLE = "Bank Portfolio Tracker";
+	public static final String LOGIN_TEXT = "Log in to load your bank";
+	public static final String NO_BANK_TEXT = "Open your bank once to load your items";
+	/** The EMPTY card's title when the gp band matched nothing (N section 3 §6). */
+	public static final String EMPTY_TEXT = "Nothing in this price range";
+	/** The EMPTY card's title when the bank holds no tradeable item at all. */
+	public static final String NO_TRADEABLES_TEXT = "Your bank holds no tradeable items";
+	/** The EMPTY card's title when there is a bank but no price for anything in it yet. */
+	public static final String NO_PRICES_TEXT = "None of your items has a price yet";
+	/** The EMPTY card's one-tap way out of a band that hid everything (N section 2). */
+	public static final String CLEAR_BAND_TEXT = "Clear price range";
+	/** The caption row's text link (N 4.4 control 4). */
+	public static final String REFRESH_TEXT = "Refresh";
+	/** What that link says for {@link #REFRESH_ACK_MILLIS} after a tap, so an accepted refresh answers. */
+	public static final String REFRESHING_TEXT = "Refreshing...";
+	/** How long the acknowledgement holds: long enough to read, short enough not to outlast the fetch. */
+	static final int REFRESH_ACK_MILLIS = 1_800;
+	/**
+	 * What the link says when the acknowledgement expires, until the fade takes it back to {@link #REFRESH_TEXT}
+	 * (addendum P, line P2). The same face and the same grey - it is still the Refresh control, saying that the
+	 * tap it was given has been served.
+	 */
+	public static final String UP_TO_DATE_TEXT = "Up to date";
+	/**
+	 * How long "Up to date" stands before the link reads "Refresh" again (P2, the user's own wish: "can you get
+	 * that wording to fade away after 1min tho so it keeps everything looking minimal").
+	 */
+	static final int UP_TO_DATE_MILLIS = 60_000;
+	/** The gear menu's first entry - the second home of Refresh (N 3.1, O4; the gear's since Q2). */
+	public static final String REFRESH_MENU_TEXT = "Refresh prices now";
+	/** The gear's tooltip (Q1): one word, because the menu under it says the rest. */
+	public static final String OPTIONS_TIP = "Options";
+	/**
+	 * How long after the gear menu closes a press on the GEAR opens nothing (addendum AB, line AB1;
+	 * {@code docs/bank-price-movement-addendum-AB-2026-09-13.md}) - the width of the toggle's second half.
+	 *
+	 * <p>It exists because the gear cannot see its own menu. RuneLite forces every popup heavy-weight
+	 * ({@code ClientUI.setupDefaults}), and {@code BasicPopupMenuUI.MouseGrabber} cancels an open popup on any
+	 * press OUTSIDE it - the gear is outside - BEFORE that press reaches the gear's own mouse listener. So a
+	 * second click on the gear always arrives at a listener that finds the menu already closed, and the loop the
+	 * user photographed follows: "if we click the gear settings icon while its already open it closes, currently
+	 * it just reopens on a loop". The panel therefore remembers WHEN the menu went away
+	 * ({@link #menuClosedAtMillis}) and a press inside this window is read as the close it really was.
+	 *
+	 * <p>300 ms is a click and not a pause: it is longer than the interval between the grabber's cancel and the
+	 * label's {@code mousePressed} (one event queue hop) and shorter than any deliberate re-open. A reader who
+	 * shuts the menu by clicking the sidebar and then wants it back waits a third of a second, which is the whole
+	 * cost of the rule.
+	 */
+	static final long GEAR_REOPEN_GUARD_MILLIS = 300L;
+	/**
+	 * What {@link #menuClosedAtMillis} holds while the menu has never closed - a sentinel rather than 0, so that
+	 * the guard never subtracts from a stamp that is not one (a pinned clock is free to read 0).
+	 */
+	private static final long MENU_NEVER_CLOSED = Long.MIN_VALUE;
+	/**
+	 * The gear menu's second group (Q2), named as their config items are (Q3) - and since addendum Y (line Y4;
+	 * {@code docs/bank-price-movement-addendum-Y-2026-09-13.md}) named in the words a reader who has never read a
+	 * contract would use.
+	 *
+	 * <p>The user asked for that pass in one sentence - "Perhaps we should come up with more layman names for the
+	 * other selections" - and the new words follow one rule: a switch that decides what is COUNTED opens with
+	 * "Include", and a switch that decides what is DRAWN opens with "Show". The cash item names the thing it counts
+	 * in full, as the game does; the row item says "stack value", which is what the row prints, rather than the
+	 * plugin's own word for it.
+	 *
+	 * <p>Only the WORDS changed: the keys, the defaults, the order and what each switch does are untouched, and
+	 * nothing drawn on the sidebar moved - these labels live in this popup and on the settings page.
+	 */
+	public static final String COUNT_CASH_TEXT = "Include coins and platinum tokens";
+	public static final String COUNT_UNTRADEABLES_TEXT = "Include untradeable items";
+	/**
+	 * The group's fourth item since addendum Y (line Y1), directly after the untradeables it reads as a sibling of:
+	 * whether what the player is CARRYING - the inventory and the worn gear - is counted in the bank value and
+	 * listed beside the bank's own stacks.
+	 *
+	 * <p>It sits with the two "Include" switches because it answers the same question they do - what is in the sum -
+	 * and before the row switch, which is about drawing. Its own words are the user's: "an option that is on by
+	 * default (Include inventory and gear equipped)".
+	 */
+	public static final String COUNT_INVENTORY_TEXT = "Include inventory and worn gear";
+	public static final String HOLDING_ROWS_TEXT = "Show stack value on rows";
+	/**
+	 * The group's FIRST item since addendum T (line T1;
+	 * {@code docs/bank-price-movement-addendum-T-2026-09-12.md}), named as its config item is: which PRICE SERIES
+	 * the figures are read from. It leads the group because it is the switch the other three qualify - what a stack
+	 * is worth is answered before whether it is counted - and because it is the one a reader comes to the menu for
+	 * after seeing the card's line say "Live prices on".
+	 *
+	 * <p>Y4 gave it a verb ("Use live prices"): a bare noun phrase beside four sentences read as a heading for them
+	 * rather than as the switch it is.
+	 */
+	public static final String LIVE_PRICES_TEXT = "Use live prices";
+	/** Their tooltips - the config items' own descriptions (Q3, T1, Y1). */
+	public static final String LIVE_PRICES_TIP = "Actively traded items use the wiki's live traded prices for every "
+		+ "figure; thin items keep the daily guide price";
+	public static final String COUNT_CASH_TIP = "Coins and platinum tokens (1,000 gp each) count in the bank value";
+	public static final String COUNT_UNTRADEABLES_TIP = "List untradeable stacks at their tradeable parts' value, or else their High Alchemy value,"
+		+ " and count them in the bank value";
+	/**
+	 * The new item's hover (Y1). It says WHEN, because the answer is not "always": the two containers are read on
+	 * the bank event and on Refresh and at no other moment (Y2), so a reader who drops something and watches the
+	 * list sit still is told why before they wonder.
+	 */
+	public static final String COUNT_INVENTORY_TIP = "Items in your inventory and worn gear count in the bank value "
+		+ "and are listed with the bank's stacks. They are read when you open the bank or press Refresh.";
+	public static final String HOLDING_ROWS_TIP = "Rows show the stack's value, and the stack's change, "
+		+ "instead of the unit price";
+	/**
+	 * The caption of the gear menu's last row (addendum Z, line Z2;
+	 * {@code docs/bank-price-movement-addendum-Z-2026-09-13.md}): the three quick bands the price fold offers,
+	 * in three boxes a reader can type into.
+	 *
+	 * <p>It is a LABEL and not a check item because the thing under it is not a switch - the user asked to "see
+	 * and change the 3 default filter options for price mins", and a bank whose interesting end is 10m+ has three
+	 * bands that say nothing about it. The words are the config item's own (Z1), so the settings page and the menu
+	 * name the same setting.
+	 *
+	 * <p><b>The words are the user's own, twice over.</b> Line Z7, after the first hand look at the boxes, asked
+	 * for what the boxes DO rather than what they are called in the config ("also call it 'Quick price filter
+	 * presets' if that fits nicely"); addendum AB line AB3, after the next one, asked for the same thing in fewer
+	 * ("Also change the wording from 'Quick price filter presets' to 'Preset price ranges'",
+	 * {@code docs/bank-price-movement-addendum-AB-2026-09-13.md}). Three words are what a caption over three boxes
+	 * can carry - "price ranges" is what the boxes hold and "Preset" is what makes them one tap rather than two
+	 * bounds typed by hand. It fits, as Z7's did: the sentence is shorter than "Include coins and platinum tokens"
+	 * one group above, so the menu is no wider for it. The config item carries the same string (AB3) and the KEY
+	 * is untouched by either rename, so a stored trio survives both.
+	 */
+	public static final String PRESETS_TEXT = "Preset price ranges";
+	/** The menu item under the boxes (Z2) - 100k / 1m / 10m back in one click, in the boxes, the fold and the config. */
+	public static final String RESET_PRESETS_TEXT = "Reset to default";
+	/** The row's hover - the config item's own description (Z1), so both places say the same sentence. */
+	public static final String PRESETS_TIP = "The three quick bands under the band button, in gp shorthand and "
+		+ "smallest first - for example 1m, 10m, 100m.";
+	/** The reset item's hover: the three amounts it puts back, named. */
+	public static final String RESET_PRESETS_TIP = "Put the 100k, 1m and 10m bands back";
+	/**
+	 * The button on the menu's last row (addendum AB, line AB2;
+	 * {@code docs/bank-price-movement-addendum-AB-2026-09-13.md}): the way OUT of the gear menu, at the bottom
+	 * right of it, under "Reset to default".
+	 *
+	 * <p>The user asked for "a 'save' or 'ok' button ... that will close the settings box as well", and it is
+	 * <b>OK</b> and not "Save" because there is nothing here left to save when it is pressed: every switch in this
+	 * menu writes itself the moment it is ticked, and the three boxes commit on Enter, on leaving a box and on the
+	 * menu closing (Z2). A button labelled "Save" beside controls that have already saved asks a reader to wonder
+	 * what would happen if they did not press it.
+	 */
+	public static final String OK_TEXT = "OK";
+	/** Its hover: the two things the press does, in the order it does them (AB2). */
+	public static final String OK_TIP = "Close this menu; the price ranges above are saved first";
+	/**
+	 * The tooltip of the refresh link (addendum S, line S2;
+	 * {@code docs/bank-price-movement-addendum-S-2026-09-11.md}): what the control does, and the fact that decides
+	 * whether a second tap is worth making - Jagex publishes the guide prices once a day, so a re-check almost
+	 * always brings the same figures back. The 30 s cooldown is no longer named here: the link is never disabled,
+	 * a refused tap is answered in the problem row (K5/L10), and the sentence a reader needs before tapping is
+	 * how often the DATA moves, not how often the button may be pressed.
+	 */
+	public static final String REFRESH_TIP = "Re-check the guide prices. Jagex publishes them once a day.";
+	/**
+	 * The three check items of the gear menu's first group (O4), named as the config items are (O2) - and in the
+	 * plainer words of Y4: the card's caption already says "Bank value" one line above the figures the second and
+	 * third draw, so each of them names the CHANGE, which is what a reader calls it.
+	 */
+	public static final String SHOW_VALUE_TEXT = "Show bank value";
+	public static final String SHOW_GP_TEXT = "Show change in gp";
+	public static final String SHOW_PCT_TEXT = "Show change in %";
+	/** Their tooltips - the config items' own descriptions (O2). */
+	public static final String SHOW_VALUE_TIP = "Show the whole-bank total on the card";
+	public static final String SHOW_GP_TIP = "Show the bank's gp change for the chosen window";
+	public static final String SHOW_PCT_TIP = "Show the bank's percentage change for the chosen window";
+	/**
+	 * The sort word-button's whole tooltip (addendum X, line X2;
+	 * {@code docs/bank-price-movement-addendum-X-2026-09-13.md}): ONE phrase, the same under every column,
+	 * both directions and both readings of the holding switch.
+	 *
+	 * <p>Addendum W's hover named the ordering in force - the column, then the direction in words, then the
+	 * gesture - which is sixteen sentences restating what the button's own face already prints (the label) and
+	 * wears (the arrow, W2). What a reader cannot deduce is what PICKING something will do, and that is now
+	 * said by the thing they are about to pick: each menu entry's own hover (X1). So the button is left with
+	 * the one thing only it can say - what it opens.
+	 */
+	public static final String SORT_BUTTON_TIP = "Change sorting";
+	/** The band button's tooltip while no band is set (N 3.3). */
+	public static final String BAND_TIP = "Show only items in a price range";
+	/** The hero card's caption (N 3.1, 4.2). */
+	public static final String VALUE_TITLE = "Bank value";
+	/** The half of the sums rule that is true whatever the switches say; see {@link #sumsRule}. */
+	static final String SUMS_HEAD = "Sums count each stack's guide price x quantity";
+	/**
+	 * The cash clause of the sums rule, said while {@code countCash} is on - its default (P1, Q4). Coins and
+	 * platinum tokens are named because they are then IN the total ({@link PortfolioSummary#currencyGp()}) and
+	 * are the one part of it that is not a stack with a guide price - a reader adding the rows up by hand would
+	 * otherwise be short by exactly the cash.
+	 */
+	static final String CASH_CLAUSE = ", plus coins and platinum tokens (1,000 gp each)";
+	/**
+	 * What the card's tooltip says after the stacks count while {@code countInventory} is on (addendum Y, line Y3;
+	 * {@code docs/bank-price-movement-addendum-Y-2026-09-13.md}), in the user's own words: the total over the
+	 * caption "Bank value" is the bank AND what the player is carrying and wearing.
+	 *
+	 * <p>It is an appositive and is punctuated as one - the clause after it takes the closing comma
+	 * ({@link #carriedClause}) - because the sentence goes on to the coins and then to the live count.
+	 */
+	static final String CARRIED_CLAUSE = ", including inventory and worn gear";
+	/**
+	 * The untradeables clause, said while {@code countUntradeables} is on (Q5); off, none of them is in the sum.
+	 *
+	 * <p>It names TWO values, in the order the service tries them (addendum R, lines R2 and R4;
+	 * {@code docs/bank-price-movement-addendum-R-2026-09-11.md}): a stack RuneLite can take apart
+	 * ({@code ItemMapping}) is counted at what its tradeable PARTS are worth - a Crystal body is three Crystal
+	 * armour seeds at ~16.7m, not its 900k alch value - and only a stack with no such mapping falls back to High
+	 * Alchemy. Both are in the sum this rule is explaining, so both are named; which one a given row used is on
+	 * that row's own tooltip ({@link MovementRowPanel#partsLine}).
+	 */
+	static final String UNTRADEABLE_CLAUSE = ", untradeables at their tradeable parts' value or else their High "
+		+ "Alchemy value";
+	/**
+	 * The live clause, said while {@code livePrices} is on - its default (addendum T, line T5;
+	 * {@code docs/bank-price-movement-addendum-T-2026-09-12.md}). It follows the head directly because it corrects
+	 * the head: with the switch on, a stack that passes the liquidity checks (three under T3, five since addendum
+	 * V) is counted at the wiki's live
+	 * traded price and not at "each stack's guide price", so the sentence that explains the sum has to say so
+	 * before it goes on to the cash. Which stacks those are is the card's first line ("123 of 519 stacks live") and,
+	 * per stack, the row's own tooltip.
+	 */
+	static final String LIVE_CLAUSE = ", live traded prices for actively traded items";
+	static final String SUMS_TAIL = "; stacks without a guide price are left out.";
+	/**
+	 * The rule the card's tooltip states under its figures with the cash counted and the live switch OFF (P1) -
+	 * addendum P's sentence, word for word, which is what the card says whenever the figures are the guide series
+	 * alone.
+	 */
+	static final String SUMS_RULE = SUMS_HEAD + CASH_CLAUSE + SUMS_TAIL;
+	/**
+	 * The permanent line under the provenance footnote (addendum S, line S1;
+	 * {@code docs/bank-price-movement-addendum-S-2026-09-11.md}), in the footnote's own face and grey: the one
+	 * place on the panel that says the data steps ONCE A DAY.
+	 *
+	 * <p>The words are the user's own and are kept to the character - they asked for "some written indication
+	 * that it gets data only once every 24 if the user is refreshing" and then spelled it: "line, use 'Item
+	 * prices update every 24hrs' and if this is hovered then show why". So the sentence is a LINE, not a beat on
+	 * the Refresh control, and the "why" is behind it ({@link #updateTooltip}).
+	 *
+	 * <p>It is drawn in every hero state, with every option and with all three figures hidden - a reader who
+	 * cannot see a figure can still see why the one they refreshed for did not move. It replaces the note
+	 * addendum P hung on the card's tooltip (P2): a sentence only a hover can reach is a sentence the reader
+	 * looking for it never finds.
+	 */
+	public static final String UPDATE_TEXT = "Item prices update every 24hrs";
+	/**
+	 * What that same line reads while {@code livePrices} is on (addendum T, line T5): the sentence it replaces is
+	 * then only half true, because the actively traded stacks move whenever the wiki's traded series does and it is
+	 * the THIN ones that still step once a day.
+	 *
+	 * <p>Both halves are load-bearing, and in this order: the reader is told what changed ("Live prices on") and
+	 * then what did not ("thin items daily"), which is the half that explains a row still sitting still after a
+	 * Refresh. The whole of it - what "actively traded" means, and when this client last looked - is behind the same
+	 * hover the guide line has ({@link #updateTooltip}).
+	 */
+	public static final String UPDATE_LIVE_TEXT = "Live prices on - thin items daily";
+	/** The first sentence of that line's tooltip (S2): why once a day, and whose day it is. */
+	static final String UPDATE_WHY = "Bank Portfolio Tracker uses the Grand Exchange guide price, which Jagex "
+		+ "publishes once a day at a varying hour.";
+	/**
+	 * Its three source sentences (the price-source study, 2026-09-11): which page shows this price, why RuneLite's
+	 * own hover can differ, and why a big move takes days to show. One sentence per line - Swing never wraps a tooltip.
+	 */
+	static final String UPDATE_SOURCE = "It is the price shown on the Grand Exchange website.<br>"
+		+ "RuneLite's own item hover uses the wiki's traded price by default, which differs most on thinly traded items.<br>"
+		+ "Jagex moves a guide price by at most about 5% a day, so a large move shows over several days.";
+	/**
+	 * Its second sentence: what re-checking does, by hand and by itself. The half-hour is
+	 * {@link PriceService#TICK_MS}, which runs while the sidebar is open (design D8).
+	 */
+	static final String UPDATE_RECHECK = "Refresh re-checks for it, and the plugin re-checks by itself every 30 minutes.";
+	/**
+	 * The live line's own first sentence (addendum T, line T5): which series the moving rows are on, how often it
+	 * is re-read, and - the half a reader asks about first - that a window compares live against the TRADED average
+	 * of that day rather than against a guide price.
+	 */
+	static final String UPDATE_LIVE_WHY = "Actively traded items show the wiki's live traded price, refreshed on "
+		+ "Refresh and every 30 minutes; their windows compare against that day's traded average.";
+	/**
+	 * Its second sentence (T5, rewritten by addendum V line V5): what "thin" means, named as the FIVE checks now
+	 * measure it - fewer than {@code LIVE_MIN_VOLUME} traded yesterday, a wide buy/sell gap in today's quote or in
+	 * yesterday's daily bucket (V3), or a live price more than half away from the guide or from yesterday's traded
+	 * average (V4) - and what such a stack shows instead. The numbers are spelled out because the reason a given
+	 * row failed is on that row's own tooltip and this is where a reader learns what those reasons mean.
+	 *
+	 * <p>The two new clauses are folded into the old ones rather than listed after them ("today or yesterday", "the
+	 * guide or from yesterday's average"): the checks pair up two by two, and a reader wants to know what kind of
+	 * thing disqualifies a row, not to count five of them.
+	 */
+	static final String UPDATE_LIVE_THIN = "Thin items (fewer than 100 traded yesterday, a wide buy/sell gap today "
+		+ "or yesterday, or a live price more than 50 % from the guide or from yesterday's average) keep the daily "
+		+ "Grand Exchange guide price.";
+	/** The opening of its third sentence, before the clock; the whole sentence is absent at 0 (S2). */
+	static final String UPDATE_LAST_CHECKED = "Last checked ";
+	/** What separates the three parts of {@link #moveText} ("1d   +12.4m   +1.0%"), kept for the bridge (N §8). */
+	static final String VALUE_SEP = "   ";
+
+	/** The content width every header row is designed at and measured against (contract C28, N6, O6). */
+	static final int W = Widgets.CONTENT_WIDTH;
+	/** Each gp field's width (contract C29, N 3.5). */
+	static final int FIELD_WIDTH = 90;
+	/** The hero card's usable width: 213 minus the 3 px edge and the 9 + 10 px padding of {@link Widgets#card}. */
+	static final int CARD_INNER = W - Widgets.EDGE_WIDTH - 9 - 10;
+	/** The window strip inside the card: five cells across its 191 px, no gaps (N 4.4 control 1). */
+	static final int CHIP_WIDTH = CARD_INNER / MovementWindow.values().length;
+	static final int CHIP_HEIGHT = 22;
+	/** The fold's four presets: 49 px each with 3 px between = 205 = 213 minus the fold's 4 + 4 padding (N 3.5). */
+	static final int PRESET_WIDTH = 49;
+	static final int PRESET_GAP = 3;
+	static final int PRESET_HEIGHT = 24;
+	/** The control row's content height (N 3.3) and the gap above it (N section 3 §3). */
+	static final int CONTROL_HEIGHT = 22;
+	static final int ROW_GAP = 6;
+	/** The "Show n more" row (N section 3 §5). */
+	static final int SHOW_MORE_HEIGHT = 26;
+	/**
+	 * How many bands a {@link BandPresets} holds - the fold's chips after "All", and the boxes in the gear menu
+	 * (addendum Z, lines Z2 and Z3).
+	 */
+	static final int BANDS = 3;
+	/** The fold's chips: "All" and the three presets. Their lower bounds are no longer constants (Z3). */
+	static final int PRESET_COUNT = BANDS + 1;
+	/** The first chip, which is not a preset at all: no lower bound, so every item (N 3.5). */
+	static final String ALL_LABEL = "All";
+	/**
+	 * Each preset box in the gear menu (Z2): narrower than the fold's {@link #FIELD_WIDTH} gp fields, because
+	 * three of them share one menu row and the longest thing a band is ever spelled as is five characters
+	 * ("1.5m", "100m", "2.15b").
+	 */
+	static final int PRESET_FIELD_WIDTH = 56;
+
+	/** The sidebar margin each side of the content: (225 - 213) / 2. */
+	private static final int MARGIN = (PluginPanel.PANEL_WIDTH - W) / 2;
+	private static final int GAP = 4;
+	/** The "x" in the fold (N 3.5). */
+	private static final int SMALL_ICON = 11;
+	/**
+	 * The sort triangle's width and the gap between a word-button's text and its icon - the two pieces of the
+	 * control row's geometry that are not text, on both word-buttons. Package-private because {@code WidgetsTest}
+	 * measures W1's four column labels against the room they leave (addendum W's width rule) rather than against
+	 * two numbers copied out of here.
+	 */
+	static final int TRIANGLE_ICON = 7;
+	static final int ICON_GAP = 5;
+	/** Between the gp figure and the percentage on the card's move line (N 4.2). */
+	private static final int MOVE_GAP = 8;
+
+	private static final Logger log = LoggerFactory.getLogger(BankPriceMovementPanel.class);
+
+	private final ItemManager itemManager;
+	private final PriceService service;
+	private final Prefs prefs;
+	private final PriceService.Listener listener;
+
+	// ---- header (built once, in buildHeader)
+	private final JPanel header;
+	private JPanel hero;
+	private JPopupMenu heroMenu;
+	private JCheckBoxMenuItem showValueItem;
+	private JCheckBoxMenuItem showGpItem;
+	private JCheckBoxMenuItem showPctItem;
+	/** The last group's first item since addendum T (T1): the price series the figures are read from. */
+	private JCheckBoxMenuItem livePricesItem;
+	private JCheckBoxMenuItem countCashItem;
+	private JCheckBoxMenuItem countUntradeablesItem;
+	/** The group's fourth item since addendum Y (Y1): the inventory and the worn gear. */
+	private JCheckBoxMenuItem countInventoryItem;
+	private JCheckBoxMenuItem holdingItem;
+	/** The menu's box row since addendum Z (Z2): the caption over the three preset boxes. */
+	private JPanel presetRow;
+	/** Those boxes, smallest first - the same style, and the same red rule, as the fold's Min / Max fields. */
+	private final Widgets.PlaceholderField[] presetFields = new Widgets.PlaceholderField[BANDS];
+	/** The item under them (Z2). */
+	private JMenuItem resetPresetsItem;
+	/** The menu's last row since addendum AB (AB2): the glue and, at the right end of it, {@link #okButton}. */
+	private JPanel okRow;
+	/** The way out of the menu (AB2). */
+	private JButton okButton;
+	private JPanel captionRow;
+	private JLabel captionLabel;
+	private JLabel refreshLabel;
+	/** The total's line: the figure WEST and the options gear EAST; the line stays for the gear (Q1). */
+	private JPanel totalRow;
+	private JLabel gearLabel;
+	private JLabel totalLabel;
+	private JPanel moveLine;
+	private JLabel triangleLabel;
+	private JLabel deltaLabel;
+	private JLabel pctLabel;
+	private JPanel stripHolder;
+	private JLabel footnoteLabel;
+	/** The card's last line: {@link #UPDATE_TEXT}, with its own tooltip rather than the card's (S1, S2). */
+	private JLabel updateLabel;
+	/** Every hero component the card's tooltip goes on (playbook 7.5). */
+	private final List<JComponent> heroTipTargets = new ArrayList<>();
+	/** The window strip inside the card. */
+	private JPanel chipRow;
+	private final Map<MovementWindow, JLabel> windowChips = new EnumMap<>(MovementWindow.class);
+	private JPanel controlRow;
+	private JLabel sortButton;
+	private JLabel bandTarget;
+	private JPanel fold;
+	private final JLabel[] presetCells = new JLabel[PRESET_COUNT];
+	private JLabel clearLabel;
+	private final Widgets.PlaceholderField minField;
+	private final Widgets.PlaceholderField maxField;
+	private JLabel problemLabel;
+	/** The sort menu that is open, if any - one at a time (the BeamPickerPopup idiom). */
+	@Nullable
+	private JPopupMenu sortMenu;
+
+	// ---- centre: the four cards
+	private final CardLayout cardLayout = new CardLayout();
+	private final JPanel cards;
+	private final JPanel loginCard;
+	private final JPanel noBankCard;
+	private final JPanel emptyCard;
+	private final JPanel emptyColumn;
+	private final PluginErrorPanel emptyMessage;
+	private final JPanel clearBandRow;
+	private final JButton clearBandButton;
+	private final JScrollPane scroll;
+	/** The scroll pane's VIEW: the list column anchored north (see {@link Widgets#north}). */
+	private final JPanel listView;
+	private final JPanel listColumn;
+	private final JPanel rowsColumn;
+	private final JPanel showMoreRow;
+	private final JLabel showMoreLabel;
+
+	// ---- state (EDT)
+	private RowFilter filter;
+	private HeroVisibility heroVisibility;
+	/** The five view switches (Q3, T1, Y1), as the gear menu and the config both hold them; never null. */
+	private ViewOptions options;
+	/** The three quick bands the fold's chips offer and the gear menu's boxes edit (Z1); never null. */
+	private BandPresets presets;
+	private List<MovementRow> rows = Collections.emptyList();
+	@Nullable
+	private Status status;
+	/** The sprites this panel has asked for, by {@code ItemManager}'s key; see {@link #image}. */
+	private final Map<Long, AsyncBufferedImage> images = new HashMap<>();
+	/** {@link #pruneImages}' scratch set of the keys still listed; empty between rebuilds, never read outside it. */
+	private final Set<Long> liveKeys = new HashSet<>();
+	/**
+	 * What "now" is when the card decides whether the bank snapshot is TODAY'S ({@link #provenanceText}) and when
+	 * the gear asks how long ago its menu closed ({@link #gearPressOpens}, AB1). A field so a test and the
+	 * headless renderer can pin it; the client reads the wall clock, which is the only clock a Swing component
+	 * has.
+	 */
+	private LongSupplier clock = System::currentTimeMillis;
+	/**
+	 * When the gear menu last became invisible, by {@link #clock} (AB1), or {@link #MENU_NEVER_CLOSED} while it
+	 * never has. Written by the menu's own {@code popupMenuWillBecomeInvisible}, which is the one moment the panel
+	 * can see a close however it was made - the gear, a press on the sidebar, Escape, OK, or {@link #stop()}.
+	 */
+	private long menuClosedAtMillis = MENU_NEVER_CLOSED;
+	/** The scrollbar gutter the header is currently reserving on its right; see {@link #syncGutter}. */
+	private int gutter;
+	/** Set while {@link #syncHeader} restructures the header, so a focus lost to that cannot apply a bound. */
+	private boolean syncingHeader;
+	/** Whether the sidebar is showing this panel: false between {@link #onDeactivate} and {@link #onActivate}. */
+	private boolean active = true;
+	/** The publish that arrived while the sidebar was elsewhere, replayed on the next {@link #onActivate}. */
+	private boolean pendingPublish;
+	@Nullable
+	private List<MovementRow> pendingRows;
+	@Nullable
+	private Status pendingStatus;
+	/** Which of the Refresh link's three beats is standing right now (P2); see {@link RefreshPhase}. */
+	private RefreshPhase refreshPhase = RefreshPhase.IDLE;
+	/** The one-shot timer that ends the beat: it is restarted at the phase's own delay, never two timers. */
+	@Nullable
+	private Timer refreshTimer;
+	/** What the rows on screen were built from; see {@link ListContext}. */
+	private ListContext list;
+	private int shown;
+	private int rebuilds;
+	private String card = CARD_LOGIN;
+	private boolean foldOpen;
+	/** Set while {@link #applyFilter} repaints the widgets, so the change is not saved a second time. */
+	private boolean updating;
+	private volatile boolean stopped;
+
+	public BankPriceMovementPanel(ItemManager itemManager, PriceService service, Prefs prefs)
+	{
+		super(false);
+		this.itemManager = Objects.requireNonNull(itemManager, "itemManager");
+		this.service = Objects.requireNonNull(service, "service");
+		this.prefs = Objects.requireNonNull(prefs, "prefs");
+
+		setLayout(new BorderLayout());
+		setBackground(ColorScheme.DARK_GRAY_COLOR);
+
+		final RowFilter loaded = prefs.load();
+		filter = loaded == null ? RowFilter.DEFAULT : loaded;
+		// Nothing is on screen yet, so the FIRST publish is the same list restated - and a list at the top with no
+		// page open stays there whichever branch it takes.
+		list = new ListContext(MovementWindow.DEFAULT, null, filter);
+		final HeroVisibility savedHero = prefs.loadHero();
+		heroVisibility = savedHero == null ? HeroVisibility.ALL : savedHero;
+		final ViewOptions savedOptions = prefs.loadOptions();
+		options = savedOptions == null ? ViewOptions.DEFAULT : savedOptions;
+		// Z1: before buildHeader, because the gear menu's boxes and the fold's chips are both built from them.
+		final BandPresets savedPresets = prefs.loadPresets();
+		presets = savedPresets == null ? BandPresets.DEFAULT : savedPresets;
+		// AA1: before renderAll below, which is what puts the fold into the header - so the sidebar is never
+		// painted once without it and then again with it. Null is "nothing stored", and that reads OPEN.
+		final Boolean savedFold = prefs.loadFoldOpen();
+		foldOpen = savedFold == null || savedFold;
+
+		// The two gp fields: applied on Enter and on focus lost; a text that does not parse turns the field red
+		// and changes nothing.
+		minField = boundField(true);
+		maxField = boundField(false);
+
+		header = Widgets.column(0);
+		header.setBorder(new EmptyBorder(MARGIN, MARGIN, GAP, MARGIN));
+		add(header, BorderLayout.NORTH);
+		buildHeader();
+
+		// The cards. Each message is a PluginErrorPanel inside its own holder: the holder is what CardLayout
+		// shows and hides, so PluginErrorPanel.setContent (which calls setVisible(true), :73) can rewrite the
+		// EMPTY card's description later without un-hiding it.
+		loginCard = messageCard(LOGIN_TEXT, "Your last bank is remembered once you have opened it");
+		// The capture is driven by ItemContainerChanged on the bank container, which the server sends when the
+		// bank interface OPENS and again on every deposit and withdrawal (ItemContainerChanged.java:30-38) - so
+		// the list fills while the bank is on screen, and the old wording described something the plugin does not
+		// do. The sidebar sits outside the game canvas, so the reader watches it happen.
+		noBankCard = messageCard(NO_BANK_TEXT, "The list fills as soon as you open your bank");
+		emptyMessage = new PluginErrorPanel();
+		typeMessage(emptyMessage);
+		emptyMessage.setContent(EMPTY_TEXT, "");
+		clearBandButton = Widgets.smallButton(CLEAR_BAND_TEXT, "Show every item again, whatever its price",
+			e -> applyBand(0L, 0L));
+		clearBandRow = new JPanel(new FlowLayout(FlowLayout.CENTER, 0, 2));
+		clearBandRow.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		clearBandRow.add(clearBandButton);
+		emptyColumn = Widgets.column(GAP);
+		emptyColumn.add(emptyMessage);
+		emptyCard = Widgets.north(emptyColumn);
+
+		// The 2 px gutter between row cards is the DARK_GRAY ground showing through (N section 3 §4).
+		rowsColumn = Widgets.column(2);
+		showMoreLabel = Widgets.linkLabel("", Widgets.sans(12), ColorScheme.LIGHT_GRAY_COLOR, Color.WHITE,
+			this::showMore);
+		showMoreLabel.setHorizontalAlignment(SwingConstants.CENTER);
+		showMoreRow = new JPanel(new BorderLayout());
+		showMoreRow.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		showMoreRow.add(showMoreLabel, BorderLayout.CENTER);
+		Widgets.fixed(showMoreRow, W, SHOW_MORE_HEIGHT);
+		listColumn = Widgets.column(3);
+		listColumn.setBorder(new EmptyBorder(0, MARGIN, MARGIN, MARGIN));
+		listColumn.add(rowsColumn);
+		listView = Widgets.north(listColumn);
+
+		scroll = new JScrollPane(listView);
+		scroll.setBorder(null);
+		scroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+		scroll.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED);
+		scroll.getVerticalScrollBar().setUnitIncrement(16);
+		scroll.getViewport().setBackground(ColorScheme.DARK_GRAY_COLOR);
+		// The header is outside the scroll pane, so the bar appearing narrows the LIST and nothing else: without
+		// this the hero card and the control row would paint 7 px wider than the row cards under them, and the
+		// step would come and go as the list crossed the scroll threshold (see syncGutter).
+		scroll.getVerticalScrollBar().addComponentListener(new ComponentAdapter()
+		{
+			@Override
+			public void componentShown(ComponentEvent e)
+			{
+				syncGutter();
+			}
+
+			@Override
+			public void componentHidden(ComponentEvent e)
+			{
+				syncGutter();
+			}
+
+			@Override
+			public void componentResized(ComponentEvent e)
+			{
+				syncGutter();
+			}
+		});
+
+		cards = new JPanel(cardLayout);
+		cards.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		cards.add(loginCard, CARD_LOGIN);
+		cards.add(noBankCard, CARD_NO_BANK);
+		cards.add(emptyCard, CARD_EMPTY);
+		cards.add(scroll, CARD_LIST);
+		add(cards, BorderLayout.CENTER);
+
+		renderBounds();
+		renderAll();
+		cardLayout.show(cards, CARD_LOGIN);
+
+		// Listen last, so nothing above can leave a half-built panel registered; seed from what the service
+		// already knows (the bridge's currentRows/currentStatus double as the first publish for a panel built
+		// after the service started), and unwind the registration if the seed throws - startUp would
+		// propagate, the plugin's field would never be assigned and stop() would never run.
+		listener = this::onRows;
+		service.addListener(listener);
+		try
+		{
+			final Status current = service.currentStatus();
+			if (current != null)
+			{
+				onRows(service.currentRows(), current);
+			}
+		}
+		catch (RuntimeException | Error e)
+		{
+			stopped = true;
+			service.removeListener(listener);
+			throw e;
+		}
+	}
+
+	// ---------------------------------------------------------------- building the header
+
+	/**
+	 * Builds every header widget once: the window strip, the hero card around it, the card's menu, the
+	 * control row, the fold and the problem row. The header column itself is permanent and
+	 * {@link #syncHeader} puts the right rows into it.
+	 */
+	private void buildHeader()
+	{
+		// The window chips (N 4.4 control 1): opaque-free JLabels, never JButtons; the segment swallows a
+		// click on the lit one and a right-button press (the card's menu is the answer to that gesture).
+		final List<JLabel> cells = new ArrayList<>(MovementWindow.values().length);
+		for (MovementWindow w : MovementWindow.values())
+		{
+			final JLabel chip = Widgets.segment(w.label(), null, () -> selectWindow(w));
+			Widgets.fixed(chip, CHIP_WIDTH, CHIP_HEIGHT);
+			windowChips.put(w, chip);
+			cells.add(chip);
+		}
+		chipRow = new JPanel(new GridLayout(1, cells.size(), 0, 0));
+		chipRow.setOpaque(false);
+		for (JLabel cell : cells)
+		{
+			chipRow.add(cell);
+		}
+		Widgets.fixed(chipRow, CARD_INNER, CHIP_HEIGHT);
+
+		hero = buildHero();
+		// Q2: the menu moved off the card's right button and onto the gear, so the card sets NO component popup
+		// and its children inherit none - a right-click anywhere on it now does nothing, which is the point of a
+		// visible control. The gear opens the same JPopupMenu on a LEFT click (openGearMenu).
+		heroMenu = buildHeroMenu();
+
+		controlRow = buildControlRow();
+		fold = buildFold();
+		problemLabel = buildProblemLabel();
+	}
+
+	/**
+	 * The hero card (N 4.2): the caption row ("Bank value" WEST, the "Refresh" link EAST), the total line (the
+	 * figure WEST, the options gear EAST), the move line (triangle, gp, percent), the window strip, the
+	 * provenance footnote and - last, under it - the update line (S1). Which of the total and the move line are
+	 * IN the card is {@link #syncHero}'s business (O3); every line is built here so a switch never rebuilds
+	 * anything.
+	 *
+	 * <p><b>The gear rides the total's line</b> (Q1) rather than taking one of its own, so the card gains no
+	 * height for it, and it sits directly under the "Refresh" link one line above - the card's two controls in
+	 * one column at its right edge. It is the one part of the card that is drawn whatever the three hero
+	 * switches say: with the total hidden the LINE stays and the gear sits on it alone, because a settings
+	 * control that can be switched off by a setting is a control a reader cannot get back to.
+	 */
+	private JPanel buildHero()
+	{
+		final JPanel card = Widgets.column(0);
+		card.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		card.setBorder(Widgets.card(null));
+
+		captionLabel = Widgets.label(VALUE_TITLE, Widgets.sans(11), ColorScheme.LIGHT_GRAY_COLOR);
+		refreshLabel = Widgets.linkLabel(REFRESH_TEXT, Widgets.sans(11), ColorScheme.LIGHT_GRAY_COLOR,
+			ColorScheme.BRAND_ORANGE, this::refreshNow);
+		refreshLabel.setToolTipText(REFRESH_TIP);
+		// The only permanently visible action on the panel, at the smallest size on it: without padding its
+		// clickable area is exactly the 39 x 15 px of the word. The inset costs nothing (the caption row asks for
+		// 53 + 6 + 62 = 121 of the card's 191 px even while it says "Refreshing...") and buys ~50 x 19 px to hit.
+		refreshLabel.setBorder(new EmptyBorder(2, ROW_GAP, 2, 0));
+		captionRow = transparentBar(ROW_GAP, captionLabel, null, refreshLabel);
+
+		totalLabel = Widgets.label("0", Widgets.sansBold(28), Color.WHITE);
+		gearLabel = iconButton(Widgets.gearIcon(Widgets.GEAR_SIZE, ColorScheme.LIGHT_GRAY_COLOR),
+			Widgets.gearIcon(Widgets.GEAR_SIZE, ColorScheme.BRAND_ORANGE), OPTIONS_TIP, this::openGearMenu);
+		// The same 6 px of hit area the Refresh link above it buys, on the side the pointer arrives from: a 12 px
+		// glyph is a 12 px target otherwise, and this one is a settings button and not a decoration.
+		gearLabel.setBorder(new EmptyBorder(2, ROW_GAP, 2, 0));
+		totalRow = transparentBar(ROW_GAP, totalLabel, null, gearLabel);
+
+		triangleLabel = new JLabel();
+		deltaLabel = Widgets.label("", Widgets.sansBold(18), ColorScheme.LIGHT_GRAY_COLOR);
+		deltaLabel.setBorder(new EmptyBorder(0, 0, 0, MOVE_GAP));
+		pctLabel = Widgets.label("", Widgets.sansBold(18), ColorScheme.LIGHT_GRAY_COLOR);
+		moveLine = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+		moveLine.setOpaque(false);
+		moveLine.add(triangleLabel);
+		moveLine.add(deltaLabel);
+		moveLine.add(pctLabel);
+
+		// The strip's own preferred size is pinned, so it sits in a holder that carries the gaps around it.
+		stripHolder = new JPanel(new BorderLayout());
+		stripHolder.setOpaque(false);
+		stripHolder.setBorder(new EmptyBorder(GAP, 0, 2, 0));
+		stripHolder.add(chipRow, BorderLayout.CENTER);
+
+		footnoteLabel = Widgets.label("", Widgets.sans(12), ColorScheme.LIGHT_GRAY_COLOR);
+		// S1: the same face and the same grey as the footnote it sits under - the two grey lines under the chips
+		// are one pair, one saying WHERE the figures come from and one saying HOW OFTEN they move. It has exactly
+		// TWO texts since addendum T (T5, {@link #updateText}) and is never fitted: both are measured against the
+		// card's 191 px in WidgetsTest instead (S3), the way the caption is. {@link #renderValue} keeps it in step
+		// with the switch; this seeds it so the card reads right before the first publish.
+		updateLabel = Widgets.label(updateText(options), Widgets.sans(12), ColorScheme.LIGHT_GRAY_COLOR);
+
+		card.add(captionRow);
+		card.add(totalRow);
+		card.add(moveLine);
+		card.add(stripHolder);
+		card.add(footnoteLabel);
+		card.add(updateLabel);
+		// Neither the gear nor the update line is a tip target: each keeps its own tooltip. A settings control
+		// that explained the bank's sums on hover would be the one thing on the card that does not say what it
+		// does, and the update line's whole point is the sentence behind IT (S2).
+		heroTipTargets.addAll(Arrays.asList(card, captionRow, captionLabel, totalRow, totalLabel, moveLine,
+			triangleLabel, deltaLabel, pctLabel, stripHolder, footnoteLabel));
+		return card;
+	}
+
+	/**
+	 * The gear menu (Q2, the card's right-click menu of N 3.1 / O4 moved onto a visible control): "Refresh
+	 * prices now", a separator, the three card check items "Show bank value" / "Show change in gp" / "Show
+	 * change in %", a separator, and the five view check items "Use live prices" (T1) / "Include coins and platinum
+	 * tokens" / "Include untradeable items" / "Include inventory and worn gear" (Y1) / "Show stack value on rows" -
+	 * two groups, because the first three say what the CARD draws and the last five what the figures MEAN.
+	 *
+	 * <p>Every check item reflects the switch it carries and writes it: the card's three go through
+	 * {@link #setHeroVisibility} and the view's five through {@link #setOptions}, which repaint at once and
+	 * write the choice to the prefs so the stored config follows. They are {@link JCheckBoxMenuItem}s - plain
+	 * Swing, painted by whatever menu UI the client's look and feel installs - and {@link #syncHeroMenu} keeps
+	 * their ticks in step with the switches, which matters when the change came from the settings page instead.
+	 *
+	 * <p>The nine entries read in the order Y4 lists them, and the new one is placed by what it MEANS: it is a
+	 * third "Include", so it goes with the other two and before the row switch, which is the only one of the five
+	 * that is about drawing rather than counting.
+	 *
+	 * <p><b>A third group since addendum Z</b> (lines Z1-Z2;
+	 * {@code docs/bank-price-movement-addendum-Z-2026-09-13.md}): after another separator, the
+	 * {@link #buildPresetRow() preset row} - a caption and three boxes, not a switch - and the
+	 * "Reset to default" item under it. They come after the switches because they are the only thing in this menu
+	 * that edits a control elsewhere on the panel rather than the panel's own reading of the bank, and they are
+	 * HERE because the fold they edit has no room to hold its own settings.
+	 *
+	 * <p><b>And one row after all of them</b> (addendum AB, line AB2): the {@link #buildOkRow() OK row}, the menu's
+	 * drawn way out. It is last because it is what a reader presses when everything above it is as they want it.
+	 */
+	private JPopupMenu buildHeroMenu()
+	{
+		final JPopupMenu menu = new JPopupMenu();
+		menu.setBorder(new EmptyBorder(5, 5, 5, 5));
+		final JMenuItem refresh = new JMenuItem(REFRESH_MENU_TEXT);
+		refresh.setFont(Widgets.sans(12));
+		refresh.addActionListener(e -> refreshNow());
+		menu.add(refresh);
+		menu.addSeparator();
+		showValueItem = checkItem(SHOW_VALUE_TEXT, SHOW_VALUE_TIP, on -> setHeroVisibility(heroVisibility.withValue(on)));
+		showGpItem = checkItem(SHOW_GP_TEXT, SHOW_GP_TIP, on -> setHeroVisibility(heroVisibility.withGp(on)));
+		showPctItem = checkItem(SHOW_PCT_TEXT, SHOW_PCT_TIP, on -> setHeroVisibility(heroVisibility.withPct(on)));
+		menu.add(showValueItem);
+		menu.add(showGpItem);
+		menu.add(showPctItem);
+		menu.addSeparator();
+		livePricesItem = checkItem(LIVE_PRICES_TEXT, LIVE_PRICES_TIP, on -> setOptions(options.withLivePrices(on)));
+		countCashItem = checkItem(COUNT_CASH_TEXT, COUNT_CASH_TIP, on -> setOptions(options.withCountCash(on)));
+		countUntradeablesItem = checkItem(COUNT_UNTRADEABLES_TEXT, COUNT_UNTRADEABLES_TIP,
+			on -> setOptions(options.withCountUntradeables(on)));
+		countInventoryItem = checkItem(COUNT_INVENTORY_TEXT, COUNT_INVENTORY_TIP,
+			on -> setOptions(options.withCountInventory(on)));
+		holdingItem = checkItem(HOLDING_ROWS_TEXT, HOLDING_ROWS_TIP, on -> setOptions(options.withHoldingOnRows(on)));
+		// T1: first of the group, before the three of addendum Q - the series the figures are read from, then what
+		// is counted and how it is drawn. Y1's switch is the third thing COUNTED, so it lands directly after the
+		// untradeables and before the row switch.
+		menu.add(livePricesItem);
+		menu.add(countCashItem);
+		menu.add(countUntradeablesItem);
+		menu.add(countInventoryItem);
+		menu.add(holdingItem);
+		// Z2: a third group, and the only one that is not a list of switches - the three quick bands, in boxes,
+		// with the way back to 100k / 1m / 10m under them.
+		menu.addSeparator();
+		presetRow = buildPresetRow();
+		menu.add(presetRow);
+		resetPresetsItem = new JMenuItem(RESET_PRESETS_TEXT);
+		resetPresetsItem.setFont(Widgets.sans(12));
+		resetPresetsItem.setToolTipText(RESET_PRESETS_TIP);
+		resetPresetsItem.addActionListener(e -> setPresets(BandPresets.DEFAULT));
+		menu.add(resetPresetsItem);
+		// AB2: and under everything, the way out.
+		okRow = buildOkRow();
+		menu.add(okRow);
+		menu.addPopupMenuListener(new PopupMenuListener()
+		{
+			@Override
+			public void popupMenuWillBecomeVisible(PopupMenuEvent e)
+			{
+				// The menu always opens on the presets in force: a box left red by a refused edit is a question
+				// that was answered ("not saved"), and re-asking it on the next open would be the only place in
+				// this sidebar where a control kept text the plugin does not believe.
+				renderPresetFields();
+				// Z6: ...and on NO box. The popup's window is focusable because of the row (see buildPresetRow),
+				// and Swing hands a fresh focusable window's focus to the first focusable thing in it - which was
+				// the first band, caret blinking, before the reader had asked for it. The ROW takes it instead, so
+				// nothing is targeted until a box is clicked. invokeLater because that initial focus is assigned
+				// after this event, when the window is actually shown: a request made now would be overruled.
+				// Through menuFocusTarget() so that the target a test can name is the target the menu asks for.
+				SwingUtilities.invokeLater(() -> menuFocusTarget().requestFocusInWindow());
+			}
+
+			@Override
+			public void popupMenuWillBecomeInvisible(PopupMenuEvent e)
+			{
+				// Z2: closing the menu is the third way to commit - a reader who types and clicks the gear away
+				// has finished editing, and the two fields one control row down have taught them that leaving a
+				// box applies it.
+				commitPresets();
+				// AB1: and this is where the panel learns that its menu went away, whoever took it away. The
+				// grabber's cancel arrives here BEFORE the gear's own press listener runs, which is what lets the
+				// gear read that press as the close half of a toggle (gearPressOpens).
+				menuClosedAtMillis = clock.getAsLong();
+			}
+
+			@Override
+			public void popupMenuCanceled(PopupMenuEvent e)
+			{
+			}
+		});
+		syncHeroMenu();
+		return menu;
+	}
+
+	/**
+	 * The gear menu's box row (Z2): the grey caption {@link #PRESETS_TEXT} over three boxes in the Min / Max
+	 * fields' style, one per band, smallest first and prefilled in gp shorthand.
+	 *
+	 * <p><b>A {@link JPanel} and not a menu item</b>, which is the whole mechanism: {@code PopupFactory} makes a
+	 * heavy-weight popup's window FOCUSABLE exactly when the popup holds a child that is neither a
+	 * {@code MenuElement} nor a {@code JSeparator} ({@code PopupFactory.java}, {@code focusPopup}), and RuneLite
+	 * forces every popup heavy-weight so the game applet cannot obscure it
+	 * ({@code ClientUI.setupDefaults}). So this row is what lets the boxes take the keyboard at all;
+	 * without it the popup window would refuse focus and every keystroke would go to the game. A press inside the
+	 * popup's own hierarchy never cancels it either ({@code BasicPopupMenuUI.MouseGrabber.isInPopup}), which is
+	 * the rest of what Z2 asks for: clicking a field must not close the menu.
+	 *
+	 * <p>The caption sits ABOVE the boxes rather than beside them because a popup is as wide as its widest child:
+	 * "Preset price ranges" beside three 56 px boxes would ask for close to 300 px and widen the whole menu past
+	 * its longest sentence, and the three boxes alone are narrower than "Include coins and platinum tokens"
+	 * already is - as is the caption itself (Z7, AB3).
+	 *
+	 * <p><b>The row is FOCUSABLE</b> (line Z6), which is the other half of that mechanism and the user's own
+	 * correction after the first hand look: "currently when you click the gear settings icon the 100k+ field is
+	 * already selected and cursor is blinking there, i dont want that until its clicked". A focusable window hands
+	 * its focus to the first focusable component in it, and until now that was the first band's text field. A plain
+	 * {@link JPanel} is not focusable ({@code DefaultFocusTraversalPolicy.accept} asks a lightweight peer, which
+	 * says no), so {@code setFocusable(true)} both puts the row ahead of its own boxes in the traversal cycle and
+	 * lets the {@link #buildHeroMenu() menu's open event} park the keyboard on it ({@link #menuFocusTarget()} is
+	 * that target). The boxes stay ordinary text fields: a click focuses one and everything after it (Enter, focus
+	 * lost, the menu closing) is unchanged.
+	 */
+	private JPanel buildPresetRow()
+	{
+		final JPanel row = Widgets.column(2);
+		row.setOpaque(false);
+		row.setBorder(new EmptyBorder(4, ROW_GAP, 2, ROW_GAP));
+		row.setFocusable(true);
+		final JLabel caption = Widgets.label(PRESETS_TEXT, Widgets.sans(12), ColorScheme.LIGHT_GRAY_COLOR);
+		caption.setToolTipText(PRESETS_TIP);
+		final JPanel boxes = new JPanel();
+		boxes.setLayout(new BoxLayout(boxes, BoxLayout.X_AXIS));
+		boxes.setOpaque(false);
+		for (int i = 0; i < presetFields.length; i++)
+		{
+			if (i > 0)
+			{
+				boxes.add(Box.createHorizontalStrut(PRESET_GAP));
+			}
+			presetFields[i] = presetBox(i);
+			boxes.add(presetFields[i]);
+		}
+		// The glue keeps the three at their pinned widths when the menu is wider than they are - which it is,
+		// because the check items above them are sentences.
+		boxes.add(Box.createHorizontalGlue());
+		row.add(caption);
+		row.add(boxes);
+		row.setToolTipText(PRESETS_TIP);
+		renderPresetFields();
+		return row;
+	}
+
+	/**
+	 * One preset box (Z2). It commits on Enter and on focus lost, exactly as the fold's gp fields do - and the
+	 * three are read TOGETHER by {@link #commitPresets}, because a band is only valid beside the other two.
+	 *
+	 * <p>Its placeholder is that slot's DEFAULT band ("100k", "1m", "10m"), so a box emptied by mistake says what
+	 * belongs in it and what "Reset to default" would put back. An empty box is not a band, so committing one is
+	 * refused like any other unreadable text.
+	 */
+	private Widgets.PlaceholderField presetBox(int i)
+	{
+		final Widgets.PlaceholderField field = Widgets.gpField(MovementMath.formatGp(BandPresets.DEFAULT.mins()[i]));
+		final String tip = "Quick band " + (i + 1) + " of " + presetFields.length
+			+ ", in gp shorthand - e.g. 1m; the three must differ";
+		// On the panel AND the text field, as the fold's fields do: the field is the mouse target inside its panel.
+		field.setToolTipText(tip);
+		field.getTextField().setToolTipText(tip);
+		Widgets.fixed(field, PRESET_FIELD_WIDTH, field.getPreferredSize().height);
+		field.addActionListener(e -> commitPresets());
+		field.getTextField().addFocusListener(new FocusAdapter()
+		{
+			@Override
+			public void focusLost(FocusEvent e)
+			{
+				// A temporary loss is the window going away, not the reader leaving the box - the same rule the
+				// Min / Max fields follow.
+				if (!e.isTemporary())
+				{
+					commitPresets();
+				}
+			}
+		});
+		return field;
+	}
+
+	/**
+	 * The gear menu's last row (addendum AB, line AB2): a horizontal glue and, pushed to the right end of the menu
+	 * by it, one small button reading {@link #OK_TEXT}.
+	 *
+	 * <p>The user asked for it in the same breath as the toggle - "also put a 'save' or 'ok' button at the bottom
+	 * right of the gear settings menu that will close the settings box as well" - and it answers a real question
+	 * this menu had left open: every other way out of it is a gesture (press the sidebar, press Escape, press the
+	 * gear again) and none of them is drawn anywhere. A reader who has just typed three bands wants a control that
+	 * says "done".
+	 *
+	 * <p>A {@link JPanel} carrying a {@link JButton}, like the {@link #buildPresetRow() preset row} above it, and
+	 * for the same two reasons: a press inside the popup's own hierarchy never cancels it
+	 * ({@code BasicPopupMenuUI.MouseGrabber.isInPopup}), so the button gets its click, and a non-{@code MenuElement}
+	 * child is what makes RuneLite's heavy-weight popup focusable at all (Z2). It is the one control in this menu
+	 * drawn by the look and feel's {@code ButtonUI} - {@link Widgets#smallButton}'s reasoning, that the way OUT of
+	 * something should look like the platform's own control - wearing the menu's own face rather than the
+	 * RuneScape small font, so it reads as part of the list it closes.
+	 *
+	 * <p>The row is as wide as the button and no wider: the glue has no preferred width, so the menu's width is
+	 * still set by its longest sentence, and the button rides the right edge whatever that turns out to be.
+	 */
+	private JPanel buildOkRow()
+	{
+		final JPanel row = new JPanel();
+		row.setLayout(new BoxLayout(row, BoxLayout.X_AXIS));
+		row.setOpaque(false);
+		row.setBorder(new EmptyBorder(2, ROW_GAP, 2, ROW_GAP));
+		okButton = Widgets.smallButton(OK_TEXT, OK_TIP, e -> pressOk());
+		okButton.setFont(Widgets.sans(12));
+		// Read AFTER the font is set, and pinned so no ButtonUI can decide to fill the row with a 180 px "OK":
+		// BoxLayout stretches a child up to its MAXIMUM, and the button's must stay the size of the word for the
+		// glue to have anything to push against.
+		okButton.setMaximumSize(okButton.getPreferredSize());
+		// The glue FIRST: BoxLayout hands the row's spare width to it, which is what puts the button at the
+		// bottom RIGHT of the menu the user asked for.
+		row.add(Box.createHorizontalGlue());
+		row.add(okButton);
+		return row;
+	}
+
+	/**
+	 * The OK button's press (AB2): commit the three boxes, then take the menu down.
+	 *
+	 * <p>Both halves are spelled out even though each is implied by the other - the close commits (Z2) and a
+	 * commit does not close - because the button's promise is that what is on screen is what is saved, and it must
+	 * hold whichever way Swing delivers the hide. A trio that does not read is still refused, in red, and the menu
+	 * still closes: the refusal was answered where it was made, and the next open asks the question afresh
+	 * ({@code popupMenuWillBecomeVisible} re-prints the bands in force).
+	 */
+	private void pressOk()
+	{
+		commitPresets();
+		closeGearMenu();
+	}
+
+	/**
+	 * Opens the gear menu under the gear (Q1) - {@code menu.show(anchor, x, y)} behind an {@code isShowing()}
+	 * guard, the same rule {@link #openSortMenu} follows: RuneLite disables lightweight popups, and a menu can
+	 * only be placed against something that is on the screen.
+	 *
+	 * <p><b>A press while the menu stands opens nothing</b> (addendum AB, line AB1), which is what makes the gear a
+	 * toggle. The press arrives here in one of two orders, and both are answered: in this client the popup has
+	 * already been cancelled by the same press (the grabber runs first), so the panel asks
+	 * {@link #gearPressOpens()} how long ago the menu closed rather than asking the menu whether it is open; and
+	 * should a popup ever survive the press that reached the gear, it is taken down here instead. Either way the
+	 * second click closes and opens nothing.
+	 */
+	void openGearMenu()
+	{
+		if (stopped)
+		{
+			return;
+		}
+		if (heroMenu.isVisible())
+		{
+			closeGearMenu();
+			return;
+		}
+		if (!gearPressOpens() || !gearLabel.isShowing())
+		{
+			return;
+		}
+		heroMenu.show(gearLabel, 0, gearLabel.getHeight());
+	}
+
+	/**
+	 * Whether a press on the gear right now OPENS the menu (AB1): true unless the menu went away within the last
+	 * {@link #GEAR_REOPEN_GUARD_MILLIS}, in which case this press is the one that took it away and its work is
+	 * done.
+	 *
+	 * <p>Named, and package-private, for the reason {@link #menuFocusTarget()} is: what a press decides can be
+	 * asked of a panel that is not on any screen, and whether a popup is SHOWING cannot - a test has no window to
+	 * show one in. The clock is {@link #setClock the panel's}, so a test drives this by moving it.
+	 */
+	boolean gearPressOpens()
+	{
+		return menuClosedAtMillis == MENU_NEVER_CLOSED
+			|| clock.getAsLong() - menuClosedAtMillis >= GEAR_REOPEN_GUARD_MILLIS;
+	}
+
+	/**
+	 * One check item of the card's menu. The action fires AFTER the item's model has toggled (a click on a
+	 * {@code JCheckBoxMenuItem} flips its selection before the {@code ActionEvent}), so {@code isSelected()}
+	 * in the listener is the NEW state; {@code setSelected} from {@link #syncHeroMenu} fires no action, which is
+	 * what keeps the config round trip from writing the config back.
+	 */
+	private static JCheckBoxMenuItem checkItem(String text, String tooltip, Consumer<Boolean> onToggle)
+	{
+		final JCheckBoxMenuItem item = new JCheckBoxMenuItem(text);
+		// Every menu item in this sidebar sets its face: one that does not is drawn by the look and feel in the
+		// 16 px bitmap RuneScape default, and this menu would then look nothing like the sort menu one control
+		// row away. The TICK stays the look and feel's - it is what a reader expects of a settings toggle.
+		item.setFont(Widgets.sans(12));
+		item.setToolTipText(tooltip);
+		item.addActionListener(e -> onToggle.accept(item.isSelected()));
+		return item;
+	}
+
+	/**
+	 * The control row (N 3.3): the sort word-button WEST, the band button EAST - a word-button that states
+	 * its band ("All items v" / "100k - 5m v", N 4.4 control 3) and opens the price fold - between two 1 px
+	 * rules.
+	 *
+	 * <p>The two buttons wear the same 7 px triangle for two different jobs (W2). The band button's points down
+	 * for good: it is a MENU MARKER, the mark every "this opens something" control on the panel carries. The sort
+	 * button's is the DIRECTION - down for biggest first, up for smallest - so it is not set here at all;
+	 * {@link #renderControl} owns it, as it owns the text, and the constructor's {@link #renderAll} paints both
+	 * before the panel is ever shown. A second marker beside it was considered and dropped: the sort button is the
+	 * only thing on its half of the row, and two triangles on one word are two directions to read.
+	 */
+	private JPanel buildControlRow()
+	{
+		sortButton = Widgets.linkLabel("", Widgets.sansBold(12), ColorScheme.TEXT_COLOR, ColorScheme.BRAND_ORANGE,
+			this::openSortMenu);
+		sortButton.setHorizontalTextPosition(SwingConstants.LEFT);
+		sortButton.setIconTextGap(ICON_GAP);
+
+		bandTarget = Widgets.linkLabel("", Widgets.sans(12), ColorScheme.TEXT_COLOR, ColorScheme.BRAND_ORANGE,
+			this::toggleFold);
+		bandTarget.setIcon(Widgets.triangle(true));
+		bandTarget.setHorizontalTextPosition(SwingConstants.LEFT);
+		bandTarget.setIconTextGap(ICON_GAP);
+
+		final JPanel row = new JPanel(new BorderLayout(ROW_GAP, 0));
+		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		row.setBorder(new CompoundBorder(new EmptyBorder(ROW_GAP, 0, 0, 0),
+			new CompoundBorder(new MatteBorder(1, 0, 1, 0, ColorScheme.BORDER_COLOR), new EmptyBorder(0, ROW_GAP, 0, ROW_GAP))));
+		row.add(sortButton, BorderLayout.WEST);
+		row.add(bandTarget, BorderLayout.EAST);
+		Widgets.fixed(row, W, ROW_GAP + 2 + CONTROL_HEIGHT);
+		return row;
+	}
+
+	/**
+	 * The price fold (N 3.5): the four presets over the two gp fields and the "x" that clears both. A plain
+	 * panel and not a popup, so no MenuSelectionManager steals keystrokes from a text field; added under the
+	 * control row while open and removed on the second tap - never hidden.
+	 *
+	 * <p>Since addendum Z (line Z3) the four chips are "All" and the reader's three {@link BandPresets}: each cell
+	 * is built once and asks {@link #presetMin} for the band its place holds, so editing the presets in the gear
+	 * menu re-labels them ({@link #renderPresetCells}) without rebuilding the fold. With the DEFAULT presets they
+	 * are "All" / "100k+" / "1m+" / "10m+" - the four this fold has always drawn.
+	 */
+	private JPanel buildFold()
+	{
+		final JPanel panel = Widgets.column(5);
+		panel.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		panel.setBorder(new EmptyBorder(ROW_GAP, GAP, ROW_GAP, GAP));
+
+		for (int i = 0; i < presetCells.length; i++)
+		{
+			// Z3: the INDEX is captured, never the band - a cell built once goes on pressing whatever band its
+			// place holds after the reader edits the presets, so nothing here is rebuilt when they do.
+			final int index = i;
+			final JLabel cell = Widgets.segment("", null, () -> applyBand(presetMin(index), 0L));
+			Widgets.fixed(cell, PRESET_WIDTH, PRESET_HEIGHT);
+			presetCells[i] = cell;
+		}
+		renderPresetCells();
+		final JPanel presetBar = Widgets.grid(PRESET_GAP, presetCells);
+		presetBar.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+
+		clearLabel = iconButton(Widgets.clearIcon(ColorScheme.LIGHT_GRAY_COLOR),
+			Widgets.clearIcon(ColorScheme.BRAND_ORANGE), "Clear both bounds", () -> applyBand(0L, 0L));
+		Widgets.fixed(clearLabel, SMALL_ICON, minField.getPreferredSize().height);
+		// A box with struts, not a FlowLayout: FlowLayout's preferred width adds its gap at BOTH ends as well as
+		// between the parts (90 + 90 + 11 with four gaps = 211, over the fold's 205), and the width rule is
+		// measured on preferred sizes. The glue keeps the "x" beside the fields when the sidebar is wider.
+		final JPanel fields = new JPanel();
+		fields.setLayout(new BoxLayout(fields, BoxLayout.X_AXIS));
+		fields.setOpaque(false);
+		fields.add(minField);
+		fields.add(Box.createHorizontalStrut(ICON_GAP));
+		fields.add(maxField);
+		fields.add(Box.createHorizontalStrut(ICON_GAP));
+		fields.add(clearLabel);
+		fields.add(Box.createHorizontalGlue());
+
+		panel.add(presetBar);
+		panel.add(fields);
+		return panel;
+	}
+
+	/**
+	 * The problem row (N 3.6): one 12 px line, its height taken from a probe so it never collapses while
+	 * empty, fitted to the width with the whole sentence as its tooltip.
+	 */
+	private JLabel buildProblemLabel()
+	{
+		final JLabel label = Widgets.label("", Widgets.sans(12), ColorScheme.LIGHT_GRAY_COLOR);
+		label.setBorder(new EmptyBorder(2, ROW_GAP, 0, ROW_GAP));
+		final int probe = Widgets.label("X", Widgets.sans(12), ColorScheme.LIGHT_GRAY_COLOR).getPreferredSize().height;
+		Widgets.fixed(label, W, probe + 2);
+		return label;
+	}
+
+	private Widgets.PlaceholderField boundField(boolean min)
+	{
+		final Widgets.PlaceholderField field = Widgets.gpField(min ? "min gp" : "max gp");
+		final String tip = (min ? "Lowest" : "Highest") + " unit price to show, e.g. 100k or 1.5m; empty = no "
+			+ (min ? "lower" : "upper") + " bound";
+		// On the panel AND the text field: the field is the mouse target inside its panel (playbook 7.5).
+		field.setToolTipText(tip);
+		field.getTextField().setToolTipText(tip);
+		Widgets.fixed(field, FIELD_WIDTH, field.getPreferredSize().height);
+		field.addActionListener(e -> applyBound(field, min));
+		field.getTextField().addFocusListener(new FocusAdapter()
+		{
+			@Override
+			public void focusLost(FocusEvent e)
+			{
+				// Not while the header itself is taking the field away (see syncHeader): that is not the user
+				// leaving the field, and what is in it is half a number.
+				if (!e.isTemporary() && !syncingHeader)
+				{
+					applyBound(field, min);
+				}
+			}
+		});
+		return field;
+	}
+
+	/**
+	 * An icon-only control: grey at rest, {@code hot} while the mouse is over it, a LEFT press runs
+	 * {@code onClick} ({@link Widgets#isPress}: a right-button press is a menu gesture everywhere in this
+	 * sidebar, never a press).
+	 */
+	private static JLabel iconButton(ImageIcon rest, ImageIcon hot, String tooltip, Runnable onClick)
+	{
+		final JLabel label = new JLabel(rest);
+		label.setToolTipText(tooltip);
+		label.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+		label.addMouseListener(new MouseAdapter()
+		{
+			@Override
+			public void mousePressed(MouseEvent e)
+			{
+				if (Widgets.isPress(e))
+				{
+					onClick.run();
+				}
+			}
+
+			@Override
+			public void mouseEntered(MouseEvent e)
+			{
+				label.setIcon(hot);
+			}
+
+			@Override
+			public void mouseExited(MouseEvent e)
+			{
+				label.setIcon(rest);
+			}
+		});
+		return label;
+	}
+
+	/** {@link Widgets#bar} on a see-through ground, for the rows inside the hero card. */
+	private static JPanel transparentBar(int gap, @Nullable JComponent west, @Nullable JComponent centre,
+		@Nullable JComponent east)
+	{
+		final JPanel bar = Widgets.bar(gap, west, centre, east);
+		bar.setOpaque(false);
+		return bar;
+	}
+
+	private static JPanel messageCard(String title, String description)
+	{
+		final PluginErrorPanel message = new PluginErrorPanel();
+		typeMessage(message);
+		message.setContent(title, description);
+		return Widgets.north(message);
+	}
+
+	/**
+	 * Puts a {@link PluginErrorPanel}'s two labels into THIS panel's type (N section 3 §2), because it sets
+	 * neither: its title inherits the look and feel's default - under {@code RuneLiteLAF} the 16 px bitmap
+	 * RuneScape face ({@code RuneLiteLAF.java:132}) - and its description is
+	 * {@code getRunescapeSmallFont()} in {@code Color.GRAY}, which measures 3.73:1 on the sidebar's ground.
+	 * These three cards are the FIRST screen a new user sees, so the panel would introduce itself in one
+	 * typeface and then work in another.
+	 *
+	 * <p>The labels are private to that class, so they are reached as its children - the title in
+	 * {@code BorderLayout.NORTH}, the description in {@code CENTER} ({@code PluginErrorPanel.java:53-61}).
+	 * {@code setContent} only sets text and calls {@code setVisible}, so a font set once here survives every
+	 * later rewrite of the EMPTY card's description.
+	 */
+	private static void typeMessage(PluginErrorPanel message)
+	{
+		final Component title = ((BorderLayout) message.getLayout()).getLayoutComponent(BorderLayout.NORTH);
+		final Component description = ((BorderLayout) message.getLayout()).getLayoutComponent(BorderLayout.CENTER);
+		if (title instanceof JLabel)
+		{
+			title.setFont(Widgets.sansBold(16));
+			title.setForeground(Color.WHITE);
+		}
+		if (description instanceof JLabel)
+		{
+			description.setFont(Widgets.sans(12));
+			description.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		}
+	}
+
+	/**
+	 * Puts exactly {@code want}, in order, into {@code parent} - and touches nothing when the set is already
+	 * right, so a repaint that changes nothing causes no flicker (C30). Rows and lines are added and removed,
+	 * never hidden: a hidden component still takes its place in a {@code DynamicGridLayout} column (playbook
+	 * 7.5).
+	 *
+	 * <p><b>A diff, not a rebuild.</b> Only the children that are NOT wanted are removed, and only the missing
+	 * ones are added, each at its place; a child that stays is never removed and never re-added. That matters
+	 * because {@code removeAll()} tears down the peer of everything under it: with the price fold open and the
+	 * caret in a gp field, a publish that merely added or dropped the problem row took the focus off that field
+	 * permanently, and the field's own focus-lost handler then applied whatever half of "100k" had been typed.
+	 * ({@code Container.addImpl} removes a component from its current parent first, so re-adding a stayer would
+	 * be exactly the same tear-down - hence inserting the missing ones instead.) The header's four rows always
+	 * keep their relative order, which is what makes the insert land the right list; anything else falls back to
+	 * the wholesale replacement rather than painting a wrong card.
+	 *
+	 * @return whether anything moved
+	 */
+	private static boolean replaceChildren(Container parent, List<Component> want)
+	{
+		if (want.equals(Arrays.asList(parent.getComponents())))
+		{
+			return false;
+		}
+		for (int i = parent.getComponentCount() - 1; i >= 0; i--)
+		{
+			if (!want.contains(parent.getComponent(i)))
+			{
+				parent.remove(i);
+			}
+		}
+		for (int i = 0; i < want.size(); i++)
+		{
+			final Component c = want.get(i);
+			if (i >= parent.getComponentCount() || parent.getComponent(i) != c)
+			{
+				parent.add(c, i);
+			}
+		}
+		if (!want.equals(Arrays.asList(parent.getComponents())))
+		{
+			parent.removeAll();
+			for (Component c : want)
+			{
+				parent.add(c);
+			}
+		}
+		parent.revalidate();
+		parent.repaint();
+		return true;
+	}
+
+	/**
+	 * Keeps the pinned header exactly as wide as the row cards scrolling under it.
+	 *
+	 * <p>The panel is {@code super(false)}, so RuneLite gives it {@code PANEL_WIDTH + SCROLLBAR_WIDTH} = 242 px
+	 * ({@code PluginPanel.java:88-92}), not the 225 px {@link #MARGIN} is derived from. The header sits in
+	 * {@code BorderLayout.NORTH} of that (contract C28 - a header inside the scroll pane would scroll away) and
+	 * the list sits inside {@link #scroll}, so the moment the vertical bar appears the LIST loses its width (7 px
+	 * under {@code RuneLiteLAF}) and the header does not: two {@code DARKER_GRAY} cards on one ground with their
+	 * right edges 7 px apart, appearing and disappearing as the list crosses the scroll threshold.
+	 *
+	 * <p>So the header reserves the same gutter, MEASURED off the bar rather than hard-coded - the look and feel
+	 * owns that number and the test JVM's is not the client's - and gives it back when the bar goes. The policy
+	 * stays {@code AS_NEEDED}: reserving it always would leave a permanent empty track, and at a narrower host
+	 * width it would push the header's content under the 213 px the design is measured at.
+	 */
+	private void syncGutter()
+	{
+		final Component bar = scroll.getVerticalScrollBar();
+		final int want = bar.isVisible() ? bar.getWidth() : 0;
+		if (want == gutter)
+		{
+			return;
+		}
+		gutter = want;
+		header.setBorder(new EmptyBorder(MARGIN, MARGIN, GAP, MARGIN + want));
+		header.revalidate();
+		header.repaint();
+	}
+
+	/** The gutter the header reserves for the list's scrollbar right now, in px (0 while there is no bar). */
+	int gutter()
+	{
+		return gutter;
+	}
+
+	/**
+	 * Syncs the gutter before laying out, so a header built at one width is measured against the list at the
+	 * same one. The bar's own {@code ComponentListener} catches the case where it is the bar, and not the panel,
+	 * that changed.
+	 */
+	@Override
+	public void doLayout()
+	{
+		syncGutter();
+		super.doLayout();
+	}
+
+	// ---------------------------------------------------------------- Activatable (sidebar shown / hidden)
+
+	/**
+	 * The sidebar opened on this panel: the service may fetch and schedule (contract C33 / C24).
+	 *
+	 * <p>Who calls this: {@code PluginPanel implements Activatable} ({@code PluginPanel.java:36},
+	 * {@code Activatable.java:29-33} - default no-op hooks), and the sidebar's tab-change listener hands the
+	 * outgoing panel to {@code SwingUtil.deactivate} and the incoming one to {@code SwingUtil.activate}
+	 * ({@code ClientUI.java:407-441}, clone tag runelite-parent-1.12.37). Closing the sidebar deactivates the
+	 * selected panel the same way, which is what makes "nothing while hidden" (design D8) hold.
+	 */
+	@Override
+	public void onActivate()
+	{
+		if (stopped)
+		{
+			return;
+		}
+		active = true;
+		if (pendingPublish)
+		{
+			final List<MovementRow> newRows = pendingRows;
+			final Status newStatus = pendingStatus;
+			pendingPublish = false;
+			pendingRows = null;
+			pendingStatus = null;
+			onRows(newRows, newStatus);
+		}
+		service.setVisible(true);
+	}
+
+	/**
+	 * The sidebar closed or moved on: nothing is fetched while nobody is looking (design D8), and nothing is
+	 * BUILT either - {@link #onRows} stores the next publish instead of laying out a page of rows nobody can see
+	 * ({@link #active}).
+	 */
+	@Override
+	public void onDeactivate()
+	{
+		closeMenus();
+		active = false;
+		if (!stopped)
+		{
+			service.setVisible(false);
+		}
+	}
+
+	/** shutDown: stops listening, drops the rows. Idempotent; the panel is dead afterwards. */
+	public void stop()
+	{
+		stopped = true;
+		closeMenus();
+		clearRefreshAck();
+		service.removeListener(listener);
+		rows = Collections.emptyList();
+		pendingPublish = false;
+		pendingRows = null;
+		pendingStatus = null;
+		images.clear();
+		rowsColumn.removeAll();
+		shown = 0;
+		updateShowMore();
+		renderControl();
+		rowsColumn.revalidate();
+		rowsColumn.repaint();
+	}
+
+	// ---------------------------------------------------------------- the hero switches (EDT, O2-O4)
+
+	/**
+	 * The switches changed under us (the plugin's {@code ConfigChanged} for one of the three keys): puts the
+	 * right lines into the card, repaints it and its tooltip, and ticks the menu to match. Saves nothing back -
+	 * the config already knows - and the same value again is a harmless repaint. The card's OWN write does not
+	 * come back this way at all: the plugin marks {@code saveHero}'s three keys as its own and drops the events
+	 * they post ({@code BankPriceMovementPlugin.prefsWriter}), because {@link #setHeroVisibility} has already
+	 * applied the whole value here. Null reads as {@link HeroVisibility#ALL}.
+	 */
+	public void applyHeroVisibility(@Nullable HeroVisibility next)
+	{
+		if (stopped)
+		{
+			return;
+		}
+		heroVisibility = next == null ? HeroVisibility.ALL : next;
+		syncHeroMenu();
+		renderValue();
+	}
+
+	/**
+	 * The card's own switch (O4: a check item of its right-click menu): applies at once AND writes the choice
+	 * through {@link Prefs#saveHero}, so the stored config follows; the {@code ConfigChanged} events that write
+	 * posts are the plugin's own and are dropped there rather than re-rendering this card once per key (see
+	 * {@link #applyHeroVisibility}). Nothing is written when nothing changed.
+	 *
+	 * <p>An ALREADY-OPEN settings page keeps the old tick until it is re-entered from the plugin list - RuneLite
+	 * rebuilds a {@code ConfigPanel} only then (see the class javadoc). The value on disk is right either way,
+	 * and {@code bpm state | jq .result.hero} shows it at once.
+	 */
+	public void setHeroVisibility(@Nullable HeroVisibility next)
+	{
+		final HeroVisibility v = next == null ? HeroVisibility.ALL : next;
+		final boolean changed = !v.equals(heroVisibility);
+		applyHeroVisibility(v);
+		if (changed && !updating)
+		{
+			prefs.saveHero(v);
+		}
+	}
+
+	/** Which of the card's three figures are drawn right now; never null. */
+	public HeroVisibility heroVisibility()
+	{
+		return heroVisibility;
+	}
+
+	/**
+	 * Pins what the card calls "today" when it stamps the bank snapshot ({@link #provenanceText}), and what the
+	 * gear calls "just now" when it asks how long ago its menu closed ({@link #gearPressOpens}, AB1) - for the
+	 * tests and the headless renderer, whose fixtures carry a fixed capture instant. The client leaves it at the
+	 * wall clock.
+	 */
+	void setClock(LongSupplier now)
+	{
+		clock = now == null ? System::currentTimeMillis : now;
+		renderValue();
+	}
+
+	/**
+	 * Puts the right lines into the card and the right figures onto the move line (O3): the caption row, the
+	 * strip, the footnote and the update line always; the total while {@code value} is on; the move line while
+	 * {@code gp} or {@code pct} is - carrying the triangle, then the gp figure while {@code gp} is on, then the
+	 * percentage while {@code pct} is. Nothing prints a placeholder for a hidden figure: the card simply shrinks.
+	 */
+	private void syncHero()
+	{
+		// The total's LINE is always in the card - the gear lives on it (Q1) - and the figure comes and goes
+		// inside it. So the card shrinks by the 28 px figure when the total is switched off, not by the line.
+		final List<Component> lines = new ArrayList<>(6);
+		lines.add(captionRow);
+		lines.add(totalRow);
+		if (heroVisibility.moveLine())
+		{
+			lines.add(moveLine);
+		}
+		lines.add(stripHolder);
+		lines.add(footnoteLabel);
+		// S1: last, under the footnote and before the card's bottom padding, in every state - the figures can be
+		// switched off, the sentence explaining why they sit still cannot.
+		lines.add(updateLabel);
+		replaceChildren(hero, lines);
+		// Not through replaceChildren: that adds by INDEX, and an index-added child of a BorderLayout lands in
+		// the centre - which would put the total where the layout has no constraint for it. One child, one
+		// constraint, added and removed like the EMPTY card's button.
+		final boolean wantTotal = heroVisibility.value();
+		if (wantTotal != (totalLabel.getParent() == totalRow))
+		{
+			if (wantTotal)
+			{
+				totalRow.add(totalLabel, BorderLayout.WEST);
+			}
+			else
+			{
+				totalRow.remove(totalLabel);
+			}
+			totalRow.revalidate();
+			totalRow.repaint();
+		}
+
+		final List<Component> parts = new ArrayList<>(3);
+		parts.add(triangleLabel);
+		if (heroVisibility.gp())
+		{
+			parts.add(deltaLabel);
+		}
+		if (heroVisibility.pct())
+		{
+			parts.add(pctLabel);
+		}
+		replaceChildren(moveLine, parts);
+	}
+
+	/** Ticks the eight menu items to the switches; {@code setSelected} fires no action, so nothing is written. */
+	private void syncHeroMenu()
+	{
+		showValueItem.setSelected(heroVisibility.value());
+		showGpItem.setSelected(heroVisibility.gp());
+		showPctItem.setSelected(heroVisibility.pct());
+		livePricesItem.setSelected(options.livePrices());
+		countCashItem.setSelected(options.countCash());
+		countUntradeablesItem.setSelected(options.countUntradeables());
+		countInventoryItem.setSelected(options.countInventory());
+		holdingItem.setSelected(options.holdingOnRows());
+	}
+
+	// ---------------------------------------------------------------- the view switches (EDT, Q1-Q6)
+
+	/**
+	 * The view switches changed under us - the plugin's {@code ConfigChanged} for one of the five keys, or the
+	 * gear menu through {@link #setOptions} - so the panel draws them: the gear menu's ticks, the card (its
+	 * tooltip names untradeables only while they are counted, Q5; its last line and that line's hover follow the
+	 * live switch, T5; its first line says the total includes what the player carries while {@code countInventory}
+	 * is on, Y3) and, when {@code holdingOnRows} moved, the ROWS, whose two figures are chosen when each
+	 * row is built (Q6). Saves nothing back; null reads as {@link ViewOptions#DEFAULT}; the same value again is
+	 * a tick and a repaint and no rebuild.
+	 *
+	 * <p><b>The control row is no longer among them</b> (addendum X, line X2). Until X the sort button's hover
+	 * named the figure the gp column compares, so this had to repaint it whenever {@code holdingOnRows} moved
+	 * or the hover would outlive its reading; the hover is now {@link #SORT_BUTTON_TIP} under every switch, and
+	 * the menu never said anything about the switch (W3) and is rebuilt on each open besides. Nothing in the
+	 * control row reads {@link #options} any more, so nothing repaints it here.
+	 *
+	 * <p><b>The live switch does not rebuild the rows here</b> (T1): unlike {@code holdingOnRows}, it changes what
+	 * the SERVICE publishes - every liquid row's price, baseline and move - so the rows follow on the recompute
+	 * that the same switch starts, and a rebuild here would only throw away a page that is about to be replaced.
+	 * What changes at once is the card, which is the part of the sidebar that says which series is on.
+	 *
+	 * <p><b>Nor does the carried switch</b> (Y1, the same rule). {@code countInventory} decides which STACKS the
+	 * service merges and what each one's quantity is, so the whole list is recomputed and republished by the value
+	 * the plugin hands {@code PriceService.setOptions} - rows, their split and the tooltip line that names it
+	 * (Y3) arrive together. Only {@code holdingOnRows} is a pure reading of rows already published, and only it
+	 * rebuilds them here.
+	 *
+	 * <p><b>What this does NOT do is decide the list.</b> Which stacks are listed and what they are worth is the
+	 * service's answer to the same switches ({@code PriceService.setOptions}, Q4/Q5): the plugin hands them to
+	 * both, and the recompute arrives here as an ordinary publish. So a switch that changes the figures repaints
+	 * twice - once now, with what is on screen, and once when the service has caught up - and never shows a row
+	 * drawn under one reading beside a total computed under another for longer than that.
+	 */
+	public void applyOptions(@Nullable ViewOptions next)
+	{
+		if (stopped)
+		{
+			return;
+		}
+		final ViewOptions want = next == null ? ViewOptions.DEFAULT : next;
+		final boolean rowsChange = want.holdingOnRows() != options.holdingOnRows();
+		options = want;
+		syncHeroMenu();
+		renderValue();
+		if (rowsChange && !rows.isEmpty())
+		{
+			// The same list restated, not one the reader asked for: they asked for another READING of it, and the
+			// page they had open and the place they were at are still the right ones (B107).
+			//
+			// This one rebuild is not deferred while the sidebar is elsewhere, as a publish is (design D8). The
+			// settings page IS another sidebar panel, so the config road always arrives here with this panel
+			// deactivated - deferring it would mean holding a "the rows are stale" flag and no publish to hang it
+			// on. The cost is bounded: one page, once, and only when the switch actually moved.
+			rebuildRows(false);
+		}
+	}
+
+	/**
+	 * The gear menu's own switch (Q2): applies at once AND writes the choice through {@link Prefs#saveOptions},
+	 * so the stored config follows - the round trip {@link #setHeroVisibility} makes for the card's three.
+	 * Nothing is written when nothing changed.
+	 */
+	public void setOptions(@Nullable ViewOptions next)
+	{
+		final ViewOptions want = next == null ? ViewOptions.DEFAULT : next;
+		final boolean changed = !want.equals(options);
+		applyOptions(want);
+		if (changed && !updating)
+		{
+			prefs.saveOptions(want);
+		}
+	}
+
+	/** The five view switches the panel is drawing right now (Q3, T1, Y1); never null. */
+	public ViewOptions options()
+	{
+		return options;
+	}
+
+	// ---------------------------------------------------------------- the price presets (EDT, Z1-Z3)
+
+	/**
+	 * The quick bands changed under us - the plugin's {@code ConfigChanged} for {@code bandPresets}, or the gear
+	 * menu's boxes through {@link #setPresets} - so the panel draws them: the three boxes re-print their bands in
+	 * ascending order and lose any red, and the fold's chips take their new labels, hovers and bands (Z3).
+	 *
+	 * <p>It saves nothing back and never touches the FILTER: the reader's Min / Max band is theirs, and a preset
+	 * is only the one-tap way to set one. The chips are repainted because the LIT one can move without the band
+	 * moving at all - a bank on "1m and up" is on a preset while the presets are 100k / 1m / 10m and on a custom
+	 * band the moment they become 500k / 10m / 100m.
+	 *
+	 * <p>Null reads as {@link BandPresets#DEFAULT}; the same value again is a repaint and nothing else. The
+	 * service is not told, because no figure this panel shows depends on which bands the fold offers.
+	 */
+	public void applyPresets(@Nullable BandPresets next)
+	{
+		if (stopped)
+		{
+			return;
+		}
+		presets = next == null ? BandPresets.DEFAULT : next;
+		renderPresetFields();
+		renderPresetCells();
+		renderChips();
+	}
+
+	/**
+	 * The gear menu's own change (Z2: the boxes, or "Reset to default") and the bridge's {@code presets=}:
+	 * applies at once AND writes the three through {@link Prefs#savePresets}, so the stored config follows - the
+	 * round trip {@link #setOptions} makes for the view switches. Nothing is written when nothing changed, and
+	 * the boxes still re-print, which is what puts a refused edit's red away when the reader asks for what is
+	 * already in force.
+	 */
+	public void setPresets(@Nullable BandPresets next)
+	{
+		final BandPresets want = next == null ? BandPresets.DEFAULT : next;
+		final boolean changed = !want.equals(presets);
+		applyPresets(want);
+		if (changed && !updating)
+		{
+			prefs.savePresets(want);
+		}
+	}
+
+	/** The three quick bands the fold is offering right now (Z1); never null. */
+	public BandPresets presets()
+	{
+		return presets;
+	}
+
+	/**
+	 * Reads the three boxes TOGETHER (Z2) - on Enter, on focus lost and when the menu closes - and, when they
+	 * name three distinct positive amounts, sorts them and makes them the presets through {@link #setPresets}.
+	 *
+	 * <p>They are one value, so they are judged as one: a box whose text is not a positive gp amount goes red,
+	 * and so do BOTH boxes of a pair naming the same amount - the two failures a reader can make here, each shown
+	 * where they made it. Nothing is saved while any box is red; the presets in force stay, which is what keeps a
+	 * half-typed trio from ever reaching the fold. The fold's own Min / Max fields judge themselves one at a time
+	 * for the same reason in reverse: either bound is a band on its own.
+	 */
+	private void commitPresets()
+	{
+		if (stopped)
+		{
+			return;
+		}
+		final long[] values = new long[presetFields.length];
+		final boolean[] bad = new boolean[presetFields.length];
+		boolean ok = true;
+		for (int i = 0; i < presetFields.length; i++)
+		{
+			long value;
+			try
+			{
+				value = MovementMath.parseGp(presetFields[i].getText().trim());
+			}
+			catch (ParseException e)
+			{
+				value = 0L;
+			}
+			// A band of nothing is not a band: "All" is already the fold's first chip, so 0 is as unreadable
+			// here as "abc" is.
+			values[i] = value;
+			if (value <= 0L)
+			{
+				bad[i] = true;
+				ok = false;
+			}
+		}
+		for (int i = 0; i < values.length; i++)
+		{
+			for (int j = i + 1; j < values.length; j++)
+			{
+				if (values[i] > 0L && values[i] == values[j])
+				{
+					bad[i] = true;
+					bad[j] = true;
+					ok = false;
+				}
+			}
+		}
+		for (int i = 0; i < presetFields.length; i++)
+		{
+			Widgets.markInvalid(presetFields[i], bad[i]);
+		}
+		if (!ok)
+		{
+			return;
+		}
+		final BandPresets next;
+		try
+		{
+			next = BandPresets.of(values[0], values[1], values[2]);
+		}
+		catch (IllegalArgumentException refused)
+		{
+			// The invariant itself lives in BandPresets; the two loops above are this row's reading of it, and if
+			// the two ever part company the boxes say so rather than throwing out of an action listener.
+			for (Widgets.PlaceholderField field : presetFields)
+			{
+				Widgets.markInvalid(field, true);
+			}
+			return;
+		}
+		setPresets(next);
+	}
+
+	/**
+	 * Spells the three boxes from the presets, smallest first, and clears their red (Z2). A box already holding
+	 * that spelling is left alone, so re-printing does not move the caret of the one being typed in.
+	 *
+	 * <p>The spelling is {@link MovementMath#formatGp} - what {@link BandPresets#format()} writes into the config
+	 * and what the chips wear - rather than whatever the reader typed. A band is stored as shorthand, so a box
+	 * that went on showing "1234567" beside a config line reading "1.23m" would be showing a number the plugin no
+	 * longer holds; the rounding is the price of the shorthand and is better seen at once than found later.
+	 */
+	private void renderPresetFields()
+	{
+		final long[] mins = presets.mins();
+		for (int i = 0; i < presetFields.length; i++)
+		{
+			final String text = MovementMath.formatGp(mins[i]);
+			if (!text.equals(presetFields[i].getText()))
+			{
+				presetFields[i].setText(text);
+			}
+			Widgets.markInvalid(presetFields[i], false);
+		}
+	}
+
+	/** The fold's four chips, labelled and explained from the presets (Z3); what each one DOES is its index. */
+	private void renderPresetCells()
+	{
+		for (int i = 0; i < presetCells.length; i++)
+		{
+			final long min = presetMin(i);
+			presetCells[i].setText(presetLabel(i));
+			presetCells[i].setToolTipText(min == 0L ? "Every item, whatever its price"
+				: "Items priced " + MovementMath.formatGp(min) + " and up");
+		}
+	}
+
+	/** Chip {@code i}'s lower bound: none for "All", then the three presets, smallest first (Z3). */
+	long presetMin(int i)
+	{
+		return i == 0 ? 0L : presets.mins()[i - 1];
+	}
+
+	/** Chip {@code i}'s text: {@link #ALL_LABEL}, then {@link BandPresets#labels()} (Z3). */
+	String presetLabel(int i)
+	{
+		return i == 0 ? ALL_LABEL : presets.labels()[i - 1];
+	}
+
+	/** The fold's four chip texts in order - {@code describe()}'s {@code presetLabels} (Z4). */
+	public String[] presetLabels()
+	{
+		final String[] out = new String[PRESET_COUNT];
+		for (int i = 0; i < out.length; i++)
+		{
+			out[i] = presetLabel(i);
+		}
+		return out;
+	}
+
+	// ---------------------------------------------------------------- the filter (EDT)
+
+	/**
+	 * The config changed under us (the plugin's {@code ConfigChanged}, on the EDT): repaint the widgets from
+	 * {@code next} WITHOUT saving it back - the plugin hands the same filter to the service itself.
+	 */
+	public void applyFilter(@Nullable RowFilter next)
+	{
+		// Both config paths post their repaint with invokeLater (the plugin's onConfigChanged), so one can be
+		// drained after shutDown has already removed this panel from the toolbar and dropped its listener; the
+		// same guard onRows, refreshNow and showMore carry (contract C33).
+		if (stopped)
+		{
+			return;
+		}
+		updating = true;
+		try
+		{
+			filter = next == null ? RowFilter.DEFAULT : next;
+			renderChips();
+			renderBounds();
+			renderValue();
+			renderControl();
+		}
+		finally
+		{
+			updating = false;
+		}
+	}
+
+	public RowFilter filter()
+	{
+		return filter;
+	}
+
+	/** A window chip: the same code path as the click, for the bridge's {@code window=} verb. */
+	public void selectWindow(@Nullable MovementWindow window)
+	{
+		if (window != null)
+		{
+			changeFilter(filter.withWindow(window));
+		}
+	}
+
+	/**
+	 * PRESSING a column - one entry of the sort menu, and the bridge's {@code sort=} verb (addendum W, lines W3
+	 * and W4): the column already lit FLIPS the direction, and another column lights BIGGEST FIRST whatever
+	 * direction the one before it had.
+	 *
+	 * <p>The flip half is the old chip gesture (contract C29), and it is what the arrow now makes visible. The
+	 * other half changed with W: before it kept the direction, so choosing "Item price" while the list was on
+	 * biggest losers answered with the CHEAPEST items in the bank and nothing on screen said why. A new column
+	 * is a new question, and the interesting end of every one of these four is the big end - so it starts there,
+	 * and one more press is the whole cost of the other end.
+	 *
+	 * @param sort the column to press; null does nothing (the bridge passes an unparsed word straight through)
+	 */
+	public void clickSort(@Nullable SortMode sort)
+	{
+		if (sort == null)
+		{
+			return;
+		}
+		changeFilter(sort == filter.sort() ? filter.withDescending(!filter.descending())
+			: filter.withSort(sort).withDescending(true));
+	}
+
+	/** The bridge's {@code dir=asc|desc}: the direction alone. */
+	public void setDescending(boolean descending)
+	{
+		changeFilter(filter.withDescending(descending));
+	}
+
+	/**
+	 * The column and the direction in ONE filter change, for a caller that knows both - the config road and the
+	 * tests. A menu entry does NOT come this way: picking one is a PRESS ({@link #clickSort}), which is the only
+	 * road that can flip.
+	 *
+	 * @param sort       the column; null reads as {@link SortMode#PERCENT_MOVE}, matching {@link RowFilter}'s own
+	 *                   null handling
+	 * @param descending true for biggest first
+	 */
+	public void setSort(@Nullable SortMode sort, boolean descending)
+	{
+		changeFilter(filter.withSort(sort == null ? SortMode.PERCENT_MOVE : sort).withDescending(descending));
+	}
+
+	/**
+	 * Types {@code text} into the Min field and applies it exactly as Enter would (the bridge's {@code min=}),
+	 * and opens the fold so a shot shows what happened (N 3.5).
+	 *
+	 * @return false when the text did not parse (the field is red and the filter unchanged)
+	 */
+	public boolean applyMin(@Nullable String text)
+	{
+		minField.setText(text == null ? "" : text);
+		final boolean ok = applyBound(minField, true);
+		setFoldOpen(true);
+		return ok;
+	}
+
+	/** {@link #applyMin} for the Max field. */
+	public boolean applyMax(@Nullable String text)
+	{
+		maxField.setText(text == null ? "" : text);
+		final boolean ok = applyBound(maxField, false);
+		setFoldOpen(true);
+		return ok;
+	}
+
+	/**
+	 * A preset, the fold's "x" or the EMPTY card's "Clear price range" (N 3.5): both bounds in one filter
+	 * change, and the fields follow - the one place a click rewrites them.
+	 */
+	public void applyBand(long min, long max)
+	{
+		changeFilter(filter.withGpMin(Math.max(0L, min)).withGpMax(Math.max(0L, max)));
+		renderBounds();
+	}
+
+	/**
+	 * The Refresh link / menu entry: the service decides about the 30 s cooldown and says so in the problem row.
+	 *
+	 * <p>The link answers the tap in two beats (P2): "Refreshing..." for {@link #REFRESH_ACK_MILLIS}, then
+	 * <b>"Up to date"</b> for {@link #UP_TO_DATE_MILLIS}, then "Refresh" again. Without the first beat the
+	 * ACCEPTED path is silent - the service publishes no "I started", and guide prices change once a day, so the
+	 * figures usually come back identical - and the only answer the control ever gave was the RED cooldown line
+	 * earned by tapping it a second time because the first tap looked dead. The second beat is what says the work
+	 * FINISHED rather than merely started, and it fades on its own so the card goes back to its minimal face
+	 * (the user's own wish). Both are held by this panel's own timers rather than cleared by the next publish,
+	 * because the publish that follows a refresh lands within a frame or two of the click and would wipe them
+	 * before they could be read. They are words on the control that was tapped, not sentences in the problem row,
+	 * so they cannot fight the cooldown line for that row.
+	 *
+	 * <p><b>A refused tap leaves the link alone</b> in the only sense this panel can honour: nothing different is
+	 * painted on it. {@link PriceService#refreshNow()} returns void and answers a refusal by publishing the red
+	 * "Refreshed 12 s ago - wait" line into the problem row (K5/L10), so the panel is never told which tap was
+	 * served - the link answers the GESTURE and the problem row answers the OUTCOME. A refused tap is one made
+	 * inside 30 s of the last, so the prices really are up to date and the word is true either way.
+	 */
+	public void refreshNow()
+	{
+		if (stopped)
+		{
+			return;
+		}
+		startRefreshAck();
+		service.refreshNow();
+	}
+
+	/**
+	 * What the Refresh link is saying, and for how long (P2). The link's sequence IS this enum: a tap starts at
+	 * {@link #ACKNOWLEDGING}, its timer moves it to {@link #UP_TO_DATE}, and that one's timer ends at
+	 * {@link #IDLE} - so the word on screen is derived from the phase
+	 * ({@link BankPriceMovementPanel#renderRefreshLink}) instead of being read back out of the label, and one
+	 * timer carries all of it at the delay the phase names.
+	 */
+	private enum RefreshPhase
+	{
+		/** Nothing in flight: the control's resting word. */
+		IDLE(0, REFRESH_TEXT),
+		/** Beat one: the tap has been taken. */
+		ACKNOWLEDGING(REFRESH_ACK_MILLIS, REFRESHING_TEXT),
+		/** Beat two: the work finished, and this fades on its own. */
+		UP_TO_DATE(UP_TO_DATE_MILLIS, UP_TO_DATE_TEXT);
+
+		/** How long this beat stands before the next one; 0 for {@link #IDLE}, which waits for a tap instead. */
+		private final int millis;
+		private final String text;
+
+		RefreshPhase(int millis, String text)
+		{
+			this.millis = millis;
+			this.text = text;
+		}
+	}
+
+	/**
+	 * Puts "Refreshing..." on the caption row's link and starts the sequence again from the top - so a second tap
+	 * during either beat restarts it rather than shortening it.
+	 */
+	private void startRefreshAck()
+	{
+		setRefreshPhase(RefreshPhase.ACKNOWLEDGING);
+	}
+
+	/**
+	 * The acknowledgement timer's action: "Refreshing..." becomes "Up to date" and the fade timer starts (P2).
+	 * Package-private so a test can drive the sequence without waiting {@link #REFRESH_ACK_MILLIS} of real time.
+	 */
+	void fireRefreshAck()
+	{
+		setRefreshPhase(stopped ? RefreshPhase.IDLE : RefreshPhase.UP_TO_DATE);
+	}
+
+	/**
+	 * The fade timer's action: "Up to date" goes back to "Refresh" (P2). Package-private for the same reason as
+	 * {@link #fireRefreshAck()} - a minute is not a thing to wait for in a test.
+	 */
+	void fireUpToDate()
+	{
+		clearRefreshAck();
+	}
+
+	/**
+	 * Puts "Refresh" back and stops the timer; safe at any time, and called from {@link #stop()} so a panel the
+	 * client has removed leaves nothing ticking (P2).
+	 */
+	void clearRefreshAck()
+	{
+		setRefreshPhase(RefreshPhase.IDLE);
+	}
+
+	/**
+	 * Enters a beat: the word goes on the link, the one timer is restarted at that beat's delay - or stopped, at
+	 * {@link RefreshPhase#IDLE}, which is where a dead panel and a faded link both end.
+	 */
+	private void setRefreshPhase(RefreshPhase phase)
+	{
+		refreshPhase = phase;
+		renderRefreshLink();
+		if (refreshTimer != null)
+		{
+			refreshTimer.stop();
+		}
+		if (phase.millis <= 0)
+		{
+			return;
+		}
+		if (refreshTimer == null)
+		{
+			refreshTimer = new Timer(phase.millis, e -> fireRefreshTimer());
+			refreshTimer.setRepeats(false);
+		}
+		refreshTimer.setInitialDelay(phase.millis);
+		refreshTimer.setDelay(phase.millis);
+		refreshTimer.restart();
+	}
+
+	/** The timer's action, dispatched on the beat that armed it: one beat ends where the next begins. */
+	private void fireRefreshTimer()
+	{
+		if (refreshPhase == RefreshPhase.ACKNOWLEDGING)
+		{
+			fireRefreshAck();
+		}
+		else if (refreshPhase == RefreshPhase.UP_TO_DATE)
+		{
+			fireUpToDate();
+		}
+	}
+
+	/** The link's word, from the phase alone. */
+	private void renderRefreshLink()
+	{
+		refreshLabel.setText(refreshPhase.text);
+	}
+
+	/** Whether the caption row's link is acknowledging a tap right now ("Refreshing...", the first beat). */
+	boolean refreshAcknowledging()
+	{
+		return refreshPhase == RefreshPhase.ACKNOWLEDGING;
+	}
+
+	/** Whether the link is standing on "Up to date" - the second beat, waiting for its minute (P2). */
+	boolean upToDateShowing()
+	{
+		return refreshPhase == RefreshPhase.UP_TO_DATE;
+	}
+
+	/** Whether a beat's timer is still running - the tests' proof that {@link #stop()} left nothing ticking. */
+	boolean refreshTimersRunning()
+	{
+		return refreshTimer != null && refreshTimer.isRunning();
+	}
+
+	/**
+	 * Reads a bound off its field. Empty = no bound (0); "100k" / "1.5m" / "1,000" through
+	 * {@link MovementMath#parseGp}; anything else marks the field red and leaves the filter alone. The parsed
+	 * number is NEVER written back over a spelling that already means it (gotcha 10: parseGp goes through float
+	 * above 2^24), so "1.5m" stays "1.5m".
+	 *
+	 * <p>A text that parsed goes back through {@link #renderBound}, which is what makes a ZERO show as the
+	 * field's placeholder (P3): a bound of nothing is spelled "" in this sidebar - it is what a preset, the
+	 * fold's "x" and "Clear price range" all leave behind - and a typed "0" that stayed on screen read as a
+	 * band of "items priced 0 and up", which is not a band at all. Every road in - Enter, focus lost, a preset,
+	 * the dev bridge - therefore ends with the field spelling the filter it produced.
+	 */
+	private boolean applyBound(Widgets.PlaceholderField field, boolean min)
+	{
+		final String text = field.getText().trim();
+		final long value;
+		if (text.isEmpty())
+		{
+			value = 0L;
+		}
+		else
+		{
+			try
+			{
+				value = MovementMath.parseGp(text);
+			}
+			catch (ParseException e)
+			{
+				Widgets.markInvalid(field, true);
+				return false;
+			}
+		}
+		changeFilter(min ? filter.withGpMin(value) : filter.withGpMax(value));
+		renderBound(field, value);
+		return true;
+	}
+
+	/** Every user change lands here: repaint, then save and tell the service - unless nothing changed. */
+	private void changeFilter(RowFilter next)
+	{
+		final RowFilter old = filter;
+		filter = next == null ? RowFilter.DEFAULT : next;
+		renderChips();
+		// The hero follows the lit chip at once (M6 step 3): the summary already holds every window.
+		renderValue();
+		renderControl();
+		if (!updating && !filter.equals(old))
+		{
+			prefs.save(filter);
+			service.setFilter(filter);
+		}
+	}
+
+	// ---------------------------------------------------------------- painting the header (EDT)
+
+	/** Every header repaint at once - after a build or a publish. */
+	private void renderAll()
+	{
+		renderChips();
+		renderValue();
+		renderControl();
+		renderProblem();
+		syncHeader();
+	}
+
+	/**
+	 * Lights the window chip of the filter's window and the preset whose exact band the filter is; a chip's
+	 * tooltip names the window's baseline day when the summary has one (N 3.2).
+	 */
+	private void renderChips()
+	{
+		final PortfolioSummary summary = portfolio();
+		for (Map.Entry<MovementWindow, JLabel> e : windowChips.entrySet())
+		{
+			final MovementWindow w = e.getKey();
+			final WindowMove move = summary.move(w);
+			final LocalDate day = move == null ? null : move.thenDay();
+			e.getValue().setToolTipText("Guide-price change over the last " + w.label()
+				+ (day == null ? "" : " - baseline " + MovementMath.formatDay(day)));
+			Widgets.chip(e.getValue(), w == filter.window());
+		}
+		for (int i = 0; i < presetCells.length; i++)
+		{
+			Widgets.chip(presetCells[i], presetLit(filter, presetMin(i)));
+		}
+	}
+
+	/**
+	 * Whether a chip whose lower bound is {@code min} is the filter's EXACT band: that bound and no upper one
+	 * ("All" is min 0, i.e. no band at all).
+	 *
+	 * <p>The band and not the chip's PLACE since addendum Z (Z3): the four bounds are the reader's now, so the
+	 * only thing that can be asked of a filter is whether it is a given one.
+	 */
+	static boolean presetLit(RowFilter filter, long min)
+	{
+		return filter.gpMax() == 0L && filter.gpMin() == min;
+	}
+
+	/**
+	 * Paints the two fields from the filter - on construction, {@link #applyFilter}, {@link #applyBand} and
+	 * after a bound is applied; a chip click never rewrites what the user typed. A field whose text already means
+	 * the filter's value keeps its text ("100k" stays "100k" when the config says 100000); otherwise the exact
+	 * figure goes in, "" for no bound.
+	 */
+	private void renderBounds()
+	{
+		renderBound(minField, filter.gpMin());
+		renderBound(maxField, filter.gpMax());
+	}
+
+	/**
+	 * One field, spelled for {@code value}. A bound of NOTHING has exactly one spelling here - the empty field,
+	 * which is what shows the placeholder - so a "0" the user or the bridge typed is rewritten even though it
+	 * parses to the value the filter holds (P3); every other value keeps whatever text already means it.
+	 */
+	private static void renderBound(Widgets.PlaceholderField field, long value)
+	{
+		final String text = field.getText().trim();
+		boolean same;
+		if (value == 0L)
+		{
+			same = text.isEmpty();
+		}
+		else
+		{
+			try
+			{
+				same = MovementMath.parseGp(text) == value;
+			}
+			catch (ParseException e)
+			{
+				same = false;
+			}
+		}
+		if (!same)
+		{
+			field.setText(value == 0L ? "" : MovementMath.formatExact(value));
+		}
+		Widgets.markInvalid(field, false);
+	}
+
+	/**
+	 * Paints the hero card from the last status's {@link PortfolioSummary} and the LIT window (M4 as
+	 * addendum N draws it): the total, triangle + gp + percent, the footnote "1d vs 08 Sep - bank 09:00", the
+	 * edge in the move's colour, then the lines the switches allow (O3, {@link #syncHero}), the tooltip -
+	 * listing only the figures that are shown - on the card and every child (playbook 7.5), and the update
+	 * line's own hover with its clock (S2). The WHOLE bank,
+	 * whatever the gp band says (M1): a Min / Max change repaints nothing here (M6 step 4). Whether the card is
+	 * IN the header is {@link #syncHeader}'s business.
+	 */
+	private void renderValue()
+	{
+		final PortfolioSummary summary = portfolio();
+		final MovementWindow window = filter.window();
+		final WindowMove move = summary.move(window);
+		// The TRIANGLE keeps the constant and the two figures take the lifted red (see Widgets.MOVE_DOWN_TEXT):
+		// a 23 px solid glyph is not small text and needs no lift, while the figures beside it are 18 px.
+		final Color moveColour = moveColor(move);
+		final Color textColour = moveTextColor(move);
+		hero.setBorder(Widgets.card(edgeColor(move)));
+
+		// The total shares its line with the gear (Q1), so what it may take is the card's inner width less the
+		// gear and the BorderLayout gap either side of the pair - measured off the gear rather than assumed, the
+		// way the band button is measured off the sort button one row down.
+		Widgets.setFitted(totalLabel, MovementMath.formatGp(summary.valueNow()),
+			CARD_INNER - gearLabel.getPreferredSize().width - 2 * ROW_GAP);
+		if (move == null)
+		{
+			triangleLabel.setIcon(null);
+			triangleLabel.setBorder(null);
+			deltaLabel.setText(MovementMath.DASH);
+			deltaLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+			// One dash on the line whichever figure is drawn (N 4.6): the percent carries it only while the gp
+			// figure is hidden, so the two never print "-  -".
+			pctLabel.setText(heroVisibility.gp() ? "" : MovementMath.DASH);
+			pctLabel.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
+		}
+		else
+		{
+			final int sign = Long.signum(move.deltaGp());
+			triangleLabel.setIcon(sign > 0 ? Widgets.triangleUp(moveColour) : sign < 0 ? Widgets.triangleDown(moveColour) : null);
+			triangleLabel.setBorder(sign == 0 ? null : new EmptyBorder(0, 0, 0, ICON_GAP));
+			deltaLabel.setText(MovementMath.formatDelta(move.deltaGp()));
+			deltaLabel.setForeground(textColour);
+			final boolean hasPct = move.deltaPct() != null;
+			pctLabel.setText(hasPct ? MovementMath.formatPct(move.deltaPct(), move.deltaGp()) : MovementMath.DASH);
+			pctLabel.setForeground(hasPct ? textColour : ColorScheme.LIGHT_GRAY_COLOR);
+		}
+		Widgets.setFitted(footnoteLabel, provenanceText(status, window, move, clock.getAsLong(), options), CARD_INNER);
+		// The service knows when it is running blind and says so in one sentence; until now nothing user-facing
+		// read either field, so the sidebar was pixel-identical whether the wiki answered five minutes ago or has
+		// failed all session, and whether "now" is RuneLite's own price or the wiki's stand-in (checker, B005 /
+		// B101). The footnote is the line that carries the provenance, so it is the line that reddens; the whole
+		// reason goes in the card's tooltip, which has no 191 px budget. NOT the problem row: L11 pins
+		// Status.problem() null while a stored baseline stands, and that is deliberate.
+		final String warning = status == null || !status.degraded() ? null : status.degradedReason();
+		footnoteLabel.setForeground(warning == null ? ColorScheme.LIGHT_GRAY_COLOR : ColorScheme.PROGRESS_ERROR_COLOR);
+		syncHero();
+
+		final String tip = valueTooltip(summary, status == null ? null : status.headerText(), heroVisibility, warning,
+			options, status == null ? null : status.live());
+		for (JComponent c : heroTipTargets)
+		{
+			c.setToolTipText(tip.isEmpty() ? null : tip);
+		}
+		// The update line and its own hover (S2, T5), off the same clock the card's tooltip used to print (P2):
+		// the line says how often the figures step - which the live switch changes - and the hover says why, and
+		// when this client last looked. Both are written here, so the line can never say one thing while its hover
+		// explains the other.
+		updateLabel.setText(updateText(options));
+		updateLabel.setToolTipText(updateTooltip(status == null ? 0L : status.pricesAtMillis(), options));
+		hero.revalidate();
+		hero.repaint();
+	}
+
+	/**
+	 * The footnote (N 4.2, 4.6): "1d vs 08 Sep - bank 09:00" with a baseline, "Guide prices - bank 09:00"
+	 * without one (between the bank read and the first fetch, or a window with no history - the problem row
+	 * says which). While the client is out the clock gives way to "logged out" - "1d vs 08 Sep - logged out" -
+	 * because both together do not fit 191 px and the stale-data warning is the one that matters; the card's
+	 * tooltip still carries the clock.
+	 *
+	 * <p><b>An older bank is stamped with its DAY, not with a clock.</b> The snapshot is remembered per account
+	 * across sessions ({@code PriceStore.loadBank}) and carries the instant it was CAPTURED, so a bank last
+	 * opened on Saturday printed "bank 09:16" on Monday - a stamp that reads exactly like this morning under a
+	 * headline that says "Bank value", while every quantity, every holding and the whole-bank total on that
+	 * screen are Saturday's and only the prices are current. When the capture is not {@code nowMillis}'s own
+	 * calendar day the clock gives way to "bank 08 Sep" (measured: "180d vs 31 Dec - bank 08 Sep" is 164 px of
+	 * the card's 191, where the day AND the clock together are 198 and would be cut).
+	 *
+	 * <p>This arity is the guide-only footnote. Which DAY is stamped once live prices are on is
+	 * {@link #footnoteDay}'s answer and the overload below's business (addendum U, line U3); with no live calendar
+	 * on the status - every status before addendum U - the two arities print the same line.
+	 *
+	 * @param nowMillis what "today" is; the panel's {@link #clock}, so this stays a pure function and cannot
+	 *                  change its answer for a fixed status at midnight
+	 */
+	static String provenanceText(@Nullable Status status, @Nullable MovementWindow window, @Nullable WindowMove move,
+		long nowMillis)
+	{
+		return provenanceText(status, window, move, nowMillis, null);
+	}
+
+	/**
+	 * {@link #provenanceText(Status, MovementWindow, WindowMove, long)} under the view switches (addendum U, line
+	 * U3): while live prices are on AND this publish actually priced rows off the traded series, the day the
+	 * footnote stamps is the LIVE day for the lit window - the day those rows compared against - and not the guide
+	 * baseline day beside it.
+	 *
+	 * <p>The two are the same day most of the time and different exactly when it matters. The live series counts
+	 * back from the live snapshot's own UTC date (U1) while the guide baselines count back from Jagex's anchor day,
+	 * so at any hour before Jagex publishes the day's table the guide's "1d" is a day older than the traded one. The
+	 * live look of 2026-09-12 found that gap sold as one day: a Partyhat set reading +30 % for "1d" because its
+	 * traded bucket was two days back. The footnote is the line that says what "1d" MEANS on this screen, so it
+	 * names the day the majority of the figures under it actually used.
+	 *
+	 * <p>It falls back to the guide day in every other state, which is the line addenda K to S print, word for word:
+	 * the switch off, a publish with no live rows at all (nothing on screen used a traded day), a window with no
+	 * traded bucket, and a status from before addendum U that carries no live calendar.
+	 *
+	 * @param options the view switches; null reads as {@link ViewOptions#DEFAULT}. The switch is read as well as the
+	 *                count, so throwing live prices off repaints the guide day at once, without waiting for the
+	 *                service's own recompute - the same beat the update line changes on
+	 */
+	static String provenanceText(@Nullable Status status, @Nullable MovementWindow window, @Nullable WindowMove move,
+		long nowMillis, @Nullable ViewOptions options)
+	{
+		final StringBuilder sb = new StringBuilder(48);
+		final LocalDate day = footnoteDay(status, window, move, options);
+		if (day != null)
+		{
+			sb.append((window == null ? MovementWindow.DEFAULT : window).label()).append(" vs ")
+				.append(MovementMath.formatDay(day));
+		}
+		else
+		{
+			sb.append("Guide prices");
+		}
+		if (status != null && !status.loggedIn())
+		{
+			sb.append(" - logged out");
+		}
+		else
+		{
+			sb.append(" - bank ").append(bankStamp(status == null ? 0L : status.bankAtMillis(), nowMillis));
+		}
+		return sb.toString();
+	}
+
+	/**
+	 * Which day the footnote stamps for the lit window (addendum U, line U3): the LIVE day while live prices are on
+	 * and this publish put at least one row on the traded series, and the guide baseline day otherwise. Null - the
+	 * footnote then reads "Guide prices" - only when there is no move at all, exactly as before addendum U.
+	 *
+	 * <p>Both halves of the live test are load-bearing. The SWITCH, because the panel repaints the card the moment
+	 * it is thrown and the footnote must not go on naming a traded day the sidebar is no longer showing. The COUNT
+	 * ({@code liveRows}), because with the switch on and nothing liquid enough to qualify every figure on screen is
+	 * a guide figure, and stamping the traded calendar over a screen of guide rows would be the same lie addendum U
+	 * removed, told the other way round.
+	 *
+	 * @param options the view switches; null reads as {@link ViewOptions#DEFAULT}
+	 */
+	@Nullable
+	static LocalDate footnoteDay(@Nullable Status status, @Nullable MovementWindow window, @Nullable WindowMove move,
+		@Nullable ViewOptions options)
+	{
+		final LocalDate guideDay = move == null ? null : move.thenDay();
+		if (guideDay == null || !(options == null ? ViewOptions.DEFAULT : options).livePrices())
+		{
+			return guideDay;
+		}
+		final Status.LiveStatus live = status == null ? null : status.live();
+		if (live == null || live.liveRows() <= 0)
+		{
+			return guideDay;
+		}
+		final LocalDate liveDay = live.windowDays().get(window == null ? MovementWindow.DEFAULT : window);
+		return liveDay == null ? guideDay : liveDay;
+	}
+
+	/**
+	 * How a bank snapshot's age is stamped: {@link MovementMath#DASH} without one, the clock while it was
+	 * captured on {@code nowMillis}'s own local day, and the calendar day otherwise. Both instants are read in
+	 * the viewer's zone, the zone {@link MovementMath#formatTime} already prints in - this is a wall-clock
+	 * capture, not the UTC guide-table marker {@link MovementMath#formatDay} was written for, and only the shape
+	 * of the day is borrowed.
+	 */
+	static String bankStamp(long capturedAtMillis, long nowMillis)
+	{
+		if (capturedAtMillis <= 0L)
+		{
+			return MovementMath.DASH;
+		}
+		final ZoneId zone = ZoneId.systemDefault();
+		final LocalDate captured = Instant.ofEpochMilli(capturedAtMillis).atZone(zone).toLocalDate();
+		if (nowMillis > 0L && !captured.equals(Instant.ofEpochMilli(nowMillis).atZone(zone).toLocalDate()))
+		{
+			return MovementMath.formatDay(captured);
+		}
+		return MovementMath.formatTime(capturedAtMillis);
+	}
+
+	/**
+	 * Paints the control row (N 3.3, addendum W lines W2 and W3): the sort button's COLUMN and its direction
+	 * arrow, then the band button - stating its band in words (N 4.4 control 3) - fitted to what the sort button
+	 * leaves.
+	 *
+	 * <p>The arrow is set here and only here, because it is a piece of the filter and not a decoration of the
+	 * widget: {@code Widgets.triangle(descending)} points down for biggest first and up for smallest, and the
+	 * button's preferred width - which is what the band button is fitted against on the next line - is the label
+	 * plus that one glyph either way.
+	 *
+	 * <p>The sort button's tooltip is the constant {@link #SORT_BUTTON_TIP} (addendum X, line X2). It is set
+	 * here, beside the text and the arrow, rather than once in {@link #buildControlRow}, so that one method
+	 * owns everything the sort button says; it depends on nothing, which is the whole of X2 - the column and
+	 * the direction are on the button's face and what a press will do is on the menu entry (X1).
+	 *
+	 * <p>The band button's tooltip carries the COUNT: addendum N deleted the count line deliberately
+	 * (section 3 §5), so after setting a band there is otherwise nowhere on the panel that says whether it
+	 * matched 3 items or 300 - the "Show n more" row is absent whenever the band matched less than a page.
+	 */
+	private void renderControl()
+	{
+		sortButton.setText(filter.sort().label());
+		sortButton.setIcon(Widgets.triangle(filter.descending()));
+		sortButton.setToolTipText(SORT_BUTTON_TIP);
+		final boolean band = bandOn();
+		final int room = W - 2 * ROW_GAP - sortButton.getPreferredSize().width - ROW_GAP;
+		Widgets.setFitted(bandTarget, bandLabel(filter.gpMin(), filter.gpMax()), room - TRIANGLE_ICON - ICON_GAP);
+		bandTarget.setToolTipText((band ? "Showing items " + bandSentence(filter.gpMin(), filter.gpMax()) : BAND_TIP)
+			+ " - " + countSentence());
+	}
+
+	/**
+	 * "12 of 529 items" for the band button's tooltip; the listed rows against the bank's tradeable stacks.
+	 *
+	 * <p>With a stack the guide table cannot price it also names them - "529 items, 3 with no guide price"
+	 * (checker, B105). {@code MovementMath.apply} drops an unpriced row before the band is even considered, and
+	 * addendum N deleted the count line, so a newly released item simply vanished from the list with nothing on
+	 * the panel accounting for it. The count comes from the whole-bank sums, which are computed over the bank
+	 * BEFORE the filter, so it is the same number with a band set or without one.
+	 */
+	private String countSentence()
+	{
+		final int total = status == null ? 0 : status.bankItems();
+		final PortfolioSummary summary = portfolio();
+		final int unpriced = Math.max(0, summary.itemsTotal() - summary.itemsPriced());
+		return rows.size() + (total > rows.size() ? " of " + total : "") + (rows.size() == 1 ? " item" : " items")
+			+ (unpriced > 0 ? ", " + unpriced + " with no guide price" : "");
+	}
+
+	/**
+	 * Paints the problem row (N 3.6): the status's problem sentence, fitted, with the whole sentence as its
+	 * tooltip; red by the UNCHANGED {@link #isErrorStatus} rule, grey for L11's "No 180d history".
+	 */
+	private void renderProblem()
+	{
+		Widgets.setFitted(problemLabel, problemText(), W - 2 * ROW_GAP);
+		problemLabel.setForeground(isErrorStatus() ? ColorScheme.PROGRESS_ERROR_COLOR : ColorScheme.LIGHT_GRAY_COLOR);
+	}
+
+	/**
+	 * Puts the right rows into the header column, in order, and nothing else: the hero card (the chips are
+	 * inside it), the control row, the fold while open and the problem row while there is a problem - all of
+	 * them only while a bank is loaded (N section 3 §3: LOGIN and NO_BANK empty the header). Rows are added
+	 * and removed, never hidden (playbook 7.5), and nothing is touched when the set is already right, so a
+	 * status-only publish causes no flicker (C30).
+	 */
+	private void syncHeader()
+	{
+		final List<Component> want = new ArrayList<>(4);
+		if (bankLoaded())
+		{
+			want.add(hero);
+			want.add(controlRow);
+			if (foldOpen)
+			{
+				want.add(fold);
+			}
+			if (!problemText().isEmpty())
+			{
+				want.add(problemLabel);
+			}
+		}
+		// The flag covers the one case the diff above cannot: the fold genuinely leaving (the bank went away, or
+		// the user closed it) while a gp field has the caret. A focus lost to THAT must not apply a half-typed
+		// bound. It is inert whenever the toolkit delivers the focus event later from the queue - which is why
+		// the diff, and not this, is what makes the ordinary publish safe.
+		syncingHeader = true;
+		try
+		{
+			replaceChildren(header, want);
+		}
+		finally
+		{
+			syncingHeader = false;
+		}
+	}
+
+	/**
+	 * Opens or closes the price fold (N 3.5): the band button's click, and the bridge's {@code fold=toggle}
+	 * (addendum AA, line AA2). It presses {@link #pressFold}, so the state it leaves the fold in is REMEMBERED -
+	 * a fold the reader shut that stood open again on the next launch would be a control that argues back.
+	 */
+	public void toggleFold()
+	{
+		pressFold(!foldOpen);
+	}
+
+	/**
+	 * The band button's press, said as the state it aims at - the bridge's {@code fold=on|off} takes this same
+	 * road (AA2): opens or closes the fold AND writes the choice through {@link Prefs#saveFoldOpen}, so the stored
+	 * config follows. It is the round trip {@link #setOptions} and {@link #setPresets} make for the gear menu's
+	 * switches, and nothing is written when nothing changed.
+	 *
+	 * <p>A stopped panel writes nothing either: {@link #setFoldOpen} would refuse the change, and a write without
+	 * one is a stored choice nobody made (contract C33).
+	 */
+	public void pressFold(boolean open)
+	{
+		if (stopped)
+		{
+			return;
+		}
+		final boolean changed = open != foldOpen;
+		setFoldOpen(open);
+		if (changed && !updating)
+		{
+			prefs.saveFoldOpen(open);
+		}
+	}
+
+	/**
+	 * The fold changed under us - the plugin's {@code ConfigChanged} for {@code foldOpen}, i.e. the settings page
+	 * (AA1) - so the header takes or loses the fold's two rows and nothing else happens: no write back (the config
+	 * already knows) and no service call, because which rows are LISTED does not depend on whether the controls
+	 * that set the band are on screen. The same state again is a no-op diff inside {@link #syncHeader}.
+	 *
+	 * <p>It is also how {@link #applyMin} and {@link #applyMax} open the fold so a shot shows what they did: that
+	 * is the bridge pointing at a control, not the reader choosing to keep it open, so it writes nothing either.
+	 *
+	 * <p>The guard is {@link #applyFilter}'s: both config roads post their repaint with {@code invokeLater}, so
+	 * one can be drained after {@code shutDown} has already dropped this panel (contract C33).
+	 */
+	public void setFoldOpen(boolean open)
+	{
+		if (stopped)
+		{
+			return;
+		}
+		foldOpen = open;
+		syncHeader();
+	}
+
+	// ---------------------------------------------------------------- the column menu (W3)
+
+	/**
+	 * The sort menu, built but not shown (addendum W, line W3): four {@link JMenuItem}s, one per
+	 * {@link SortMode}, in the enum's own order, the lit column carrying the button's own arrow as its icon and
+	 * the other three no icon at all. Plain {@code JMenuItem}s, not radio items: no dependence on the
+	 * look-and-feel's radio mark.
+	 *
+	 * <p><b>The icon is the same glyph as the button's</b>, which is the whole of W's fix. The menu says which
+	 * column is lit (the orange) and which way it runs (the arrow) in one row, so the reader can see what
+	 * picking it again will do before they do it. No entry carries a grey qualifier any more - addenda N and V
+	 * hung "per item" / "unit price" / "stack value" here, and W3 deletes them: four column names need no gloss,
+	 * and the one reading that genuinely changes with a switch is the ROW's business, which is where the words
+	 * now live alone ({@code MovementRowPanel}'s "Change per item:" line; addendum X, line X2).
+	 *
+	 * <p>No separators either: three groups of two became four columns, and a rule between single entries is a
+	 * line drawn round nothing.
+	 *
+	 * <p>Every entry is a PRESS through {@link #clickSort}, exactly as the bridge's {@code sort=} is - the lit
+	 * one flips, another lights biggest first - so there is one rule for what a column press does and one place
+	 * it lives. The menu is rebuilt on every open, so nothing here needs a refresh of its own.
+	 *
+	 * <p><b>Each entry's hover says what picking it will do</b> (addendum X, line X1;
+	 * {@code docs/bank-price-movement-addendum-X-2026-09-13.md}): the LIT column's entry reads
+	 * "Toggle &lt;label&gt;" and every other "Sort by &lt;label&gt;", the label verbatim and the entry TEXT
+	 * untouched. That is the one thing the menu could not show - the orange says which column is lit and the
+	 * arrow which way it runs, but neither says that the lit one turns over rather than doing nothing when it
+	 * is picked again. The two texts are chosen where the lit column is read, so the rebuild on each open is
+	 * all that keeps them true, and the button's own hover is free to be the one phrase of X2.
+	 */
+	JPopupMenu buildSortMenu()
+	{
+		final JPopupMenu menu = new JPopupMenu();
+		menu.setBorder(new EmptyBorder(5, 5, 5, 5));
+		final SortMode current = filter.sort();
+		for (SortMode mode : SortMode.values())
+		{
+			final boolean on = mode == current;
+			final JMenuItem item = new JMenuItem(mode.label(), on ? Widgets.triangle(filter.descending()) : null);
+			item.setFont(Widgets.sans(12));
+			item.setForeground(on ? ColorScheme.BRAND_ORANGE : ColorScheme.TEXT_COLOR);
+			item.setToolTipText((on ? "Toggle " : "Sort by ") + mode.label());
+			item.addActionListener(e -> clickSort(mode));
+			menu.add(item);
+		}
+		return menu;
+	}
+
+	/**
+	 * Shows the sort menu under the sort button - {@code menu.show(anchor, x, y)} behind an
+	 * {@code isShowing()} guard, one at a time ({@code BeamPickerPopup.java:109-160}; RuneLite disables
+	 * lightweight popups, and a menu can only be placed against something on the screen).
+	 */
+	private void openSortMenu()
+	{
+		closeSortMenu();
+		if (stopped || !sortButton.isShowing())
+		{
+			return;
+		}
+		final JPopupMenu menu = buildSortMenu();
+		sortMenu = menu;
+		menu.show(sortButton, 0, sortButton.getHeight());
+	}
+
+	/** Takes down whichever of the panel's two menus is standing - the sidebar moving away closes both (Q1). */
+	private void closeMenus()
+	{
+		closeSortMenu();
+		closeGearMenu();
+	}
+
+	/**
+	 * Takes the gear menu down: the sidebar moving away (Q1), {@link #stop()}, and the OK button (AB2).
+	 *
+	 * <p>The hide is what commits the preset boxes and stamps {@link #menuClosedAtMillis}, because Swing fires
+	 * {@code popupMenuWillBecomeInvisible} for it - one road, however the close was asked for.
+	 */
+	private void closeGearMenu()
+	{
+		if (heroMenu != null && heroMenu.isVisible())
+		{
+			heroMenu.setVisible(false);
+		}
+	}
+
+	private void closeSortMenu()
+	{
+		final JPopupMenu open = sortMenu;
+		sortMenu = null;
+		if (open != null)
+		{
+			open.setVisible(false);
+		}
+	}
+
+	// ---------------------------------------------------------------- the rows (EDT)
+
+	/**
+	 * What the rows ON SCREEN were built from, as one immutable value: the window and the baseline day their
+	 * tooltips carry (L7) and the whole filter they were listed under. A publish is measured against it twice,
+	 * and the two questions are deliberately different ones.
+	 *
+	 * <p>{@link #redrawnBy} is "would these rows be drawn differently?" - the window and the baseline day are
+	 * printed in every row's tooltip, and the ordering decides which row is which; a new gp band moves rows in or
+	 * out, which the row LIST itself already shows, so it is not asked here.
+	 *
+	 * <p>{@link #asksDifferentList} is "did the reader ask for another list?" (B107) - any choice of theirs, band
+	 * included. That is the one that sends them back to the top; everything else - a deposit, a withdrawal, new
+	 * prices, a new baseline day - is the same list restated, and leaves them where they were.
+	 */
+	private static final class ListContext
+	{
+		private final MovementWindow window;
+		@Nullable
+		private final LocalDate thenDay;
+		private final RowFilter filter;
+
+		ListContext(MovementWindow window, @Nullable LocalDate thenDay, RowFilter filter)
+		{
+			this.window = window == null ? MovementWindow.DEFAULT : window;
+			this.thenDay = thenDay;
+			this.filter = filter == null ? RowFilter.DEFAULT : filter;
+		}
+
+		/**
+		 * Whether rows built for {@code next} would read differently from these, even where the row list itself
+		 * is unchanged: another window or baseline day (both are stamped into every row's tooltip, L7) or another
+		 * sort column.
+		 */
+		boolean redrawnBy(ListContext next)
+		{
+			return window != next.window || !Objects.equals(thenDay, next.thenDay)
+				|| filter.sort() != next.filter.sort();
+		}
+
+		/** Whether {@code next} is a list the READER asked for rather than this one restated (B107). */
+		boolean asksDifferentList(ListContext next)
+		{
+			return window != next.window || !filter.equals(next.filter);
+		}
+	}
+
+	/**
+	 * {@link PriceService.Listener}: the EDT, by contract; re-posted if it is not.
+	 *
+	 * <p>While the sidebar is showing another panel this only REMEMBERS the publish (design D8: nothing while
+	 * nobody is looking). {@code setVisible(false)} stops the service fetching, but the bank keeps changing -
+	 * every deposit, withdrawal and rearrange publishes - and each publish whose quantities differ rebuilt a
+	 * whole page: ~2,700 Swing components on the EDT and up to {@link #ROWS_PER_PAGE} sprite renders queued onto
+	 * the game thread, for a panel nobody can see. The last publish is replayed whole by {@link #onActivate}, so
+	 * what the reader gets when they open the sidebar is the same picture they would have got had it been open.
+	 */
+	private void onRows(@Nullable List<MovementRow> newRows, @Nullable Status newStatus)
+	{
+		if (stopped)
+		{
+			return;
+		}
+		if (!SwingUtilities.isEventDispatchThread())
+		{
+			SwingUtilities.invokeLater(() -> onRows(newRows, newStatus));
+			return;
+		}
+		if (!active)
+		{
+			pendingPublish = true;
+			pendingRows = newRows;
+			pendingStatus = newStatus;
+			return;
+		}
+		final List<MovementRow> safe = newRows == null ? Collections.emptyList() : newRows;
+		final MovementWindow window = newStatus != null && newStatus.window() != null ? newStatus.window() : filter.window();
+		final ListContext next = new ListContext(window, newStatus == null ? null : newStatus.thenDay(), filter);
+		final boolean rebuild = list.redrawnBy(next) || !safe.equals(rows);
+		// A DIFFERENT list is one the reader asked for: another window (which the status carries, and which can
+		// land a publish after the filter already changed) or any other choice of theirs. Everything else - a
+		// deposit, a withdrawal, new prices, a new baseline day - is the same list restated (B107).
+		final boolean newList = list.asksDifferentList(next);
+		status = newStatus;
+		if (rebuild)
+		{
+			rows = safe;
+			list = next;
+			rebuildRows(newList);
+		}
+		renderChips();
+		renderValue();
+		renderControl();
+		renderProblem();
+		syncHeader();
+		showCard(chooseCard());
+	}
+
+	/**
+	 * Rebuilds the list from {@link #rows}, and decides where the reader ends up.
+	 *
+	 * <p><b>Why that is a decision at all.</b> This runs on every publish whose rows differ, and the bank
+	 * publishes on every deposit, withdrawal and rearrange ({@code ItemContainerChanged}) - so a reader who
+	 * opened three pages and scrolled two-thirds down to read the 90 d movers used to be thrown back to row 1
+	 * of 250, with both extra pages gone, by each single item they withdrew (B107). The pages they opened and
+	 * the place they scrolled to are their work; a bank that changed under them is not a reason to undo it.
+	 *
+	 * <p>The top IS the new answer for a list the reader ASKED for - another window, another ordering or
+	 * direction, another gp band - because the row they were looking at is not the row that belongs there any
+	 * more. That, and only that, is {@code newList}.
+	 *
+	 * <p><b>Why the restore is posted.</b> The whole rebuild happens in one go on the EDT, so nothing lays the
+	 * column out while it is empty and the reader's position survives it; what can still move it is the LAYOUT
+	 * that follows, where a view of a different height makes the viewport pull a position that now falls past
+	 * the end back up, and the scrollbar's value follows it. A value written here would be undone by that
+	 * layout, so the write is posted behind it - and {@code BoundedRangeModel.setValue} clamps it to
+	 * {@code maximum - visibleAmount}, so a list that really did get shorter leaves the reader at its bottom
+	 * rather than past its end.
+	 *
+	 * @param newList whether these rows are a different list, not the same one restated
+	 */
+	private void rebuildRows(boolean newList)
+	{
+		final JScrollBar bar = scroll.getVerticalScrollBar();
+		// Pages, not rows: shown is only ever off a page boundary when it reached the end of the list, and a page
+		// count is what "Show n more" sold the reader.
+		final int keepPages = newList ? 1 : Math.max(1, (shown + ROWS_PER_PAGE - 1) / ROWS_PER_PAGE);
+		final int keepScroll = newList ? 0 : bar.getValue();
+		rowsColumn.removeAll();
+		shown = 0;
+		for (int page = 0; page < keepPages && shown < rows.size(); page++)
+		{
+			addPage();
+		}
+		pruneImages();
+		updateShowMore();
+		rowsColumn.revalidate();
+		rowsColumn.repaint();
+		if (keepScroll <= 0)
+		{
+			bar.setValue(0);
+		}
+		else
+		{
+			SwingUtilities.invokeLater(() -> restoreScroll(keepScroll));
+		}
+		rebuilds++;
+	}
+
+	/** Puts the reader back where they were, clamped by the model to the bottom of the new list (B107). */
+	private void restoreScroll(int value)
+	{
+		if (stopped)
+		{
+			return;
+		}
+		scroll.getVerticalScrollBar().setValue(value);
+	}
+
+	/** Builds the next page of rows (contract C32: never every row at once). */
+	private void addPage()
+	{
+		final int end = Math.min(rows.size(), shown + ROWS_PER_PAGE);
+		for (int i = shown; i < end; i++)
+		{
+			final MovementRow row = rows.get(i);
+			rowsColumn.add(new MovementRowPanel(row, image(row), list.window, list.thenDay, options));
+		}
+		shown = end;
+	}
+
+	/**
+	 * The sprite for a row, on the EDT (contract C31); null - and a blank cell - if the manager cannot.
+	 *
+	 * <p><b>Why this keeps its own map.</b> {@code ItemManager}'s sprite cache holds 128 images
+	 * ({@code ItemManager.java:221-222}), so one page of {@link #ROWS_PER_PAGE} rows cannot fit in it: walking
+	 * 250 keys evicts the earliest, the next rebuild misses on all of them, and every miss queues a
+	 * {@code client.createItemSprite} onto the GAME thread ({@code ItemManager.java:489-508}). Since a rebuild
+	 * happens on every bank change, banking with the sidebar open would push ~250 sprite renders per deposit at
+	 * the client. A held {@link AsyncBufferedImage} keeps its pixels after the manager evicts it, so remembering
+	 * the ones this panel asked for means a rebuild that changed only prices re-renders nothing and no icon
+	 * blinks blank.
+	 *
+	 * <p>The key is the manager's own - id, quantity AND stackable - because a stackable sprite carries its stack
+	 * number in the picture; keying on the id alone would paint yesterday's count after a deposit. A null is
+	 * never remembered, so a picture the manager could not give yet can still arrive later.
+	 */
+	@Nullable
+	private AsyncBufferedImage image(MovementRow row)
+	{
+		final long key = imageKey(row);
+		final AsyncBufferedImage cached = images.get(key);
+		if (cached != null)
+		{
+			return cached;
+		}
+		try
+		{
+			final AsyncBufferedImage image = itemManager.getImage(row.id(), row.quantity(), row.stackable());
+			if (image != null)
+			{
+				images.put(key, image);
+			}
+			return image;
+		}
+		catch (RuntimeException e)
+		{
+			log.debug("no image for item {}", row.id(), e);
+			return null;
+		}
+	}
+
+	/** {@code ItemManager}'s own image key - id, quantity, stackable - packed into one long. */
+	private static long imageKey(MovementRow row)
+	{
+		return ((long) row.id() << 33) | ((long) Math.max(0, row.quantity()) << 1) | (row.stackable() ? 1L : 0L);
+	}
+
+	/**
+	 * Drops the sprites of rows that are no longer listed, so a long session over many banks does not hold every
+	 * picture it ever drew (36 x 32 ARGB is ~4.6 KB each). Called at the end of a rebuild, where the row list is
+	 * the new truth.
+	 */
+	private void pruneImages()
+	{
+		if (images.isEmpty())
+		{
+			return;
+		}
+		// One set, reused: a rebuild happens on every bank change and a bank is up to a few thousand rows, so
+		// this used to build and throw away a set that size per deposit. Cleared at both ends, so it holds no key
+		// between rebuilds - only its (grown) table, which is the point.
+		liveKeys.clear();
+		for (MovementRow row : rows)
+		{
+			liveKeys.add(imageKey(row));
+		}
+		images.keySet().retainAll(liveKeys);
+		liveKeys.clear();
+	}
+
+	/** The next page (contract C32); the bridge's {@code more}. Nothing to add is not an error. */
+	public void showMore()
+	{
+		if (stopped || shown >= rows.size())
+		{
+			return;
+		}
+		addPage();
+		updateShowMore();
+		rowsColumn.revalidate();
+		rowsColumn.repaint();
+	}
+
+	/**
+	 * Adds or removes the "Show &lt;remainder&gt; more" row rather than hiding it - a hidden row still takes
+	 * its place in a column (N section 3 §5: no count line, no "Show all").
+	 *
+	 * <p>The tooltip is written HERE, beside the text: set once in the constructor from {@link #ROWS_PER_PAGE}
+	 * it said "Build the next 250 rows" under a label reading "Show 12 more" - which is every bank's last click.
+	 */
+	private void updateShowMore()
+	{
+		listColumn.remove(showMoreRow);
+		if (shown < rows.size())
+		{
+			final int remainder = rows.size() - shown;
+			showMoreLabel.setText(showMoreText(remainder));
+			showMoreLabel.setToolTipText("Build the next " + Math.min(remainder, ROWS_PER_PAGE) + " rows");
+			listColumn.add(showMoreRow);
+		}
+		listColumn.revalidate();
+		listColumn.repaint();
+	}
+
+	/** "Show 279 more" (N section 3 §5). */
+	public static String showMoreText(int remainder)
+	{
+		return "Show " + remainder + " more";
+	}
+
+	/** Rows built so far (the first {@code n} of {@link #totalRows()}). */
+	public int shownRows()
+	{
+		return shown;
+	}
+
+	/** Rows the service published for the current filter. */
+	public int totalRows()
+	{
+		return rows.size();
+	}
+
+	/**
+	 * Whether the problem row is painted red. Red means "something failed, and it may be yours to act on": the
+	 * cooldown "Refreshed 12 s ago - wait" and "Wiki history down - no movement" both name something the
+	 * reader can do. TWO sentences are exempt, and neither is a failure.
+	 *
+	 * <p>Addendum L's "No 180d history" (L11): a window whose target date predates the whole revision index is a
+	 * fact about the wiki page - nothing was requested, nothing failed and no retry will change it - so it reads
+	 * in the ordinary grey and the acceptance list's "no red status" for it holds.
+	 *
+	 * <p>And K7's "No 1d history yet", which addendum N 3.6 had red: it is published only while the FIRST index
+	 * or table fetch is in flight, so on a fresh profile it is the first thing a new user ever sees under their
+	 * new bank value - in the same red as a real failure, for a state that clears itself in seconds. It is
+	 * progress, not a fault, and it names nothing to do; grey is what it means.
+	 *
+	 * <p>The status says which kind it published ({@link PriceService.ProblemKind#severe()}), decided where the
+	 * sentence was written. This used to rebuild those two sentences and compare strings, so a reworded one
+	 * silently turned red.
+	 */
+	private boolean isErrorStatus()
+	{
+		return status != null && status.problemKind().severe();
+	}
+
+	/** The problem row's sentence: the status's problem, or "" when there is none. */
+	String problemText()
+	{
+		final String problem = status == null ? null : status.problem();
+		return problem == null ? "" : problem;
+	}
+
+	/**
+	 * The whole status sentence, for the bridge's {@code status} field (N 3.6): {@code Status.text()} plus the
+	 * problem sentence when there is one and the text does not already carry it (contract C29, K7). On the
+	 * screen the sentence is split between the card's tooltip ({@code headerText()}) and the problem row.
+	 */
+	String statusText()
+	{
+		if (status == null)
+		{
+			return "";
+		}
+		final String text = status.text() == null ? "" : status.text();
+		final String problem = status.problem();
+		if (problem == null || problem.isEmpty() || text.contains(problem))
+		{
+			return text;
+		}
+		return text.isEmpty() ? problem : text + " - " + problem;
+	}
+
+	// ---------------------------------------------------------------- pure helpers (for the tests and the bridge)
+
+	/** The last status's summary; {@link PortfolioSummary#EMPTY} before one, or for a status that carries none. */
+	private PortfolioSummary portfolio()
+	{
+		final PortfolioSummary summary = status == null ? null : status.portfolio();
+		return summary == null ? PortfolioSummary.EMPTY : summary;
+	}
+
+	private boolean bankLoaded()
+	{
+		return status != null && status.bankLoaded();
+	}
+
+	private boolean bandOn()
+	{
+		return filter.gpMin() != 0L || filter.gpMax() != 0L;
+	}
+
+	/** The band button (N 4.4 control 3): "All items", "100k+", "up to 5m", "100k - 5m". */
+	static String bandLabel(long min, long max)
+	{
+		return bandParts(min, max, "All items", "%s+", "up to %s", "%s - %s");
+	}
+
+	/** The band in words for a tooltip - "from 1m", "from 100k to 5m", "up to 5m" - or "" without one. */
+	static String bandSentence(long min, long max)
+	{
+		return bandParts(min, max, "", "from %s", "up to %s", "from %s to %s");
+	}
+
+	/** The EMPTY card's description of the band (N section 3 §6): "Your band is 1m and up" / "from 100k to 5m" / "up to 5m". */
+	static String bandDescription(long min, long max)
+	{
+		return "Your band is " + bandParts(min, max, "", "%s and up", "up to %s", "from %s to %s");
+	}
+
+	/**
+	 * The one shape all three band sentences have: a band is NONE, a lower bound alone, an upper bound alone or
+	 * both, and each of the three only differs in the words it puts round the {@link MovementMath#formatGp}
+	 * figures. Written once so a fourth shape - or a bound that starts counting 0 as a bound - cannot be added to
+	 * two of the three.
+	 *
+	 * @param none    the whole answer when neither bound is set
+	 * @param minOnly a pattern taking the lower bound
+	 * @param maxOnly a pattern taking the upper bound
+	 * @param both    a pattern taking the lower bound then the upper one
+	 */
+	private static String bandParts(long min, long max, String none, String minOnly, String maxOnly, String both)
+	{
+		final boolean hasMin = min > 0L;
+		final boolean hasMax = max > 0L;
+		if (!hasMin && !hasMax)
+		{
+			return none;
+		}
+		if (!hasMax)
+		{
+			return String.format(minOnly, MovementMath.formatGp(min));
+		}
+		if (!hasMin)
+		{
+			return String.format(maxOnly, MovementMath.formatGp(max));
+		}
+		return String.format(both, MovementMath.formatGp(min), MovementMath.formatGp(max));
+	}
+
+	/**
+	 * The bridge's old line 2 - "1d   +12.4m   +1.0%", "1d   -   -" without a baseline (M4) - SYNTHESISED for
+	 * {@code describe()} so addendum M's live step 3 keeps reading it (N section 3 §8), whatever the switches
+	 * hide on the card (O3: the bridge still echoes the portfolio in full). The percentage is truncated toward
+	 * zero and signed by the gp figure, like a row's (L2).
+	 */
+	static String moveText(@Nullable MovementWindow window, @Nullable WindowMove move)
+	{
+		final String label = (window == null ? MovementWindow.DEFAULT : window).label();
+		if (move == null)
+		{
+			return label + VALUE_SEP + MovementMath.DASH + VALUE_SEP + MovementMath.DASH;
+		}
+		return label + VALUE_SEP + MovementMath.formatDelta(move.deltaGp()) + VALUE_SEP
+			+ MovementMath.formatPct(move.deltaPct(), move.deltaGp());
+	}
+
+	/** Green for a rise, red for a fall, the dim grey for zero or for no baseline (M4) - the row rule, on the sum. */
+	static Color moveColor(@Nullable WindowMove move)
+	{
+		return Widgets.move(signum(move), Widgets.Kind.MARK);
+	}
+
+	/**
+	 * {@link #moveColor} as the card's two FIGURES are painted: the same green and grey, and
+	 * {@link Widgets#MOVE_DOWN_TEXT} - the lifted red, 5.05:1 where the constant is 3.63:1 - for a fall. The
+	 * triangle and the card's edge keep {@link #moveColor} / {@link #edgeColor}, so the direction marks and the
+	 * numbers still agree; this is the row's {@link MovementRowPanel#textChangeColor} rule on the sum.
+	 */
+	static Color moveTextColor(@Nullable WindowMove move)
+	{
+		return Widgets.move(signum(move), Widgets.Kind.FIGURE);
+	}
+
+	/**
+	 * The hero card's edge (N 3.1, O3 - it stays whatever the switches say: a direction hint, not a figure):
+	 * the move colour's {@code darker()} for a mover, the card's own grey - an invisible edge that still keeps
+	 * the card's width - for zero or no move.
+	 */
+	static Color edgeColor(@Nullable WindowMove move)
+	{
+		return Widgets.move(signum(move), Widgets.Kind.EDGE);
+	}
+
+	/** Which way the whole bank went over a window, for {@link Widgets#move}; no move at all reads as flat. */
+	private static int signum(@Nullable WindowMove move)
+	{
+		return move == null ? 0 : Long.signum(move.deltaGp());
+	}
+
+	/**
+	 * The hero card's HTML tooltip (M4, N 3.1, O3): the exact total over the priced stacks - and over the coins
+	 * (P1) - one line per window WITH a baseline (in window order, whichever chip is lit), the rule the sums
+	 * follow, and last the whole header sentence ("Guide prices - 1d vs 08 Sep - Bank as of 09:00"), which is
+	 * the one place it lives whole.
+	 *
+	 * <pre>
+	 * Bank value: 1,234,567,890 gp over 519 of 538 stacks plus 791,078 gp in coins (whole bank - the gp band is not applied)
+	 * 1d vs 07 Sep: +12,400,000 gp (+1.0%), 512 stacks priced on both days
+	 * 30d vs 09 Aug: -3,100,000 gp (-0.2%), 498 stacks priced on both days
+	 * Sums count each stack's guide price x quantity, plus coins and platinum tokens (1,000 gp each); stacks without a guide price are left out.
+	 * Guide prices - 1d vs 07 Sep - Bank as of 09:00
+	 * </pre>
+	 *
+	 * <p>Only the figures the switches SHOW are listed (O3): with the total off its line goes; with the gp off a
+	 * window line reads "1d vs 07 Sep: +1.0%, 512 stacks priced on both days", with the percent off
+	 * "1d vs 07 Sep: +12,400,000 gp, 512 stacks priced on both days", and with both off the window lines go and
+	 * the sums rule with them when no figure is left; with everything hidden the tooltip is the header sentence
+	 * alone - it carries no gp figure, so nothing exact is anywhere on screen. "" when there is nothing at all
+	 * to say - the caller then sets no tooltip.
+	 *
+	 * <p><b>The refresh note is gone from here</b> (addendum S, line S3). Addendum P hung "Guide prices change
+	 * once a day - last checked 09:05" on the end of this tooltip, and a sentence that can only be reached by
+	 * hovering the card is a sentence a reader looking for it never finds. It is now the card's last LINE
+	 * ({@link #UPDATE_TEXT}) with the clock behind its own hover ({@link #updateTooltip}), so this tooltip ends
+	 * with the status sentence again and no longer needs a price clock at all.
+	 *
+	 * <p>The last line before it is the state the FIGURES cannot show. {@code warning} is
+	 * {@link Status#degradedReason()}, which {@code PriceService} publishes for two of them - the last history
+	 * fetch failed so the baselines on screen are whatever was stored (L11), and too few bank stacks compare for
+	 * the anchor day to be derived, so the newest wiki table stands in as "now" (L3): the footnote reddens, and
+	 * this says why, in the one place with room for the whole sentence (checker, B005 / B101).
+	 *
+	 * @param shown   which figures are drawn; null reads as {@link HeroVisibility#ALL}
+	 * @param warning the degraded sentence, or null when the service is confident
+	 */
+	static String valueTooltip(PortfolioSummary summary, @Nullable String headerLine, @Nullable HeroVisibility shown,
+		@Nullable String warning)
+	{
+		return valueTooltip(summary, headerLine, shown, warning, ViewOptions.DEFAULT);
+	}
+
+	/**
+	 * {@link #valueTooltip(PortfolioSummary, String, HeroVisibility, String)} under the view switches
+	 * (addendum Q): the sums rule states the sum it is explaining, so it names the cash only while
+	 * {@code countCash} counts it (Q4) and gains {@link #UNTRADEABLE_CLAUSE} only while
+	 * {@code countUntradeables} is on (Q5, R4). The FIGURES need no switch here - with the cash off the service
+	 * publishes a summary whose {@code currencyGp} is 0, so the "plus ... in coins" clause drops itself, and
+	 * with untradeables on they are already inside {@code valueNow} and {@code itemsTotal}.
+	 *
+	 * <p>Since addendum T (T5) the live switch adds two things and nothing else: the first line counts the stacks
+	 * that are on the traded series ({@link #liveClause}, "123 of 519 stacks live" - the one place that count is
+	 * printed), and the rule says which prices the sum used ({@link #LIVE_CLAUSE}). Every figure above them is
+	 * already the service's answer under the same switch, as the cash is.
+	 *
+	 * <p>And since addendum Y (Y3) the first line names the two containers while {@code countInventory} is on
+	 * ({@link #carriedClause}) -
+	 *
+	 * <pre>
+	 * Bank value: 1,234,567,890 gp over 519 of 538 stacks, including inventory and worn gear, plus 791,078 gp in coins (whole bank - the gp band is not applied)
+	 * </pre>
+	 *
+	 * <p>- because the caption over the figure still reads "Bank value" (the user's decision, by number) and
+	 * RuneLite's own bank title will read lower by exactly what the player is carrying and wearing.
+	 *
+	 * @param options the view switches; null reads as {@link ViewOptions#DEFAULT}
+	 */
+	static String valueTooltip(PortfolioSummary summary, @Nullable String headerLine, @Nullable HeroVisibility shown,
+		@Nullable String warning, @Nullable ViewOptions options)
+	{
+		return valueTooltip(summary, headerLine, shown, warning, options, null);
+	}
+
+	/**
+	 * {@link #valueTooltip(PortfolioSummary, String, HeroVisibility, String, ViewOptions)} with the live calendar
+	 * this publish was computed on (addendum U, line U3). It changes ONE thing: a window whose live rows and guide
+	 * rows compared against DIFFERENT days names both of them ({@link #windowHead}) -
+	 *
+	 * <pre>
+	 * 1d: live rows vs 11 Sep, guide rows vs 10 Sep: +3,120,000 gp (+0.8%), 588 stacks priced on both days
+	 * </pre>
+	 *
+	 * <p>- because the card's figure is the sum of two populations that did not compare against the same day, and a
+	 * single "vs 10 Sep" over it would be wrong for most of the gp in the number. They differ exactly while Jagex
+	 * has not yet published the day's guide table: the live series counts back from its own snapshot's UTC date
+	 * (U1), the guide baselines from the anchor day. When the two agree - and whenever there are no live rows, or
+	 * the switch is off - the line is the one-day line addenda M to T print, word for word.
+	 *
+	 * @param live the traded feeds' state for this publish, carrying the day each window's traded bucket holds;
+	 *             null - which is every caller that knows nothing of addendum U - reads as no live calendar at all
+	 *             and prints the guide days alone
+	 */
+	static String valueTooltip(PortfolioSummary summary, @Nullable String headerLine, @Nullable HeroVisibility shown,
+		@Nullable String warning, @Nullable ViewOptions options, @Nullable Status.LiveStatus live)
+	{
+		final HeroVisibility v = shown == null ? HeroVisibility.ALL : shown;
+		final List<String> lines = new ArrayList<>(8);
+		if (v.value())
+		{
+			// Y3: the carried clause is an appositive on the stacks count, so it takes the comma that would
+			// otherwise open the coins clause - "stacks, including inventory and worn gear, plus 791,078 gp in
+			// coins". With either clause absent the other reads exactly as it did before addendum Y.
+			final String carried = carriedClause(options);
+			final String coins = coinsClause(summary.currencyGp());
+			lines.add("Bank value: " + MovementMath.formatExact(summary.valueNow()) + " gp over "
+				+ summary.itemsPriced() + " of " + summary.itemsTotal() + " stacks" + carried
+				+ (carried.isEmpty() || coins.isEmpty() ? "" : ",") + coins
+				+ liveClause(summary, options) + " (whole bank - the gp band is not applied)");
+		}
+		if (v.moveLine())
+		{
+			for (WindowMove move : summary.moves().values())
+			{
+				final StringBuilder line = new StringBuilder(96);
+				line.append(windowHead(move, live, options));
+				if (v.gp())
+				{
+					line.append(signedExact(move.deltaGp())).append(" gp");
+				}
+				if (v.pct())
+				{
+					final String pct = MovementMath.formatPct(move.deltaPct(), move.deltaGp());
+					line.append(v.gp() ? " (" + pct + ")" : pct);
+				}
+				line.append(", ").append(move.itemsCovered()).append(" stacks priced on both days");
+				lines.add(line.toString());
+			}
+		}
+		// The rule explains the figures above it, so it goes with the last LINE - not with the last switch: a
+		// summary with no window move at all prints no line for a shown move figure, and a rule under nothing
+		// would be explaining a sum that is not there.
+		if (!lines.isEmpty())
+		{
+			lines.add(sumsRule(options));
+		}
+		if (headerLine != null && !headerLine.isEmpty())
+		{
+			lines.add(Widgets.escapeHtml(headerLine));
+		}
+		if (warning != null && !warning.isEmpty())
+		{
+			lines.add(Widgets.escapeHtml(warning));
+		}
+		if (lines.isEmpty())
+		{
+			return "";
+		}
+		return "<html>" + String.join("<br>", lines) + "</html>";
+	}
+
+	/**
+	 * The update line's own hover (addendum S, line S2): why the figures sit still, and when this client last
+	 * looked.
+	 *
+	 * <pre>
+	 * Bank Portfolio Tracker uses the Grand Exchange guide price, which Jagex publishes once a day at a varying hour.
+	 * Refresh re-checks for it, and the plugin re-checks by itself every 30 minutes.
+	 * Last checked 09:05.
+	 * </pre>
+	 *
+	 * <p>Three sentences, one per line, in the card's own tooltip HTML: Swing does not wrap a tooltip, so the one
+	 * 200-character line they make unbroken would open a box several times the width of the client's sidebar, and
+	 * the card beside it already reads as a stack of lines. The clock is {@code Status.pricesAtMillis()} through
+	 * {@link MovementMath#formatTime}, the same path the card's tooltip printed it by until S3 took that line
+	 * away; at 0 - nothing was ever fetched, so there is no clock to print - the third sentence is simply absent,
+	 * rather than stamping a dash where a time belongs.
+	 *
+	 * <p>It never answers "": the first two sentences are true before any fetch and after every one, so this line
+	 * always has something to say and the label always has a tooltip.
+	 *
+	 * @param pricesAtMillis when the guide prices on screen were read; 0 for "never fetched"
+	 */
+	static String updateTooltip(long pricesAtMillis)
+	{
+		return updateTooltip(pricesAtMillis, null);
+	}
+
+	/**
+	 * {@link #updateTooltip(long)} under the view switches (addendum T, line T5). With {@code livePrices} ON the
+	 * line above it says something else, so the hover does too:
+	 *
+	 * <pre>
+	 * Actively traded items show the wiki's live traded price, refreshed on Refresh and every 30 minutes; their windows compare against that day's traded average.
+	 * Thin items (fewer than 100 traded yesterday, a wide buy/sell gap today or yesterday, or a live price more than 50 % from the guide or from yesterday's average) keep the daily Grand Exchange guide price.
+	 * Last checked 09:05.
+	 * </pre>
+	 *
+	 * <p>The guide hover's three source sentences are NOT said here, and that is the point of the branch: "it is
+	 * the price shown on the Grand Exchange website" is true of every figure on screen while the switch is off and
+	 * false of the moving ones while it is on, so a reader comparing a row against the GE site is told which state
+	 * they are in rather than being handed a sentence that was true yesterday. The last line is the same clock in
+	 * both, by the same rule - absent at 0, because nothing has been fetched to time.
+	 *
+	 * @param options the view switches; null reads as the guide-only hover, which is what every caller that knows
+	 *                nothing of addendum T wants
+	 */
+	static String updateTooltip(long pricesAtMillis, @Nullable ViewOptions options)
+	{
+		final StringBuilder sb = new StringBuilder(480).append("<html>");
+		if (options != null && options.livePrices())
+		{
+			sb.append(UPDATE_LIVE_WHY).append("<br>").append(UPDATE_LIVE_THIN);
+		}
+		else
+		{
+			sb.append(UPDATE_WHY).append("<br>").append(UPDATE_SOURCE).append("<br>").append(UPDATE_RECHECK);
+		}
+		if (pricesAtMillis > 0L)
+		{
+			sb.append("<br>").append(UPDATE_LAST_CHECKED).append(MovementMath.formatTime(pricesAtMillis)).append('.');
+		}
+		return sb.append("</html>").toString();
+	}
+
+	/**
+	 * What the card's last line reads for a set of view switches (T5): {@link #UPDATE_LIVE_TEXT} while
+	 * {@code livePrices} is on and {@link #UPDATE_TEXT} - addendum S's sentence, word for word - while it is off.
+	 *
+	 * <p>The line follows the SWITCH and not the data: it is drawn before the first fetch, with the wiki down and
+	 * with every stack in the bank too thin to qualify, and in each of those states "live prices on" is still the
+	 * true answer to "why might this figure move when I refresh?". How many stacks actually are live is a count,
+	 * and counts live on the card's tooltip ({@link #valueTooltip}) and on the rows.
+	 *
+	 * @param options the switches; null reads as {@link ViewOptions#DEFAULT}
+	 */
+	static String updateText(@Nullable ViewOptions options)
+	{
+		return (options == null ? ViewOptions.DEFAULT : options).livePrices() ? UPDATE_LIVE_TEXT : UPDATE_TEXT;
+	}
+
+	/**
+	 * The cash clause of the tooltip's first line - " plus 791,078 gp in coins" (P1) - or "" when the bank holds
+	 * no coins and no platinum tokens, because "plus 0 gp in coins" is a line that says nothing.
+	 *
+	 * <p>"in coins" covers both: platinum tokens are counted at 1,000 gp each and folded into the one figure by
+	 * {@code BankSnapshot.currencyGp}, and the sums rule below names them.
+	 */
+	static String coinsClause(long currencyGp)
+	{
+		return currencyGp <= 0L ? "" : " plus " + MovementMath.formatExact(currencyGp) + " gp in coins";
+	}
+
+	/**
+	 * The live count on the tooltip's first line while {@code livePrices} is on (addendum T, line T5):
+	 * ", 123 of 519 stacks live" - how many of the PRICED stacks were counted at the wiki's live traded mid rather
+	 * than at a guide price.
+	 *
+	 * <p>It is printed at 0 as well, and deliberately: "0 of 519 stacks live" is the answer to the question a
+	 * reader has when the switch is on and nothing on the list has moved since they opened it - the checks refused
+	 * everything, or the feed has not answered yet - and a clause that vanished exactly then would hide the one
+	 * state it exists to explain. The denominator is {@code itemsPriced} and not the whole bank, because a stack
+	 * with no price at all was never a candidate.
+	 *
+	 * <p>"" while the switch is off, which is the line addenda K to S print, word for word.
+	 *
+	 * @param options the switches; null reads as {@link ViewOptions#DEFAULT}, exactly as {@link #sumsRule} takes it,
+	 *                so the two clauses of one line can never disagree about which switch is on
+	 */
+	static String liveClause(PortfolioSummary summary, @Nullable ViewOptions options)
+	{
+		if (!(options == null ? ViewOptions.DEFAULT : options).livePrices())
+		{
+			return "";
+		}
+		return ", " + summary.liveRows() + " of " + summary.itemsPriced() + " stacks live";
+	}
+
+	/**
+	 * The clause the tooltip's first line gains directly after the stacks count while {@code countInventory} is on
+	 * (addendum Y, line Y3): ", including inventory and worn gear". The card's caption stays "Bank value" - the
+	 * user's own decision, by number - so this is the one place the card says that the figure under that caption
+	 * is bigger than what RuneLite's bank title shows, and why.
+	 *
+	 * <p>It follows the SWITCH and not the bank, exactly as {@link #liveClause} does: a player standing in a bank
+	 * with an empty inventory and no gear still gets the clause, because the question it answers is what the total
+	 * COUNTS, and an answer that appeared only when the reader happened to be carrying something would be missing
+	 * whenever they went looking for it.
+	 *
+	 * <p>"" while the switch is off, which is the line addenda K to X print, word for word.
+	 *
+	 * @param options the switches; null reads as {@link ViewOptions#DEFAULT}, the same rule {@link #liveClause}
+	 *                and {@link #sumsRule} take, so the clauses of one line can never disagree about a switch
+	 */
+	static String carriedClause(@Nullable ViewOptions options)
+	{
+		return (options == null ? ViewOptions.DEFAULT : options).countInventory() ? CARRIED_CLAUSE : "";
+	}
+
+	/**
+	 * How ONE window line of the card's tooltip opens, up to and including the colon before the figures (addendum
+	 * U, line U3): "1d vs 07 Sep: " while every row on screen compared against one day, and
+	 * "1d: live rows vs 11 Sep, guide rows vs 10 Sep: " while the two populations compared against two.
+	 *
+	 * <p>The long form is only ever printed when it is TRUE of the figure beside it - live prices on, live rows in
+	 * the sum, and a traded day for this window that is not the guide's. Any of those missing and the head is the
+	 * short one, which is the line the card has carried since addendum M.
+	 *
+	 * @param live    the traded feeds' state; null, or one with no rows and no days, gives the short head
+	 * @param options the view switches; null reads as {@link ViewOptions#DEFAULT}
+	 */
+	static String windowHead(WindowMove move, @Nullable Status.LiveStatus live, @Nullable ViewOptions options)
+	{
+		final String label = move.window().label();
+		final String guide = MovementMath.formatDay(move.thenDay());
+		if (live == null || live.liveRows() <= 0 || !(options == null ? ViewOptions.DEFAULT : options).livePrices())
+		{
+			return label + " vs " + guide + ": ";
+		}
+		final LocalDate liveDay = live.windowDays().get(move.window());
+		if (liveDay == null || liveDay.equals(move.thenDay()))
+		{
+			return label + " vs " + guide + ": ";
+		}
+		return label + ": live rows vs " + MovementMath.formatDay(liveDay) + ", guide rows vs " + guide + ": ";
+	}
+
+	/**
+	 * The sums rule for a set of view switches (Q4, Q5, R4, T5): the rule states what the sums above it actually
+	 * count, so each clause is there exactly while its switch is. With the cash counted and the live switch off
+	 * this is {@link #SUMS_RULE}, word for word, which is the sentence the card has carried since addendum P.
+	 *
+	 * <p>The clauses are in the order a reader needs them: WHICH price ({@link #LIVE_CLAUSE}, because it corrects
+	 * the head's "guide price"), then what else is in the sum (the cash, the untradeables), then what is left out.
+	 *
+	 * @param options the switches; null reads as {@link ViewOptions#DEFAULT}
+	 */
+	static String sumsRule(@Nullable ViewOptions options)
+	{
+		final ViewOptions v = options == null ? ViewOptions.DEFAULT : options;
+		return SUMS_HEAD + (v.livePrices() ? LIVE_CLAUSE : "") + (v.countCash() ? CASH_CLAUSE : "")
+			+ (v.countUntradeables() ? UNTRADEABLE_CLAUSE : "") + SUMS_TAIL;
+	}
+
+	/** "+12,400,000", "-3,100,000", "0": the exact gp move with its sign, as the row tooltip prints one. */
+	private static String signedExact(long gp)
+	{
+		return (gp > 0L ? "+" : "") + MovementMath.formatExact(gp);
+	}
+
+	// ---------------------------------------------------------------- the cards (EDT)
+
+	/** Contract C30's state rule; LOGIN until the first publish. */
+	private String chooseCard()
+	{
+		if (status == null)
+		{
+			return CARD_LOGIN;
+		}
+		if (!status.loggedIn() && !status.bankLoaded())
+		{
+			return CARD_LOGIN;
+		}
+		if (!status.bankLoaded())
+		{
+			return CARD_NO_BANK;
+		}
+		return rows.isEmpty() ? CARD_EMPTY : CARD_LIST;
+	}
+
+	private void showCard(String name)
+	{
+		if (CARD_EMPTY.equals(name))
+		{
+			renderEmptyCard();
+		}
+		if (!name.equals(card))
+		{
+			card = name;
+			cardLayout.show(cards, name);
+		}
+	}
+
+	/**
+	 * The EMPTY card (N section 3 §6): why the list is empty, and - only when a band did it - the one-tap
+	 * "Clear price range" under the message, added and removed like every other conditional row. A user is
+	 * never trapped behind a filter.
+	 */
+	private void renderEmptyCard()
+	{
+		final boolean noTradeables = status != null && status.bankItems() == 0;
+		final boolean band = bandOn();
+		if (noTradeables)
+		{
+			emptyMessage.setContent(NO_TRADEABLES_TEXT, "Only Grand Exchange items have a guide price");
+		}
+		else if (!band)
+		{
+			emptyMessage.setContent(NO_PRICES_TEXT, "The list fills when the guide prices arrive");
+		}
+		else
+		{
+			emptyMessage.setContent(EMPTY_TEXT, bandDescription(filter.gpMin(), filter.gpMax()));
+		}
+		final boolean wantButton = band && !noTradeables;
+		if (wantButton != (clearBandRow.getParent() == emptyColumn))
+		{
+			if (wantButton)
+			{
+				emptyColumn.add(clearBandRow);
+			}
+			else
+			{
+				emptyColumn.remove(clearBandRow);
+			}
+			emptyColumn.revalidate();
+			emptyColumn.repaint();
+		}
+	}
+
+	/** Which card is showing: {@link #CARD_LOGIN}, {@link #CARD_NO_BANK}, {@link #CARD_EMPTY} or {@link #CARD_LIST}. */
+	public String card()
+	{
+		return card;
+	}
+
+	// ---------------------------------------------------------------- for the bridge and the tests
+
+	/**
+	 * What a picture of this sidebar is made of, top to bottom: the pinned header, then the SCROLLED CONTENT
+	 * (the scroll pane's view, however tall) rather than the window onto it - printing the panel itself stops
+	 * where the visible slice stops (Loot and Beam's first live shot, cut through the middle). While a
+	 * message card is showing, that card stands in for the list.
+	 */
+	public List<Component> shotComponents()
+	{
+		final Component body;
+		switch (card)
+		{
+			case CARD_LOGIN:
+				body = loginCard;
+				break;
+			case CARD_NO_BANK:
+				body = noBankCard;
+				break;
+			case CARD_EMPTY:
+				body = emptyCard;
+				break;
+			default:
+				body = listView;
+		}
+		return Arrays.asList(header, body);
+	}
+
+	/**
+	 * One line of JSON describing the visible state, for the bridge's {@code state}: the card, the paging,
+	 * the filter, the two fields' validity, the status sentence and whether the panel is on screen - then the
+	 * five view switches ({@code options}, Q7, T1 and Y1 - the fifth key is {@code inventory}), beside them what
+	 * the TRADED feeds delivered for this
+	 * publish ({@code live}, T8: {@code fetchedAt}, {@code latestItems}, {@code liveRows}, {@code guideRows},
+	 * {@code alchRows}, every figure 0 while the switch is off, then addendum U's {@code liveDay} and
+	 * {@code windowDays} - the live calendar this publish counted back from, both null-valued while there is no
+	 * snapshot), and the three hero switches ({@code hero}, O3),
+	 * each written from its own value's {@code asMap()} in the same shape, the hero as drawn (the old {@code bankMove}
+	 * line synthesised in full for addendum M's scripts; {@code bankValue}, {@code heroGp} and {@code heroPct}
+	 * are "" while their figure is hidden), the card's update line ({@code updateLine}, S4 - beside
+	 * {@code heroSub} because it is the line under it, and always the same sentence, so a script can prove it is
+	 * drawn without a picture), the control row - {@code sortLabel}, the lit COLUMN's label as the button prints
+	 * it (addendum W, line W3; the direction is beside it in {@code descending} and drawn as the arrow, and V2's
+	 * {@code sortHint} is gone with the grey qualifiers it described) - the fold, the problem row and the
+	 * Show-more text (N section 3 §8).
+	 *
+	 * <p>The fold carries the reader's quick bands since addendum Z (line Z4): {@code presets}, the three in force
+	 * as numbers ({@code [100000,1000000,10000000]}), and {@code presetLabels}, the four chip TEXTS as they are
+	 * drawn ({@code ["All","100k+","1m+","10m+"]}) - the numbers so a script can assert what was stored, the
+	 * labels so it can assert what a shot of the fold should read, without a picture.
+	 */
+	public String describe()
+	{
+		final PortfolioSummary summary = portfolio();
+		final WindowMove move = summary.move(filter.window());
+		return "{\"card\":\"" + card
+			+ "\",\"shown\":" + shown
+			+ ",\"total\":" + rows.size()
+			+ ",\"window\":\"" + filter.window().name()
+			+ "\",\"sort\":\"" + filter.sort().name()
+			+ "\",\"descending\":" + filter.descending()
+			+ ",\"gpMin\":" + filter.gpMin()
+			+ ",\"gpMax\":" + filter.gpMax()
+			+ ",\"minInvalid\":" + Widgets.isMarkedInvalid(minField)
+			+ ",\"maxInvalid\":" + Widgets.isMarkedInvalid(maxField)
+			+ ",\"status\":" + json(statusText())
+			+ ",\"showing\":" + isShowing()
+			+ ",\"options\":" + flags(options.asMap())
+			+ ",\"live\":" + values(liveStatus().asMap())
+			+ ",\"hero\":" + flags(heroVisibility.asMap())
+			+ ",\"bankValueShowing\":" + heroShowing()
+			+ ",\"bankValue\":" + json(shows(totalLabel) ? totalLabel.getText() : "")
+			+ ",\"bankMove\":" + json(moveText(filter.window(), move))
+			+ ",\"bankWindow\":\"" + filter.window().label()
+			+ "\",\"heroGp\":" + json(shows(deltaLabel) ? deltaLabel.getText() : "")
+			+ ",\"heroPct\":" + json(shows(pctLabel) ? pctLabel.getText() : "")
+			+ ",\"heroSub\":" + json(heroSubText())
+			+ ",\"updateLine\":" + json(updateLabel.getText())
+			+ ",\"sortLabel\":" + json(sortButton.getText())
+			+ ",\"countText\":" + json(bandTarget.getText())
+			+ ",\"bandOn\":" + bandOn()
+			+ ",\"foldOpen\":" + foldOpen
+			+ ",\"presets\":" + numbers(presets.mins())
+			+ ",\"presetLabels\":" + texts(presetLabels())
+			+ ",\"problemText\":" + json(problemText())
+			+ ",\"problemRed\":" + isErrorStatus()
+			+ ",\"showMoreText\":" + json(showMoreVisible() ? showMoreLabel.getText() : "")
+			+ "}";
+	}
+
+	/** The line under the figures as drawn: the provenance footnote. */
+	String heroSubText()
+	{
+		return footnoteLabel.getText();
+	}
+
+	/**
+	 * What the traded feeds delivered for the publish on screen (addendum T, line T8), for {@code describe()}:
+	 * the last status's {@link Status.LiveStatus}, and {@link Status.LiveStatus#OFF} - every figure 0, every day
+	 * null - before the first publish, so {@code state.live} is an object with the same keys in every state a
+	 * script can find the panel in.
+	 */
+	private Status.LiveStatus liveStatus()
+	{
+		final Status.LiveStatus live = status == null ? null : status.live();
+		return live == null ? Status.LiveStatus.OFF : live;
+	}
+
+	/**
+	 * A JSON object of booleans, in the map's own order - the three hero switches, from
+	 * {@link HeroVisibility#asMap()}, which is the same object the dev bridge's {@code state.hero} is built from
+	 * (S2). Written by hand rather than with Gson: this panel is Swing and has no injected Gson, and the bridge's
+	 * one is not the panel's to reach for.
+	 */
+	private static String flags(Map<String, Boolean> values)
+	{
+		final StringBuilder sb = new StringBuilder(48).append('{');
+		for (Map.Entry<String, Boolean> e : values.entrySet())
+		{
+			if (sb.length() > 1)
+			{
+				sb.append(',');
+			}
+			sb.append(json(e.getKey())).append(':').append(Boolean.TRUE.equals(e.getValue()));
+		}
+		return sb.append('}').toString();
+	}
+
+	/**
+	 * {@link #flags} for {@link Status.LiveStatus#asMap()} - the five figures of T8 and addendum U's two calendar
+	 * keys, which together are what {@code state.live} is. Written by hand for the same reason: this panel is Swing
+	 * and has no injected Gson.
+	 *
+	 * <p>Four value shapes, which is every shape that map holds: a {@link Number} prints as a number, a
+	 * {@link String} (an ISO date) as a quoted string, a nested {@link Map} as a nested object - one level, which
+	 * is all {@code windowDays} is - and a null as JSON {@code null}, because "that window has no traded bucket" is
+	 * a fact and not a zero. Anything else would be a new key nobody has taught this to write, so it is refused
+	 * rather than printed as its {@code toString}.
+	 */
+	private static String values(Map<?, ?> map)
+	{
+		final StringBuilder sb = new StringBuilder(160).append('{');
+		for (Map.Entry<?, ?> e : map.entrySet())
+		{
+			if (sb.length() > 1)
+			{
+				sb.append(',');
+			}
+			sb.append(json(String.valueOf(e.getKey()))).append(':').append(value(e.getValue()));
+		}
+		return sb.append('}').toString();
+	}
+
+	/** A JSON array of numbers - the three preset bands, smallest first ({@code presets}, Z4). */
+	private static String numbers(long[] values)
+	{
+		final StringBuilder sb = new StringBuilder(40).append('[');
+		for (int i = 0; i < values.length; i++)
+		{
+			if (i > 0)
+			{
+				sb.append(',');
+			}
+			sb.append(values[i]);
+		}
+		return sb.append(']').toString();
+	}
+
+	/** A JSON array of strings - the fold's four chip texts ({@code presetLabels}, Z4). */
+	private static String texts(String[] values)
+	{
+		final StringBuilder sb = new StringBuilder(40).append('[');
+		for (int i = 0; i < values.length; i++)
+		{
+			if (i > 0)
+			{
+				sb.append(',');
+			}
+			sb.append(json(values[i]));
+		}
+		return sb.append(']').toString();
+	}
+
+	/** One JSON value for {@link #values}: a number, a quoted string, a nested object, or {@code null}. */
+	private static String value(@Nullable Object v)
+	{
+		if (v == null)
+		{
+			return "null";
+		}
+		if (v instanceof Number)
+		{
+			return v.toString();
+		}
+		if (v instanceof Map)
+		{
+			return values((Map<?, ?>) v);
+		}
+		if (v instanceof String)
+		{
+			return json((String) v);
+		}
+		throw new IllegalArgumentException("no JSON shape for " + v.getClass().getSimpleName());
+	}
+
+	private static String json(@Nullable String s)
+	{
+		if (s == null)
+		{
+			return "null";
+		}
+		final StringBuilder sb = new StringBuilder(s.length() + 2).append('"');
+		for (int i = 0; i < s.length(); i++)
+		{
+			final char c = s.charAt(i);
+			switch (c)
+			{
+				case '"':
+					sb.append("\\\"");
+					break;
+				case '\\':
+					sb.append("\\\\");
+					break;
+				case '\n':
+					sb.append("\\n");
+					break;
+				case '\r':
+					sb.append("\\r");
+					break;
+				case '\t':
+					sb.append("\\t");
+					break;
+				default:
+					if (c < 0x20)
+					{
+						sb.append(String.format("\\u%04x", (int) c));
+					}
+					else
+					{
+						sb.append(c);
+					}
+			}
+		}
+		return sb.append('"').toString();
+	}
+
+	/** The rows built so far, in list order - the bridge echoes the first ten. */
+	public List<MovementRowPanel> rowPanels()
+	{
+		final List<MovementRowPanel> out = new ArrayList<>(rowsColumn.getComponentCount());
+		for (Component c : rowsColumn.getComponents())
+		{
+			if (c instanceof MovementRowPanel)
+			{
+				out.add((MovementRowPanel) c);
+			}
+		}
+		return out;
+	}
+
+	@Nullable
+	public Status status()
+	{
+		return status;
+	}
+
+	/** How many times the list was rebuilt - the tests' proof that a status-only publish leaves it alone. */
+	int rebuilds()
+	{
+		return rebuilds;
+	}
+
+	/** The baseline day the rows on screen carry in their tooltips (L7); null until one is known. */
+	@Nullable
+	LocalDate listThenDay()
+	{
+		return list.thenDay;
+	}
+
+	JPanel header()
+	{
+		return header;
+	}
+
+	/** The hero card, whether or not it is in the header right now. */
+	JPanel hero()
+	{
+		return hero;
+	}
+
+	/** Whether the hero card is in the header - true exactly while a bank is loaded (M4, N section 3 §3). */
+	boolean heroShowing()
+	{
+		return hero.getParent() == header;
+	}
+
+	/**
+	 * Whether {@code c} is drawn on the hero card right now - which of the card's parts are IN it (O3), asked
+	 * once instead of a named accessor per part restating {@link #syncHero}'s rules.
+	 *
+	 * <p>The walk up the parent chain is what makes it one question: the total and the move line are children of
+	 * the card, the gp figure and the percentage are children of the move LINE, and a switched-off part is
+	 * removed rather than hidden - so a part is drawn exactly when every link above it is still in place.
+	 * Whether the CARD itself is in the header is a different question ({@link #heroShowing()}): the switches
+	 * hold their answer while there is no bank to draw.
+	 */
+	boolean shows(@Nullable Component c)
+	{
+		return c != null && SwingUtilities.isDescendingFrom(c, hero);
+	}
+
+	/** The gear menu: Refresh, the three show / hide check items (O4) and the five view switches (Q2, T1, Y1). */
+	JPopupMenu heroMenu()
+	{
+		return heroMenu;
+	}
+
+	/** The menu's "Use live prices" check item, first of the view group (T1, renamed by Y4). */
+	JCheckBoxMenuItem livePricesItem()
+	{
+		return livePricesItem;
+	}
+
+	/** The gear on the total's line, which opens {@link #heroMenu()} (Q1). */
+	JLabel gearLabel()
+	{
+		return gearLabel;
+	}
+
+	/** The total's line: the figure while it is shown, and the gear always (Q1). */
+	JPanel totalRow()
+	{
+		return totalRow;
+	}
+
+	/** The menu's "Include coins and platinum tokens" check item (Q2, renamed by Y4). */
+	JCheckBoxMenuItem countCashItem()
+	{
+		return countCashItem;
+	}
+
+	/** The menu's "Include untradeable items" check item (Q2, renamed by Y4). */
+	JCheckBoxMenuItem countUntradeablesItem()
+	{
+		return countUntradeablesItem;
+	}
+
+	/** The menu's "Include inventory and worn gear" check item (Y1). */
+	JCheckBoxMenuItem countInventoryItem()
+	{
+		return countInventoryItem;
+	}
+
+	/** The menu's "Show stack value on rows" check item (Q2, renamed by Y4). */
+	JCheckBoxMenuItem holdingItem()
+	{
+		return holdingItem;
+	}
+
+	/** The menu's box row: the "Preset price ranges" caption over the three boxes (Z2, Z7, AB3). */
+	JPanel presetRow()
+	{
+		return presetRow;
+	}
+
+	/**
+	 * Where the keyboard goes when the gear menu opens (Z6): the preset {@link #presetRow() row}, and never one of
+	 * the boxes in it.
+	 *
+	 * <p>It is named rather than left implicit because the rule is a promise to the reader - no caret blinks until
+	 * a box is clicked - and the only thing that can be seen from outside is WHICH component the open event asks
+	 * for. Focus itself belongs to a shown window, which a test has none of.
+	 */
+	Component menuFocusTarget()
+	{
+		return presetRow;
+	}
+
+	/** One of those boxes, {@code i} counted smallest first (Z2). */
+	Widgets.PlaceholderField presetField(int i)
+	{
+		return presetFields[i];
+	}
+
+	/** The menu's "Reset to default" item, under the boxes (Z2). */
+	JMenuItem resetPresetsItem()
+	{
+		return resetPresetsItem;
+	}
+
+	/** The menu's last row: the glue and the "OK" button at its right end (AB2). */
+	JPanel okRow()
+	{
+		return okRow;
+	}
+
+	/** That button - commit and close (AB2). */
+	JButton okButton()
+	{
+		return okButton;
+	}
+
+	/** The menu's "Show bank value" check item (O4). */
+	JCheckBoxMenuItem showValueItem()
+	{
+		return showValueItem;
+	}
+
+	/** The menu's "Show change in gp" check item (O4, renamed by Y4). */
+	JCheckBoxMenuItem showGpItem()
+	{
+		return showGpItem;
+	}
+
+	/** The menu's "Show change in %" check item (O4, renamed by Y4). */
+	JCheckBoxMenuItem showPctItem()
+	{
+		return showPctItem;
+	}
+
+	/** The caption row: "Bank value" and the "Refresh" link; never hides (O3). */
+	JPanel captionRow()
+	{
+		return captionRow;
+	}
+
+	JLabel captionLabel()
+	{
+		return captionLabel;
+	}
+
+	/** The "Refresh" text link in the caption row. */
+	JLabel refreshLabel()
+	{
+		return refreshLabel;
+	}
+
+	/** The bank total, 28 px bold white, stack form ("1.23b"); in the card while {@code value} is on. */
+	JLabel totalLabel()
+	{
+		return totalLabel;
+	}
+
+	/** The move line - triangle, gp, percent - in the card while {@code gp} or {@code pct} is on. */
+	JPanel moveLine()
+	{
+		return moveLine;
+	}
+
+	/** The lit window's percentage, 18 px bold in the move colour; on the move line while {@code pct} is on. */
+	JLabel pctLabel()
+	{
+		return pctLabel;
+	}
+
+	/** The lit window's gp move, 18 px bold in the move colour; on the move line while {@code gp} is on. */
+	JLabel deltaLabel()
+	{
+		return deltaLabel;
+	}
+
+	/** The move triangle; on the move line whenever the line is. */
+	JLabel triangleLabel()
+	{
+		return triangleLabel;
+	}
+
+	/** The holder of the window strip inside the card; never hides (O3). */
+	JPanel stripHolder()
+	{
+		return stripHolder;
+	}
+
+	/** The provenance footnote; never hides (O3). */
+	JLabel footnoteLabel()
+	{
+		return footnoteLabel;
+	}
+
+	/** The card's last line - {@link #UPDATE_TEXT} under the footnote; never hides (S1). */
+	JLabel updateLabel()
+	{
+		return updateLabel;
+	}
+
+	/** The window strip inside the card. */
+	JPanel chipRow()
+	{
+		return chipRow;
+	}
+
+	JLabel windowChip(MovementWindow window)
+	{
+		return windowChips.get(window);
+	}
+
+	JPanel controlRow()
+	{
+		return controlRow;
+	}
+
+	JLabel sortButton()
+	{
+		return sortButton;
+	}
+
+	/** The band word-button ("All items v"). */
+	JLabel bandTarget()
+	{
+		return bandTarget;
+	}
+
+	JPanel fold()
+	{
+		return fold;
+	}
+
+	boolean foldOpen()
+	{
+		return foldOpen;
+	}
+
+	/** The fold's chip {@code i}: "All", then the three presets smallest first (Z3). */
+	JLabel presetCell(int i)
+	{
+		return presetCells[i];
+	}
+
+	/** The fold's "x". */
+	JLabel clearBoundsLabel()
+	{
+		return clearLabel;
+	}
+
+	Widgets.PlaceholderField minField()
+	{
+		return minField;
+	}
+
+	Widgets.PlaceholderField maxField()
+	{
+		return maxField;
+	}
+
+	JLabel problemLabel()
+	{
+		return problemLabel;
+	}
+
+	boolean problemShowing()
+	{
+		return problemLabel.getParent() == header;
+	}
+
+	/** The "Show n more" text control at the foot of the list. */
+	JLabel showMoreLabel()
+	{
+		return showMoreLabel;
+	}
+
+	boolean showMoreVisible()
+	{
+		return showMoreRow.getParent() == listColumn;
+	}
+
+	/** The EMPTY card's "Clear price range" button, whether or not it is on the card right now. */
+	JButton clearBandButton()
+	{
+		return clearBandButton;
+	}
+
+	boolean clearBandShowing()
+	{
+		return clearBandRow.getParent() == emptyColumn;
+	}
+
+	JPanel rowsColumn()
+	{
+		return rowsColumn;
+	}
+
+	JScrollPane scrollPane()
+	{
+		return scroll;
+	}
+
+	JPanel listView()
+	{
+		return listView;
+	}
+
+	boolean stopped()
+	{
+		return stopped;
+	}
+}

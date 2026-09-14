@@ -1,0 +1,85 @@
+/*
+ * Bank Portfolio Tracker - Plugin Hub build file.
+ *
+ * Hub shape: compileOnly net.runelite:client (the client and everything it brings - gson, guice, okhttp,
+ * okio, slf4j, guava - are PROVIDED by the host, never bundled), the JUnit 4 + Mockito 4.11 test set, Java
+ * release 11 bytecode. This plugin declares NO third-party runtime dependency of its own.
+ *
+ * The manifest says build=standard, so at package time the Hub DELETES this file and builds the sources with
+ * its own standard-build.gradle plus target_init.gradle (which forces the Hub's runelite.version and
+ * -release 11). Everything here is therefore for humans and for local/offline/IDE builds only.
+ *
+ * Dropped from the combined workspace's build file (all launcher-only): mavenLocal(), the `run` task's
+ * 1 g heap / G1 / GC-log jvmArgs, the hand-rolled `shadowJar`, the jsoup dependency (that belongs to a
+ * different plugin), the net.runelite:jshell test dependency, and the lombok pair (this package contains
+ * zero lombok references).
+ */
+plugins {
+	id 'java'
+}
+
+repositories {
+	maven {
+		url = 'https://repo.runelite.net'
+		content {
+			includeGroupByRegex("net\\.runelite.*")
+		}
+	}
+	mavenCentral()
+}
+
+// RuneLite client version. The Hub compiles every plugin against its own pinned `runelite.version`
+// (1.12.38 as of 2026-09-10); the literal below is the reproducible FALLBACK for a local/offline/IDE build
+// and is overridable with -PruneLiteVersion=<v>. Bump it in step with the Hub's pin. If a new client
+// changes an API the compile fails loudly here - re-verify rather than assuming a clean bump.
+def runeLiteVersion = project.findProperty('runeLiteVersion') ?: '1.12.38'
+def launcherClass = 'com.bankpricemovement.BankPriceMovementPluginTest'
+
+dependencies {
+	compileOnly group: 'net.runelite', name: 'client', version: runeLiteVersion
+
+	testImplementation 'junit:junit:4.12'
+	// Mockito 4.11.0 (JDK17-safe; RuneLite itself pins 3.1.0, which predates JDK 17).
+	testImplementation 'org.mockito:mockito-core:4.11.0'
+	testImplementation group: 'net.runelite', name: 'client', version: runeLiteVersion
+}
+
+group = 'com.bankpricemovement'
+version = '1.0.0'
+
+// The Hub packager reads runelite-plugin.properties from the REPO ROOT; BankPriceMovementWiringTest reads
+// it back off the CLASSPATH (`/runelite-plugin.properties`) to prove the plugin class is listed. One file,
+// both readers - a second copy under src/main/resources would only drift.
+processResources {
+	from(rootDir) {
+		include 'runelite-plugin.properties'
+	}
+}
+
+tasks.withType(JavaCompile).configureEach {
+	options.encoding = 'UTF-8'
+	// Hub rule: all classes must be Java 11 bytecode or lower.
+	options.release.set(11)
+}
+
+// The sidebar renders (LookRenderer, test source set) are acceptance pictures compared BYTE FOR BYTE against
+// docs/handoff/lab/ticker-*.png, so the text must be drawn the same way on every machine. A JLabel does NOT
+// take its antialiasing from the RenderingHints the renderer sets: Swing reads it out of the DESKTOP's font
+// settings (sun.awt.SunToolkit's aaTextInfo), so on a box with ClearType on every glyph gets subpixel colour
+// fringes and the identical-looking picture differs from the pin in ~17,800 of 202,500 pixels. `off` is the
+// greyscale antialiasing the pinned pictures were drawn with. Test-JVM only, and the Hub deletes this file at
+// package time (see the header), so nothing shipped depends on it.
+tasks.withType(Test).configureEach {
+	jvmArgs '-Dawt.useSystemAAFontSettings=off'
+}
+
+// `gradlew run` boots a developer-mode RuneLite with this plugin injected - the route the Hub's own README
+// and templateplugin/AGENTS.md tell people to test with. The launcher lives in the TEST source set, so it
+// never reaches the packaged jar. -ea is required: ExternalPluginManager.loadBuiltin refuses to run without
+// assertions.
+tasks.register('run', JavaExec) {
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = launcherClass
+	jvmArgs '-ea'
+	args '--developer-mode'
+}
