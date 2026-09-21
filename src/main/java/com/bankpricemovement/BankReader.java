@@ -20,7 +20,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Turns the raw bank container into the priceable {@link BankSnapshot} the rest of Bank Portfolio Tracker works
+ * Turns the raw bank container into the priceable {@link BankSnapshot} the rest of 2h Bank Portfolio Tracker works
  * from (contract lines C11 and C12).
  *
  * <p>Since addendum Y line Y2 the same rules read two more containers: {@link #readContainers} turns the player's

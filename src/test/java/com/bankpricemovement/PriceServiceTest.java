@@ -1985,26 +1985,41 @@ public class PriceServiceTest
 	}
 
 	/**
-	 * Q6: the two gp orderings follow the switch, so the list agrees with the figures the rows print. In the
-	 * fixture every mover gains exactly 1 gp per item over a day, so the per-ITEM order is a wall of ties broken
-	 * alphabetically ("Abyssal whip") while the per-STACK order is the depth of the stack - "Item 24", 24 of them
-	 * at +1, is the most money made.
+	 * AO1, at the level the sidebar actually reads the list from: the gp column orders by the WHOLE STACK's change,
+	 * with no switch left to say otherwise. This test used to be {@code theHoldingSwitchReordersTheGpSorts} and
+	 * proved the opposite pair - {@code holdingOnRows} off gave the per-ITEM order, on gave the per-STACK one (Q6).
+	 * That key is deleted, and the stack is the reading that survived it, so the two-order test is replaced by the
+	 * one order the column now has.
+	 *
+	 * <p>The fixture makes the difference unmissable: every mover gains exactly 1 gp per ITEM over a day, so the
+	 * old per-item order was a wall of ties broken alphabetically and led with "Abyssal whip" - a single whip whose
+	 * stack made 1 gp - while the stack's order leads with "Item 24", 24 of them at +1 gp each. Leading with the
+	 * whip is what the user's "biggest gainers" never meant over a bank.
 	 */
 	@Test
-	public void theHoldingSwitchReordersTheGpSorts()
+	public void theGpColumnOrdersByTheWholeStacksChange()
 	{
 		warmUp();
 		service.setFilter(RowFilter.DEFAULT.withSort(SortMode.GP_MOVE).withDescending(true));
-		final MovementRow perItem = lastRows().get(0);
 
-		service.setOptions(ViewOptions.DEFAULT.withHoldingOnRows(true));
+		final MovementRow top = lastRows().get(0);
+		assertEquals("the holding that made the most money, not the item whose unit price moved most",
+			"Item 24", top.name());
+		assertEquals("24 held, 1 gp each", 24L, top.holdingDeltaGp());
+		assertEquals("and one whip made the same 1 gp an item as every other mover",
+			Long.valueOf(1L), rowFor(lastRows(), WHIP).deltaGp());
+		assertOrderedByStackChange(lastRows());
 
-		final MovementRow perStack = lastRows().get(0);
-		assertEquals("Abyssal whip", perItem.name());
-		assertEquals(Long.valueOf(1L), perItem.deltaGp());
-		assertEquals("Item 24", perStack.name());
-		assertEquals("24 held, 1 gp each", 24L, perStack.holdingDeltaGp());
-		final List<MovementRow> rows = lastRows();
+		// No view switch reaches the ordering any more (AO1), so a recompute under other options lands the same way.
+		service.setOptions(ViewOptions.DEFAULT.withCountInventory(false));
+
+		assertEquals("Item 24", lastRows().get(0).name());
+		assertOrderedByStackChange(lastRows());
+	}
+
+	/** Every neighbouring pair of movers in stack-change order, biggest first - the gp column's whole promise. */
+	private static void assertOrderedByStackChange(final List<MovementRow> rows)
+	{
 		for (int i = 1; i < rows.size(); i++)
 		{
 			if (rows.get(i).hasMovement() && rows.get(i - 1).hasMovement())
@@ -2025,7 +2040,15 @@ public class PriceServiceTest
 		assertEquals(ViewOptions.DEFAULT, service.options());
 
 		warmUp();
-		final ViewOptions all = new ViewOptions(false, true, true);
+		// Every one of the five switches away from its default, written as withers rather than as a row of bare
+		// booleans: addendum AO removed a field from the MIDDLE of the old positional list, so a five-argument call
+		// still compiles while meaning something else (ViewOptions' own constructor javadoc).
+		final ViewOptions all = ViewOptions.DEFAULT
+			.withCountCash(false)
+			.withCountUntradeables(true)
+			.withLivePrices(false)
+			.withCountInventory(false)
+			.withShowHoverText(true);
 		service.setOptions(all);
 
 		assertEquals(all, lastStatus().options());
@@ -2045,7 +2068,7 @@ public class PriceServiceTest
 
 		assertEquals(publishes, publishedStatus.size());
 
-		service.setOptions(ViewOptions.DEFAULT.withHoldingOnRows(true));
+		service.setOptions(ViewOptions.DEFAULT.withCountUntradeables(true));
 
 		assertTrue("a real change does publish", publishedStatus.size() > publishes);
 	}

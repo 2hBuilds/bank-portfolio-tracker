@@ -63,7 +63,7 @@ import org.slf4j.LoggerFactory;
  * account and no search text is ever a parameter, so every user of this plugin issues BYTE-IDENTICAL requests
  * and the hosts learn only an IP - which the descriptive {@link #USER_AGENT} already discloses - and that this
  * plugin is installed. The bank itself never leaves the client: it is read on the client thread and persisted
- * under {@code ~/.runelite/bank-portfolio-tracker/} only. {@code theRequestUrlsCarryNothingDerivedFromThePlayer}
+ * under {@code ~/.runelite/plugin-data/bank-portfolio-tracker/} only. {@code theRequestUrlsCarryNothingDerivedFromThePlayer}
  * in the tests is what keeps that true as the routes change.
  *
  * <p><b>Why the client and the Gson are injected.</b> RuneLite's {@code @Provides OkHttpClient}

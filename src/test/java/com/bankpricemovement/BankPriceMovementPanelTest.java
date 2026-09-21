@@ -31,7 +31,9 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.annotation.Nullable;
 import javax.imageio.ImageIO;
+import javax.swing.AbstractButton;
 import javax.swing.Icon;
+import javax.swing.JButton;
 import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
@@ -60,9 +62,11 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -102,11 +106,15 @@ public class BankPriceMovementPanelTest
 	private static final String COOLDOWN = "Refreshed 12 s ago - wait";
 	private static final String UNAVAILABLE = "Wiki history down - no movement";
 	/**
-	 * How every card tooltip in this file ends: the status sentence, and nothing after it. Addendum P's refresh
-	 * note used to follow it; addendum S line S3 took it off the card and made it the update line's own hover,
-	 * because a sentence only a hover can reach is one a reader looking for it never finds.
+	 * What the card's hover is, for every fixture in this file that publishes {@link #summary()} (addendum AF):
+	 * the bank value to the gp, with thousands separators, and nothing else at all.
+	 *
+	 * <p>It is composed from the summary rather than quoted, because the promise AF makes is that the hover and
+	 * the card's own 28 px figure are two spellings of ONE number - so a change that rounds the hover, or that
+	 * moves the figure off {@code valueNow()}, has to turn this red rather than be absorbed by a literal.
 	 */
-	private static final String TOOLTIP_TAIL = "<br>" + STATUS_TEXT + "</html>";
+	private static final String VALUE_TIP = MovementMath.formatExact(summary().valueNow())
+		+ BankPriceMovementPanel.GP_SUFFIX;
 	/** The update line's hover as the fixtures' price clock stamps it (S2). */
 	private static final String UPDATE_TIP = BankPriceMovementPanel.updateTooltip(PRICES_AT);
 	/**
@@ -121,6 +129,28 @@ public class BankPriceMovementPanelTest
 	 * together is T8's: with the switch off this panel is exactly the panel those addenda left behind.
 	 */
 	private static final ViewOptions LIVE_OFF = ViewOptions.DEFAULT.withLivePrices(false);
+	/**
+	 * The view switches with the hover switch ON (addendum AH, deleted by AI and restored narrowed by AJ:
+	 * {@code docs/bank-price-movement-addendum-AJ-2026-09-20.md}).
+	 *
+	 * <p>It is the {@link #LIVE_OFF} of the hovers, and for the same reason. {@code showHoverText} ships OFF -
+	 * the one switch in {@link ViewOptions#DEFAULT} whose default is the quieter sidebar - so a test that pins
+	 * what a hover SAYS has to name the switch it is reading under rather than inherit today's default, or
+	 * there is no hover on the component to read at all. Every such test goes through
+	 * {@link #buildWithHovers()}; that the default really is silent is pinned by the addendum AJ section
+	 * instead ({@link #theCardsHoverIsSilentUntilTheSwitchIsTurnedOn}).
+	 *
+	 * <p><b>AH3 widened it from two hovers to every one of them, and AJ narrowed it back by exactly one.</b>
+	 * AH as first built spared the tooltips that explain a CONTROL, and the user, on that build: "there are
+	 * still some things that show hover text even when its 'off' please fix this and make sure there is no
+	 * hover text at all unless it is on". So the sort button, the Refresh link, the update line, the gear and
+	 * its items, the chips, the band button and the preset boxes go quiet with the switch too - which is why
+	 * every test below that reads one of THEIR tooltips builds through {@link #buildWithHovers()} as well. The
+	 * item ROWS are the one thing outside its reach, because addendum AI moved a row's description out of the
+	 * hover and into the cell, so a row is silent at either setting
+	 * ({@link #aRowIsSilentUnderEitherSettingAndStillOpensOnAClick}).
+	 */
+	private static final ViewOptions HOVERS_ON = ViewOptions.DEFAULT.withShowHoverText(true);
 
 	private ItemManager itemManager;
 	private PriceService service;
@@ -258,6 +288,31 @@ public class BankPriceMovementPanelTest
 		assertNotNull(listener);
 	}
 
+	/**
+	 * {@link #build()} with addendum AH's hover switch turned ON in the stored config, over whatever else the
+	 * test has already put there (so a test that pins the guide-only card with {@link #LIVE_OFF} keeps it).
+	 *
+	 * <p>Every test that asserts what the card's hover or a CONTROL's hover says builds through this rather
+	 * than through {@link #build()}: since AH3 the switch governs both - the card's gp figure, and every
+	 * tooltip that explains a control - so a panel built on the defaults carries no tooltip on either and there
+	 * is nothing to read. A test about an item ROW does NOT need it and must not imply that it does: since
+	 * addendum AI a row is silent at either setting. The switch is seeded through the PREFS seam, which is the
+	 * plugin's own road in
+	 * ({@code Prefs.loadOptions} reads the config key), so nothing is saved back and {@code prefs.optionSaves}
+	 * stays empty.
+	 */
+	private void buildWithHovers() throws Exception
+	{
+		prefs.storedOptions = hovers(prefs.storedOptions == null ? ViewOptions.DEFAULT : prefs.storedOptions);
+		build();
+	}
+
+	/** {@code options} with addendum AH's hover switch on - for a test that hands the panel a value directly. */
+	private static ViewOptions hovers(ViewOptions options)
+	{
+		return options.withShowHoverText(true);
+	}
+
 	private void publish(List<MovementRow> rows, PriceService.Status status) throws Exception
 	{
 		onEdt(() -> listener.onRows(rows, status));
@@ -345,6 +400,18 @@ public class BankPriceMovementPanelTest
 		return status(true, true, 3, 3, window, problem, STATUS_TEXT, PRICES_AT, thenDay);
 	}
 
+	/**
+	 * {@link #listedWithProblem} carrying the portfolio as well - the hero card speaking AND the problem row
+	 * under it, which is the state the whole-tree hover walk needs: it is the only publish that puts all four
+	 * of {@link Widgets#setFitted}'s labels on screen at once.
+	 */
+	private static PriceService.Status listedWithProblemAndPortfolio(String problem)
+	{
+		final PriceService.Status s = listedWithProblem(problem, MovementWindow.D1, THEN_DAY);
+		when(s.portfolio()).thenReturn(summary());
+		return s;
+	}
+
 	/** {@link #listedWithProblem} with the kind said outright, whatever the sentence reads like. */
 	private static PriceService.Status listedWithProblem(String problem, PriceService.ProblemKind kind,
 		MovementWindow window, @Nullable LocalDate thenDay)
@@ -365,6 +432,26 @@ public class BankPriceMovementPanelTest
 			final long unit = i * 1_000L;
 			out.add(new MovementRow(i, "Item " + i, i, i > 1, unit, unit - 100L, 100L, 100.0 * 100 / (unit - 100), unit * i,
 				null));
+		}
+		return Collections.unmodifiableList(out);
+	}
+
+	/**
+	 * {@link #rows} as the half-hourly price recheck publishes them again: the SAME items - same ids, same names,
+	 * same quantities - one gp dearer each.
+	 *
+	 * <p>It is the fixture addendum AG's tests are built on, because it is the publish that nobody asked for. The
+	 * list differs, so {@code onRows} rebuilds the page from new {@link MovementRowPanel} instances; nothing the
+	 * reader did caused it; and a row that held its own clicked/unclicked flag would fold itself up right here.
+	 */
+	private static List<MovementRow> repriced(int n)
+	{
+		final List<MovementRow> out = new ArrayList<>(n);
+		for (int i = 1; i <= n; i++)
+		{
+			final long unit = i * 1_000L + 1L;
+			out.add(new MovementRow(i, "Item " + i, i, i > 1, unit, unit - 101L, 101L, 101.0 * 100 / (unit - 101),
+				unit * i, null));
 		}
 		return Collections.unmodifiableList(out);
 	}
@@ -832,30 +919,42 @@ public class BankPriceMovementPanelTest
 		assertFalse("and it still fits the card", footnote.endsWith(Widgets.ELLIPSIS));
 	}
 
-	/** N 3.1: the tooltip is M4's lines AND the whole header sentence, on the card and every child (playbook 7.5). */
+	/**
+	 * AF (N 3.1's target, rebuilt): the hover on the card and every child of it is the bank value to the gp and
+	 * NOTHING else. The user, looking at the eight-line block it used to be: "it clutters the screen and the
+	 * button right under it allow you to see those values" - so what the hover is for now is the one thing the
+	 * 28 px figure cannot say, which is the gp the rounding took away.
+	 *
+	 * <p>The figure and the hover are pinned against the SAME summary field here (playbook 7.5), because the whole
+	 * promise is that they are two spellings of one number: a change that rounds one without the other, or that
+	 * moves either off {@code valueNow()}, turns this red.
+	 */
 	@Test
-	public void heroTooltipCarriesTheM4LinesAndTheHeaderSentenceOnEveryChild() throws Exception
+	public void heroTooltipIsTheExactBankValueOnEveryChildOfTheCard() throws Exception
 	{
 		// T8: this test pins the guide-only card, so it names the switch it is drawing rather than
 		// inheriting today's default.
 		prefs.storedOptions = LIVE_OFF;
-		build();
+		buildWithHovers();
 		publish(rows(3), listedWith(summary()));
 		final String tip = panel.hero().getToolTipText();
-		// Y3: the carried clause rides on the first line while countInventory is on, which is its default.
-		assertTrue(tip, tip.startsWith("<html>Bank value: 1,234,567,890 gp over 519 of 538 stacks,"
-			+ " including inventory and worn gear (whole bank - the gp band is not applied)"));
-		assertTrue(tip, tip.contains("<br>1d vs 07 Sep: +12,400,000 gp (+1.0%), 512 stacks priced on both days"));
-		assertTrue(tip, tip.contains("<br>7d vs 01 Sep: 0 gp (0.0%), 500 stacks priced on both days"));
-		assertTrue(tip, tip.contains("<br>30d vs 09 Aug: -3,100,000 gp (-0.2%), 498 stacks priced on both days"));
-		assertFalse("no line for a window without a baseline", tip.contains("180d"));
-		assertTrue(tip, tip.contains("<br>" + BankPriceMovementPanel.SUMS_RULE));
-		assertTrue("the whole status sentence lives here (N 3.1), and it is the LAST line (S3)", tip.endsWith(TOOLTIP_TAIL));
-		assertEquals(tip, BankPriceMovementPanel.valueTooltip(summary(), STATUS_TEXT, HeroVisibility.ALL, null, LIVE_OFF));
+		assertEquals("the gp figure, with thousands separators and its unit", "1,234,567,890 gp", tip);
+		assertEquals(VALUE_TIP, tip);
+		assertFalse("one line, so no HTML wrapper round it", tip.contains("<html>"));
+		assertFalse(tip, tip.contains("<br>"));
+		assertEquals("and the card prints the rounded form of that very number",
+			MovementMath.formatGp(summary().valueNow()), panel.totalLabel().getText());
+		assertEquals("1.23b", panel.totalLabel().getText());
+
+		// Nothing the old block carried survives: the reader gets it from the card or from the controls under it.
+		assertFalse("the stack counts are the band button's business now", tip.contains("stacks"));
+		assertFalse("a window's own figures are on the move line and the chips", tip.contains("1d"));
+		assertFalse(tip, tip.contains("Sums count"));
+		assertFalse("the status sentence is the footnote's", tip.contains(STATUS_TEXT));
+
+		assertEquals(tip, BankPriceMovementPanel.valueTooltip(summary(), HeroVisibility.ALL, null));
 		assertEquals("a null visibility reads as every figure shown", tip,
-			BankPriceMovementPanel.valueTooltip(summary(), STATUS_TEXT, null, null, LIVE_OFF));
-		assertTrue(BankPriceMovementPanel.valueTooltip(summary(), null, HeroVisibility.ALL, null, LIVE_OFF)
-			.endsWith("left out.</html>"));
+			BankPriceMovementPanel.valueTooltip(summary(), null, null));
 		for (JComponent c : new JComponent[]{panel.hero(), panel.captionRow(), panel.captionLabel(), panel.totalLabel(),
 			panel.moveLine(), panel.triangleLabel(), panel.deltaLabel(), panel.pctLabel(), panel.stripHolder(), panel.footnoteLabel()})
 		{
@@ -864,19 +963,19 @@ public class BankPriceMovementPanelTest
 		assertEquals("the link keeps its own tooltip", BankPriceMovementPanel.REFRESH_TIP, panel.refreshLabel().getToolTipText());
 		assertEquals("and the update line keeps its own (S2)", UPDATE_TIP, panel.updateLabel().getToolTipText());
 		assertTrue("a chip keeps its own tooltip", panel.windowChip(MovementWindow.D1).getToolTipText().startsWith("Guide-price change"));
-		// A window whose baseline day is unknown prints a dash, never a guess.
-		final String noDay = BankPriceMovementPanel.valueTooltip(new PortfolioSummary(5L, 1, 1,
-			Collections.singletonMap(MovementWindow.D7, new WindowMove(MovementWindow.D7, null, 5L, 5L, 0L, 0.0d, 1))),
-			null, HeroVisibility.ALL, null, LIVE_OFF);
-		assertTrue(noDay, noDay.contains("<br>7d vs -: 0 gp (0.0%), 1 stacks priced on both days"));
+
+		// The lit window is no longer anything to the hover: the figure is the whole bank, whichever chip is on.
+		onEdt(() -> panel.selectWindow(MovementWindow.D180));
+		assertEquals("a window with no baseline leaves the total - and so the hover - alone", tip,
+			panel.hero().getToolTipText());
 	}
 
 	/**
 	 * O3 / O6: all eight combinations of the three switches. For each: the lines in the card and the figures on
 	 * the move line are exactly the ones switched on; the card's height is the full card less the lines removed
 	 * (nothing hidden takes its place - {@code DynamicGridLayout.java:211-216}: insets plus the rows' heights);
-	 * the width rule holds with the widest figures (N6); and the tooltip names ONLY the figures that are shown,
-	 * ending in the status sentence - the status sentence alone when everything is hidden.
+	 * the width rule holds with the widest figures (N6); and the hover is the exact total while the total is
+	 * drawn and no hover at all when it is not (AF) - a hover explains a number, so it goes with the number.
 	 */
 	@Test
 	public void everyCombinationOfTheSwitchesDrawsTheRightLinesFitsTheCardAndTellsTheTooltip() throws Exception
@@ -884,7 +983,7 @@ public class BankPriceMovementPanelTest
 		// T8: this test pins the guide-only card, so it names the switch it is drawing rather than
 		// inheriting today's default.
 		prefs.storedOptions = LIVE_OFF;
-		build();
+		buildWithHovers();
 		publish(rows(3), listedWith(summary()));
 		final int[] measured = new int[4];
 		onEdt(() ->
@@ -960,40 +1059,13 @@ public class BankPriceMovementPanelTest
 				assertEquals(v + ": the card is the full card less the lines removed", expected, height);
 				assertEquals(v + ": the card is exactly its lines", sum, height);
 
-				// The tooltip: only the figures that are shown, the status sentence last.
+				// The hover (AF): the exact total while the total is drawn, and nothing at all when it is not.
+				// It follows v.value() ALONE - the gp and percent switches decide what is on the move line, and
+				// the move line's figures were never what this hover explained.
 				final String tip = panel.hero().getToolTipText();
-				assertEquals(v.toString(), tip, BankPriceMovementPanel.valueTooltip(summary(), STATUS_TEXT, v, null, LIVE_OFF));
-				assertEquals(v + ": the total in the tooltip", v.value(), tip.contains("1,234,567,890"));
-				assertEquals(v + ": the exact gp in the tooltip", v.gp(), tip.contains("+12,400,000") || tip.contains("-3,100,000"));
-				assertEquals(v + ": the percent in the tooltip", v.pct(), tip.contains("+1.0%") || tip.contains("-0.2%"));
-				assertEquals(v + ": the sums rule goes with the last figure", v.any(), tip.contains("Sums count"));
-				assertEquals(v + ": a window line only while a move figure is shown", v.moveLine(), tip.contains("1d vs 07 Sep:"));
-				// With the total hidden the window line is the tooltip's FIRST line, so no "<br>" precedes it.
-				if (v.gp() && v.pct())
-				{
-					assertTrue(tip, tip.contains("1d vs 07 Sep: +12,400,000 gp (+1.0%), 512 stacks priced on both days"));
-				}
-				else if (v.gp())
-				{
-					assertTrue(tip, tip.contains("1d vs 07 Sep: +12,400,000 gp, 512 stacks priced on both days"));
-					assertFalse(tip, tip.contains("%"));
-				}
-				else if (v.pct())
-				{
-					assertTrue(tip, tip.contains("1d vs 07 Sep: +1.0%, 512 stacks priced on both days"));
-					assertFalse(tip, tip.contains("12,400,000") || tip.contains("3,100,000"));
-				}
-				final String firstLine = v.value() ? "<html>Bank value: " : v.moveLine() ? "<html>1d vs 07 Sep: " : "<html>" + STATUS_TEXT;
-				assertTrue(v + ": the first line has no break before it: " + tip, tip.startsWith(firstLine));
-				if (v.any())
-				{
-					assertTrue(tip, tip.endsWith(TOOLTIP_TAIL));
-				}
-				else
-				{
-					assertEquals("everything hidden: the status sentence alone, which is not a figure",
-						"<html>" + STATUS_TEXT + "</html>", tip);
-				}
+				assertEquals(v.toString(), v.value() ? VALUE_TIP : null, tip);
+				assertEquals(v.toString(), v.value() ? VALUE_TIP : "",
+					BankPriceMovementPanel.valueTooltip(summary(), v, null));
 				for (JComponent c : new JComponent[]{panel.captionRow(), panel.captionLabel(), panel.totalRow(),
 					panel.totalLabel(), panel.moveLine(), panel.deltaLabel(), panel.pctLabel(), panel.stripHolder(),
 					panel.footnoteLabel()})
@@ -1022,9 +1094,8 @@ public class BankPriceMovementPanelTest
 				assertFalse("the total is whole", panel.totalLabel().getText().endsWith(Widgets.ELLIPSIS));
 				assertEquals("-99.9%", panel.pctLabel().getText());
 				assertFalse(panel.deltaLabel().getText().endsWith(Widgets.ELLIPSIS));
-				final String tip = panel.hero().getToolTipText();
-				assertEquals(v + ": no exact gp in the tooltip while the gp is hidden", v.gp(), tip.contains("-999,000,000,000"));
-				assertEquals(v.value(), tip.contains("999,999,999,999"));
+				// The widest total there is: the hover spells all twelve digits, however the card had to fit it.
+				assertEquals(v.toString(), v.value() ? "999,999,999,999 gp" : null, panel.hero().getToolTipText());
 			});
 			publish(rows(3), listedWith(summary()));
 		}
@@ -1041,7 +1112,7 @@ public class BankPriceMovementPanelTest
 		// T8: this test pins the guide-only card, so it names the switch it is drawing rather than
 		// inheriting today's default.
 		prefs.storedOptions = LIVE_OFF;
-		build();
+		buildWithHovers();
 		publish(rows(3), listedWith(summary()));
 		onEdt(() -> panel.applyHeroVisibility(HeroVisibility.NONE));
 		onEdt(() ->
@@ -1056,7 +1127,7 @@ public class BankPriceMovementPanelTest
 			assertTrue(Widgets.isLit(panel.windowChip(MovementWindow.D1)));
 			assertTrue(panel.footnoteLabel().getText(), panel.footnoteLabel().getText().startsWith("1d vs 07 Sep - bank "));
 			assertEquals("the edge stays", ColorScheme.PROGRESS_COMPLETE_COLOR.darker(), edgeOf(panel.hero()));
-			assertEquals("<html>" + STATUS_TEXT + "</html>", panel.hero().getToolTipText());
+			assertNull("AF: no figure under the pointer, so no hover to explain one", panel.hero().getToolTipText());
 			assertEquals(BankPriceMovementPanel.UPDATE_TEXT, panel.updateLabel().getText());
 			final String d = panel.describe();
 			assertTrue(d, d.contains("\"hero\":{\"value\":false,\"gp\":false,\"pct\":false},\"bankValueShowing\":true,\"bankValue\":\"\",\"bankMove\":\"1d   +12.4m   +1.0%\",\"bankWindow\":\"1d\",\"heroGp\":\"\",\"heroPct\":\"\",\"heroSub\":\"1d vs 07 Sep - bank "));
@@ -1067,9 +1138,8 @@ public class BankPriceMovementPanelTest
 			assertEquals(ColorScheme.DARKER_GRAY_COLOR, edgeOf(panel.hero()));
 			assertTrue(panel.footnoteLabel().getText().startsWith("Guide prices - bank "));
 		});
-		// A status with no header sentence, nothing ever fetched and everything hidden: no tooltip at all rather
-		// than an empty box - and the update line still carries its own, because its first two sentences are true
-		// before any fetch (S2).
+		// Nothing ever fetched and everything hidden: no tooltip at all rather than an empty box - and the update
+		// line still carries its own, because its first two sentences are true before any fetch (S2).
 		final PriceService.Status bare = status(true, true, 3, 3, MovementWindow.D1, null, "", 0L);
 		when(bare.headerText()).thenReturn("");
 		publish(rows(3), bare);
@@ -1078,7 +1148,7 @@ public class BankPriceMovementPanelTest
 		assertEquals(BankPriceMovementPanel.updateTooltip(0L), panel.updateLabel().getToolTipText());
 
 		// ...and once prices have been read, the card says no more than it did - the clock is the update line's
-		// business now (S3), not a line of the card's tooltip.
+		// business (S3), and the hover is the total's, which is hidden.
 		final PriceService.Status fetched = status(true, true, 3, 3, MovementWindow.D1, null, "", PRICES_AT);
 		when(fetched.headerText()).thenReturn("");
 		publish(rows(3), fetched);
@@ -1175,71 +1245,72 @@ public class BankPriceMovementPanelTest
 		assertEquals(Widgets.MOVE_DOWN_TEXT, panel.pctLabel().getForeground());
 	}
 
-	/** O3's tooltip as a pure function: the four ways a window line can read, and the empty case. */
+	/**
+	 * AF's hover as a pure function: {@code MovementMath.formatExact(valueNow())} and nothing else, plain text
+	 * while there is one line to say, {@code ""} while the total is hidden, and the degraded sentence on a second
+	 * line under the figure when there is one - which is the only thing that ever puts HTML round it.
+	 */
 	@Test
-	public void valueTooltipListsOnlyTheFiguresShown()
+	public void valueTooltipIsTheExactBankValueAndNothingElse()
 	{
 		final PortfolioSummary s = summary();
-		final String gpOnly = tooltip(s, STATUS_TEXT, HeroVisibility.of(true, true, false));
-		assertTrue(gpOnly, gpOnly.contains("<br>30d vs 09 Aug: -3,100,000 gp, 498 stacks priced on both days"));
-		assertFalse(gpOnly, gpOnly.contains("%"));
-		final String pctOnly = tooltip(s, STATUS_TEXT, HeroVisibility.of(false, false, true));
-		assertTrue(pctOnly, pctOnly.startsWith("<html>1d vs 07 Sep: +1.0%, 512 stacks priced on both days<br>7d vs 01 Sep: 0.0%, 500 stacks"));
-		// No gp FIGURE in the window lines - the sums rule below them names the unit itself ("1,000 gp each", P1).
-		assertFalse(pctOnly, pctOnly.substring(0, pctOnly.indexOf(BankPriceMovementPanel.SUMS_RULE)).contains(" gp"));
-		assertTrue(pctOnly, pctOnly.contains("<br>Sums count"));
-		final String valueOnly = tooltip(s, STATUS_TEXT, HeroVisibility.of(true, false, false));
-		assertEquals("<html>Bank value: 1,234,567,890 gp over 519 of 538 stacks, including inventory and worn gear"
-			+ " (whole bank - the gp band is not applied)"
-			+ "<br>" + BankPriceMovementPanel.SUMS_RULE
-			+ "<br>" + STATUS_TEXT + "</html>", valueOnly);
-		assertEquals("<html>" + STATUS_TEXT + "</html>", tooltip(s, STATUS_TEXT, HeroVisibility.NONE));
-		assertEquals("nothing to say at all", "", tooltip(s, null, HeroVisibility.NONE));
-		assertEquals("", tooltip(s, "", HeroVisibility.NONE));
-		assertEquals("the header sentence is escaped", "<html>a &lt;b&gt; &amp; c</html>",
-			tooltip(s, "a <b> & c", HeroVisibility.NONE));
+		assertEquals("1,234,567,890 gp", BankPriceMovementPanel.valueTooltip(s, HeroVisibility.ALL, null));
+		assertEquals("the switches below the total are nothing to it: only value() decides",
+			"1,234,567,890 gp", BankPriceMovementPanel.valueTooltip(s, HeroVisibility.of(true, false, false), null));
+		assertEquals("a null visibility reads as every figure shown", "1,234,567,890 gp",
+			BankPriceMovementPanel.valueTooltip(s, null, null));
+		assertEquals("an empty warning is no warning", "1,234,567,890 gp",
+			BankPriceMovementPanel.valueTooltip(s, HeroVisibility.ALL, ""));
+
+		// Hidden: "", which is the caller's signal to set no tooltip at all rather than an empty yellow box.
+		assertEquals("", BankPriceMovementPanel.valueTooltip(s, HeroVisibility.NONE, null));
+		assertEquals("hidden beats a warning - there is no figure for it to hang under", "",
+			BankPriceMovementPanel.valueTooltip(s, HeroVisibility.NONE, UNAVAILABLE));
+		assertEquals("", BankPriceMovementPanel.valueTooltip(s, HeroVisibility.of(false, true, true), null));
+
+		// Degraded: the figure, a break, the sentence - and the sentence is escaped, because the service composes
+		// it from the wiki's own words and a stray angle bracket would eat the rest of the tooltip.
+		assertEquals("<html>1,234,567,890 gp<br>" + UNAVAILABLE + "</html>",
+			BankPriceMovementPanel.valueTooltip(s, HeroVisibility.ALL, UNAVAILABLE));
+		assertEquals("<html>1,234,567,890 gp<br>a &lt;b&gt; &amp; c</html>",
+			BankPriceMovementPanel.valueTooltip(s, HeroVisibility.ALL, "a <b> & c"));
+
+		// A bank worth nothing still answers a figure: "0 gp" is the truth, and a blank hover would read as a bug.
+		assertEquals("0 gp", BankPriceMovementPanel.valueTooltip(PortfolioSummary.EMPTY, HeroVisibility.ALL, null));
+		assertEquals("0 gp", BankPriceMovementPanel.valueTooltip(
+			new PortfolioSummary(0L, 0, 0, Collections.emptyMap()), HeroVisibility.ALL, null));
+		assertEquals("<html>0 gp<br>" + UNAVAILABLE + "</html>",
+			BankPriceMovementPanel.valueTooltip(PortfolioSummary.EMPTY, HeroVisibility.ALL, UNAVAILABLE));
 	}
 
 	/**
 	 * P1: coins and platinum tokens are half of what a player means by "bank value", so they are IN the 28 px
-	 * total - and named in the tooltip's first line, because a reader adding the rows up by hand would otherwise
-	 * be short by exactly the cash. The clause is absent at 0: "plus 0 gp in coins" says nothing.
+	 * total - and, since AF, in the hover under it to the gp, because a reader adding the rows up by hand would
+	 * otherwise be short by exactly the cash and have nothing to check their arithmetic against.
 	 */
 	@Test
-	public void theCardCountsCoinsInTheTotalAndNamesThemInItsTooltip() throws Exception
+	public void theCardCountsCoinsInTheTotalAndInItsExactHover() throws Exception
 	{
 		// T8: this test pins the guide-only card, so it names the switch it is drawing rather than
 		// inheriting today's default.
 		prefs.storedOptions = LIVE_OFF;
-		build();
+		buildWithHovers();
 		publish(rows(3), listedWith(summaryWithCash(791_078L)));
-		final String withCash = panel.hero().getToolTipText();
-		// Y3: the carried clause is an appositive and takes the comma the coins clause then rides on.
-		assertTrue(withCash, withCash.startsWith("<html>Bank value: 1,235,358,968 gp over 519 of 538 stacks"
-			+ ", including inventory and worn gear, plus 791,078 gp in coins (whole bank - the gp band is not applied)"));
-		assertTrue("the rule names what the sum counts", withCash.contains("<br>" + BankPriceMovementPanel.SUMS_RULE));
-		assertEquals("the wording addendum P asks for, pinned",
-			"Sums count each stack's guide price x quantity, plus coins and platinum tokens (1,000 gp each);"
-				+ " stacks without a guide price are left out.", BankPriceMovementPanel.SUMS_RULE);
+		assertEquals("the stacks plus the cash, to the gp", "1,235,358,968 gp", panel.hero().getToolTipText());
+		assertEquals("1.23b", panel.totalLabel().getText());
 
-		// The same bank with no cash: the same first line without the clause, and the stacks' value alone.
+		// The same bank with no cash: the hover is short by exactly the 791,078 gp that left it.
 		publish(rows(3), listedWith(summary()));
-		final String noCash = panel.hero().getToolTipText();
-		assertTrue(noCash, noCash.startsWith("<html>Bank value: 1,234,567,890 gp over 519 of 538 stacks"
-			+ ", including inventory and worn gear (whole bank - the gp band is not applied)"));
-		assertFalse(noCash, noCash.contains("in coins"));
-		assertEquals("", BankPriceMovementPanel.coinsClause(0L));
-		assertEquals("", BankPriceMovementPanel.coinsClause(-1L));
-		assertEquals(" plus 791,078 gp in coins", BankPriceMovementPanel.coinsClause(791_078L));
+		assertEquals("1,234,567,890 gp", panel.hero().getToolTipText());
+		assertEquals("and the difference is the cash", 791_078L,
+			summaryWithCash(791_078L).valueNow() - summary().valueNow());
 
 		// The 28 px figure is the whole bank, cash included - here a bank that is nothing but cash.
 		publish(rows(3), listedWith(new PortfolioSummary(0L, 0, 0, Collections.emptyMap(), 200_000_000L)));
 		onEdt(() ->
 		{
 			assertEquals("200m", panel.totalLabel().getText());
-			assertTrue(panel.hero().getToolTipText(), panel.hero().getToolTipText().startsWith(
-				"<html>Bank value: 200,000,000 gp over 0 of 0 stacks, including inventory and worn gear,"
-					+ " plus 200,000,000 gp in coins"));
+			assertEquals("200,000,000 gp", panel.hero().getToolTipText());
 		});
 		publish(rows(3), listedWith(summaryWithCash(791_078L)));
 		onEdt(() -> assertEquals("the stacks plus the cash, in stack form", "1.23b", panel.totalLabel().getText()));
@@ -1311,12 +1382,12 @@ public class BankPriceMovementPanelTest
 		// The clock is the viewer's own (MovementMath.formatTime reads in the default zone), so it is composed
 		// rather than quoted; every other character of the three sentences is pinned.
 		assertEquals("the wording addendum S asks for, pinned",
-			"<html>Bank Portfolio Tracker uses the Grand Exchange guide price, which Jagex publishes once a day at a"
+			"<html>2h Bank Portfolio Tracker uses the Grand Exchange guide price, which Jagex publishes once a day at a"
 				+ " varying hour.<br>It is the price shown on the Grand Exchange website.<br>RuneLite's own item hover uses the wiki's traded price by default, which differs most on thinly traded items.<br>Jagex moves a guide price by at most about 5% a day, so a large move shows over several days.<br>Refresh re-checks for it, and the plugin re-checks by itself every 30 minutes."
 				+ "<br>Last checked " + MovementMath.formatTime(PRICES_AT) + ".</html>",
 			BankPriceMovementPanel.updateTooltip(PRICES_AT));
 		assertEquals("nothing ever fetched: five sentences, no clock",
-			"<html>Bank Portfolio Tracker uses the Grand Exchange guide price, which Jagex publishes once a day at a"
+			"<html>2h Bank Portfolio Tracker uses the Grand Exchange guide price, which Jagex publishes once a day at a"
 				+ " varying hour.<br>It is the price shown on the Grand Exchange website.<br>RuneLite's own item hover uses the wiki's traded price by default, which differs most on thinly traded items.<br>Jagex moves a guide price by at most about 5% a day, so a large move shows over several days.<br>Refresh re-checks for it, and the plugin re-checks by itself every 30 minutes."
 				+ "</html>",
 			BankPriceMovementPanel.updateTooltip(0L));
@@ -1327,7 +1398,7 @@ public class BankPriceMovementPanelTest
 		// T8: this test pins the guide-only card, so it names the switch it is drawing rather than
 		// inheriting today's default.
 		prefs.storedOptions = LIVE_OFF;
-		build();
+		buildWithHovers();
 		publish(rows(3), listedWith(summary()));
 		assertEquals(UPDATE_TIP, panel.updateLabel().getToolTipText());
 		assertTrue(UPDATE_TIP, UPDATE_TIP.contains(MovementMath.formatTime(PRICES_AT)));
@@ -1349,34 +1420,42 @@ public class BankPriceMovementPanelTest
 	}
 
 	/**
-	 * S3: addendum P's last tooltip line ("Guide prices change once a day - last checked 09:05") is REDUNDANT now
-	 * that the card carries the sentence as a line, so it is gone and the card's tooltip ends with the status
-	 * sentence again - under a degraded warning when there is one.
+	 * S3, under AF: no clock on the card's hover. Addendum P hung "Guide prices change once a day - last checked
+	 * 09:05" on the end of it, S3 moved that to the update line's own hover, and AF took the rest away - so the
+	 * only thing that can follow the figure now is the degraded sentence, and it is followed by nothing.
+	 *
+	 * <p>The warning survives AF because it is the one thing the card cannot repeat: the footnote reddens for it
+	 * but is fitted to 191 px and cannot carry the sentence (B005 / B101).
 	 */
 	@Test
-	public void theCardTooltipNoLongerCarriesTheRefreshNote() throws Exception
+	public void theCardHoverCarriesNoClockAndEndsOnTheDegradedSentence() throws Exception
 	{
 		// T8: this test pins the guide-only card, so it names the switch it is drawing rather than
 		// inheriting today's default.
 		prefs.storedOptions = LIVE_OFF;
-		build();
+		buildWithHovers();
 		publish(rows(3), listedWith(summary()));
 		final String tip = panel.hero().getToolTipText();
+		assertEquals(VALUE_TIP, tip);
 		assertFalse(tip, tip.contains("last checked"));
 		assertFalse(tip, tip.contains(MovementMath.formatTime(PRICES_AT)));
-		assertTrue(tip, tip.endsWith("<br>" + STATUS_TEXT + "</html>"));
 
-		// A degraded status: the warning is the last line, as it was before P hung a note after it.
+		// A degraded status: the figure, a break, the sentence, and the tooltip ends there.
 		final PriceService.Status blind = listedWith(summary());
 		when(blind.degraded()).thenReturn(true);
 		when(blind.degradedReason()).thenReturn(UNAVAILABLE);
 		publish(rows(3), blind);
-		assertTrue(panel.hero().getToolTipText(), panel.hero().getToolTipText().endsWith(
-			"<br>" + STATUS_TEXT + "<br>" + UNAVAILABLE + "</html>"));
+		assertEquals("<html>" + VALUE_TIP + "<br>" + UNAVAILABLE + "</html>", panel.hero().getToolTipText());
 		assertFalse(panel.hero().getToolTipText(), panel.hero().getToolTipText().contains("last checked"));
+		assertFalse("the status sentence is the footnote's, degraded or not",
+			panel.hero().getToolTipText().contains(STATUS_TEXT));
 
 		// ...and the clock it used to print is on the update line's hover, off the same status field.
 		assertEquals(UPDATE_TIP, panel.updateLabel().getToolTipText());
+
+		// A confident status takes the second line back off, and the hover is the bare figure again.
+		publish(rows(3), listedWith(summary()));
+		assertEquals(VALUE_TIP, panel.hero().getToolTipText());
 	}
 
 	/**
@@ -1388,7 +1467,7 @@ public class BankPriceMovementPanelTest
 	@Test
 	public void theLivePricesItemLeadsTheViewGroupAndWritesThePref() throws Exception
 	{
-		build();
+		buildWithHovers();
 		publish(rows(3), listedWith(summary()));
 		// Y4 gave it a verb: the switch addendum T named "Live prices" reads "Use live prices" in the menu and on
 		// the settings page, and nothing else about it moved.
@@ -1404,9 +1483,13 @@ public class BankPriceMovementPanelTest
 
 		final int rebuilds = panel.rebuilds();
 		onEdt(() -> panel.livePricesItem().doClick(0));
-		assertEquals(LIVE_OFF, panel.options());
+		// hovers(...) throughout, because this panel was built with AH's hover switch on - the gear item's own
+		// tooltip is read above, and since AH3 there is none to read with the switch off. It rides along in
+		// every ViewOptions here and moves nothing else.
+		assertEquals(hovers(LIVE_OFF), panel.options());
 		assertFalse("the tick follows the click", panel.livePricesItem().isSelected());
-		assertEquals("the pref is written so the config panel follows", Arrays.asList(LIVE_OFF), prefs.optionSaves);
+		assertEquals("the pref is written so the config panel follows", Arrays.asList(hovers(LIVE_OFF)),
+			prefs.optionSaves);
 		assertEquals("the card follows at once", BankPriceMovementPanel.UPDATE_TEXT, panel.updateLabel().getText());
 		assertEquals("the rows wait for the service's own recompute", rebuilds, panel.rebuilds());
 		assertTrue("the filter and the hero switches are untouched", prefs.saves.isEmpty());
@@ -1414,7 +1497,7 @@ public class BankPriceMovementPanelTest
 		verify(service, never()).setFilter(any());
 
 		// The config's own road back ticks and repaints and writes nothing more.
-		onEdt(() -> panel.applyOptions(ViewOptions.DEFAULT));
+		onEdt(() -> panel.applyOptions(hovers(ViewOptions.DEFAULT)));
 		assertTrue(panel.livePricesItem().isSelected());
 		assertEquals(BankPriceMovementPanel.UPDATE_LIVE_TEXT, panel.updateLabel().getText());
 		assertEquals(1, prefs.optionSaves.size());
@@ -1428,7 +1511,7 @@ public class BankPriceMovementPanelTest
 	@Test
 	public void theCardSaysLivePricesAreOnWhileTheSwitchIsOn() throws Exception
 	{
-		build();
+		buildWithHovers();
 		publish(rows(3), listedWith(summary()));
 		onEdt(() ->
 		{
@@ -1460,14 +1543,15 @@ public class BankPriceMovementPanelTest
 				BankPriceMovementPanel.updateTooltip(0L, ViewOptions.DEFAULT).contains("Last checked"));
 			assertNotEquals("it is the line's own hover, not the card's", panel.hero().getToolTipText(), tip);
 
-			// T8: off is addendum S's line and hover, to the character.
-			panel.applyOptions(LIVE_OFF);
+			// T8: off is addendum S's line and hover, to the character. The hovers stay ON across the flip, so
+			// the only switch moving here is the live one - AH3 put every tooltip behind the other.
+			panel.applyOptions(hovers(LIVE_OFF));
 			assertEquals(BankPriceMovementPanel.UPDATE_TEXT, panel.updateLabel().getText());
 			assertEquals(UPDATE_TIP, panel.updateLabel().getToolTipText());
 			assertEquals(BankPriceMovementPanel.updateTooltip(PRICES_AT), panel.updateLabel().getToolTipText());
 
 			// ...and back, without a publish: the line is the panel's own switch.
-			panel.applyOptions(ViewOptions.DEFAULT);
+			panel.applyOptions(hovers(ViewOptions.DEFAULT));
 			assertEquals(BankPriceMovementPanel.UPDATE_LIVE_TEXT, panel.updateLabel().getText());
 			assertEquals("null reads as the defaults (T1)", panel.updateLabel().getText(),
 				BankPriceMovementPanel.updateText(null));
@@ -1483,37 +1567,28 @@ public class BankPriceMovementPanelTest
 	}
 
 	/**
-	 * T5: the card's tooltip counts the stacks that are on the traded series - the one place that count is printed
-	 * - and its sums rule names the prices the sum actually used. Both are there exactly while the switch is, and
-	 * the count is printed at 0 as well, because "0 of 519 stacks live" is the answer to "why has nothing moved?".
+	 * T8, under AF: the live switch changes the card's update LINE and the footnote, and it no longer changes the
+	 * hover at all - the hover is the total, and the total is the service's answer under whichever switch is on.
+	 *
+	 * <p>Addendum T's own count ("123 of 519 stacks live") went with the eight-line tooltip: it is the dev
+	 * bridge's {@code state.live.liveRows} now and is drawn nowhere.
 	 */
 	@Test
-	public void theCardTooltipCountsTheLiveStacksAndNamesTheLivePrices() throws Exception
+	public void theLiveSwitchLeavesTheCardsHoverAlone() throws Exception
 	{
-		build();
-		publish(rows(3), listedWith(summaryWithLive(123)));
-		final String tip = panel.hero().getToolTipText();
-		// Y3: the carried clause sits between the stacks count and the live count, both of them on by default.
-		assertTrue(tip, tip.startsWith("<html>Bank value: 1,234,567,890 gp over 519 of 538 stacks,"
-			+ " including inventory and worn gear, 123 of 519 stacks live (whole bank - the gp band is not applied)"));
-		assertTrue(tip, tip.contains("<br>Sums count each stack's guide price x quantity,"
-			+ " live traded prices for actively traded items, plus coins and platinum tokens (1,000 gp each);"
-			+ " stacks without a guide price are left out."));
-		assertTrue("the status sentence is still the last line (S3)", tip.endsWith(TOOLTIP_TAIL));
-		assertEquals(", 123 of 519 stacks live", BankPriceMovementPanel.liveClause(summaryWithLive(123), ViewOptions.DEFAULT));
-		assertEquals("printed at 0, and that is the state it exists for",
-			", 0 of 519 stacks live", BankPriceMovementPanel.liveClause(summary(), null));
+		buildWithHovers();
+		publish(rows(3), listedWithLive(summaryWithLive(123), 123, LocalDate.of(2026, 9, 9), null));
+		assertEquals(VALUE_TIP, panel.hero().getToolTipText());
+		assertEquals("the switch is drawn on the line under the figure, not in the hover over it",
+			BankPriceMovementPanel.UPDATE_LIVE_TEXT, panel.updateLabel().getText());
+		assertTrue("and the count is still readable from a terminal",
+			panel.describe().contains("\"liveRows\":123"));
 
-		publish(rows(3), listedWith(summary()));
-		assertTrue(panel.hero().getToolTipText(), panel.hero().getToolTipText().contains(", 0 of 519 stacks live "));
-
-		// T8: with the switch off neither clause is anywhere on the card, and the tooltip is the pre-T one.
-		onEdt(() -> panel.applyOptions(LIVE_OFF));
-		final String off = panel.hero().getToolTipText();
-		assertFalse(off, off.contains("stacks live"));
-		assertFalse(off, off.contains("live traded prices"));
-		assertEquals("", BankPriceMovementPanel.liveClause(summaryWithLive(123), LIVE_OFF));
-		assertEquals(BankPriceMovementPanel.valueTooltip(summary(), STATUS_TEXT, HeroVisibility.ALL, null, LIVE_OFF), off);
+		// AH: the hover switch rides along, because applyOptions takes the WHOLE value - turning the live series
+		// off with a bare LIVE_OFF here would turn the hovers off with it and leave nothing to read.
+		onEdt(() -> panel.applyOptions(hovers(LIVE_OFF)));
+		assertEquals("the same bank, live or not: the hover is the total", VALUE_TIP, panel.hero().getToolTipText());
+		assertEquals(BankPriceMovementPanel.UPDATE_TEXT, panel.updateLabel().getText());
 	}
 
 	// ---- addendum U: the live calendar on the card (U3)
@@ -1579,51 +1654,6 @@ public class BankPriceMovementPanelTest
 			BankPriceMovementPanel.provenanceText(live, MovementWindow.D1, move, PRICES_AT, LIVE_OFF));
 	}
 
-	/**
-	 * U3: the card's tooltip names BOTH days for a window whose live rows and guide rows compared against different
-	 * ones - the figure beside it is the sum of two populations, and one "vs 07 Sep" over it would be wrong for most
-	 * of the gp in the number. A window whose two calendars agree, one with no traded bucket, and every window while
-	 * the switch is off keep the one-day line addenda M to T print.
-	 */
-	@Test
-	public void theCardTooltipNamesBothDaysWhenTheLiveAndGuideCalendarsSeparate() throws Exception
-	{
-		build();
-		final Map<MovementWindow, LocalDate> days = new EnumMap<>(MovementWindow.class);
-		// 1d: the live rows are a day ahead of the guide table. 7d: the two agree. 30d: no traded bucket at all.
-		days.put(MovementWindow.D1, LocalDate.of(2026, 9, 8));
-		days.put(MovementWindow.D7, THEN_DAY.minusDays(6));
-		final PriceService.Status live = listedWithLive(summaryWithLive(123), 123, LocalDate.of(2026, 9, 9), days);
-		publish(rows(3), live);
-
-		final String tip = panel.hero().getToolTipText();
-		assertTrue(tip, tip.contains("<br>1d: live rows vs 08 Sep, guide rows vs 07 Sep: +12,400,000 gp (+1.0%),"
-			+ " 512 stacks priced on both days"));
-		assertTrue("the two calendars agree here, so one day is the whole truth",
-			tip.contains("<br>7d vs 01 Sep: 0 gp (0.0%), 500 stacks priced on both days"));
-		assertTrue("no traded bucket for this window, so the guide day stands alone",
-			tip.contains("<br>30d vs 09 Aug: -3,100,000 gp (-0.2%), 498 stacks priced on both days"));
-		assertTrue("the status sentence is still the last line (S3)", tip.endsWith(TOOLTIP_TAIL));
-
-		// The head on its own, which is the whole of the rule.
-		final WindowMove move = summary().move(MovementWindow.D1);
-		assertEquals("1d: live rows vs 08 Sep, guide rows vs 07 Sep: ",
-			BankPriceMovementPanel.windowHead(move, live.live(), ViewOptions.DEFAULT));
-		assertEquals("the switch off is the one-day head", "1d vs 07 Sep: ",
-			BankPriceMovementPanel.windowHead(move, live.live(), LIVE_OFF));
-		assertEquals("no live calendar at all is the one-day head", "1d vs 07 Sep: ",
-			BankPriceMovementPanel.windowHead(move, null, ViewOptions.DEFAULT));
-		assertEquals("no live rows on screen is the one-day head", "1d vs 07 Sep: ",
-			BankPriceMovementPanel.windowHead(move, listedWithLive(summary(), 0, LocalDate.of(2026, 9, 9), days).live(),
-				ViewOptions.DEFAULT));
-
-		// T8 still holds over it: with the switch off this tooltip is the guide-only one, character for character.
-		onEdt(() -> panel.applyOptions(LIVE_OFF));
-		assertEquals(BankPriceMovementPanel.valueTooltip(summaryWithLive(123), STATUS_TEXT, HeroVisibility.ALL, null,
-			LIVE_OFF), panel.hero().getToolTipText());
-		assertFalse(panel.hero().getToolTipText(), panel.hero().getToolTipText().contains("live rows vs"));
-	}
-
 	@Test
 	public void controlTextsAreThePureHelpers()
 	{
@@ -1668,12 +1698,15 @@ public class BankPriceMovementPanelTest
 
 	/**
 	 * O4 as addendum Q moved it (Q2): the GEAR menu - "Refresh prices now", the card's three check items, then
-	 * the three view switches, in two separated groups - and the card's right-click menu is gone with it.
+	 * the four view switches addendum AO left standing, in two separated groups - and the card's right-click
+	 * menu is gone with it.
 	 */
 	@Test
 	public void theGearMenuRefreshesAndTogglesTheThreeFigures() throws Exception
 	{
-		build();
+		// AH: the hovers are ON here so that the assertion below - hiding the total takes its hover with it -
+		// is about the FIGURE going away and not about the whole sidebar being silent.
+		buildWithHovers();
 		publish(rows(3), listedWith(summary()));
 		final JPopupMenu menu = panel.heroMenu();
 		assertNull("Q2: the card's right-click menu is REMOVED - the gear is the way in", panel.hero().getComponentPopupMenu());
@@ -1681,12 +1714,15 @@ public class BankPriceMovementPanelTest
 			BankPriceMovementPanel.SHOW_GP_TEXT, BankPriceMovementPanel.SHOW_PCT_TEXT,
 			BankPriceMovementPanel.LIVE_PRICES_TEXT, BankPriceMovementPanel.COUNT_CASH_TEXT,
 			BankPriceMovementPanel.COUNT_UNTRADEABLES_TEXT, BankPriceMovementPanel.COUNT_INVENTORY_TEXT,
-			BankPriceMovementPanel.HOLDING_ROWS_TEXT, BankPriceMovementPanel.RESET_PRESETS_TEXT), itemTexts(menu));
-		// Z2: ten items now - the nine switches and, under the preset row, the way back to the default bands;
-		// AB2 put the OK row under all of them.
-		assertEquals("ten items, the preset row, the OK row and three separators", 15, menu.getComponentCount());
+			// AH: the ninth and last ITEM, under the preset row. "Reset to default" is no longer among them -
+			// AH2 made it a button in the bottom row beside OK, so it is a child of that row and not an entry.
+			// It was the tenth until addendum AO deleted "Show stack value on rows" from the group above it.
+			BankPriceMovementPanel.SHOW_HOVER_TEXT_TEXT), itemTexts(menu));
+		// Z2: nine items - the eight switches and addendum AH's hover switch - with the preset row among them and,
+		// under everything, addendum AB's OK row carrying AH2's "Reset to default" button at its left end.
+		assertEquals("nine items, the preset row, the OK row and three separators", 14, menu.getComponentCount());
 		assertTrue("the first separator is under Refresh", menu.getComponent(1) instanceof JSeparator);
-		assertTrue("the second is between the card's three and the view's five", menu.getComponent(5) instanceof JSeparator);
+		assertTrue("the second is between the card's three and the view's four", menu.getComponent(5) instanceof JSeparator);
 		// T1: the price series leads the group - what a stack is worth is answered before whether it is counted.
 		assertSame(panel.livePricesItem(), menu.getComponent(6));
 		final List<JComponent> children = new ArrayList<>();
@@ -1714,7 +1750,7 @@ public class BankPriceMovementPanelTest
 		assertEquals(HeroVisibility.of(false, true, true), panel.heroVisibility());
 		assertFalse("the tick follows the click", panel.showValueItem().isSelected());
 		assertFalse("the total left the card at once", panel.shows(panel.totalLabel()));
-		assertFalse(panel.hero().getToolTipText().contains("1,234,567,890"));
+		assertNull("AF: the hover goes with the figure it explains", panel.hero().getToolTipText());
 		assertEquals("the pref is written so the config panel follows", Arrays.asList(HeroVisibility.of(false, true, true)), prefs.heroSaves);
 		assertTrue("the filter is not touched", prefs.saves.isEmpty());
 		verify(service, never()).setFilter(any());
@@ -1815,7 +1851,7 @@ public class BankPriceMovementPanelTest
 	@Test
 	public void theGearSitsAtTheRightOfTheTotalLineAndSaysOptions() throws Exception
 	{
-		build();
+		buildWithHovers();
 		publish(rows(3), listedWith(summary()));
 		onEdt(() ->
 		{
@@ -1848,22 +1884,23 @@ public class BankPriceMovementPanelTest
 	@Test
 	public void theInitialViewOptionsComeFromThePrefs() throws Exception
 	{
-		prefs.storedOptions = new ViewOptions(false, true, true).withCountInventory(false);
+		prefs.storedOptions = new ViewOptions(false, true, true, false, false);
 		build();
 		publish(rows(3), listedWith(summary()));
 		onEdt(() ->
 		{
-			assertEquals(new ViewOptions(false, true, true).withCountInventory(false), panel.options());
+			assertEquals(new ViewOptions(false, true, true, false, false), panel.options());
 			assertFalse(panel.countCashItem().isSelected());
 			assertTrue(panel.countUntradeablesItem().isSelected());
-			assertTrue(panel.holdingItem().isSelected());
-			assertFalse("Y1: the fifth switch comes through the same seam", panel.countInventoryItem().isSelected());
+			// T1's switch reads through the seam as well; it stood beside the row switch addendum AO deleted.
+			assertTrue(panel.livePricesItem().isSelected());
+			assertFalse("Y1: the carried switch comes through the same seam", panel.countInventoryItem().isSelected());
 			assertTrue("construction saves nothing", prefs.optionSaves.isEmpty());
 		});
 
-		// A fresh profile remembers nothing and gets the defaults: cash counted, what the player carries counted
-		// (Y1), the other two off. A second panel needs a second service, since build() pins that each one
-		// registers exactly one listener.
+		// A fresh profile remembers nothing and gets the defaults: cash counted, live prices on, what the player
+		// carries counted (Y1), untradeables and the data hovers off. A second panel needs a second service,
+		// since build() pins that each one registers exactly one listener.
 		service = mock(PriceService.class);
 		prefs = new RecordingPrefs();
 		build();
@@ -1872,56 +1909,67 @@ public class BankPriceMovementPanelTest
 			assertEquals(ViewOptions.DEFAULT, panel.options());
 			assertTrue(panel.countCashItem().isSelected());
 			assertTrue(panel.countInventoryItem().isSelected());
+			assertTrue(panel.livePricesItem().isSelected());
 			assertFalse(panel.countUntradeablesItem().isSelected());
-			assertFalse(panel.holdingItem().isSelected());
 		});
 	}
 
 	/**
-	 * Q2: the gear menu's three view items write the choice through {@code saveOptions} and apply it at once -
-	 * the round trip the card's three make - and the tick follows the click. The config's own path back
+	 * Q2: the gear menu's view items write the choice through {@code saveOptions} and apply it at once - the
+	 * round trip the card's three make - and the tick follows the click. The config's own path back
 	 * ({@link BankPriceMovementPanel#applyOptions}) writes nothing more.
+	 *
+	 * <p>Three of them are flipped here, which is what this test has always done; the third used to be the row
+	 * switch addendum AO deleted and is addendum T's live switch now. The one it is does not matter - they all
+	 * ride the same {@code setOptions} road - only that a flip of one carries every other switch through
+	 * untouched.
 	 */
 	@Test
-	public void theThreeViewSwitchesWriteThePrefAndApplyAtOnce() throws Exception
+	public void theViewSwitchesWriteThePrefAndApplyAtOnce() throws Exception
 	{
-		build();
+		buildWithHovers();
 		publish(rows(3), listedWith(summary()));
-		for (JCheckBoxMenuItem item : new JCheckBoxMenuItem[]{panel.countCashItem(), panel.countUntradeablesItem(), panel.holdingItem()})
+		for (JCheckBoxMenuItem item : new JCheckBoxMenuItem[]{panel.countCashItem(), panel.countUntradeablesItem(),
+			panel.livePricesItem()})
 		{
 			assertNotNull(item.getText() + " carries the config item's description", item.getToolTipText());
 		}
 		assertEquals(BankPriceMovementPanel.COUNT_CASH_TIP, panel.countCashItem().getToolTipText());
 		assertEquals(BankPriceMovementPanel.COUNT_UNTRADEABLES_TIP, panel.countUntradeablesItem().getToolTipText());
-		assertEquals(BankPriceMovementPanel.HOLDING_ROWS_TIP, panel.holdingItem().getToolTipText());
+		assertEquals(BankPriceMovementPanel.LIVE_PRICES_TIP, panel.livePricesItem().getToolTipText());
 		assertTrue("cash is counted by default", panel.countCashItem().isSelected());
 
+		// Every expected value below is wrapped in hovers(...): the three items' own tooltips are read above,
+		// and since AH3 there are none to read unless the hover switch is on, so this panel was built with it
+		// on. It is the fifth field of ViewOptions and no business of these three switches - which is the
+		// point of carrying it through unchanged rather than letting a flip drop it.
 		onEdt(() -> panel.countUntradeablesItem().doClick(0));
-		assertEquals(ViewOptions.DEFAULT.withCountUntradeables(true), panel.options());
+		assertEquals(hovers(ViewOptions.DEFAULT.withCountUntradeables(true)), panel.options());
 		assertTrue("the tick follows the click", panel.countUntradeablesItem().isSelected());
-		assertEquals(Arrays.asList(ViewOptions.DEFAULT.withCountUntradeables(true)), prefs.optionSaves);
+		assertEquals(Arrays.asList(hovers(ViewOptions.DEFAULT.withCountUntradeables(true))), prefs.optionSaves);
 
 		onEdt(() -> panel.countCashItem().doClick(0));
-		assertEquals(new ViewOptions(false, true, false), panel.options());
-		onEdt(() -> panel.holdingItem().doClick(0));
-		assertEquals(new ViewOptions(false, true, true), panel.options());
+		assertEquals(hovers(new ViewOptions(false, true, true, true, false)), panel.options());
+		onEdt(() -> panel.livePricesItem().doClick(0));
+		assertEquals(hovers(new ViewOptions(false, true, false, true, false)), panel.options());
 		assertEquals(3, prefs.optionSaves.size());
-		assertEquals(new ViewOptions(false, true, true), prefs.optionSaves.get(2));
+		assertEquals(hovers(new ViewOptions(false, true, false, true, false)), prefs.optionSaves.get(2));
 
 		// The config's ConfigChanged comes back through applyOptions and writes nothing more.
-		onEdt(() -> panel.applyOptions(new ViewOptions(false, true, true)));
+		onEdt(() -> panel.applyOptions(hovers(new ViewOptions(false, true, false, true, false))));
 		assertEquals(3, prefs.optionSaves.size());
 		assertTrue("the hero switches and the filter are untouched", prefs.heroSaves.isEmpty());
 		assertTrue(prefs.saves.isEmpty());
 		verify(service, never()).setFilter(any());
 
 		onEdt(() -> panel.countCashItem().doClick(0));
-		assertEquals(new ViewOptions(true, true, true), panel.options());
+		assertEquals(hovers(new ViewOptions(true, true, false, true, false)), panel.options());
 		assertTrue(panel.countCashItem().isSelected());
 	}
 
 	/**
-	 * Y4: the gear menu in plain words - the nine entries, in the order they are drawn, spelled out.
+	 * Y4: the gear menu in plain words - the nine entries addendum AO leaves, in the order they are drawn,
+	 * spelled out.
 	 *
 	 * <p>The literals are the point. Every other assertion in this file reads these labels through the panel's
 	 * constants, so a rename sails through all of them; the user asked for a pass over the WORDS ("Perhaps we
@@ -1943,36 +1991,45 @@ public class BankPriceMovementPanelTest
 			"Include coins and platinum tokens",
 			"Include untradeable items",
 			"Include inventory and worn gear",
-			"Show stack value on rows",
-			// Z2: the tenth item, under the preset row and its rule - the only entry that is not a switch.
-			"Reset to default"), texts);
+			// AH: the ninth and last entry, under the preset row and its rule - the only switch carrying a box
+			// it draws itself. "Reset to default" was an entry until AH2 moved it into the bottom row beside
+			// OK, so it is pinned by the bottom-row test instead.
+			"Show hover text"), texts);
 		for (String gone : new String[]{"Show bank move (gp)", "Show bank move (%)", "Live prices",
 			"Count coins and platinum", "Count untradeable items", "Show holding value on rows"})
 		{
 			assertFalse("the pre-Y label is gone: " + gone, texts.contains(gone));
 		}
-		// The two switch groups are unmoved: the card's three say what is DRAWN, the five under them what the
-		// figures MEAN, addendum Z's bands come after both and addendum AB's OK row after everything.
-		assertEquals("ten items, the preset row, the OK row and three separators", 15,
+		// AO1: and the row switch's own Y4 name is gone the same way, asserted rather than merely unused -
+		// this is the file that pins the WORDS, so a deleted item left drawn on the settings page would show
+		// up here or nowhere.
+		assertFalse("AO1: the row switch is deleted, label and all", texts.contains("Show stack value on rows"));
+		// The two switch groups are unmoved: the card's three say what is DRAWN, the four under them what the
+		// figures MEAN, addendum Z's bands come after both, addendum AH's hover switch after those and
+		// addendum AB's OK row - now carrying "Reset to default" as well (AH2) - after everything.
+		assertFalse("AH2: the way back to the default bands is a button in that row, not an entry",
+			texts.contains(BankPriceMovementPanel.RESET_PRESETS_TEXT));
+		assertEquals("nine items, the preset row, the OK row and three separators", 14,
 			panel.heroMenu().getComponentCount());
 	}
 
 	/**
 	 * Y1: the new switch is a check item of the second group, directly after "Include untradeable items" - it is a
-	 * third thing INCLUDED, and the row switch under it is the only one of the five about drawing. It carries its
-	 * config item's own description, is ticked out of the box (default ON), writes through {@code saveOptions} the
-	 * way the other four do, and rebuilds no rows: which stacks exist and what each one's quantity is are the
-	 * service's answer to the same switch, and arrive as an ordinary publish.
+	 * third thing INCLUDED, and since addendum AO deleted the row switch that used to sit under it, the last of
+	 * the group. It carries its config item's own description, is ticked out of the box (default ON), writes
+	 * through {@code saveOptions} the way the other three do, and rebuilds no rows: which stacks exist and what
+	 * each one's quantity is are the service's answer to the same switch, and arrive as an ordinary publish.
 	 */
 	@Test
 	public void theCarriedSwitchSitsWithTheIncludesAndWritesThePref() throws Exception
 	{
-		build();
+		buildWithHovers();
 		publish(rows(3), listedWith(summary()));
 		final JPopupMenu menu = panel.heroMenu();
 		assertSame(panel.countInventoryItem(), item(menu, BankPriceMovementPanel.COUNT_INVENTORY_TEXT));
 		assertSame("directly after the untradeables", panel.countInventoryItem(), menu.getComponent(9));
-		assertSame("and before the row switch", panel.holdingItem(), menu.getComponent(10));
+		assertTrue("AO1: and last of its group now, with the separator under it",
+			menu.getComponent(10) instanceof JSeparator);
 		assertEquals("the name addendum Y asks for, pinned", "Include inventory and worn gear",
 			BankPriceMovementPanel.COUNT_INVENTORY_TEXT);
 		assertEquals("the description addendum Y asks for, pinned",
@@ -1986,174 +2043,96 @@ public class BankPriceMovementPanelTest
 
 		final int rebuilds = panel.rebuilds();
 		onEdt(() -> panel.countInventoryItem().doClick(0));
-		assertEquals(ViewOptions.DEFAULT.withCountInventory(false), panel.options());
+		// hovers(...) because this panel was built with AH's switch on - the item's own tooltip is read above,
+		// and AH3 leaves none to read otherwise. It is the fifth field and rides through every flip unchanged.
+		assertEquals(hovers(ViewOptions.DEFAULT.withCountInventory(false)), panel.options());
 		assertFalse("the tick follows the click", panel.countInventoryItem().isSelected());
 		assertEquals("the pref is written so the config panel follows",
-			Arrays.asList(ViewOptions.DEFAULT.withCountInventory(false)), prefs.optionSaves);
+			Arrays.asList(hovers(ViewOptions.DEFAULT.withCountInventory(false))), prefs.optionSaves);
 		assertEquals("the rows wait for the service's own recompute", rebuilds, panel.rebuilds());
 		assertTrue("the filter and the hero switches are untouched", prefs.saves.isEmpty());
 		assertTrue(prefs.heroSaves.isEmpty());
 		verify(service, never()).setFilter(any());
-		// Y1: the fifth key of state.options, last and named "inventory".
+		// Y1: the key of state.options named "inventory" - the fourth since addendum AO took "holding" out from
+		// between the untradeables and the live switch - and since AH the fifth and last is "hover", which is
+		// TRUE here because this panel was built with it on.
 		assertTrue(panel.describe(), panel.describe().contains(
-			",\"options\":{\"cash\":true,\"untradeables\":false,\"holding\":false,\"live\":true,\"inventory\":false}"));
+			",\"options\":{\"cash\":true,\"untradeables\":false,\"live\":true,\"inventory\":false,\"hover\":true}"));
 
 		// The settings page's own change comes back through applyOptions: it ticks and writes nothing more.
-		onEdt(() -> panel.applyOptions(ViewOptions.DEFAULT));
+		onEdt(() -> panel.applyOptions(hovers(ViewOptions.DEFAULT)));
 		assertTrue("the tick follows the config", panel.countInventoryItem().isSelected());
 		assertEquals(1, prefs.optionSaves.size());
 		assertEquals(rebuilds, panel.rebuilds());
 		assertTrue(panel.describe(), panel.describe().contains(
-			",\"options\":{\"cash\":true,\"untradeables\":false,\"holding\":false,\"live\":true,\"inventory\":true}"));
+			",\"options\":{\"cash\":true,\"untradeables\":false,\"live\":true,\"inventory\":true,\"hover\":true}"));
 	}
 
 	/**
-	 * Y3: the card's caption stays "Bank value" - the user's decision, by number - so the hover is where the card
-	 * says that the figure under that caption is the bank AND what the player is carrying and wearing. The clause
-	 * rides on the stacks count as an appositive and takes the comma the coins clause then reads on.
+	 * Q6 as addendum AO leaves it: {@code applyOptions} is the config's road - it repaints and ticks the menu
+	 * and saves nothing - and it rebuilds the ROWS for NONE of the switches at all.
 	 *
-	 * <p>It follows the SWITCH and not the bank, exactly as the live count does: a player with an empty inventory
-	 * still gets it, because the question it answers is what the total COUNTS and an answer that appeared only
-	 * when they happened to be carrying something would be missing whenever they went looking for it.
+	 * <p><b>The rule this test pins has been inverted, and that is the point of it.</b> Q6 gave the road one
+	 * switch that threw the row panels away and built them again, {@code holdingOnRows}, because that one
+	 * decided what a row PRINTED. The Q4 row format made the face print both readings - the stack on line 2,
+	 * one item on line 3 - which left the switch reaching nothing drawn, and addendum AO line AO1 deleted it on
+	 * the user's word ("if it doesnt do anything anymore then remove it"). So every switch that remains is
+	 * about what the figures MEAN, which is the service's answer and arrives as an ordinary publish, and a
+	 * rebuild here would now be a rebuild for nothing.
+	 *
+	 * <p>The rebuild counter is still what is read, and it must stay flat through every one of them - including
+	 * addendum AH's hover switch, which is the one switch that does reach the open page and reaches it through
+	 * {@code applyHoverSwitch} rather than by building the rows again.
 	 */
 	@Test
-	public void theCardTooltipSaysTheTotalIncludesWhatIsCarried() throws Exception
-	{
-		// The guide-only card, so this reads the sentence of Y3 with nothing of addendum T's between its clauses.
-		prefs.storedOptions = LIVE_OFF;
-		build();
-		publish(rows(3), listedWith(summaryWithCash(791_078L)));
-		final String on = panel.hero().getToolTipText();
-		assertTrue(on, on.startsWith("<html>Bank value: 1,235,358,968 gp over 519 of 538 stacks,"
-			+ " including inventory and worn gear, plus 791,078 gp in coins"
-			+ " (whole bank - the gp band is not applied)"));
-
-		// Off: the first line is the one addendum X printed, and the clause is nowhere on the card.
-		onEdt(() -> panel.applyOptions(LIVE_OFF.withCountInventory(false)));
-		final String off = panel.hero().getToolTipText();
-		assertTrue(off, off.startsWith("<html>Bank value: 1,235,358,968 gp over 519 of 538 stacks"
-			+ " plus 791,078 gp in coins (whole bank - the gp band is not applied)"));
-		assertFalse(off, off.contains("inventory"));
-		assertFalse(off, off.contains("worn gear"));
-		assertEquals("with the switch off the whole hover is the pre-Y one",
-			BankPriceMovementPanel.valueTooltip(summaryWithCash(791_078L), STATUS_TEXT, HeroVisibility.ALL, null,
-				LIVE_OFF.withCountInventory(false)), off);
-
-		// With no cash the clause closes on the parenthesis instead, and with the live count on it closes on that.
-		onEdt(() -> panel.applyOptions(LIVE_OFF));
-		publish(rows(3), listedWith(summary()));
-		assertTrue(panel.hero().getToolTipText(), panel.hero().getToolTipText().startsWith(
-			"<html>Bank value: 1,234,567,890 gp over 519 of 538 stacks, including inventory and worn gear"
-				+ " (whole bank - the gp band is not applied)"));
-		onEdt(() -> panel.applyOptions(ViewOptions.DEFAULT));
-		publish(rows(3), listedWith(summaryWithLive(123)));
-		assertTrue(panel.hero().getToolTipText(), panel.hero().getToolTipText().startsWith(
-			"<html>Bank value: 1,234,567,890 gp over 519 of 538 stacks, including inventory and worn gear,"
-				+ " 123 of 519 stacks live (whole bank - the gp band is not applied)"));
-
-		// The clause as a pure function: the switch decides it, and null reads as the defaults.
-		assertEquals("the clause addendum Y asks for, pinned", ", including inventory and worn gear",
-			BankPriceMovementPanel.CARRIED_CLAUSE);
-		assertEquals(BankPriceMovementPanel.CARRIED_CLAUSE,
-			BankPriceMovementPanel.carriedClause(ViewOptions.DEFAULT));
-		assertEquals(BankPriceMovementPanel.CARRIED_CLAUSE, BankPriceMovementPanel.carriedClause(null));
-		assertEquals("", BankPriceMovementPanel.carriedClause(ViewOptions.DEFAULT.withCountInventory(false)));
-	}
-
-	/**
-	 * Q6: {@code applyOptions} is the config's road - it repaints and ticks the menu and saves nothing - and it
-	 * rebuilds the ROWS for exactly one of the five switches, because only {@code holdingOnRows} decides what a
-	 * row prints. Which stacks are listed is the service's answer to the other four, and arrives as a publish.
-	 */
-	@Test
-	public void applyOptionsRepaintsWithoutSavingAndOnlyTheHoldingSwitchRebuildsTheRows() throws Exception
+	public void applyOptionsRepaintsWithoutSavingAndRebuildsTheRowsForNoSwitchAtAll() throws Exception
 	{
 		build();
 		publish(rows(3), listedWith(summary()));
 		final int built = panel.rebuilds();
 		onEdt(() ->
 		{
-			assertEquals("3,000", panel.rowPanels().get(2).priceText());
-			assertEquals("+100", panel.rowPanels().get(2).gpText());
+			// The third row of the fixture is a stack of three at 3,000 gp each, and the Q4 face prints the
+			// STACK on line 2 - the reading the deleted switch used to have to be ON for.
+			assertEquals("the face is the stack: 3 x 3,000", "9,000", panel.rowPanels().get(2).priceText());
+			assertEquals("...and the stack's move: 3 x +100", "+300", panel.rowPanels().get(2).gpText());
 
 			panel.applyOptions(ViewOptions.DEFAULT.withCountCash(false));
 			assertEquals(built, panel.rebuilds());
-			panel.applyOptions(new ViewOptions(false, true, false));
+			panel.applyOptions(new ViewOptions(false, true, true, true, false));
 			assertEquals("a switch the rows do not read leaves them alone", built, panel.rebuilds());
 			assertFalse(panel.countCashItem().isSelected());
 			assertTrue(panel.countUntradeablesItem().isSelected());
 
-			panel.applyOptions(new ViewOptions(false, true, true));
-			assertEquals("the rows are rebuilt once for the holding switch", built + 1, panel.rebuilds());
-			assertEquals("3 x 3,000", "9,000", panel.rowPanels().get(2).priceText());
-			assertEquals("3 x +100", "+300", panel.rowPanels().get(2).gpText());
-			assertTrue(panel.holdingItem().isSelected());
+			panel.applyOptions(new ViewOptions(false, true, false, false, false));
+			assertEquals("AO1: and so does every other one, now that the row switch is gone", built,
+				panel.rebuilds());
+			assertEquals("the face is unmoved", "9,000", panel.rowPanels().get(2).priceText());
+			assertEquals("+300", panel.rowPanels().get(2).gpText());
+			assertFalse(panel.livePricesItem().isSelected());
+			assertFalse(panel.countInventoryItem().isSelected());
 
-			panel.applyOptions(new ViewOptions(false, true, true));
-			assertEquals("the same value again rebuilds nothing", built + 1, panel.rebuilds());
+			// AH3's switch is the one that does reach the open page, and it reaches it without a rebuild.
+			panel.applyOptions(new ViewOptions(false, true, false, false, true));
+			assertEquals("the hover switch repaints the hovers, not the rows", built, panel.rebuilds());
+
+			panel.applyOptions(new ViewOptions(false, true, false, false, true));
+			assertEquals("the same value again does nothing at all", built, panel.rebuilds());
 			panel.applyOptions(null);
 			assertEquals("null reads as the defaults", ViewOptions.DEFAULT, panel.options());
-			assertEquals("3,000", panel.rowPanels().get(2).priceText());
+			assertEquals("9,000", panel.rowPanels().get(2).priceText());
+			assertEquals(built, panel.rebuilds());
 			assertTrue(prefs.optionSaves.isEmpty());
 		});
 
 		// And the switches survive a publish: they are the panel's, not the status's.
-		onEdt(() -> panel.applyOptions(ViewOptions.DEFAULT.withHoldingOnRows(true)));
+		onEdt(() -> panel.applyOptions(ViewOptions.DEFAULT.withCountUntradeables(true)));
 		publish(rows(3), listedWith(summary()));
 		onEdt(() ->
 		{
-			assertEquals(ViewOptions.DEFAULT.withHoldingOnRows(true), panel.options());
+			assertEquals(ViewOptions.DEFAULT.withCountUntradeables(true), panel.options());
 			assertEquals("9,000", panel.rowPanels().get(2).priceText());
 		});
-	}
-
-	/**
-	 * Q4 / Q5 / R4: the card's tooltip states the rule its sums actually follow, so each clause is there exactly
-	 * while its switch is - the cash named only while it is counted, and the untradeables clause only while they
-	 * are. Since addendum R that clause names BOTH valuations, in the order the service tries them: the tradeable
-	 * parts first, the High Alchemy value as the fallback. With both switches at their defaults it is addendum
-	 * P's sentence, word for word.
-	 */
-	@Test
-	public void theSumsRuleNamesExactlyWhatTheSumCounts() throws Exception
-	{
-		assertEquals("the guide-only default is addendum P's wording, pinned",
-			"Sums count each stack's guide price x quantity, plus coins and platinum tokens (1,000 gp each);"
-				+ " stacks without a guide price are left out.", BankPriceMovementPanel.sumsRule(LIVE_OFF));
-		assertEquals(BankPriceMovementPanel.SUMS_RULE, BankPriceMovementPanel.sumsRule(LIVE_OFF));
-		assertEquals("Sums count each stack's guide price x quantity, plus coins and platinum tokens (1,000 gp each),"
-				+ " untradeables at their tradeable parts' value or else their High Alchemy value;"
-				+ " stacks without a guide price are left out.",
-			BankPriceMovementPanel.sumsRule(LIVE_OFF.withCountUntradeables(true)));
-		assertEquals("with the cash out of the sum the rule stops claiming it",
-			"Sums count each stack's guide price x quantity; stacks without a guide price are left out.",
-			BankPriceMovementPanel.sumsRule(new ViewOptions(false, false, true, false)));
-		// T5: with the live switch on - the plugin's own default - the rule says which prices the sum used, and
-		// says it first, because it is the clause that corrects "each stack's guide price".
-		assertEquals("Sums count each stack's guide price x quantity, live traded prices for actively traded items,"
-				+ " plus coins and platinum tokens (1,000 gp each); stacks without a guide price are left out.",
-			BankPriceMovementPanel.sumsRule(ViewOptions.DEFAULT));
-		assertEquals("null reads as the defaults, which turn live prices on (T1)",
-			BankPriceMovementPanel.sumsRule(ViewOptions.DEFAULT), BankPriceMovementPanel.sumsRule(null));
-		assertEquals(", live traded prices for actively traded items", BankPriceMovementPanel.LIVE_CLAUSE);
-
-		// T8: this test pins the guide-only card, so it names the switch it is drawing rather than
-		// inheriting today's default.
-		prefs.storedOptions = LIVE_OFF;
-		build();
-		publish(rows(3), listedWith(summary()));
-		final String plain = panel.hero().getToolTipText();
-		assertTrue(plain, plain.contains("<br>" + BankPriceMovementPanel.SUMS_RULE + "<br>"));
-		assertFalse(plain, plain.contains("High Alchemy"));
-		assertFalse(plain, plain.contains("parts"));
-
-		onEdt(() -> panel.applyOptions(LIVE_OFF.withCountUntradeables(true)));
-		final String withUntradeables = panel.hero().getToolTipText();
-		assertTrue(withUntradeables,
-			withUntradeables.contains(", untradeables at their tradeable parts' value or else their High Alchemy value;"));
-		assertEquals("one line changed, and it is the rule",
-			plain.replace(BankPriceMovementPanel.SUMS_RULE, BankPriceMovementPanel.sumsRule(panel.options())),
-			withUntradeables);
 	}
 
 	/**
@@ -2187,7 +2166,7 @@ public class BankPriceMovementPanelTest
 	@Test
 	public void refreshLinkAsksTheService() throws Exception
 	{
-		build();
+		buildWithHovers();
 		publish(rows(1), listed(1, 1));
 		onEdt(() ->
 		{
@@ -2315,12 +2294,46 @@ public class BankPriceMovementPanelTest
 	@Test
 	public void chipTooltipsNameTheBaselineDay() throws Exception
 	{
-		build();
+		buildWithHovers();
 		assertEquals("Guide-price change over the last 1d", panel.windowChip(MovementWindow.D1).getToolTipText());
 		publish(rows(3), listedWith(summary()));
 		assertEquals("Guide-price change over the last 1d - baseline 07 Sep", panel.windowChip(MovementWindow.D1).getToolTipText());
 		assertEquals("Guide-price change over the last 30d - baseline 09 Aug", panel.windowChip(MovementWindow.D30).getToolTipText());
 		assertEquals("Guide-price change over the last 180d", panel.windowChip(MovementWindow.D180).getToolTipText());
+	}
+
+	// ---- addendum AM: which end of the control row each control stands at
+
+	/**
+	 * AM: the two controls have swapped ends - the price band WEST, the sort column EAST.
+	 *
+	 * <p>The user, looking at the live sidebar: "please swap the location of these menu buttons, i would like
+	 * the sort filter on the right and the 1,000+ on the left." They had stood the other way round since
+	 * addendum N, and nothing else about either moved: each keeps its own text, its own arrow and its own
+	 * fitting rule, and the row still holds exactly the two of them.
+	 *
+	 * <p><b>Pinned by SLOT and not by index.</b> {@code getComponents()} would answer the order the two were
+	 * added in, which is not what a reader sees - a {@code BorderLayout} draws by CONSTRAINT, so a later tidy-up
+	 * that reordered the two {@code add} calls without touching their constraints would change the answer to
+	 * this test while changing nothing on the sidebar, and a swap back to addendum N's arrangement done by
+	 * re-labelling the constraints would pass one written by index. The constraint is the rule; ask for the
+	 * constraint.
+	 */
+	@Test
+	public void theControlRowStandsTheBandWestAndTheSortEast() throws Exception
+	{
+		build();
+		onEdt(() ->
+		{
+			final BorderLayout layout = (BorderLayout) panel.controlRow().getLayout();
+			assertSame("AM: the price band is the LEFT-hand control", panel.bandTarget(),
+				layout.getLayoutComponent(BorderLayout.WEST));
+			assertSame("AM: and the sort column the RIGHT-hand one", panel.sortButton(),
+				layout.getLayoutComponent(BorderLayout.EAST));
+			assertNull("nothing stands between them", layout.getLayoutComponent(BorderLayout.CENTER));
+			assertEquals("...and the row holds those two and nothing else", 2,
+				panel.controlRow().getComponentCount());
+		});
 	}
 
 	// ---- the control row: sort
@@ -2391,7 +2404,7 @@ public class BankPriceMovementPanelTest
 	@Test
 	public void theSortMenuEntriesSayToggleTheLitColumnAndSortByTheOthers() throws Exception
 	{
-		build();
+		buildWithHovers();
 		onEdt(() ->
 		{
 			for (SortMode column : SortMode.values())
@@ -2430,27 +2443,30 @@ public class BankPriceMovementPanelTest
 
 	/**
 	 * X2: the sort button's hover is the one phrase "Change sorting" - under every column, both directions and
-	 * both readings of the holding switch, and from the first paint on. The column and the direction are on the
+	 * either reading of a view switch, and from the first paint on. The column and the direction are on the
 	 * button's face (W2) and what a press does is on the entry (X1), so the hover only names the control.
+	 *
+	 * <p>The switch looped here was {@code holdingOnRows} until addendum AO deleted it; it is addendum T's live
+	 * switch now, which is the one that remains and that changes what the columns are computed from.
 	 */
 	@Test
 	public void theSortButtonsHoverIsOnePhraseUnderEveryColumnAndSwitch() throws Exception
 	{
 		assertEquals("Change sorting", BankPriceMovementPanel.SORT_BUTTON_TIP);
-		build();
+		buildWithHovers();
 		onEdt(() ->
 		{
 			assertEquals("set before the panel is ever shown", "Change sorting",
 				panel.sortButton().getToolTipText());
-			for (boolean holding : new boolean[]{false, true})
+			for (boolean live : new boolean[]{false, true})
 			{
-				panel.applyOptions(ViewOptions.DEFAULT.withHoldingOnRows(holding));
+				panel.applyOptions(hovers(ViewOptions.DEFAULT.withLivePrices(live)));
 				for (SortMode column : SortMode.values())
 				{
 					for (boolean descending : new boolean[]{true, false})
 					{
 						panel.setSort(column, descending);
-						assertEquals(column + " " + descending + " holding=" + holding, "Change sorting",
+						assertEquals(column + " " + descending + " live=" + live, "Change sorting",
 							panel.sortButton().getToolTipText());
 					}
 				}
@@ -2543,7 +2559,7 @@ public class BankPriceMovementPanelTest
 	@Test
 	public void bandButtonStatesItsBand() throws Exception
 	{
-		build();
+		buildWithHovers();
 		publish(rows(3), listed(529, 3));
 		onEdt(() ->
 		{
@@ -2927,7 +2943,7 @@ public class BankPriceMovementPanelTest
 	@Test
 	public void presetsLightExactlyOnTheirBandAndApplyIt() throws Exception
 	{
-		build();
+		buildWithHovers();
 		onEdt(() ->
 		{
 			panel.toggleFold();
@@ -3005,8 +3021,14 @@ public class BankPriceMovementPanelTest
 	// ---- addendum Z: the three price presets (Z1-Z3)
 
 	/**
-	 * Z2: the gear menu's last group - a rule under "Show stack value on rows", the row with its grey caption and
-	 * three boxes, and "Reset to default" under it.
+	 * Z2: the gear menu's last group - a rule under the last view switch, the row with its grey caption and
+	 * three boxes, and, since AH, the hover switch under it. The switch that rule sits under is "Include
+	 * inventory and worn gear" since addendum AO deleted "Show stack value on rows" from beneath it.
+	 *
+	 * <p>"Reset to default" left this group in AH2: the user, looking at the menu, wanted it "in the orange box
+	 * alongside 'OK' ... just aligned left", so it is a button in the bottom row now and
+	 * {@link #theBottomRowHoldsResetOnTheLeftAndOkOnTheRight} is what pins it. Its TEXT is still pinned here,
+	 * because the words are addendum Z's and moving a control is no licence to reword it.
 	 *
 	 * <p>That the row is a plain {@link JPanel} and not a menu item is not a detail of taste. {@code PopupFactory}
 	 * makes a heavy-weight popup's window FOCUSABLE exactly when the popup holds a child that is neither a
@@ -3015,15 +3037,20 @@ public class BankPriceMovementPanelTest
 	 * every keystroke meant for a band would reach the game instead.
 	 */
 	@Test
-	public void theGearMenuEndsWithThePresetBoxesAndTheResetItem() throws Exception
+	public void theGearMenuEndsWithThePresetBoxesAndTheHoverSwitch() throws Exception
 	{
-		build();
+		buildWithHovers();
 		final JPopupMenu menu = panel.heroMenu();
-		assertEquals("nine items, the preset row, the reset item, the OK row and three separators", 15,
+		assertEquals("eight items, the preset row, the hover switch, the OK row and three separators", 14,
 			menu.getComponentCount());
-		assertTrue("a rule under the last switch", menu.getComponent(11) instanceof JSeparator);
-		assertSame("then the row", panel.presetRow(), menu.getComponent(12));
-		assertSame("then the way back", panel.resetPresetsItem(), menu.getComponent(13));
+		assertTrue("a rule under the last switch", menu.getComponent(10) instanceof JSeparator);
+		assertSame("then the row", panel.presetRow(), menu.getComponent(11));
+		// AH: and in the space under it, where the user drew the box - the group's rule is the one above, so the
+		// hover switch joins this last group rather than starting another. AH2 took "Reset to default" out from
+		// between the two and put it in the bottom row.
+		assertSame(panel.showHoverTextItem(), menu.getComponent(12));
+		assertEquals(BankPriceMovementPanel.SHOW_HOVER_TEXT_TEXT, ((JMenuItem) menu.getComponent(12)).getText());
+		assertSame("and the OK row under everything (AB2)", panel.okRow(), menu.getComponent(13));
 		assertFalse("the row is no menu element - which is what makes the popup window focusable",
 			panel.presetRow() instanceof MenuElement);
 		assertEquals("the caption addendum AB line AB3 asks for, pinned", "Preset price ranges",
@@ -3034,10 +3061,12 @@ public class BankPriceMovementPanelTest
 		assertTrue("'" + BankPriceMovementPanel.PRESETS_TEXT + "' is no wider than the longest check item",
 			textWidth(new JLabel(BankPriceMovementPanel.PRESETS_TEXT), Widgets.sans(12))
 				<= textWidth(new JLabel(BankPriceMovementPanel.COUNT_CASH_TEXT), Widgets.sans(12)));
-		assertEquals("the item addendum Z asks for, pinned", "Reset to default", BankPriceMovementPanel.RESET_PRESETS_TEXT);
+		assertEquals("the words addendum Z asks for, pinned", "Reset to default",
+			BankPriceMovementPanel.RESET_PRESETS_TEXT);
 		assertTrue(texts(panel.presetRow()).contains(BankPriceMovementPanel.PRESETS_TEXT));
-		assertEquals(BankPriceMovementPanel.RESET_PRESETS_TEXT, panel.resetPresetsItem().getText());
-		assertEquals(BankPriceMovementPanel.RESET_PRESETS_TIP, panel.resetPresetsItem().getToolTipText());
+		// AH2: the same text and the same line, on a button in the bottom row instead of an item of its own.
+		assertEquals(BankPriceMovementPanel.RESET_PRESETS_TEXT, panel.resetPresetsButton().getText());
+		assertEquals(BankPriceMovementPanel.RESET_PRESETS_TIP, panel.resetPresetsButton().getToolTipText());
 		assertEquals(BankPriceMovementPanel.PRESETS_TIP, panel.presetRow().getToolTipText());
 		for (int i = 0; i < BankPriceMovementPanel.BANDS; i++)
 		{
@@ -3241,20 +3270,20 @@ public class BankPriceMovementPanelTest
 			panel.setPresets(BandPresets.of(1_000_000L, 10_000_000L, 100_000_000L));
 			assertEquals(Arrays.asList("All", "1m+", "10m+", "100m+"), cellTexts());
 
-			panel.resetPresetsItem().doClick(0);
+			panel.resetPresetsButton().doClick(0);
 			assertEquals(BandPresets.DEFAULT, panel.presets());
 			assertEquals(Arrays.asList("100k", "1m", "10m"), presetTexts());
 			assertEquals(Arrays.asList("All", "100k+", "1m+", "10m+"), cellTexts());
 			assertEquals(2, prefs.presetSaves.size());
 			assertEquals(BandPresets.DEFAULT, prefs.presetSaves.get(1));
 
-			panel.resetPresetsItem().doClick(0);
+			panel.resetPresetsButton().doClick(0);
 			assertEquals("already there: nothing written", 2, prefs.presetSaves.size());
 			// ...but it still clears a refused edit, which is the other thing a reader presses it for.
 			type(2, "abc");
 			enter(2);
 			assertTrue(Widgets.isMarkedInvalid(panel.presetField(2)));
-			panel.resetPresetsItem().doClick(0);
+			panel.resetPresetsButton().doClick(0);
 			assertFalse(Widgets.isMarkedInvalid(panel.presetField(2)));
 			assertEquals(Arrays.asList("100k", "1m", "10m"), presetTexts());
 			assertEquals(2, prefs.presetSaves.size());
@@ -3268,7 +3297,7 @@ public class BankPriceMovementPanelTest
 	@Test
 	public void theFoldsChipsAreThePresetsAndPressingOneAppliesItsBand() throws Exception
 	{
-		build();
+		buildWithHovers();
 		onEdt(() ->
 		{
 			panel.toggleFold();
@@ -3377,7 +3406,7 @@ public class BankPriceMovementPanelTest
 	@Test
 	public void theDefaultPresetsDrawExactlyTheFoldOfAddendumW() throws Exception
 	{
-		build();
+		buildWithHovers();
 		onEdt(() ->
 		{
 			panel.toggleFold();
@@ -3532,13 +3561,18 @@ public class BankPriceMovementPanelTest
 	@Test
 	public void theOkButtonSitsAtTheBottomRightAndCommitsThenClosesTheMenu() throws Exception
 	{
-		build();
+		buildWithHovers();
 		final JPopupMenu menu = panel.heroMenu();
 		onEdt(() ->
 		{
 			assertSame("the last thing in the menu", panel.okRow(), menu.getComponent(menu.getComponentCount() - 1));
-			assertSame("directly under 'Reset to default'", panel.resetPresetsItem(),
-				menu.getComponent(menu.getComponentCount() - 2));
+			// AH slid one item in between: the row is still the last thing in the menu, and what it now sits
+			// directly under is the hover switch. "Reset to default" is no longer above it at all - AH2 brought
+			// it INTO this row, which is what theBottomRowHoldsResetOnTheLeftAndOkOnTheRight pins.
+			assertEquals("directly under 'Show hover text'", BankPriceMovementPanel.SHOW_HOVER_TEXT_TEXT,
+				((JMenuItem) menu.getComponent(menu.getComponentCount() - 2)).getText());
+			assertSame("...with the preset row above that", panel.presetRow(),
+				menu.getComponent(menu.getComponentCount() - 3));
 			assertFalse("a row and not a menu element, like the preset row above it",
 				panel.okRow() instanceof MenuElement);
 			assertEquals("the word addendum AB line AB2 asks for, pinned", "OK", BankPriceMovementPanel.OK_TEXT);
@@ -3551,9 +3585,9 @@ public class BankPriceMovementPanelTest
 
 			// Right-aligned, measured: the glue takes the row's spare width and the button ends on its edge.
 			final JPanel row = panel.okRow();
-			assertEquals("a glue, then the button", 2, row.getComponentCount());
-			assertSame(panel.okButton(), row.getComponent(1));
-			assertEquals("the glue asks for no width of its own", 0, row.getComponent(0).getPreferredSize().width);
+			assertEquals("reset, a glue, then the button (AH2)", 3, row.getComponentCount());
+			assertSame(panel.okButton(), row.getComponent(2));
+			assertEquals("the glue asks for no width of its own", 0, row.getComponent(1).getPreferredSize().width);
 			final int width = 200;
 			row.setSize(width, row.getPreferredSize().height);
 			row.doLayout();
@@ -3588,6 +3622,87 @@ public class BankPriceMovementPanelTest
 			gearMenuOpening();
 			assertFalse("the red went with the reason for it", Widgets.isMarkedInvalid(panel.presetField(1)));
 			assertEquals(Arrays.asList("1m", "10m", "100m"), presetTexts());
+		});
+	}
+
+	/**
+	 * AH2: the gear menu's bottom row holds BOTH buttons - "Reset to default" hard left, "OK" hard right.
+	 *
+	 * <p>The user, looking at the menu they had just asked for: "i changed my mind, i would like the 'reset to
+	 * default' button to be in the orange box alongside 'OK' ... just aligned left, OK button align right as it
+	 * is currently is". So the way back to the default bands stops being a menu item of its own - it was the
+	 * only entry in the gear menu that was not a switch - and becomes a button in the row that closes the menu,
+	 * which is where a reader looks for a command rather than a setting.
+	 *
+	 * <p>Three things are pinned and all three are load-bearing. WHERE: first child, glue, last child, which is
+	 * what BoxLayout turns into "one pinned left, one pinned right" however wide the popup is, and it is
+	 * MEASURED here rather than trusted to the glue. WHAT IT STILL IS: the same words, the same line and the
+	 * same action addendum Z gave it - moving a control is no licence to reword or re-aim it. And that it obeys
+	 * the hover switch like everything else (AH3), since a button that kept its tooltip would be exactly the
+	 * kind of thing the user found still talking.
+	 */
+	@Test
+	public void theBottomRowHoldsResetOnTheLeftAndOkOnTheRight() throws Exception
+	{
+		buildWithHovers();
+		final JPopupMenu menu = panel.heroMenu();
+		onEdt(() ->
+		{
+			final JPanel row = panel.okRow();
+			assertSame("the row is the last thing in the menu (AB2)", row,
+				menu.getComponent(menu.getComponentCount() - 1));
+			assertEquals("reset, a glue, then OK", 3, row.getComponentCount());
+			assertSame("'Reset to default' first", panel.resetPresetsButton(), row.getComponent(0));
+			assertEquals("the glue asks for no width of its own", 0, row.getComponent(1).getPreferredSize().width);
+			assertSame("and OK last", panel.okButton(), row.getComponent(2));
+			assertFalse("AH2: it is no longer an entry in the menu",
+				itemTexts(menu).contains(BankPriceMovementPanel.RESET_PRESETS_TEXT));
+
+			// Measured, not assumed: the glue between them takes the row's spare width, so one button ends up
+			// against the left inset and the other against the right one at any width the popup happens to be.
+			final int width = 200;
+			row.setSize(width, row.getPreferredSize().height);
+			row.doLayout();
+			final Insets insets = row.getInsets();
+			assertEquals("reset starts at the row's left edge", insets.left, panel.resetPresetsButton().getX());
+			assertEquals("OK ends at the row's right edge", width - insets.right,
+				panel.okButton().getX() + panel.okButton().getWidth());
+			assertTrue("with the room between them",
+				panel.resetPresetsButton().getX() + panel.resetPresetsButton().getWidth() < panel.okButton().getX());
+			assertEquals("and no ButtonUI may stretch it", panel.resetPresetsButton().getPreferredSize(),
+				panel.resetPresetsButton().getMaximumSize());
+			assertEquals("in the menu's own face, like OK beside it", Widgets.sans(12),
+				panel.resetPresetsButton().getFont());
+
+			// The same words and the same line addendum Z gave the item it replaces.
+			assertEquals("Reset to default", BankPriceMovementPanel.RESET_PRESETS_TEXT);
+			assertEquals(BankPriceMovementPanel.RESET_PRESETS_TEXT, panel.resetPresetsButton().getText());
+			assertEquals(BankPriceMovementPanel.RESET_PRESETS_TIP,
+				panel.resetPresetsButton().getToolTipText());
+			assertEquals(BankPriceMovementPanel.OK_TIP, panel.okButton().getToolTipText());
+
+			// ...and the same action: 100k / 1m / 10m back in the boxes, on the chips and in the config.
+			panel.toggleFold();
+			panel.setPresets(BandPresets.of(1_000_000L, 10_000_000L, 100_000_000L));
+			assertEquals(Arrays.asList("All", "1m+", "10m+", "100m+"), cellTexts());
+			panel.resetPresetsButton().doClick(0);
+			assertEquals(BandPresets.DEFAULT, panel.presets());
+			assertEquals(Arrays.asList("100k", "1m", "10m"), presetTexts());
+			assertEquals(Arrays.asList("All", "100k+", "1m+", "10m+"), cellTexts());
+			assertEquals("one write for the trio it replaced, one for the default it put back", 2,
+				prefs.presetSaves.size());
+		});
+
+		// AH3: both buttons go quiet with everything else, and come back with it.
+		onEdt(() ->
+		{
+			panel.applyOptions(ViewOptions.DEFAULT);
+			assertNull("the reset button", panel.resetPresetsButton().getToolTipText());
+			assertNull("the OK button", panel.okButton().getToolTipText());
+			panel.applyOptions(HOVERS_ON);
+			assertEquals(BankPriceMovementPanel.RESET_PRESETS_TIP,
+				panel.resetPresetsButton().getToolTipText());
+			assertEquals(BankPriceMovementPanel.OK_TIP, panel.okButton().getToolTipText());
 		});
 	}
 
@@ -3764,7 +3879,7 @@ public class BankPriceMovementPanelTest
 	@Test
 	public void problemRowIsRedForFailuresGreyForNoHistoryAndRemovedWhenClear() throws Exception
 	{
-		build();
+		buildWithHovers();
 		publish(rows(1), listed(1, 1));
 		assertFalse(panel.problemShowing());
 		assertEquals("", panel.problemLabel().getText());
@@ -3924,6 +4039,82 @@ public class BankPriceMovementPanelTest
 		verify(itemManager).getImage(3, 3, true);
 	}
 
+	/**
+	 * AL: the two figures on a row's second line stop competing - the gp figure takes the QUIET role and the
+	 * percentage keeps the full one.
+	 *
+	 * <p>The user, on a full list: "can you brainstorm some ideas for making the change in gp (+3,432) and the
+	 * percent change (+23.5%) ... be more isolated from each other?" Four variants were drawn at the real width
+	 * and they chose the dimmed gp. So a moving row now paints two DIFFERENT colours on one line, where it
+	 * painted one twice before, and the difference is the whole change - hence the {@code assertNotEquals}.
+	 *
+	 * <p><b>Asked of {@link Widgets} and never of a hex value.</b> The palette is one source - {@code Widgets.move}
+	 * mixes QUIET from FIGURE, and FIGURE lifts the falling red (B045) - so a test carrying its own copies of the
+	 * numbers would pin the mix as it stands today and fail the next time the user's eye moves it, which is the
+	 * one kind of change this pair must survive. What is pinned is the RELATIONSHIP: which role each figure
+	 * takes.
+	 *
+	 * <p>The flat row is asserted from the other end, and the Q4 row format did NOT change it: a row whose
+	 * price has not moved still prints no gp figure at all, on either line, because "0.0%" beside it is already
+	 * the whole of what there is to say and a row reading "0 ... 0 ... 0.0%" says one fact three times. The
+	 * column survives the blank - {@code GP_COLUMN} is a fixed box that an empty label holds open exactly as a
+	 * filled one does - and both lines blank together, so line 3's figure is never left standing alone under a
+	 * gap. The rule underneath is unmoved too: QUIET and FIGURE agree at a signum of zero, because pushing a
+	 * grey figure toward the background makes it harder to read and says nothing about a direction it does not
+	 * have. That agreement is what AL promised about a row that has not moved, and it is asserted here even
+	 * though no figure is currently painted with it.
+	 */
+	@Test
+	public void theGpFigureIsDimmedAndThePercentageBesideItIsNot() throws Exception
+	{
+		build();
+		publish(Arrays.asList(
+			new MovementRow(1, "Riser", 1, false, 1_100L, 1_000L, 100L, 10.0d, 1_100L, null),
+			new MovementRow(2, "Faller", 1, false, 900L, 1_000L, -100L, -10.0d, 900L, null),
+			new MovementRow(3, "Flat", 1, false, 1_000L, 1_000L, 0L, 0.0d, 1_000L, null)),
+			listed(3, 3));
+		onEdt(() ->
+		{
+			final List<MovementRowPanel> panels = panel.rowPanels();
+			for (int i = 0; i <= 1; i++)
+			{
+				final MovementRowPanel p = panels.get(i);
+				final int signum = i == 0 ? 1 : -1;
+				final String why = p.row().name() + ": ";
+				final JLabel gp = gpLabelOf(p);
+				assertNotNull(why + "it has a gp figure to dim", gp);
+				assertEquals(why + "AL: the gp figure takes the QUIET role",
+					Widgets.move(signum, Widgets.Kind.QUIET), gp.getForeground());
+				assertEquals(why + "...and the percentage keeps the full FIGURE colour",
+					Widgets.move(signum, Widgets.Kind.FIGURE), p.changeColor());
+				assertNotEquals(why + "AL: which is the point - the two no longer read as one figure",
+					gp.getForeground(), p.changeColor());
+				assertEquals(why + "the row's own helper is what painted it", MovementRowPanel.quietChangeColor(p.row()),
+					gp.getForeground());
+			}
+
+			final MovementRowPanel flat = panels.get(2);
+			assertEquals("a flat row prints no gp figure", "", flat.gpText());
+			assertNull("...so there is no label on its face to dim", gpLabelOf(flat));
+			// Line 3's figure has no accessor, so it is asked of the card: nothing anywhere on a flat row
+			// prints a bare zero, which is the half of the rule gpText() alone cannot answer.
+			final List<JComponent> flatParts = new ArrayList<>();
+			descendants(flat, flatParts);
+			for (JComponent c : flatParts)
+			{
+				if (c instanceof JLabel)
+				{
+					assertNotEquals("neither line of a flat row prints a zero", "0", ((JLabel) c).getText());
+				}
+			}
+			assertEquals("the percentage is the quiet grey", Widgets.move(0, Widgets.Kind.FIGURE),
+				flat.changeColor());
+			assertEquals("and QUIET takes it UNDIMMED: a grey dash pushed toward the background only reads worse",
+				Widgets.move(0, Widgets.Kind.FIGURE), Widgets.move(0, Widgets.Kind.QUIET));
+			assertEquals(Widgets.move(0, Widgets.Kind.QUIET), MovementRowPanel.quietChangeColor(flat.row()));
+		});
+	}
+
 	@Test
 	public void aPictureTheManagerCannotGiveIsNotAnError() throws Exception
 	{
@@ -4009,6 +4200,617 @@ public class BankPriceMovementPanelTest
 		onEdt(() -> panel.setSort(SortMode.GP_MOVE, false));
 		publish(new ArrayList<>(rows(3)), listed(3, 3));
 		assertEquals(2, panel.rebuilds());
+	}
+
+	// ----------------------------------- addenda AG and AI: which rows have their description block open
+
+	/**
+	 * <b>THE ONE THAT MATTERS.</b> A row the reader clicked open is still open after the next publish has rebuilt
+	 * the page - and it is a different row card that is standing open.
+	 *
+	 * <p>This is the assertion the naive design dies on, so read what the naive design was. A
+	 * {@link MovementRowPanel} is not long-lived: {@code rebuildRows} calls {@code removeAll()} and {@code addPage}
+	 * builds the list again from NEW instances on every publish whose rows differ - a refresh, a bank opening, the
+	 * half-hourly price recheck. The obvious place for "is this row expanded?" is a boolean field on the row, and
+	 * it passes every test you can write against one row: it opens, the block appears, it shuts again. Then the
+	 * plugin ships, the reader clicks a row open to read where its price came from, prices are rechecked half an
+	 * hour later, and the block they are reading folds itself up with nothing on screen to explain why. So the
+	 * state lives on the PANEL ({@code expandedIds} behind one {@link MovementRowPanel.Expansion}), handed to every
+	 * row {@code addPage} builds, and the proof of it is here: {@link #repriced} publishes the same items with new
+	 * prices, the card at that position is a different OBJECT afterwards, and it is still open while both its
+	 * neighbours are shut.
+	 *
+	 * <p><b>Re-pointed by addendum AI.</b> Until AI the observable was which of two TOOLTIPS a row was carrying;
+	 * the description is not a hover any more, so it is the cell's own geometry instead - the detail block
+	 * showing, and the card grown by exactly what that block asks for ({@link #assertOpen}). Same seam, same
+	 * promise, and now the thing a reader actually sees.
+	 */
+	@Test
+	public void aRowClickedOpenIsStillOpenAfterThePageIsRebuilt() throws Exception
+	{
+		build();
+		publish(rows(3), listed(3, 3));
+		final MovementRowPanel clicked = panel.rowPanels().get(1);
+		assertClosed("every row starts shut", clicked);
+		onEdt(() -> clickRow(clicked));
+		assertOpen("the click opened it", clicked);
+
+		// The half-hourly recheck: the same three items, a gp dearer. Nobody asked for it, and it rebuilds.
+		publish(repriced(3), listed(3, 3));
+		assertEquals("the page really was rebuilt", 2, panel.rebuilds());
+		final List<MovementRowPanel> after = panel.rowPanels();
+		assertNotSame("...from new row cards, which is the whole point", clicked, after.get(1));
+		assertEquals("Item 2", after.get(1).row().name());
+		assertOpen("AG: the reader's click outlived the rebuild", after.get(1));
+		assertClosed("and it opened one row, not the list", after.get(0));
+		assertClosed("and it opened one row, not the list", after.get(2));
+
+		// Clicking again folds it away, and THAT survives the next rebuild the same way - the state is the
+		// reader's answer either way round, not a flag that only ever gets set.
+		onEdt(() -> clickRow(after.get(1)));
+		assertClosed("clicked again, folded away", after.get(1));
+		publish(rows(3), listed(3, 3));
+		assertEquals(3, panel.rebuilds());
+		assertClosed("and it stays folded across the rebuild", panel.rowPanels().get(1));
+	}
+
+	/**
+	 * AI: the GEOMETRY survives the rebuild too, and not just the flag.
+	 *
+	 * <p>The test above reads {@link #assertOpen}, which asks both questions at once; this one asks the second
+	 * alone and says why it is a question of its own. A row seeds itself from the panel's
+	 * {@link MovementRowPanel.Expansion} when it is BUILT, and a build that read the state without APPLYING it
+	 * would leave the new card reporting "open" while it was drawn as the shut strip - which passes every
+	 * assertion about the seam and still shows the reader a list that folded itself up. So the height of the
+	 * card the rebuild produced is pinned against the height of the card the click produced, by the px.
+	 */
+	@Test
+	public void anOpenRowKeepsItsTallerHeightAcrossARebuild() throws Exception
+	{
+		build();
+		publish(rows(3), listed(3, 3));
+		final MovementRowPanel clicked = panel.rowPanels().get(1);
+		final int shut = clicked.getPreferredSize().height;
+		assertEquals("a shut row is the 62 px card (addendum N section 2, at the Q4 height)",
+			MovementRowPanel.ROW_HEIGHT, shut);
+		onEdt(() -> clickRow(clicked));
+		final int open = clicked.getPreferredSize().height;
+		assertTrue("the cell grew to hold the description: " + open, open > shut);
+
+		publish(repriced(3), listed(3, 3));
+		final MovementRowPanel rebuilt = panel.rowPanels().get(1);
+		assertNotSame("a new card", clicked, rebuilt);
+		assertOpen("AI: the block is still showing", rebuilt);
+		assertEquals("AI: and the card is still the taller one, to the px", open,
+			rebuilt.getPreferredSize().height);
+		assertEquals("...while its neighbours are the plain 62 px strip", MovementRowPanel.ROW_HEIGHT,
+			panel.rowPanels().get(0).getPreferredSize().height);
+	}
+
+	/**
+	 * AG: the state is keyed by ITEM ID and not by list position, so an open row follows its item through a
+	 * re-sort rather than staying at the position the item used to sit at.
+	 *
+	 * <p>Keying by position would look right for exactly as long as the list never moved, and this panel's list
+	 * moves on four different gestures (another column, another direction, another price band, another window).
+	 * A reader who opened "Twisted bow" and then sorted by stack value would find some unrelated row open and
+	 * the bow folded.
+	 */
+	@Test
+	public void anOpenRowFollowsItsItemThroughAReSort() throws Exception
+	{
+		build();
+		publish(rows(8), listed(8, 8));
+		final MovementRowPanel atFive = panel.rowPanels().get(5);
+		final int item = atFive.row().id();
+		assertEquals("the fixture puts item 6 at position 5", 6, item);
+		onEdt(() -> clickRow(atFive));
+		assertOpen("opened at position 5", atFive);
+
+		// The reader picks another column, and the service answers with the same eight items the other way up.
+		onEdt(() -> panel.setSort(SortMode.STACK_VALUE, true));
+		final List<MovementRow> reversed = new ArrayList<>(rows(8));
+		Collections.reverse(reversed);
+		publish(reversed, listed(8, 8));
+
+		final List<MovementRowPanel> after = panel.rowPanels();
+		assertEquals("the list really did turn over", item, after.get(2).row().id());
+		assertOpen("AG: the open cell followed the ITEM", after.get(2));
+		assertClosed("and not the position it was clicked at", after.get(5));
+	}
+
+	/**
+	 * AG: two rows open independently, and closing one says nothing about the other - the state is a SET of item
+	 * ids, not one "the open row" slot.
+	 */
+	@Test
+	public void twoRowsOpenIndependentlyAndClosingOneLeavesTheOtherOpen() throws Exception
+	{
+		build();
+		publish(rows(4), listed(4, 4));
+		final List<MovementRowPanel> first = panel.rowPanels();
+		onEdt(() ->
+		{
+			clickRow(first.get(0));
+			clickRow(first.get(3));
+		});
+		assertOpen("the first row the reader opened", first.get(0));
+		assertClosed("untouched", first.get(1));
+		assertClosed("untouched", first.get(2));
+		assertOpen("the second, and opening it did not close the first", first.get(3));
+
+		onEdt(() -> clickRow(first.get(0)));
+		assertClosed("closed again", first.get(0));
+		assertOpen("closing one row leaves the other open", first.get(3));
+
+		// And both readings - one open, one closed - come back together after a rebuild.
+		publish(repriced(4), listed(4, 4));
+		final List<MovementRowPanel> after = panel.rowPanels();
+		assertClosed("the closed one stays closed", after.get(0));
+		assertClosed("and the two that were never clicked stay shut", after.get(1));
+		assertClosed("and the two that were never clicked stay shut", after.get(2));
+		assertOpen("the open one stays open", after.get(3));
+	}
+
+	/**
+	 * AG: nothing is open until the reader opens it - on the first page, and on a page built later by
+	 * "Show n more", which is built from the same {@link MovementRowPanel.Expansion} and must agree with it.
+	 */
+	@Test
+	public void aFreshPanelStartsWithEveryRowShut() throws Exception
+	{
+		build();
+		publish(rows(5), listed(5, 5));
+		for (MovementRowPanel row : panel.rowPanels())
+		{
+			assertClosed(row.row().name() + " starts shut", row);
+		}
+
+		// The second page is built minutes later by a gesture of its own; it starts shut too.
+		publish(rows(300), listed(300, 300));
+		assertEquals(250, panel.rowPanels().size());
+		onEdt(() -> panel.showMore());
+		assertEquals(300, panel.rowPanels().size());
+		assertClosed("a row built by the second page", panel.rowPanels().get(275));
+
+		// ...and a row opened on page two behaves like any other: it survives the rebuild, in its own place.
+		final MovementRowPanel onPageTwo = panel.rowPanels().get(275);
+		onEdt(() -> clickRow(onPageTwo));
+		assertOpen("opened on page two", onPageTwo);
+		publish(repriced(300), listed(300, 300));
+		assertEquals("the rebuild keeps the pages the reader opened", 300, panel.rowPanels().size());
+		assertOpen("and the click with them", panel.rowPanels().get(275));
+		assertClosed("its neighbour is untouched", panel.rowPanels().get(274));
+	}
+
+	/**
+	 * AK: the open cell is a LABEL COLUMN, and its change line names the WINDOW it is measuring.
+	 *
+	 * <p>The user asked for the block to be simplified - "This looks really hard to read, can you please pitch
+	 * me some ideas ... simplify, layman talk" - chose the labelled option, and then corrected it: "i find the
+	 * change confusing, make it show how many days (1d, 7d, 30d, 90d, 180d) so itll be Change 1d or Change 7d
+	 * for example". The correction is the half a later tidy-up would lose, because "Change" alone looks
+	 * complete: the lit chip is at the top of the sidebar, a screen away from the figure, so a block that does
+	 * not name its own window leaves the reader to remember which one they picked.
+	 *
+	 * <p>{@link #assertOpen} already pins the block against {@code MovementRowPanel.detail(...)}, which is what
+	 * keeps the two from drifting. What is added here is the part that call cannot show, because it is handed
+	 * the same window the panel would hand it: that the window reaching the block is the one the PAGE was built
+	 * for, so a reader on 7d reads "Change 7d" and never yesterday's label.
+	 */
+	@Test
+	public void theOpenCellIsALabelColumnWhoseChangeLineNamesTheWindow() throws Exception
+	{
+		build();
+		publish(rows(3), status(true, true, 3, 3, MovementWindow.D7, null, STATUS_TEXT, PRICES_AT));
+		final MovementRowPanel row = panel.rowPanels().get(1);
+		onEdt(() -> clickRow(row));
+		assertOpen("AK: the labelled block", row);
+
+		final String text = detailOf(row).getText();
+		assertTrue(text, text.contains(MovementRowPanel.L_NOW));
+		assertTrue(text, text.contains(MovementRowPanel.L_WAS));
+		assertTrue(text, text.contains(MovementRowPanel.L_HAVE));
+		assertTrue("AK: the change names the window the page is drawn for",
+			text.contains(MovementRowPanel.L_CHANGE + MovementWindow.D7.label()));
+		assertFalse("and not the one it is not", text.contains(MovementRowPanel.L_CHANGE + MovementWindow.D1.label()));
+
+		// The reader moves to another window: the page is rebuilt, and the block follows it.
+		publish(repriced(3), status(true, true, 3, 3, MovementWindow.D30, null, STATUS_TEXT, PRICES_AT));
+		final MovementRowPanel after = panel.rowPanels().get(1);
+		assertOpen("AK: still open on the new window", after);
+		assertTrue("AK: and re-labelled with it", detailOf(after).getText()
+			.contains(MovementRowPanel.L_CHANGE + MovementWindow.D30.label()));
+	}
+
+	// ------------------------------- addendum AJ: the hover switch, back, with its reach narrowed by AI
+
+	/**
+	 * AJ: the switch's gear item - where it is, and what it is made of.
+	 *
+	 * <p>The user drew the place in AH ("exactly where i drew the orange box"), and asked for it again in AJ
+	 * after AI had deleted the switch along with the row hovers it used to govern: "where is the show hover
+	 * text box and wording and default 'off' setting? it should be the row above OK". So it is the LAST item in
+	 * the menu, directly after the preset row and directly above addendum AB's OK row, in that group rather
+	 * than one of its own. ("Reset to default" stood between the row and the switch until AH2 moved it into
+	 * that OK row, and the switch did not move with it.)
+	 *
+	 * <p><b>And it is a plain {@link JMenuItem} carrying a drawn icon, never a {@link JCheckBoxMenuItem}.</b>
+	 * That is the one thing in this addendum a later tidy-up would undo without noticing: RuneLite's look and
+	 * feel paints an UNSELECTED check item as blank, so a switch that ships OFF would look exactly like a
+	 * command until someone turned it on, and nobody turns on a control they cannot see is a control. The type
+	 * is therefore pinned here, beside the two other halves of the same promise - the box is on the LEFT and the
+	 * label to the RIGHT of it, both hard against the menu's left edge, which is what the user asked for in the
+	 * same breath.
+	 */
+	@Test
+	public void theHoverSwitchIsTheLastGearItemAndDrawsItsOwnBox() throws Exception
+	{
+		buildWithHovers();
+		final JPopupMenu menu = panel.heroMenu();
+		final JMenuItem hoverItem = item(menu, BankPriceMovementPanel.SHOW_HOVER_TEXT_TEXT);
+		assertEquals("the words addendum AH asks for and AJ puts back, pinned", "Show hover text",
+			BankPriceMovementPanel.SHOW_HOVER_TEXT_TEXT);
+		assertEquals(BankPriceMovementPanel.SHOW_HOVER_TEXT_TEXT, hoverItem.getText());
+
+		assertSame("the last item in the menu", hoverItem, menu.getComponent(menu.getComponentCount() - 2));
+		assertSame("the panel's own accessor names the same item", panel.showHoverTextItem(), hoverItem);
+		assertSame("directly after the preset row (AH2 took the reset item out from between them)",
+			panel.presetRow(), menu.getComponent(menu.getComponentCount() - 3));
+		assertSame("AJ: and directly above the OK row (AB2) - \"it should be the row above OK\"", panel.okRow(),
+			menu.getComponent(menu.getComponentCount() - 1));
+		assertTrue("that row is where the way back to the default bands lives now",
+			SwingUtilities.isDescendingFrom(panel.resetPresetsButton(), panel.okRow()));
+		assertFalse("no rule between: it is in the last group, not a group of its own",
+			menu.getComponent(menu.getComponentCount() - 3) instanceof JSeparator);
+
+		assertFalse("AH: a check item would be BLANK while this switch is off, which is most of the time",
+			hoverItem instanceof JCheckBoxMenuItem);
+		assertTrue("...and the check items beside it really are the other kind",
+			panel.countInventoryItem() instanceof JCheckBoxMenuItem);
+		assertNotNull("it carries a drawn box of its own", hoverItem.getIcon());
+		assertNull("which the check items do not", panel.countInventoryItem().getIcon());
+
+		assertEquals("the box is on the left", SwingConstants.LEFT, hoverItem.getHorizontalAlignment());
+		assertEquals("and the label to the right of it", SwingConstants.RIGHT,
+			hoverItem.getHorizontalTextPosition());
+		assertEquals("in the menu's own face", Widgets.sans(12), hoverItem.getFont());
+		// Read under the switch, because since AH3 there is nothing to read without it - the item's own line
+		// goes quiet with every other, which is the whole of the user's "no hover text at all unless it is on".
+		assertEquals("and with the switch on it explains itself like everything else",
+			BankPriceMovementPanel.SHOW_HOVER_TEXT_TIP, hoverItem.getToolTipText());
+		// AJ narrowed the SENTENCE with the reach. AH's read "the bank value, the item rows and the controls";
+		// addendum AI moved a row's description out of its hover and into the cell, so a row is silent at every
+		// setting and the switch has nothing left to say about one. A description that still promised the rows
+		// would be the item telling the reader something untrue.
+		assertEquals("the description addendum AJ asks for, pinned",
+			"Show hover text anywhere in the sidebar: the bank value and the controls",
+			BankPriceMovementPanel.SHOW_HOVER_TEXT_TIP);
+	}
+
+	/**
+	 * AJ: "empty when off, ticked when on" - the user's own words for the box in AH - the DEFAULT they asked
+	 * for again in AJ ("and default 'off' setting"), and the click that flips it.
+	 *
+	 * <p>The two glyphs are compared as PIXELS, the way every other drawn icon in this file is ({@code sameIcon}
+	 * over {@code Widgets.triangle}): they have no {@code equals} of their own, and the promise is about what a
+	 * reader sees rather than about which object the item is holding. Both states draw ink - an empty box is
+	 * still a box - and the ticked one draws more of it.
+	 */
+	@Test
+	public void theHoverSwitchesBoxIsEmptyWhenOffAndTickedWhenOnAndTheClickWritesThePref() throws Exception
+	{
+		build();
+		assertFalse("AJ: the quieter sidebar is what ships, as the user asked twice",
+			panel.options().showHoverText());
+		publish(rows(3), listedWith(summary()));
+		final JMenuItem hoverItem = item(panel.heroMenu(), BankPriceMovementPanel.SHOW_HOVER_TEXT_TEXT);
+		final Icon empty = Widgets.checkBox(false);
+		final Icon ticked = Widgets.checkBox(true);
+		assertFalse("the two states are not the same picture", sameIcon(empty, ticked));
+		assertTrue("an empty box is still a box: the outline is drawn", inked(empty) > 0);
+		assertTrue("and the tick is ink on top of it", inked(ticked) > inked(empty));
+		assertTrue("off out of the box", sameIcon(empty, hoverItem.getIcon()));
+
+		// The click: the switch flips, the box fills, and the pref is written so the settings page follows.
+		onEdt(() -> hoverItem.doClick(0));
+		assertTrue(panel.options().showHoverText());
+		assertTrue("the box follows the click", sameIcon(ticked, hoverItem.getIcon()));
+		assertEquals("the pref is written so the config panel follows", Arrays.asList(HOVERS_ON),
+			prefs.optionSaves);
+		assertTrue("the filter and the hero switches are untouched", prefs.saves.isEmpty());
+		assertTrue(prefs.heroSaves.isEmpty());
+
+		// ...and again, back off.
+		onEdt(() -> hoverItem.doClick(0));
+		assertFalse(panel.options().showHoverText());
+		assertTrue(sameIcon(empty, hoverItem.getIcon()));
+		assertEquals(2, prefs.optionSaves.size());
+		assertEquals(ViewOptions.DEFAULT, prefs.optionSaves.get(1));
+
+		// The settings page's own change comes back through applyOptions: it redraws the box and writes nothing.
+		onEdt(() -> panel.applyOptions(HOVERS_ON));
+		assertTrue("the box follows the config road too", sameIcon(ticked, hoverItem.getIcon()));
+		assertEquals(2, prefs.optionSaves.size());
+		onEdt(() -> panel.applyOptions(ViewOptions.DEFAULT));
+		assertTrue(sameIcon(empty, hoverItem.getIcon()));
+		assertEquals(2, prefs.optionSaves.size());
+	}
+
+	/**
+	 * AJ: the hero card's hover - addendum AF's exact gp figure - is SILENT out of the box, and turning the
+	 * switch on brings it back exactly as AF left it.
+	 *
+	 * <p>This is addendum AH's data-hover test with one half taken away. AH governed two hovers, the card's and
+	 * an item row's; AI moved a row's description out of the hover and into the cell, so the card's is the only
+	 * DATA hover left for the switch to hold, and the rows have a test of their own saying they are silent
+	 * whichever way it is set ({@link #aRowIsSilentUnderEitherSettingAndStillOpensOnAClick}).
+	 *
+	 * <p><b>Null and not the empty string.</b> Swing's {@code ToolTipManager} registers a component the moment
+	 * it is given any text and opens an empty yellow box for {@code ""} - which is the very reading ("a box
+	 * follows my pointer around") the switch exists to remove. Every assertion here says {@code assertNull}
+	 * rather than {@code assertEquals("", ...)} for that reason.
+	 */
+	@Test
+	public void theCardsHoverIsSilentUntilTheSwitchIsTurnedOn() throws Exception
+	{
+		build();
+		assertFalse("AJ: the quieter sidebar is what ships", panel.options().showHoverText());
+		publish(rows(3), listedWith(summary()));
+		onEdt(() ->
+		{
+			for (JComponent c : heroTipTargets())
+			{
+				assertNull(c.getClass().getSimpleName() + " carries no hover while the switch is off",
+					c.getToolTipText());
+			}
+		});
+
+		// The settings page's own road in: the same panel, the next publish, the hover back.
+		onEdt(() -> panel.applyOptions(HOVERS_ON));
+		publish(repriced(3), listedWith(summary()));
+		onEdt(() ->
+		{
+			for (JComponent c : heroTipTargets())
+			{
+				assertEquals(c.getClass().getSimpleName() + " is back on the card's hover", VALUE_TIP,
+					c.getToolTipText());
+			}
+		});
+	}
+
+	/**
+	 * AH3, the scope decision AJ keeps: the switch governs every hover that explains a CONTROL, and not only
+	 * the card's figure.
+	 *
+	 * <p>AH as first built spared them - the sort button, the Refresh link, the "Item prices update every 24hrs"
+	 * line, the gear, the window chips, the band button and the items in the gear menu kept their words in both
+	 * states, on the reasoning that a control which will not say what it does is a worse sidebar rather than a
+	 * quieter one. The user, on that build: "there are still some things that show hover text even when its
+	 * 'off' please fix this and make sure there is no hover text at all unless it is on." So the reasoning was
+	 * wrong about what they asked for, and this test is the old one read backwards - silent with the switch off,
+	 * word for word with it on, and silent again the moment it goes back.
+	 *
+	 * <p>The literal texts of the ON half are the old test's, unchanged: narrowing the switch's reach to leave
+	 * the item rows out (AI, AJ) is no licence to change what a CONTROL says.
+	 */
+	@Test
+	public void everyControlGoesQuietWithTheSwitchAndSaysItsPieceAgainWhenItComesBack() throws Exception
+	{
+		build();
+		publish(rows(3), listedWith(summary()));
+		assertControlTooltipsSilent("the switch OFF");
+
+		onEdt(() -> panel.applyOptions(HOVERS_ON));
+		publish(repriced(3), listedWith(summary()));
+		assertControlTooltipsIntact("the switch ON");
+
+		// ...and off again on the flip ALONE, with no publish behind it: applyHoverSwitch re-applies every hover
+		// the panel has registered, and a control that only went quiet on the next publish would be a control
+		// that stayed loud for up to half an hour (the price re-check interval) after the box was unticked.
+		onEdt(() -> panel.applyOptions(ViewOptions.DEFAULT));
+		assertControlTooltipsSilent("the switch OFF again, on the flip alone");
+
+		// ...and back on the same way, so the flip is lossless in both directions - the map AH3 keeps holds what
+		// each component says while the switch is on, and turning it off must not empty it.
+		onEdt(() -> panel.applyOptions(HOVERS_ON));
+		assertControlTooltipsIntact("the switch ON again, on the flip alone");
+	}
+
+	/**
+	 * AJ: <b>not one component anywhere in this sidebar carries a tooltip while the switch is off</b> - walked,
+	 * not listed - and not one component inside a ROW carries one at either setting.
+	 *
+	 * <p>Two guards over one traversal, because they answer two different failures.
+	 *
+	 * <p>The FIRST is addendum AH3's, and it is the guard that would have caught the bug the user found. The
+	 * first cut of AH silenced the two hovers it knew about and missed four labels, because
+	 * {@link Widgets#setFitted} hangs the whole text on a label it had to CUT and does it behind the panel's
+	 * back. So the sidebar still spoke - over the bank total, the provenance footnote, the band button and the
+	 * problem line - and it spoke exactly when a reader goes looking, which is when the label is too narrow to
+	 * read. A test naming components one by one could not have caught that, because nobody writing it would
+	 * have thought to name them; this one walks the panel's whole tree, and both popup menus with it, and fails
+	 * on whatever it finds.
+	 *
+	 * <p>The SECOND is addendum AI's, and is the part AJ has to be careful about: a ROW is silent whether the
+	 * switch is on or off, because since AI a row's description is the block the cell opens rather than a
+	 * hover, and {@link Widgets#setFittedName} would otherwise leave a cut name and a cut price talking behind
+	 * the row's back ({@code MovementRowPanel.clearHovers} is what answers that). A reader of this file will
+	 * assume the switch covers the rows - it did, for one afternoon - so the ON half asserts outright that it
+	 * does not.
+	 *
+	 * <p>The failure message names the offending component's class, the words on its face and the text it was
+	 * showing, so the next person to add a {@code setToolTipText} outside {@code setHover} is told where.
+	 *
+	 * <p>Every state that puts something extra in the tree is walked: the fold open (the chips and the Min /
+	 * Max boxes), a problem row, an OPEN row, and the empty card with its "Clear price range" button, which
+	 * hangs off a card the reader only sees when a band has hidden everything.
+	 */
+	@Test
+	public void notOneComponentHoversWithTheSwitchOffAndNoRowHoversWithItOn() throws Exception
+	{
+		build();
+		assertFalse("AJ: the quieter sidebar is what ships", panel.options().showHoverText());
+		onEdt(() ->
+		{
+			panel.toggleFold();
+			panel.applyFilter(RowFilter.DEFAULT.withGpMin(123_456_789L).withGpMax(2_000_000_000L));
+		});
+		publish(rows(3), listedWithProblemAndPortfolio(UNAVAILABLE));
+		onEdt(() ->
+		{
+			// The walk reaches the corners - asserted, so this can never pass by finding nothing.
+			final Map<JComponent, String> targets = everyHoverTarget();
+			assertTrue("the hero card", targets.containsKey(panel.hero()));
+			assertTrue("the bank total", targets.containsKey(panel.totalLabel()));
+			assertTrue("the provenance footnote", targets.containsKey(panel.footnoteLabel()));
+			assertTrue("the update line", targets.containsKey(panel.updateLabel()));
+			assertTrue("the Refresh link", targets.containsKey(panel.refreshLabel()));
+			assertTrue("the gear", targets.containsKey(panel.gearLabel()));
+			assertTrue("a window chip", targets.containsKey(panel.windowChip(MovementWindow.D1)));
+			assertTrue("the sort button", targets.containsKey(panel.sortButton()));
+			assertTrue("the band button", targets.containsKey(panel.bandTarget()));
+			assertTrue("the fold's chips", targets.containsKey(panel.presetCell(1)));
+			assertTrue("the Min box", targets.containsKey(panel.minField()));
+			assertTrue("the Max box", targets.containsKey(panel.maxField()));
+			assertTrue("the problem line", targets.containsKey(panel.problemLabel()));
+			assertTrue("a gear item", targets.containsKey(panel.countInventoryItem()));
+			assertTrue("the switch's own item", targets.containsKey(panel.showHoverTextItem()));
+			assertTrue("a preset box", targets.containsKey(panel.presetField(0)));
+			assertTrue("the preset row", targets.containsKey(panel.presetRow()));
+			assertTrue("the reset button", targets.containsKey(panel.resetPresetsButton()));
+			assertTrue("the OK button", targets.containsKey(panel.okButton()));
+			final MovementRowPanel first = panel.rowPanels().get(0);
+			assertTrue("a row", targets.containsKey(first));
+			final List<JComponent> rowParts = new ArrayList<>();
+			descendants(first, rowParts);
+			assertFalse("a row has children", rowParts.isEmpty());
+			for (JComponent c : rowParts)
+			{
+				assertTrue("inside a row: " + name(c), targets.containsKey(c));
+			}
+
+			assertNothingHovers("the switch OFF");
+
+			// An OPEN row is the description's own state, and it must be as silent as a shut one.
+			clickRow(first);
+			assertOpen("the click opened it", first);
+			assertNothingHovers("the switch OFF, with a row clicked open");
+		});
+
+		// ON, on the flip alone: the controls and the card speak, and the rows do not - which is AJ's whole
+		// narrowing, asserted where a reader will come looking for it.
+		onEdt(() ->
+		{
+			panel.applyOptions(HOVERS_ON);
+			assertNoRowHovers("the switch ON");
+			for (JComponent c : heroTipTargets())
+			{
+				assertEquals(name(c), VALUE_TIP, c.getToolTipText());
+			}
+		});
+		assertControlTooltipsIntact("the switch ON");
+
+		// The empty card hangs a button of its own in the tree, on a card nobody sees until a band hides
+		// everything - the kind of corner a hand-written list of components forgets.
+		onEdt(() -> panel.applyOptions(ViewOptions.DEFAULT));
+		publish(Collections.emptyList(), listed(10, 0));
+		onEdt(() ->
+		{
+			assertTrue("the empty card is showing its button", panel.clearBandShowing());
+			assertTrue(everyHoverTarget().containsKey(panel.clearBandButton()));
+			assertNothingHovers("the switch OFF, on the empty card");
+			panel.applyOptions(HOVERS_ON);
+			assertNotNull("and it explains itself again with the switch on",
+				panel.clearBandButton().getToolTipText());
+		});
+	}
+
+	/**
+	 * AJ, and <b>the fact a future reader will get wrong</b>: the hover switch does not reach the item rows.
+	 *
+	 * <p>A row carries no tooltip with the switch ON and none with it OFF - on the card and on every child of
+	 * it - and a click opens the cell in both states. That is not an oversight and it is not a bug waiting to
+	 * be fixed: addendum AI moved a row's description out of the hover and into the block the cell opens, so
+	 * there is no row hover for a switch to govern, and AJ restored the switch for the hovers AI left behind -
+	 * the card's figure and the controls - rather than for these. Anyone who "fixes" this by wiring the rows
+	 * back into {@code setHover} re-creates the seven-line tooltip the user asked to be rid of.
+	 *
+	 * <p>The click half matters as much as the silence. Under AH a click on a row swapped which of two tooltips
+	 * it carried, so a row was inert while the hovers were off; since AI the click opens a block a reader can
+	 * see, and it must work whatever the switch says.
+	 */
+	@Test
+	public void aRowIsSilentUnderEitherSettingAndStillOpensOnAClick() throws Exception
+	{
+		buildWithHovers();
+		publish(rows(4), listed(4, 4));
+		assertTrue("the panel really is built with the switch on", panel.options().showHoverText());
+		onEdt(() -> assertNoRowHovers("the switch ON: a row says nothing on hover since AI"));
+
+		final MovementRowPanel openedWithHoversOn = panel.rowPanels().get(2);
+		onEdt(() -> clickRow(openedWithHoversOn));
+		assertOpen("the click opens the cell with the switch on", openedWithHoversOn);
+		onEdt(() -> assertNoRowHovers("the switch ON, with a row open"));
+
+		// Off, on the flip alone. The rows are deliberately NOT rebuilt for this switch - and since addendum AO
+		// deleted holdingOnRows, applyOptions rebuilds them for no switch at all - so what is asserted here is
+		// that they had nothing to lose by not being.
+		onEdt(() -> panel.applyOptions(ViewOptions.DEFAULT));
+		onEdt(() -> assertNoRowHovers("the switch OFF"));
+		assertOpen("and the reader's open row is untouched by the flip", panel.rowPanels().get(2));
+
+		final MovementRowPanel openedWithHoversOff = panel.rowPanels().get(0);
+		onEdt(() -> clickRow(openedWithHoversOff));
+		assertOpen("the click opens the cell with the switch off too", openedWithHoversOff);
+		onEdt(() -> assertNoRowHovers("the switch OFF, with two rows open"));
+	}
+
+	/**
+	 * AH3, kept by AJ: the four labels {@link Widgets#setFitted} speaks for follow the switch like everything
+	 * else. They are named outright because they are the ones AH3 had to adopt - the real leak the user found -
+	 * and the ones a later tidy-up would drop again.
+	 *
+	 * <p>The problem line is given a sentence too long for its 213 px row ON PURPOSE, and that it really was
+	 * cut is asserted rather than assumed. {@code Widgets.setFitted} hangs the full text on a label only when
+	 * it had to CUT it, so this file's usual problem sentence - which fits whole - leaves no tooltip at all and
+	 * would prove nothing either way. The problem line is also the only one of the four whose hover is nothing
+	 * BUT the fitted text, the total and the footnote carrying the card's own hover (AF) and the band button
+	 * its band sentence, so it is the one that proves the adoption rather than a text written over it
+	 * afterwards.
+	 */
+	@Test
+	public void theFittedLabelsHoverWithTheSwitchOnAndAreSilentWithItOff() throws Exception
+	{
+		// Far past the 213 px the problem row has (N section 3 §2, T6), so the fitting helper must cut it.
+		final String longProblem = "the last wiki history fetch failed - showing stored baselines from before"
+			+ " the most recent Jagex guide-price publication";
+		buildWithHovers();
+		onEdt(() ->
+		{
+			panel.toggleFold();
+			panel.applyFilter(RowFilter.DEFAULT.withGpMin(123_456_789L).withGpMax(2_000_000_000L));
+		});
+		publish(rows(3), listedWithProblemAndPortfolio(longProblem));
+		onEdt(() ->
+		{
+			assertEquals("the bank total (AF)", VALUE_TIP, panel.totalLabel().getToolTipText());
+			assertEquals("the provenance footnote", VALUE_TIP, panel.footnoteLabel().getToolTipText());
+			assertNotNull("the band button", panel.bandTarget().getToolTipText());
+			assertTrue("the fixture really is cut, so there is something here to leak",
+				panel.problemLabel().getText().endsWith(Widgets.ELLIPSIS));
+			assertFitted(panel.problemLabel(), longProblem);
+
+			// ...and off on the flip alone, which is where the leak was: a label the panel never registered
+			// would keep the fitting helper's own hover and go on talking with the box unticked.
+			panel.applyOptions(ViewOptions.DEFAULT);
+			assertNull("the bank total", panel.totalLabel().getToolTipText());
+			assertNull("the provenance footnote", panel.footnoteLabel().getToolTipText());
+			assertNull("the band button", panel.bandTarget().getToolTipText());
+			assertNull("the problem line, still drawn cut", panel.problemLabel().getToolTipText());
+			assertTrue("...and still drawn cut, so the silence is not the label having gone whole",
+				panel.problemLabel().getText().endsWith(Widgets.ELLIPSIS));
+		});
 	}
 
 	@Test
@@ -4263,8 +5065,8 @@ public class BankPriceMovementPanelTest
 		// line 2 synthesised for the lit window (the mocked status carries no summary, so the total is 0 and 1d has
 		// no baseline: one dash on the gp, nothing on the percent). The bank time is before the epoch, so the clock
 		// in the footnote is a dash.
-		assertTrue(d, d.contains(",\"options\":{\"cash\":true,\"untradeables\":false,\"holding\":false,\"live\":true"
-			+ ",\"inventory\":true}"
+		assertTrue(d, d.contains(",\"options\":{\"cash\":true,\"untradeables\":false,\"live\":true"
+			+ ",\"inventory\":true,\"hover\":false}"
 			+ ",\"live\":{\"fetchedAt\":0,\"latestItems\":0,\"liveRows\":0,\"guideRows\":0,\"alchRows\":0"
 			+ ",\"liveDay\":null,\"windowDays\":{\"1d\":null,\"7d\":null,\"30d\":null,\"90d\":null,\"180d\":null}}"));
 		assertTrue(d, d.contains(",\"hero\":{\"value\":true,\"gp\":true,\"pct\":true},\"bankValueShowing\":true,\"bankValue\":\"0\",\"bankMove\":\"1d   -   -\",\"bankWindow\":\"1d\",\"heroGp\":\"-\",\"heroPct\":\"\",\"heroSub\":\"Guide prices - bank -\""));
@@ -4289,13 +5091,15 @@ public class BankPriceMovementPanelTest
 		assertTrue(noGp, noGp.contains("\"hero\":{\"value\":true,\"gp\":false,\"pct\":true},\"bankValueShowing\":true,\"bankValue\":\"1.23b\",\"bankMove\":\"1d   +12.4m   +1.0%\",\"bankWindow\":\"1d\",\"heroGp\":\"\",\"heroPct\":\"+1.0%\""));
 
 		// Q7: the view switches ride beside the hero's, written from ViewOptions.asMap() in the same shape - five
-		// of them since Y1, in that value's own order, with the carried switch last.
-		onEdt(() -> panel.applyOptions(new ViewOptions(false, true, true)));
+		// of them since addendum AO took "holding" out from between the untradeables and the live switch, in that
+		// value's own order, with the hover switch last.
+		onEdt(() -> panel.applyOptions(new ViewOptions(false, true, true, true, false)));
 		assertTrue(panel.describe(), panel.describe().contains(
-			",\"options\":{\"cash\":false,\"untradeables\":true,\"holding\":true,\"live\":true,\"inventory\":true}"));
+			",\"options\":{\"cash\":false,\"untradeables\":true,\"live\":true,\"inventory\":true,\"hover\":false}"));
+		assertFalse("AO1: and the key it echoed is gone", panel.describe().contains("\"holding\":"));
 		onEdt(() -> panel.applyOptions(LIVE_OFF.withCountInventory(false)));
 		assertTrue(panel.describe(), panel.describe().contains(
-			",\"options\":{\"cash\":true,\"untradeables\":false,\"holding\":false,\"live\":false,\"inventory\":false}"
+			",\"options\":{\"cash\":true,\"untradeables\":false,\"live\":false,\"inventory\":false,\"hover\":false}"
 				+ ",\"live\":{"));
 		assertTrue(panel.describe(), panel.describe().contains(
 			",\"updateLine\":\"Item prices update every 24hrs\","));
@@ -4337,7 +5141,7 @@ public class BankPriceMovementPanelTest
 	public void everyHeaderRowAndEveryRowFitsTheContentWidth() throws Exception
 	{
 		prefs.stored = new RowFilter(123_456_789L, 2_000_000_000L, SortMode.GP_MOVE, false, MovementWindow.D1);
-		build();
+		buildWithHovers();
 		final PriceService.Status wide = status(false, true, 99_999, 99_999, MovementWindow.D1, UNAVAILABLE, STATUS_TEXT, PRICES_AT);
 		when(wide.portfolio()).thenReturn(hugeSummary());
 		publish(wideRows(), wide);
@@ -4383,7 +5187,9 @@ public class BankPriceMovementPanelTest
 				assertTrue(panel.presetCell(p).getText() + " needs " + tw, tw + 2 <= BankPriceMovementPanel.PRESET_WIDTH);
 			}
 
-			// The control row: the sort button whole, the band button fitted beside it.
+			// The control row: the sort button whole, the band button fitted into what it leaves. Addendum AM
+			// swapped which END each stands at (band WEST, sort EAST) and neither fitting rule moved with
+			// them, which is why this stays a sum of the two widths and takes no view of the order.
 			final int control = panel.sortButton().getPreferredSize().width + BankPriceMovementPanel.ROW_GAP + panel.bandTarget().getPreferredSize().width;
 			report.append("\n  control row content ").append(control).append(" px of ").append(W - 2 * BankPriceMovementPanel.ROW_GAP)
 				.append(" [").append(panel.sortButton().getText()).append("] [").append(panel.bandTarget().getText()).append(']');
@@ -4418,6 +5224,126 @@ public class BankPriceMovementPanelTest
 			assertTrue(longName.tooltipHtml(), longName.tooltipHtml().contains("Karambwan vessel (baited) long"));
 			System.out.println(report);
 		});
+	}
+
+	/**
+	 * The Q4 row format, measured on a published page: every cell is the 62 px three-line card the user
+	 * approved, and the two gp figures stand in ONE right-aligned column - the stack's directly over the item's,
+	 * and every row's over every other row's.
+	 *
+	 * <p><b>That column is the reason the format is three lines rather than one</b>, and nothing else in this
+	 * file pins it. {@link #everyHeaderRowAndEveryRowFitsTheContentWidth} measures a row's OUTER width and takes
+	 * no view of where anything inside it lands; {@code priceText()} and {@code gpText()} are asked for their
+	 * words and never for their position. A fit order that sized each figure against its own row's left-hand
+	 * text would pass every one of those and draw a ragged list, which is the reading failure the whole
+	 * three-line cell exists to avoid.
+	 *
+	 * <p>The fixture is deliberately uneven - "+200m" over "+100m", "+28k" over "+1", "+21k" over "+3.0k" - so a
+	 * column that came from the text rather than from a fixed box could not come out straight by accident. It
+	 * also pins the compact thousands the format needed ("+3.0k", where the sidebar printed "+3,000" before),
+	 * because that figure is the one real loss of precision on the face and a silent return to the long form
+	 * would take the column with it.
+	 *
+	 * <p>Two of the four rows hold ONE item, which is Q4.7: the working still prints, so every row reads the
+	 * same way, and the figure beside it does not, because it is already standing on the line above. So those
+	 * rows carry one visible gp figure and the other two carry two.
+	 *
+	 * <p>Measured after a real layout and in the ROWS COLUMN's own coordinates, so "one column" means across the
+	 * page the reader scans and not merely inside each card.
+	 */
+	@Test
+	public void everyRowIsTheThreeLineCellAndBothGpFiguresStandInOneColumn() throws Exception
+	{
+		assertEquals("the format the user approved is a 62 px cell", 62, MovementRowPanel.ROW_HEIGHT);
+		final List<MovementRow> uneven = Arrays.asList(
+			new MovementRow(1, "Twisted bow", 2, false, 1_200_000_000L, 1_100_000_000L, 100_000_000L, 9.09d,
+				2_400_000_000L, null),
+			new MovementRow(2, "Feather", 28_000, true, 3L, 2L, 1L, 50.0d, 84_000L, null),
+			new MovementRow(3, "Divine ranging potion(3)", 7, true, 32_300L, 29_300L, 3_000L, 10.23d, 226_100L, null),
+			new MovementRow(4, "Abyssal whip", 1, false, 1_500_000L, 1_800_000L, -300_000L, -16.66d, 1_500_000L, null));
+		build();
+		publish(uneven, listed(uneven.size(), uneven.size()));
+		onEdt(() ->
+		{
+			// Laid out at the sidebar's own size, tall enough for four rows with room to spare: a page that had
+			// to scroll would take the gutter off every card and measure something else.
+			layout(SIDEBAR_WIDTH, 900);
+			assertFalse("four rows do not scroll", panel.scrollPane().getVerticalScrollBar().isVisible());
+
+			final List<MovementRowPanel> rows = panel.rowPanels();
+			assertEquals(uneven.size(), rows.size());
+			final StringBuilder report = new StringBuilder("the Q4 gp column, in the rows column's coordinates:");
+			final List<String> texts = new ArrayList<>();
+			final List<Integer> edges = new ArrayList<>();
+			final List<Integer> widths = new ArrayList<>();
+			for (MovementRowPanel row : rows)
+			{
+				final String why = row.row().name() + ": ";
+				assertEquals(why + "the cell is the three-line card", MovementRowPanel.ROW_HEIGHT,
+					row.getPreferredSize().height);
+				assertEquals(why + "...and the page gave it exactly that", MovementRowPanel.ROW_HEIGHT,
+					row.getHeight());
+
+				final List<JLabel> figures = gpFiguresOf(row);
+				assertEquals(why + "Q4.7: a stack of one prints its move once, a bigger stack twice",
+					row.row().quantity() > 1 ? 2 : 1, figures.size());
+				for (JLabel figure : figures)
+				{
+					final Rectangle where = SwingUtilities.convertRectangle(figure.getParent(),
+						figure.getBounds(), panel.rowsColumn());
+					texts.add(figure.getText());
+					edges.add(where.x + where.width);
+					widths.add(where.width);
+					report.append("\n  [").append(row.row().name()).append("] \"").append(figure.getText())
+						.append("\" right edge ").append(where.x + where.width)
+						.append(", box ").append(where.width).append(" px");
+				}
+			}
+			System.out.println(report);
+
+			// The words first, so a failure of the column says whether the figures themselves changed.
+			assertEquals("the stack's move over the item's, on every row that has both",
+				Arrays.asList("+200m", "+100m", "+28k", "+1", "+21k", "+3.0k", "-300k"), texts);
+			// ...then the one thing the words cannot say: they all end on the same pixel.
+			for (int i = 1; i < edges.size(); i++)
+			{
+				assertEquals("\"" + texts.get(i) + "\" does not end where \"" + texts.get(0) + "\" does"
+					+ report, edges.get(0), edges.get(i));
+				assertEquals("\"" + texts.get(i) + "\" is not in the same box" + report,
+					widths.get(0), widths.get(i));
+			}
+			assertTrue("the column is on the row, not off its left edge", edges.get(0) > 0);
+		});
+	}
+
+	/**
+	 * The gp figures a reader can see on one row's face: the stack's on line 2 and the item's on line 3.
+	 *
+	 * <p>Found by COLOUR rather than by walking the face's nested {@code BorderLayout}s, exactly as
+	 * {@link #gpLabelOf} is found by its text: addendum AL painted those two labels - and nothing else on the
+	 * card - in {@link MovementRowPanel#quietChangeColor}, since the name and the stack total are white, the
+	 * working is grey, and the percentage beside them keeps the full FIGURE colour. (The word "Total" stood on
+	 * line 2 until addendum AO line AO2 deleted it; it was LIGHT_GRAY and never answered this search.) A row
+	 * with no move at all must not be asked, because QUIET and FIGURE agree at a signum of zero and the
+	 * percentage would answer too.
+	 *
+	 * <p>An EMPTY figure is left out: a stack of one carries the label with no text on it (Q4.7), and what is
+	 * measured here is what is drawn.
+	 */
+	private static List<JLabel> gpFiguresOf(MovementRowPanel row)
+	{
+		final Color quiet = MovementRowPanel.quietChangeColor(row.row());
+		final List<JComponent> parts = new ArrayList<>();
+		descendants(row, parts);
+		final List<JLabel> out = new ArrayList<>();
+		for (JComponent c : parts)
+		{
+			if (c instanceof JLabel && quiet.equals(c.getForeground()) && !((JLabel) c).getText().isEmpty())
+			{
+				out.add((JLabel) c);
+			}
+		}
+		return out;
 	}
 
 	/**
@@ -4740,7 +5666,7 @@ public class BankPriceMovementPanelTest
 	@Test
 	public void theRefreshLinkGoesRefreshingThenUpToDateThenBackToRefresh() throws Exception
 	{
-		build();
+		buildWithHovers();
 		publish(rows(1), listedWith(summary()));
 		onEdt(() ->
 		{
@@ -4850,7 +5776,7 @@ public class BankPriceMovementPanelTest
 	@Test
 	public void aRealStatusFromTheServiceRendersTheWholeHeader() throws Exception
 	{
-		build();
+		buildWithHovers();
 		final PriceService.Status real = StatusFixtures.listed(PRICES_AT, PRICES_AT - 60_000L, MovementWindow.D1,
 			null, THEN_DAY, summary(), 538, 519);
 		assertEquals("the fixture is a real baseline day", THEN_DAY, real.thenDay());
@@ -4861,8 +5787,8 @@ public class BankPriceMovementPanelTest
 		assertEquals("+12.4m", panel.deltaLabel().getText());
 		assertEquals("1d vs 07 Sep - bank " + MovementMath.formatTime(real.bankAtMillis()),
 			panel.footnoteLabel().getText());
-		assertTrue(panel.hero().getToolTipText(), panel.hero().getToolTipText()
-			.endsWith("<br>" + real.headerText() + "</html>"));
+		assertEquals("a real status draws the same hover a mocked one does (AF)", VALUE_TIP,
+			panel.hero().getToolTipText());
 		assertEquals("no problem: the sentence is the header line", real.text(), panel.statusText());
 		assertFalse(panel.problemShowing());
 
@@ -4874,8 +5800,8 @@ public class BankPriceMovementPanelTest
 		assertEquals(UNAVAILABLE, panel.problemLabel().getToolTipText());
 		assertTrue(panel.problemShowing());
 		assertEquals(ColorScheme.PROGRESS_ERROR_COLOR, panel.problemLabel().getForeground());
-		assertTrue("the whole header sentence is still in the card's tooltip",
-			panel.hero().getToolTipText().endsWith("<br>" + problem.headerText() + "</html>"));
+		assertEquals("a problem is the problem row's sentence; the hover is still the figure alone (AF)",
+			VALUE_TIP, panel.hero().getToolTipText());
 
 		// The coercion the mock cannot show: a real status with no summary answers EMPTY, never null.
 		final PriceService.Status none = StatusFixtures.listed(PRICES_AT, PRICES_AT - 60_000L, MovementWindow.D1,
@@ -4883,6 +5809,8 @@ public class BankPriceMovementPanelTest
 		assertSame(PortfolioSummary.EMPTY, none.portfolio());
 		publish(Collections.emptyList(), none);
 		assertEquals("0", panel.totalLabel().getText());
+		assertEquals("a bank worth nothing still answers a figure, never a blank hover", "0 gp",
+			panel.hero().getToolTipText());
 	}
 
 	/**
@@ -4987,7 +5915,7 @@ public class BankPriceMovementPanelTest
 	@Test
 	public void theBandTooltipCarriesTheCount() throws Exception
 	{
-		build();
+		buildWithHovers();
 		publish(rows(3), listed(10, 3));
 		onEdt(() ->
 		{
@@ -5005,16 +5933,19 @@ public class BankPriceMovementPanelTest
 	}
 
 	/**
-	 * X2 with Q6: no hover in the control row follows the holding switch any more. The gp column's tooltip was
-	 * the one that did ("gp change per item" / "per stack", W2), which is why {@code applyOptions} had to
-	 * repaint the control row when the switch moved; the button now says one phrase under either reading, the
-	 * four entries say the same two sentences under either (W3, X1), and the LABELS never moved in the first
-	 * place - so the switch is left doing the one thing it is for, the figures on the ROWS.
+	 * X2 with Q6: nothing in the control row follows a VIEW switch. The gp column's tooltip was the one that
+	 * did ("gp change per item" / "per stack", W2, over the row switch addendum AO has since deleted), which is
+	 * why {@code applyOptions} had to repaint the control row when a switch moved; the button now says one
+	 * phrase whatever the switches are, the four entries say the same two sentences (W3, X1), and the LABELS
+	 * never moved in the first place.
+	 *
+	 * <p>Addendum AO1 settles the question that hover used to ask: the gp column compares the STACK's move for
+	 * everyone, under no switch at all, so there is no second reading left for a qualifier to name.
 	 */
 	@Test
-	public void noHoverInTheControlRowFollowsTheHoldingSwitch() throws Exception
+	public void noHoverInTheControlRowFollowsAViewSwitch() throws Exception
 	{
-		build();
+		buildWithHovers();
 		publish(rows(3), listed(10, 3));
 		onEdt(() ->
 		{
@@ -5024,8 +5955,8 @@ public class BankPriceMovementPanelTest
 			assertEquals("Toggle gp change", item(panel.buildSortMenu(), "gp change").getToolTipText());
 			assertEquals("Sort by Stack price", item(panel.buildSortMenu(), "Stack price").getToolTipText());
 
-			// The switch moves and the control row does not: same column, same face, same hovers, same menu.
-			panel.applyOptions(ViewOptions.DEFAULT.withHoldingOnRows(true));
+			// A switch moves and the control row does not: same column, same face, same hovers, same menu.
+			panel.applyOptions(hovers(ViewOptions.DEFAULT.withLivePrices(false)));
 			assertEquals("gp change", panel.sortButton().getText());
 			assertEquals("Change sorting", panel.sortButton().getToolTipText());
 			assertEquals("no qualifier in the menu, under either switch (W3)", "gp change",
@@ -5035,19 +5966,78 @@ public class BankPriceMovementPanelTest
 			assertEquals("Sort by Item price", item(panel.buildSortMenu(), "Item price").getToolTipText());
 			assertEquals("Sort by Percent change", item(panel.buildSortMenu(), "Percent change").getToolTipText());
 
-			// The other three columns read the same under either switch, as they always did.
+			// The other three columns read the same under every switch, as they always did.
 			panel.setSort(SortMode.STACK_VALUE, false);
 			assertEquals("Change sorting", panel.sortButton().getToolTipText());
 			assertEquals("Toggle Stack price", item(panel.buildSortMenu(), "Stack price").getToolTipText());
-			panel.applyOptions(ViewOptions.DEFAULT);
+			panel.applyOptions(hovers(ViewOptions.DEFAULT));
 			assertEquals("Change sorting", panel.sortButton().getToolTipText());
 			assertEquals("Toggle Stack price", item(panel.buildSortMenu(), "Stack price").getToolTipText());
 
 			// ...and a switch that was never read leaves the row exactly as it was.
-			panel.applyOptions(ViewOptions.DEFAULT.withCountCash(false));
+			panel.applyOptions(hovers(ViewOptions.DEFAULT.withCountCash(false)));
 			assertEquals("Change sorting", panel.sortButton().getToolTipText());
 			assertEquals("Stack price", panel.sortButton().getText());
 		});
+	}
+
+	/**
+	 * AO1, and the whole point of the change: with the "gp change" column LIT and biggest first, a big stack of
+	 * a small mover outranks a single item that moved more per unit.
+	 *
+	 * <p>{@code holdingOnRows} used to decide that. Off - the shipped default - the column compared
+	 * {@link MovementRow#deltaGp()}, one item's move, and a hundred Robin hood hats that each gained 50 gp sat
+	 * below one Twisted bow that gained 2,000: the reader asking "what gained me the most gp" was answered with
+	 * a per-item league table. Addendum AO deleted the switch and settled the column on
+	 * {@link MovementRow#holdingDeltaGp()} for everyone, because this is a portfolio tracker and the row's
+	 * headline line has been the STACK since addendum AN. <b>It is a user-visible change to the default
+	 * ordering of one column</b>, which is why it is pinned here rather than left to follow from the comparator.
+	 *
+	 * <p>It is asserted through the PANEL's own control - the button is clicked, and the filter that click hands
+	 * the service is the one the ordering is taken from - so a future change that quietly re-aims the gp column
+	 * cannot pass by leaving the button and the comparator disagreeing. The two fixture rows are built so the
+	 * two readings disagree outright, and that they do is asserted rather than assumed.
+	 */
+	@Test
+	public void theGpColumnRanksTheBigStackOfASmallMoverFirst() throws Exception
+	{
+		// 100 hats at 32,000 that each gained 50 gp: the stack gained 5,000. One bow at 1,000,000 that gained
+		// 2,000: the stack gained 2,000, because there is one of it.
+		final MovementRow hats = new MovementRow(1, "Robin hood hat", 100, false, 32_000L, 31_950L, 50L,
+			50.0 * 100 / 31_950, 3_200_000L, null);
+		final MovementRow bow = new MovementRow(2, "Twisted bow", 1, false, 1_000_000L, 998_000L, 2_000L,
+			2_000.0 * 100 / 998_000, 1_000_000L, null);
+		assertTrue("the fixture really does split the two readings: the bow moved more per item",
+			bow.deltaGp() > hats.deltaGp());
+		assertTrue("...and the hats moved more as a stack", hats.holdingDeltaGp() > bow.holdingDeltaGp());
+
+		build();
+		publish(Arrays.asList(hats, bow), listed(2, 2));
+		onEdt(() -> panel.clickSort(SortMode.GP_MOVE));
+		assertEquals(SortMode.GP_MOVE, panel.filter().sort());
+		assertTrue("a column lights biggest first (W3)", panel.filter().descending());
+		assertEquals("gp change", panel.sortButton().getText());
+
+		final List<MovementRow> lit = MovementMath.apply(Arrays.asList(hats, bow), panel.filter());
+		assertEquals("AO1: the stack's move is the key, under no switch at all",
+			Arrays.asList("Robin hood hat", "Twisted bow"), names(lit));
+
+		// And the arrow still means what it says: the smallest stack move leads when it points the other way.
+		onEdt(() -> panel.clickSort(SortMode.GP_MOVE));
+		assertFalse("the lit column picked again flips the direction (W3)", panel.filter().descending());
+		assertEquals(Arrays.asList("Twisted bow", "Robin hood hat"),
+			names(MovementMath.apply(Arrays.asList(hats, bow), panel.filter())));
+	}
+
+	/** The names of {@code rows} in the order they were handed over, for an ordering assertion to read. */
+	private static List<String> names(List<MovementRow> rows)
+	{
+		final List<String> out = new ArrayList<>(rows.size());
+		for (MovementRow row : rows)
+		{
+			out.add(row.name());
+		}
+		return out;
 	}
 
 	/**
@@ -5071,10 +6061,11 @@ public class BankPriceMovementPanelTest
 				assertFalse(panel.describe(), panel.describe().contains("sortHint"));
 			}
 
-			// The holding switch moves no label, so it moves no sortLabel either (and since X2, no hover).
+			// A view switch moves no label, so it moves no sortLabel either (and since X2, no hover). The one
+			// that came nearest to moving this label was the row switch, and addendum AO1 deleted it.
 			panel.setSort(SortMode.GP_MOVE, true);
 			assertTrue(panel.describe(), panel.describe().contains("\"sortLabel\":\"gp change\","));
-			panel.applyOptions(ViewOptions.DEFAULT.withHoldingOnRows(true));
+			panel.applyOptions(ViewOptions.DEFAULT.withLivePrices(false));
 			assertTrue(panel.describe(), panel.describe().contains("\"sortLabel\":\"gp change\","));
 			assertFalse(panel.describe(), panel.describe().contains("sortHint"));
 		});
@@ -5088,7 +6079,7 @@ public class BankPriceMovementPanelTest
 	@Test
 	public void theBandTooltipNamesTheStacksWithNoGuidePrice() throws Exception
 	{
-		build();
+		buildWithHovers();
 		publish(rows(3), listedWith(summary()));
 		final String tip = panel.bandTarget().getToolTipText();
 		assertTrue(tip, tip.endsWith("3 of 538 items, 19 with no guide price"));
@@ -5107,14 +6098,15 @@ public class BankPriceMovementPanelTest
 	 * stored (L11), and too few stacks compare for the anchor day to be derived, so the wiki's newest table
 	 * stands in as "now" (L3). Until this, the only readers in the tree were the dev bridge and the tests, so the
 	 * sidebar was pixel-identical whether the wiki answered five minutes ago or has failed all session. The
-	 * FOOTNOTE carries the provenance, so the footnote reddens; the whole sentence goes in the card's tooltip,
-	 * which has no 191 px budget. The problem row is deliberately untouched - L11 pins {@code problem()} null
-	 * while a stored baseline stands.
+	 * FOOTNOTE carries the provenance, so the footnote reddens; the whole sentence goes under the figure on the
+	 * card's hover, which has no 191 px budget - and it is the one thing addendum AF left there beside the
+	 * figure, for exactly that reason. The problem row is deliberately untouched - L11 pins {@code problem()}
+	 * null while a stored baseline stands.
 	 */
 	@Test
-	public void aDegradedStatusRedensTheFootnoteAndPutsTheReasonInTheCardTooltip() throws Exception
+	public void aDegradedStatusRedensTheFootnoteAndPutsTheReasonUnderTheFigure() throws Exception
 	{
-		build();
+		buildWithHovers();
 		final String reason = "the last wiki history fetch failed - showing stored baselines";
 		final PriceService.Status blind = listedWith(summary());
 		when(blind.degraded()).thenReturn(true);
@@ -5126,21 +6118,21 @@ public class BankPriceMovementPanelTest
 		assertTrue(panel.footnoteLabel().getText(), panel.footnoteLabel().getText().startsWith("1d vs 07 Sep - bank "));
 		assertNull("L11: a window with a stored baseline still never complains", panel.status().problem());
 		assertFalse("the problem row stays out - the warning is on the card", panel.problemShowing());
-		final String tip = panel.totalLabel().getToolTipText();
-		assertTrue(tip, tip.contains(reason));
-		assertTrue("the header sentence is still there, whole", tip.contains(STATUS_TEXT));
+		// AF: the figure, a break, the sentence - on the total and on every other child of the card alike.
+		assertEquals("<html>" + VALUE_TIP + "<br>" + reason + "</html>", panel.totalLabel().getToolTipText());
+		assertEquals(panel.totalLabel().getToolTipText(), panel.hero().getToolTipText());
 
-		// ...and a confident status takes both back off.
+		// ...and a confident status takes both back off, leaving the figure on its own.
 		publish(rows(3), listedWith(summary()));
 		assertEquals(ColorScheme.LIGHT_GRAY_COLOR, panel.footnoteLabel().getForeground());
-		assertFalse(panel.totalLabel().getToolTipText(), panel.totalLabel().getToolTipText().contains(reason));
+		assertEquals(VALUE_TIP, panel.totalLabel().getToolTipText());
 	}
 
 	/** B049: the Show-more tooltip counts the rows it will really build - every bank's last click is a short one. */
 	@Test
 	public void theShowMoreTooltipCountsTheRowsItWillBuild() throws Exception
 	{
-		build();
+		buildWithHovers();
 		publish(rows(262), listed(262, 262));
 		onEdt(() ->
 		{
@@ -5207,16 +6199,6 @@ public class BankPriceMovementPanelTest
 			}
 		}
 		assertEquals(title + ": a title and a description", 2, labels);
-	}
-
-	/**
-	 * The card's tooltip for a summary, a header sentence and a set of switches, with no degraded warning - the
-	 * shape most of the assertions here want. The panel keeps ONE tooltip method, the widest, so the arguments a
-	 * test does not care about are said out loud here rather than in six overloads.
-	 */
-	private static String tooltip(PortfolioSummary summary, @Nullable String headerLine, HeroVisibility shown)
-	{
-		return BankPriceMovementPanel.valueTooltip(summary, headerLine, shown, null, LIVE_OFF);
 	}
 
 	/** The viewer's calendar day of an instant - the zone the bank stamp and the clock are both read in. */
@@ -5331,6 +6313,369 @@ public class BankPriceMovementPanelTest
 				l.mouseExited(e);
 			}
 		}
+	}
+
+	/**
+	 * A LEFT click on a row card, delivered to every listener on it - the gesture of addendum AG, which since
+	 * addendum AI opens and shuts the cell.
+	 *
+	 * <p>A click and not a press: the row's listener answers {@code mouseClicked} so that the right button still
+	 * belongs entirely to the two K8 menu entries. The EDT, like every other touch of these components, because
+	 * the toggle re-pins the row's size and revalidates the column it is in.
+	 */
+	private static void clickRow(JComponent c)
+	{
+		final MouseEvent e = new MouseEvent(c, MouseEvent.MOUSE_CLICKED, System.currentTimeMillis(), 0, 1, 1, 1,
+			false, MouseEvent.BUTTON1);
+		for (MouseListener l : c.getMouseListeners())
+		{
+			l.mouseClicked(e);
+		}
+	}
+
+	/**
+	 * The description block of a row (addendum AI): the {@link BorderLayout#CENTER} child of the cell, built with
+	 * the row and hidden until it is clicked.
+	 *
+	 * <p>Asked for by its CONSTRAINT rather than by index, because the constraint is the design - the cell is a
+	 * face pinned NORTH over a detail block filling what is left, both inside the one card border, which is what
+	 * makes an open row one growing cell instead of a second widget under a row that stayed at its shut height.
+	 */
+	private static JLabel detailOf(MovementRowPanel row)
+	{
+		final Component c = ((BorderLayout) row.getLayout()).getLayoutComponent(BorderLayout.CENTER);
+		assertTrue("AI: the cell's CENTER is the description block, not " + c, c instanceof JLabel);
+		return (JLabel) c;
+	}
+
+	/**
+	 * The window the rows on screen were built for - the panel's own rule, restated once here rather than
+	 * guessed at by each caller: the STATUS names it whenever it carries one, because a publish can land after
+	 * the reader has already moved the filter, and the saved filter names it otherwise ({@code onRows}).
+	 *
+	 * <p>Needed since addendum AK, which put the window's label into a row's open block ("Change 7d"), so a
+	 * test that checks the block has to know which window the page was drawn for.
+	 */
+	private MovementWindow listWindow()
+	{
+		final PriceService.Status s = panel.status();
+		return s != null && s.window() != null ? s.window() : panel.filter().window();
+	}
+
+	/**
+	 * The gp figure's label on a row's face, or null when the row has nothing to print there.
+	 *
+	 * <p>Found by the words on it rather than by walking the face's nested {@code BorderLayout}s: the figure is
+	 * the one thing on a row that prints {@code MovementRowPanel.gpText()}, and a search by text survives the
+	 * next tidy-up of the fit order, which a path through the layout would not.
+	 *
+	 * <p>Null, and not a failure, when there is nothing to print - a row with no baseline at all, and a row
+	 * whose price has not moved. Q4 kept that blank: the column is a fixed box and holds itself open empty.
+	 *
+	 * <p>It finds LINE 2's figure, which is what {@code gpText()} returns. Line 3's item figure is a different
+	 * string on every stack of more than one, so it cannot be caught by this search; {@link #gpFiguresOf} is
+	 * what looks at both.
+	 */
+	@Nullable
+	private static JLabel gpLabelOf(MovementRowPanel row)
+	{
+		final String text = row.gpText();
+		if (text.isEmpty())
+		{
+			return null;
+		}
+		final List<JComponent> parts = new ArrayList<>();
+		descendants(row, parts);
+		JLabel found = null;
+		for (JComponent c : parts)
+		{
+			if (c instanceof JLabel && text.equals(((JLabel) c).getText()))
+			{
+				assertNull("two labels on one row print \"" + text + "\"", found);
+				found = (JLabel) c;
+			}
+		}
+		assertNotNull("no label on the row prints its gp figure \"" + text + "\"", found);
+		return found;
+	}
+
+	/**
+	 * A row standing OPEN (addendum AI): the state the panel records, the block showing, and the cell grown by
+	 * exactly what that block asks for.
+	 *
+	 * <p>All three, because each can hold without the others and only the three together are what a reader sees.
+	 * The state alone is the seam; the visibility alone would pass on a cell that never grew, so the description
+	 * would be drawn over the row under it; and the height alone would pass on an empty block.
+	 *
+	 * <p><b>Re-pointed by addendum AK.</b> The text used to be {@code tooltip(...)} re-wrapped, and since AK it
+	 * is the labelled column {@link MovementRowPanel#detail} builds - so the expected string is obtained by
+	 * CALLING that method with this page's own context rather than by copying its output here. A copy would be
+	 * a second implementation of the block, free to drift from the first; a call cannot, and it says what the
+	 * panel's promise actually is: an open cell shows the block AK builds for THIS row, under the window and
+	 * the switches the page was built with, and nothing else.
+	 *
+	 * <p>The last argument is the one thing the block cannot work out for itself: the name is repeated above
+	 * the table only when the row's face had to CUT it, which is why {@code MovementRowPanel} sets the text
+	 * after {@code Widgets.setFittedName} has run. Asked of the label the reader is looking at
+	 * ({@link MovementRowPanel#nameText()}), so this agrees with the face by construction.
+	 */
+	private void assertOpen(String why, MovementRowPanel row)
+	{
+		assertTrue(why + ": the panel records it open", row.expanded());
+		final JLabel detail = detailOf(row);
+		assertTrue(why + ": the description is showing", detail.isVisible());
+		assertEquals(why + ": AK's labelled block, built for this row under the page's window and switches",
+			MovementRowPanel.detail(row.row(), listWindow(), panel.listThenDay(), panel.options(),
+				!row.row().name().equals(row.nameText())),
+			detail.getText());
+		assertEquals(why + ": the cell grew by exactly what the block asks for",
+			MovementRowPanel.ROW_HEIGHT + detail.getPreferredSize().height, row.getPreferredSize().height);
+		assertTrue(why + ": ...which is more than the 62 px card", row.getPreferredSize().height
+			> MovementRowPanel.ROW_HEIGHT);
+	}
+
+	/** A row SHUT (addendum AI): the state, the block hidden, and the plain 62 px card of addendum N. */
+	private static void assertClosed(String why, MovementRowPanel row)
+	{
+		assertFalse(why + ": the panel records it shut", row.expanded());
+		assertFalse(why + ": the description is hidden", detailOf(row).isVisible());
+		assertEquals(why + ": the cell is the 62 px card", MovementRowPanel.ROW_HEIGHT,
+			row.getPreferredSize().height);
+	}
+
+	/**
+	 * Every component of the hero card that carries the CARD's own hover - the {@code heroTipTargets} list inside
+	 * the panel, read back through its accessors.
+	 *
+	 * <p>The gear and the update line are deliberately not among them: each keeps a tooltip of its own.
+	 */
+	private List<JComponent> heroTipTargets()
+	{
+		return Arrays.<JComponent>asList(panel.hero(), panel.captionRow(), panel.captionLabel(), panel.totalRow(),
+			panel.totalLabel(), panel.moveLine(), panel.triangleLabel(), panel.deltaLabel(), panel.pctLabel(),
+			panel.stripHolder(), panel.footnoteLabel());
+	}
+
+	/**
+	 * AI: no row in the sidebar is showing a hover - on itself, or on any component the pointer can land on
+	 * inside it. Every offender is collected before anything fails, so one run names all of them rather than
+	 * the first the walk happened to reach.
+	 *
+	 * <p><b>It takes no view of addendum AJ's hover switch, and that is the point.</b> A row is silent with the
+	 * switch on and silent with it off, because since AI a row's description is the block the cell opens rather
+	 * than a tooltip, so every caller may hand this any setting it likes.
+	 *
+	 * <p>Null and not the empty string. Swing's {@code ToolTipManager} registers a component the moment it is
+	 * given any text and opens an empty yellow box for {@code ""} - which is the very reading ("a box follows
+	 * my pointer down the list") that moving the description into the cell exists to remove.
+	 */
+	private void assertNoRowHovers(String why)
+	{
+		final List<String> offenders = new ArrayList<>();
+		for (MovementRowPanel row : panel.rowPanels())
+		{
+			final List<JComponent> parts = new ArrayList<>();
+			parts.add(row);
+			descendants(row, parts);
+			assertFalse("a row has children to be silent about", parts.isEmpty());
+			for (JComponent c : parts)
+			{
+				final String tip = c.getToolTipText();
+				if (tip != null)
+				{
+					offenders.add(row.row().name() + ": " + name(c) + " -> \"" + tip + "\"");
+				}
+			}
+		}
+		if (!offenders.isEmpty())
+		{
+			fail(why + ": " + offenders.size() + " component(s) inside a row still show a hover. A row says"
+				+ " nothing on hover since AI - its description is the block the click opens - so"
+				+ " MovementRowPanel.clearHovers must reach every child, including the ones"
+				+ " Widgets.setFittedName and Widgets.setFitted hang the full text on. Offenders: " + offenders);
+		}
+	}
+
+	/**
+	 * Every component a pointer can land on in this sidebar, mapped to the place it is in.
+	 *
+	 * <p>The panel's whole tree - which reaches the four CardLayout cards, the header, the fold and every row -
+	 * and then the two popup menus, which are children of nothing until Swing shows them and so would be missed
+	 * by a walk from the panel alone. The gear menu is built once and kept; the sort menu is rebuilt on every
+	 * open (X1), so this asks for a fresh one exactly as a reader's click does.
+	 */
+	private Map<JComponent, String> everyHoverTarget()
+	{
+		final Map<JComponent, String> out = new LinkedHashMap<>();
+		collectHoverTargets(panel, "the sidebar", out);
+		collectHoverTargets(panel.heroMenu(), "the gear menu", out);
+		collectHoverTargets(panel.buildSortMenu(), "the sort menu", out);
+		return out;
+	}
+
+	private static void collectHoverTargets(Container root, String place, Map<JComponent, String> out)
+	{
+		if (root instanceof JComponent)
+		{
+			out.put((JComponent) root, place);
+		}
+		final List<JComponent> parts = new ArrayList<>();
+		descendants(root, parts);
+		for (JComponent c : parts)
+		{
+			out.put(c, place);
+		}
+	}
+
+	/**
+	 * What to call a component in a failure message: its class, and the words on its face when it has any.
+	 *
+	 * <p>The words are the point. "JLabel" names a hundred components in this panel and none of them to a
+	 * reader; {@code JLabel "Item prices update every 24hrs"} names exactly one.
+	 */
+	private static String name(JComponent c)
+	{
+		String text = null;
+		if (c instanceof JLabel)
+		{
+			text = ((JLabel) c).getText();
+		}
+		else if (c instanceof AbstractButton)
+		{
+			text = ((AbstractButton) c).getText();
+		}
+		else if (c instanceof JTextField)
+		{
+			text = ((JTextField) c).getText();
+		}
+		return c.getClass().getSimpleName() + (text == null || text.isEmpty() ? "" : " \"" + text + "\"");
+	}
+
+	/**
+	 * AH3: nothing in the sidebar is showing a hover. Every offender is collected before anything fails, so one
+	 * run names all of them rather than the first one the walk happened to reach.
+	 */
+	private void assertNothingHovers(String why)
+	{
+		final List<String> offenders = new ArrayList<>();
+		for (Map.Entry<JComponent, String> e : everyHoverTarget().entrySet())
+		{
+			final String tip = e.getKey().getToolTipText();
+			if (tip != null)
+			{
+				offenders.add(e.getValue() + ": " + name(e.getKey()) + " -> \"" + tip + "\"");
+			}
+		}
+		if (!offenders.isEmpty())
+		{
+			fail(why + ": " + offenders.size() + " component(s) still show a hover with the switch off."
+				+ " Every tooltip in this panel must go through setHover, and a label fitted with"
+				+ " Widgets.setFitted must have its text adopted straight afterwards. Offenders: " + offenders);
+		}
+	}
+
+	/**
+	 * AH3: the controls that used to be spared - the ones the user found still talking - are silent.
+	 *
+	 * <p>Named one by one and not walked, deliberately: {@link #assertNothingHovers} proves the general rule,
+	 * and this proves it of exactly the components the reversed scope decision is ABOUT, so a failure here
+	 * reads as "the sort button went back to speaking" rather than as a tree walk that found something.
+	 */
+	private void assertControlTooltipsSilent(String why)
+	{
+		for (Map.Entry<JComponent, String> e : controlTipTargets().entrySet())
+		{
+			assertNull(why + ": " + e.getValue() + " (" + name(e.getKey()) + ")", e.getKey().getToolTipText());
+		}
+	}
+
+	/** The controls whose own words addendum AH spared and addendum AH3 took back, each with its name. */
+	private Map<JComponent, String> controlTipTargets()
+	{
+		final Map<JComponent, String> out = new LinkedHashMap<>();
+		out.put(panel.sortButton(), "the sort button");
+		out.put(panel.refreshLabel(), "the Refresh link");
+		out.put(panel.updateLabel(), "the update line");
+		out.put(panel.gearLabel(), "the gear");
+		out.put(panel.bandTarget(), "the band button");
+		for (MovementWindow w : MovementWindow.values())
+		{
+			out.put(panel.windowChip(w), "the " + w + " chip");
+		}
+		out.put(panel.showValueItem(), "the 'Show bank value' item");
+		out.put(panel.showGpItem(), "the 'Show change in gp' item");
+		out.put(panel.showPctItem(), "the 'Show change in %' item");
+		out.put(panel.livePricesItem(), "the 'Use live prices' item");
+		out.put(panel.countCashItem(), "the coins item");
+		out.put(panel.countUntradeablesItem(), "the untradeables item");
+		out.put(panel.countInventoryItem(), "the inventory item");
+		out.put(panel.presetRow(), "the preset row");
+		out.put(panel.resetPresetsButton(), "the 'Reset to default' button");
+		out.put(panel.okButton(), "the OK button");
+		out.put(panel.showHoverTextItem(), "the switch's own item");
+		return out;
+	}
+
+	/**
+	 * AH3: with the switch ON, everything in the sidebar that explains a CONTROL says exactly what it said
+	 * before the switch existed. Widening WHEN a control speaks is no licence to change WHAT it says, so every
+	 * literal here is the one the pre-AH tests pinned.
+	 */
+	private void assertControlTooltipsIntact(String why)
+	{
+		assertEquals(why + ": the words addendum X asks for, pinned", "Change sorting",
+			BankPriceMovementPanel.SORT_BUTTON_TIP);
+		assertEquals(why + ": the sort button", BankPriceMovementPanel.SORT_BUTTON_TIP,
+			panel.sortButton().getToolTipText());
+		assertEquals(why + ": the Refresh link", BankPriceMovementPanel.REFRESH_TIP,
+			panel.refreshLabel().getToolTipText());
+		// The update line's own hover (S2, T5): whichever of the two sentences the live switch has it on.
+		assertEquals(why + ": the update line",
+			BankPriceMovementPanel.updateTooltip(PRICES_AT, panel.options()),
+			panel.updateLabel().getToolTipText());
+		assertEquals(why + ": the gear", BankPriceMovementPanel.OPTIONS_TIP, panel.gearLabel().getToolTipText());
+		assertNotNull(why + ": the band button", panel.bandTarget().getToolTipText());
+		for (MovementWindow w : MovementWindow.values())
+		{
+			assertTrue(why + ": the " + w + " chip", panel.windowChip(w).getToolTipText()
+				.startsWith("Guide-price change"));
+		}
+		// Every gear item that carries a line of its own says it here - the switch's OWN item included. AH's
+		// reasoning was that this one had to speak in both states or it would be the one control in the client
+		// that explains itself only once it has been turned on; AH3 accepted that cost, because the user asked
+		// for "no hover text at all unless it is on" and an exception for the switch is still hover text.
+		assertEquals(why, BankPriceMovementPanel.SHOW_VALUE_TIP, panel.showValueItem().getToolTipText());
+		assertEquals(why, BankPriceMovementPanel.SHOW_GP_TIP, panel.showGpItem().getToolTipText());
+		assertEquals(why, BankPriceMovementPanel.SHOW_PCT_TIP, panel.showPctItem().getToolTipText());
+		assertEquals(why, BankPriceMovementPanel.LIVE_PRICES_TIP, panel.livePricesItem().getToolTipText());
+		assertEquals(why, BankPriceMovementPanel.COUNT_CASH_TIP, panel.countCashItem().getToolTipText());
+		assertEquals(why, BankPriceMovementPanel.COUNT_UNTRADEABLES_TIP,
+			panel.countUntradeablesItem().getToolTipText());
+		assertEquals(why, BankPriceMovementPanel.COUNT_INVENTORY_TIP, panel.countInventoryItem().getToolTipText());
+		assertEquals(why, BankPriceMovementPanel.PRESETS_TIP, panel.presetRow().getToolTipText());
+		// AH2 moved this one out of the entries and into the bottom row; its line went with it, unchanged.
+		assertEquals(why, BankPriceMovementPanel.RESET_PRESETS_TIP, panel.resetPresetsButton().getToolTipText());
+		assertEquals(why, BankPriceMovementPanel.OK_TIP, panel.okButton().getToolTipText());
+		assertEquals(why + ": and the switch's own item", BankPriceMovementPanel.SHOW_HOVER_TEXT_TIP,
+			item(panel.heroMenu(), BankPriceMovementPanel.SHOW_HOVER_TEXT_TEXT).getToolTipText());
+	}
+
+	/** How many pixels an icon actually draws: anything not fully transparent (AH's "empty box" is still ink). */
+	private static int inked(Icon icon)
+	{
+		final BufferedImage image = pixels(icon);
+		int n = 0;
+		for (int y = 0; y < image.getHeight(); y++)
+		{
+			for (int x = 0; x < image.getWidth(); x++)
+			{
+				if (((image.getRGB(x, y) >>> 24) & 0xff) != 0)
+				{
+					n++;
+				}
+			}
+		}
+		return n;
 	}
 
 	/** The label shows {@code full} whole, or cut with "..." and the whole text as its tooltip (Widgets.setFitted). */

@@ -29,10 +29,12 @@ repositories {
 }
 
 // RuneLite client version. The Hub compiles every plugin against its own pinned `runelite.version`
-// (1.12.38 as of 2026-09-10); the literal below is the reproducible FALLBACK for a local/offline/IDE build
+// (1.12.39 as of 2026-09-20); the literal below is the reproducible FALLBACK for a local/offline/IDE build
 // and is overridable with -PruneLiteVersion=<v>. Bump it in step with the Hub's pin. If a new client
 // changes an API the compile fails loudly here - re-verify rather than assuming a clean bump.
-def runeLiteVersion = project.findProperty('runeLiteVersion') ?: '1.12.38'
+// 1.12.39 is the first client carrying net.runelite.client.util.Filepath and Plugin.getPluginDirectory(),
+// which the Hub now requires all file i/o to go through (addendum AD); this plugin cannot compile below it.
+def runeLiteVersion = project.findProperty('runeLiteVersion') ?: '1.12.39'
 def launcherClass = 'com.bankpricemovement.BankPriceMovementPluginTest'
 
 dependencies {
@@ -45,7 +47,7 @@ dependencies {
 }
 
 group = 'com.bankpricemovement'
-version = '1.0.0'
+version = '1.0.1'
 
 // The Hub packager reads runelite-plugin.properties from the REPO ROOT; BankPriceMovementWiringTest reads
 // it back off the CLASSPATH (`/runelite-plugin.properties`) to prove the plugin class is listed. One file,

@@ -1,7 +1,9 @@
 package com.bankpricemovement;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import static org.junit.Assert.assertEquals;
@@ -13,6 +15,11 @@ import org.junit.Test;
  * {@link SortMode} (contract C2, rewritten by addendum W line W1): the FOUR columns the user listed by number -
  * "1) Percent change 2) GP change 3) Item price 4) Stack price" - and every verb that reaches them from the dev
  * bridge ({@code bpm sort=stack}), the pre-W labels included.
+ *
+ * <p>Addendum AO line AO1 changed what ONE of those columns MEANS without touching a word of its surface:
+ * {@link SortMode#GP_MOVE} compares the whole stack's move now that {@code holdingOnRows} is deleted. The label,
+ * the constant name and every alias are the ones they always were, so the vocabulary tests below say nothing new
+ * - {@link #theGpColumnRanksTheStacksMoveAndNotOneItems()} is the one that holds the new rule, by example.
  */
 public class SortModeTest
 {
@@ -34,6 +41,32 @@ public class SortModeTest
 		assertEquals(
 			Arrays.asList(SortMode.PERCENT_MOVE, SortMode.GP_MOVE, SortMode.UNIT_PRICE, SortMode.STACK_VALUE),
 			Arrays.asList(SortMode.values()));
+	}
+
+	/**
+	 * AO1, by example rather than by restating the code. {@link SortMode#GP_MOVE}'s javadoc claims the column
+	 * compares the WHOLE STACK's move under every switch; these two rows are what that claim costs.
+	 *
+	 * <p>A thousand feathers that each gained 5 gp are 5,000 gp of bank; one whip that gained 1,000 gp is 1,000.
+	 * Biggest first, the feathers lead - and the message on that assertion is the whole of AO1, because until the
+	 * {@code holdingOnRows} key was deleted the column's DEFAULT reading was the per-item one, under which the
+	 * whip's 1,000 beat the feather's 5 and this same list came out the other way round.
+	 */
+	@Test
+	public void theGpColumnRanksTheStacksMoveAndNotOneItems()
+	{
+		final MovementRow feathers = movedRow(314, "Feather", 1_000, 10L, 5L);
+		final MovementRow whip = movedRow(4151, "Abyssal whip", 1, 2_000_000L, 1_000L);
+
+		final List<MovementRow> biggestFirst = new ArrayList<>(Arrays.asList(whip, feathers));
+		biggestFirst.sort(MovementMath.comparator(SortMode.GP_MOVE, true));
+		assertEquals("5,000 gp of feathers outrank the whip's 1,000, though ONE feather moved only 5",
+			Arrays.asList("Feather", "Abyssal whip"), names(biggestFirst));
+
+		final List<MovementRow> smallestFirst = new ArrayList<>(Arrays.asList(feathers, whip));
+		smallestFirst.sort(MovementMath.comparator(SortMode.GP_MOVE, false));
+		assertEquals("and the arrow the other way turns the same two rows round",
+			Arrays.asList("Abyssal whip", "Feather"), names(smallestFirst));
 	}
 
 	/**
@@ -161,5 +194,30 @@ public class SortModeTest
 			assertSame(word.getKey() + " shouted", word.getValue(),
 				SortMode.parse(word.getKey().toUpperCase(Locale.ENGLISH)));
 		}
+	}
+
+	/**
+	 * One priced row that moved, with the two numbers the gp column weighs against each other spelled out: what
+	 * ONE of them gained ({@code deltaGp}) and how many are held. Built by hand rather than through
+	 * {@link MovementMath#row} so the example reads as the arithmetic it is testing.
+	 */
+	private static MovementRow movedRow(final int id, final String name, final int quantity, final long unit,
+		final long deltaGp)
+	{
+		final long then = unit - deltaGp;
+
+		return new MovementRow(id, name, quantity, quantity > 1, unit, then, deltaGp,
+			100.0 * deltaGp / then, unit * quantity, MovementRow.PriceSource.GUIDE);
+	}
+
+	private static List<String> names(final List<MovementRow> rows)
+	{
+		final List<String> names = new ArrayList<>();
+		for (final MovementRow row : rows)
+		{
+			names.add(row.name());
+		}
+
+		return names;
 	}
 }

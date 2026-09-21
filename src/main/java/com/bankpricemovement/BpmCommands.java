@@ -7,8 +7,9 @@ import java.awt.Component;
 import java.awt.Dimension;
 import java.awt.Graphics2D;
 import java.awt.image.BufferedImage;
-import java.io.File;
 import java.io.IOException;
+import java.io.OutputStream;
+import java.nio.file.StandardOpenOption;
 import java.text.SimpleDateFormat;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -28,7 +29,7 @@ import java.util.function.Function;
 import javax.annotation.Nullable;
 import javax.imageio.ImageIO;
 import javax.swing.SwingUtilities;
-import net.runelite.client.RuneLite;
+import net.runelite.client.util.Filepath;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -56,14 +57,15 @@ import org.slf4j.LoggerFactory;
  *                            (presets=default puts 100k / 1m / 10m back - Z4)
  * fold=on|off|toggle         the price fold under the control row - the band button's own click (AA2)
  * hero=value|gp|pct|all|none which of the hero card's three figures are drawn (O5); a field word TOGGLES
- * opt=cash|untradeables|holding|live|inventory|all|none  the gear's five view switches (Q7, T8, Y1); a field
+ * opt=cash|untradeables|live|inventory|all|none  the gear's four view switches (Q7, T8, Y1, AO1); a field
  *                            word TOGGLES
  * refresh                    the Refresh button (30 s cooldown lives in the service)
  * more                       the "Show more" button: one more page of rows
  * bank=&lt;id&gt;:&lt;qty&gt;;...        DEV ONLY - a synthetic bank, so the panel can be driven with no bank open
  *                            (995 and 13204 are its CURRENCY worth, never a row - the same rule as the reader)
  * wiki=on|off                turn the GUIDE-HISTORY client off, to exercise "Wiki history down"
- * shot[=&lt;name&gt;]              a PNG of the whole sidebar in ~/.runelite/bank-portfolio-tracker/shots/ (the sidebar must be OPEN)
+ * shot[=&lt;name&gt;]              a PNG of the whole sidebar in ~/.runelite/plugin-data/bank-portfolio-tracker/shots/
+ *                            (the sidebar must be OPEN; the answer's `path` names the file either way)
  * </pre>
  *
  * <p>Every command answers with the {@code state} object ({@code shot} puts its {@code path}, {@code width}
@@ -96,11 +98,11 @@ import org.slf4j.LoggerFactory;
  * prove what was photographed.
  *
  * <p><b>Addendum Q adds the gear menu's switches as {@code opt=}</b> (Q7), shaped on {@code hero=} down to the
- * last detail: {@code cash}, {@code untradeables} and {@code holding} each TOGGLE their switch against what the
- * sidebar is using now, {@code all} turns them all on and {@code none} turns them all off, and every answer
- * echoes {@code state.options}. There is no {@code gear} verb: the menu
- * is a Swing popup with nothing behind it that a script cannot reach through these switches, and
- * {@code shot=} photographs the gear itself.
+ * last detail: {@code cash} and {@code untradeables} each TOGGLE their switch against what the sidebar is using
+ * now, {@code all} turns them all on and {@code none} turns them all off, and every answer echoes
+ * {@code state.options}. (Q7's third word, {@code holding}, is gone since addendum AO - see the last paragraph
+ * here.) There is no {@code gear} verb: the menu is a Swing popup with nothing behind it that a script cannot
+ * reach through these switches, and {@code shot=} photographs the gear itself.
  *
  * <p><b>Addendum T adds the fourth switch to that family</b> (T8): {@code opt=live} toggles the live traded
  * prices, {@code state.options} echoes it as the fourth key {@code live}, and {@code state.live} carries what the
@@ -121,10 +123,10 @@ import org.slf4j.LoggerFactory;
  * answers being DIFFERENT on such a day is the fix rather than a fault - which is why both are printed and
  * neither is derived from the other.
  *
- * <p><b>Addendum V adds no verb at all</b>, and is worth a line here only because {@code opt=holding} changes
- * what one existing answer means: with the switch on, the gp column compares the STACK's change rather than one
- * item's (Q6), so {@code opt=holding; sort=gp} really does reorder the list. Nothing else follows the switch -
- * addendum V's V1, which had made the price column follow it too, was reverted by addendum W.
+ * <p><b>Addendum V adds no verb at all</b>, and used to be worth a line here because {@code opt=holding} changed
+ * what one existing answer meant: with the switch on, the gp column compared the STACK's change rather than one
+ * item's (Q6), so {@code opt=holding; sort=gp} really did reorder the list. Addendum AO deleted that switch and
+ * settled the question the other way round - see below - so the pair is no longer a thing a script can send.
  *
  * <p><b>Addendum W leaves ONE sort vocabulary</b> (W4), which is the one this bridge was born with.
  * {@code sort=} is {@link SortMode#parse(String)} and nothing else: the four columns of W1 - {@code percent},
@@ -140,10 +142,10 @@ import org.slf4j.LoggerFactory;
  *
  * <p><b>Addendum Y adds the fifth switch to the {@code opt=} family</b> (Y1): {@code opt=inventory} - also
  * {@code inv}, {@code gear}, {@code worn} - toggles whether what the player is carrying and wearing counts in
- * the bank value and is listed with the bank's stacks, {@code all} and {@code none} now cover five, and
- * {@code state.options} echoes it as the fifth key {@code inventory}. While it is ON, every row in
- * {@code state.rows[]} carries {@code bankQty} / {@code invQty} / {@code wornQty} beside {@code qty}, which
- * they sum to - the split the row's own tooltip prints as "3 in bank, 1 in inventory, 1 worn" (Y3) - and while
+ * the bank value and is listed with the bank's stacks, {@code all} and {@code none} covered five until addendum
+ * AO took {@code holding} out of them, and {@code state.options} echoes it as {@code inventory}. While it is ON,
+ * every row in {@code state.rows[]} carries {@code bankQty} / {@code invQty} / {@code wornQty} beside {@code qty},
+ * which they sum to - the split the row's own tooltip prints as "3 in bank, 1 in inventory, 1 worn" (Y3) - and while
  * it is off the three keys are absent, because there is nothing split to say. The switch itself changes no
  * fetch: the two containers are read from the client, on the client thread, when a bank event arrives or when
  * {@code refresh} is sent (Y2), so {@code opt=inventory} followed by {@code refresh} is how a script makes the
@@ -168,16 +170,32 @@ import org.slf4j.LoggerFactory;
  * word as often as it likes. {@code state.panel.foldOpen} is where the answer reads back; it has been in
  * {@code describe()} since the fold existed, so this verb adds no echo of its own. It is not the band: folding the
  * controls away moves no row and writes no bound.
+ *
+ * <p><b>Addendum AO takes a word OUT of {@code opt=}</b> (AO1), the first time this bridge has lost one since
+ * {@code order=}: {@code holding} named a switch that had stopped reaching anything the sidebar draws - addendum
+ * AN's three-line row prints the stack on line 2 and one item on line 3, both, always - so the stored key is
+ * deleted and the gp column now compares the STACK's move permanently, which is what the switch did when it was
+ * ON. {@code opt=holding} is therefore answered by {@link #HOLDING_GONE} rather than the generic refusal, for
+ * the reason {@code order=} is answered by {@link #ORDER_GONE}: the word is in the Q, T, U, V, Y and Z live
+ * lists and in whatever the operator has in their shell history, and a sentence naming the addendum is worth
+ * more to its author than "opt= wants ...". {@code all} and {@code none} cover FOUR switches now, and
+ * {@code state.options} loses its {@code holding} key with the field behind it.
  */
 public class BpmCommands implements Function<String, String>
 {
 	/** How long a command may take on the Swing thread before the HTTP caller is answered anyway. */
 	static final long EDT_TIMEOUT_MS = 5_000;
-	/** The lab's own screenshot directory, so a panel shot lands beside the world shots it is compared with. */
-	private static final String SHOT_DIR = "bank-portfolio-tracker/shots";
+	/**
+	 * The screenshot directory, one segment inside the plugin's own data directory (addendum AD - before it, this
+	 * was {@code bank-portfolio-tracker/shots} under {@code ~/.runelite}). Package-private because
+	 * {@link BankPriceMovementPlugin} joins it onto {@code getPluginDirectory()}.
+	 */
+	static final String SHOT_DIR = "shots";
+	/** What {@code shot} says when the bridge was built without a directory to write into (addendum AD). */
+	static final String NO_SHOT_DIR = "this bridge was built without a shot directory";
 	/** The one command that needs a window: see {@link #shot}. The tests assert this text, not the constant. */
 	static final String NOT_SHOWING =
-		"panel not showing: open Bank Portfolio Tracker in the sidebar (an off-screen print comes out blank)";
+		"panel not showing: open 2h Bank Portfolio Tracker in the sidebar (an off-screen print comes out blank)";
 	private static final String NO_ACCOUNT =
 		"no account was wired into this bridge, so a synthetic bank would be saved under account 0";
 	/**
@@ -189,8 +207,17 @@ public class BpmCommands implements Function<String, String>
 		"nobody is logged in, so a synthetic bank would be saved under account 0 - log in first, then bank=";
 	/** How many rows {@code state} carries, so a bank of 800 does not come back down the HTTP pipe. */
 	static final int STATE_ROWS = 10;
-	/** The seven words {@code opt=} takes, for a refusal that says what to type instead (Q7, T8, Y1). */
-	static final String OPTION_VERBS = "cash, untradeables, holding, live, inventory, all or none";
+	/** The six words {@code opt=} takes, for a refusal that says what to type instead (Q7, T8, Y1, AO1). */
+	static final String OPTION_VERBS = "cash, untradeables, live, inventory, all or none";
+	/**
+	 * What {@code opt=holding} answers since addendum AO (AO1), shaped on {@link #ORDER_GONE} and there for the
+	 * same reason: the switch is DELETED rather than repaired, so a script that sends the word deserves the one
+	 * sentence that says where it went. Addendum AN's row prints the stack and one item on two lines of its own
+	 * accord, which left the switch reaching nothing drawn, and the ordering question it used to decide is
+	 * settled - the gp column compares the stack, always. The tests assert this text, not the constant.
+	 */
+	static final String HOLDING_GONE = "opt=holding is gone since addendum AO - a row now shows the stack and one"
+		+ " item both, and the gp column always compares the stack";
 	/**
 	 * The four columns {@code sort=} presses, as the shortest word for each (W1), for a refusal that says what to
 	 * type instead. Every label and every older alias is accepted too - {@link SortMode#parse(String)} is the whole
@@ -251,7 +278,7 @@ public class BpmCommands implements Function<String, String>
 	private final Gson gson;
 	@Nullable
 	private final Account account;
-	private final File shotDir;
+	private final PriceStore.Directory shotDir;
 	/**
 	 * Whether the sidebar panel is on screen, i.e. whether there is anything to photograph. The seam exists so
 	 * a test can print a panel that no window ever realised; in the client it is always {@code panel::isShowing}.
@@ -262,26 +289,29 @@ public class BpmCommands implements Function<String, String>
 
 	/**
 	 * The contract's constructor (C40): every verb works exactly as it does live except {@code bank=}, which
-	 * is refused without an {@link Account} to stamp the synthetic snapshot with.
+	 * is refused without an {@link Account} to stamp the synthetic snapshot with, and {@code shot}, which has
+	 * nowhere to write - only the plugin knows the data directory, and only it can ask RuneLite for one
+	 * (addendum AD). A bridge built this way answers {@code shot} with the error below.
 	 */
 	public BpmCommands(BankPriceMovementPanel panel, PriceService service, Gson gson)
 	{
-		this(panel, service, gson, null);
-	}
-
-	/** What {@link BankPriceMovementPlugin#startUp()} builds: the contract's three plus the live account. */
-	public BpmCommands(BankPriceMovementPanel panel, PriceService service, Gson gson, @Nullable Account account)
-	{
-		this(panel, service, gson, account, new File(RuneLite.RUNELITE_DIR, SHOT_DIR), panel::isShowing);
+		this(panel, service, gson, null,
+			() ->
+			{
+				throw new IOException(NO_SHOT_DIR);
+			},
+			panel::isShowing);
 	}
 
 	/**
-	 * @param shotDir where {@code shot} writes; the tests point it at a temporary folder
+	 * @param shotDir where {@code shot} writes, asked for when a shot is taken rather than held:
+	 *                {@code getPluginDirectory().join("shots")} in the client (which throws if the disk refuses,
+	 *                straight into {@code shot}'s own error answer), a temporary folder in the tests
 	 * @param showing stands in for {@link java.awt.Component#isShowing()} on the panel, which is false for the
 	 *                headless panel the tests build; they pass a supplier that says otherwise
 	 */
 	BpmCommands(BankPriceMovementPanel panel, PriceService service, Gson gson, @Nullable Account account,
-		File shotDir, BooleanSupplier showing)
+		PriceStore.Directory shotDir, BooleanSupplier showing)
 	{
 		this.panel = panel;
 		this.service = service;
@@ -502,13 +532,18 @@ public class BpmCommands implements Function<String, String>
 	}
 
 	/**
-	 * Addendum Q's {@code opt=} verb (Q7), with addendum T's fourth switch in it (T8): the gear menu's view
-	 * switches, driven exactly as {@code hero=} drives the card's. {@code cash} toggles whether coins and platinum
+	 * Addendum Q's {@code opt=} verb (Q7), with the switches addenda T and Y added to it (T8, Y1): the gear menu's
+	 * view switches, driven exactly as {@code hero=} drives the card's. {@code cash} toggles whether coins and platinum
 	 * tokens count in the bank value (Q4), {@code untradeables} whether untradeable stacks are listed at their
-	 * High Alchemy value (Q5), {@code holding} whether a row prints the stack's worth instead of the unit price
-	 * (Q6), {@code live} whether an actively traded item is priced from the wiki's traded series instead of the
-	 * daily guide table (T1), {@code inventory} whether the player's inventory and worn gear count and are
-	 * listed with the bank's stacks (Y1); {@code all} turns all five on and {@code none} turns all five off.
+	 * High Alchemy value (Q5), {@code live} whether an actively traded item is priced from the wiki's traded
+	 * series instead of the daily guide table (T1), {@code inventory} whether the player's inventory and worn
+	 * gear count and are listed with the bank's stacks (Y1); {@code all} turns all four on and {@code none} turns
+	 * all four off.
+	 *
+	 * <p>Q6's {@code holding} is the one word here that is answered rather than applied: addendum AO deleted the
+	 * switch, and this verb says so in a sentence ({@link #HOLDING_GONE}) before the vocabulary is consulted at
+	 * all, so a script written against any build from Q to AN is told where the word went instead of being
+	 * handed the list it is missing from (AO1).
 	 *
 	 * <p>It presses {@link BankPriceMovementPanel#setOptions}, the gear menu's own check items - not the bare
 	 * {@code applyOptions} - for the reason {@code hero=} presses {@code setHeroVisibility}: that method applies
@@ -520,6 +555,10 @@ public class BpmCommands implements Function<String, String>
 	 */
 	private Map<String, Object> opt(@Nullable String value)
 	{
+		if (namesHoldingOnRows(value))
+		{
+			return error(HOLDING_GONE);
+		}
 		final ViewOptions next = applyOptionVerb(currentOptions(), value);
 		if (next == null)
 		{
@@ -570,15 +609,20 @@ public class BpmCommands implements Function<String, String>
 
 	/**
 	 * {@code opt=} as a pure function of the options it is applied to, the shape of
-	 * {@link HeroVisibility#applyVerb(String)}: a field word TOGGLES its switch, {@code all} turns all five on
-	 * and {@code none} turns all five off. The spellings are generous because the verb is typed by hand into a
-	 * URL query ({@code coins}, {@code plat}, {@code untradables}, {@code alch}, {@code stack}, {@code traded},
+	 * {@link HeroVisibility#applyVerb(String)}: a field word TOGGLES its switch, {@code all} turns all four on
+	 * and {@code none} turns all four off. The spellings are generous because the verb is typed by hand into a
+	 * URL query ({@code coins}, {@code plat}, {@code untradables}, {@code alch}, {@code traded},
 	 * {@code inv}, {@code gear}, {@code worn}), and the text is trimmed and case-folded first.
 	 *
 	 * <p>It lives here rather than on {@link ViewOptions} because the value is shared with the panel and the
 	 * service, which have no business knowing the developer bridge's vocabulary.
 	 *
-	 * @return the options to apply, or null when the text names none of the seven words of {@link #OPTION_VERBS} -
+	 * <p>Addendum Q's {@code holding} is NOT one of the words any more (AO1), and it is not refused here either:
+	 * {@link #opt(String)} catches it first, so the answer names the addendum that deleted it rather than the
+	 * list it has fallen out of. A caller of this method that wants the same courtesy asks
+	 * {@link #namesHoldingOnRows(String)}.
+	 *
+	 * @return the options to apply, or null when the text names none of the six words of {@link #OPTION_VERBS} -
 	 *         the caller then answers {@code ok:false} and leaves the sidebar exactly as it was
 	 */
 	@Nullable
@@ -604,22 +648,16 @@ public class BpmCommands implements Function<String, String>
 			case "alch":
 			case "countuntradeables":
 				return options.withCountUntradeables(!options.countUntradeables());
-			case "holding":
-			case "holdings":
-			case "stack":
-			case "stacks":
-			case "holdingonrows":
-				return options.withHoldingOnRows(!options.holdingOnRows());
-			// T8. The fourth switch, with the spellings an operator reaches for when they are reading the
+			// T8. The live switch, with the spellings an operator reaches for when they are reading the
 			// addendum ("live") or the study ("traded"); "liveprices" is the stored key, as the other three
 			// accept theirs.
 			case "live":
 			case "liveprices":
 			case "traded":
 				return options.withLivePrices(!options.livePrices());
-			// Y1. The fifth switch, with the four words the addendum and the gear menu put in an operator's
+			// Y1. The carried switch, with the four words the addendum and the gear menu put in an operator's
 			// head ("inventory" and its short form, "gear" and "worn" from the label "Include inventory and
-			// worn gear"); "countinventory" is the stored key, as the other four accept theirs.
+			// worn gear"); "countinventory" is the stored key, as the other three accept theirs.
 			case "inventory":
 			case "inv":
 			case "gear":
@@ -628,15 +666,48 @@ public class BpmCommands implements Function<String, String>
 				return options.withCountInventory(!options.countInventory());
 			case "all":
 			case "on":
-				// All FIVE explicitly. The shorter constructors default livePrices and countInventory to on, so
-				// "none" built through one of them would have left a switch standing - and "none" is the one word
-				// whose whole promise is that nothing is left standing (T8, Y1).
-				return new ViewOptions(true, true, true, true, true);
+				// All FOUR explicitly, and by name rather than through a constructor: the constructors are
+				// positional and their shorter overloads default the newer switches ON, so a word that is meant
+				// to leave nothing standing would quietly leave one - and every addendum that adds or removes a
+				// switch moves the positions under this line (AO1 removed one). The hover switch is set the way
+				// addendum AH's own arity left it: "all" has never turned the data hovers on.
+				return options.withCountCash(true).withCountUntradeables(true).withLivePrices(true)
+					.withCountInventory(true).withShowHoverText(false);
 			case "none":
 			case "off":
-				return new ViewOptions(false, false, false, false, false);
+				return options.withCountCash(false).withCountUntradeables(false).withLivePrices(false)
+					.withCountInventory(false).withShowHoverText(false);
 			default:
 				return null;
+		}
+	}
+
+	/**
+	 * Whether the text names addendum Q's deleted {@code holding} switch (AO1) - every spelling
+	 * {@link #applyOptionVerb} used to accept for it, the stored key {@code holdingonrows} included, so a script
+	 * that sent any of them is told the same thing.
+	 *
+	 * <p>{@code stack} is one of those spellings and is deliberately still caught here, even though
+	 * {@link SortMode#parse(String)} answers to the same word: the two are different verbs, and
+	 * {@code sort=stack} is untouched by any of this. The word arriving at {@code opt=} can only have meant the
+	 * switch.
+	 */
+	static boolean namesHoldingOnRows(@Nullable String text)
+	{
+		if (text == null)
+		{
+			return false;
+		}
+		switch (text.trim().toLowerCase(Locale.ENGLISH))
+		{
+			case "holding":
+			case "holdings":
+			case "stack":
+			case "stacks":
+			case "holdingonrows":
+				return true;
+			default:
+				return false;
 		}
 	}
 
@@ -940,9 +1011,9 @@ public class BpmCommands implements Function<String, String>
 		}
 		try
 		{
-			final Shot shot = writeShot(panel.shotComponents(), shotDir, name);
+			final Shot shot = writeShot(panel.shotComponents(), shotDir.get(), name);
 			final Map<String, Object> m = ok();
-			m.put("path", shot.file.getAbsolutePath());
+			m.put("path", shot.file.toString());
 			// The size is the proof the whole sidebar is in there: a shot no taller than the client window is
 			// one that was cut at the viewport.
 			m.put("width", shot.width);
@@ -981,7 +1052,7 @@ public class BpmCommands implements Function<String, String>
 		// O3: which of the card's three figures are on screen. The whole portfolio is still echoed below,
 		// hidden figures included - this says what is PAINTED, never what is known.
 		m.put("hero", heroJson(currentHero()));
-		// Q4/Q7/Y1: the gear's five switches as the sidebar is using them, so a script that flips one can see
+		// Q4/Q7/Y1/AO1: the gear's switches as the sidebar is using them, so a script that flips one can see
 		// the new state and the figures it produced in the same answer. Unlike hero, these DO change the figures
 		// below - portfolio.currencyGp reads 0 while cash is off, and an untradeable stack is a row only while
 		// untradeables is on.
@@ -1072,7 +1143,8 @@ public class BpmCommands implements Function<String, String>
 	 * painted list agree:
 	 * {@code liveRows} must equal the number of {@code rows[]} whose {@code source} reads {@code LIVE} on an
 	 * unfiltered bank of fewer than {@value #STATE_ROWS} stacks, and on a real one it is the figure the card's
-	 * "N of M stacks live" line is drawn from.
+	 * live count is drawn from. Nothing in the sidebar prints it since addendum AF took the card's detail
+	 * hover away; it reaches a reader through this bridge and the row tooltips.
 	 *
 	 * <p><b>Addendum U adds the two days the live series keeps its own calendar with</b> (U4), after the five
 	 * figures and in that order: {@code liveDay}, the UTC date of that {@code /latest} snapshot - the day every
@@ -1330,7 +1402,7 @@ public class BpmCommands implements Function<String, String>
 	 * with no width or height is an {@code IOException}, not something to lay out here. {@link #shot} refuses
 	 * before it gets here; this is the backstop for every other caller.
 	 */
-	static Shot writeShot(@Nullable List<Component> parts, File dir, @Nullable String name) throws IOException
+	static Shot writeShot(@Nullable List<Component> parts, Filepath dir, @Nullable String name) throws IOException
 	{
 		final List<Component> shown = new ArrayList<>();
 		for (Component c : parts == null ? Collections.<Component>emptyList() : parts)
@@ -1387,24 +1459,31 @@ public class BpmCommands implements Function<String, String>
 		{
 			g.dispose();
 		}
-		if (!dir.isDirectory() && !dir.mkdirs() && !dir.isDirectory())
+		if (!dir.isDirectory())
 		{
-			throw new IOException("could not create " + dir);
+			// Idempotent, so a second caller racing this one also succeeds.
+			dir.createDirectories();
 		}
 		final String base = name == null || name.trim().isEmpty()
 			? "panel" : name.trim().replaceAll("[^A-Za-z0-9_-]", "_");
 		final String stamp = new SimpleDateFormat("yyyyMMdd-HHmmss", Locale.ENGLISH).format(new Date());
-		File out = new File(dir, base + "-" + stamp + ".png");
+		Filepath out = dir.joinSegment(base + "-" + stamp + ".png");
 		for (int n = 2; out.exists(); n++)
 		{
-			out = new File(dir, base + "-" + stamp + "-" + n + ".png");
+			out = dir.joinSegment(base + "-" + stamp + "-" + n + ".png");
 		}
-		ImageIO.write(img, "png", out);
+		// ImageIO's File overload would open the file itself, outside the sandbox; the stream overload writes the
+		// same PNG bytes into the one Filepath opened for us (addendum AD).
+		try (OutputStream os = out.openOutputStream(StandardOpenOption.CREATE, StandardOpenOption.WRITE,
+			StandardOpenOption.TRUNCATE_EXISTING))
+		{
+			ImageIO.write(img, "png", os);
+		}
 		return new Shot(out, w, h);
 	}
 
 	/** One component on its own, for a caller that is not the sidebar's own {@code shot}. */
-	static File writeShot(Component c, File dir, @Nullable String name) throws IOException
+	static Filepath writeShot(Component c, Filepath dir, @Nullable String name) throws IOException
 	{
 		return writeShot(Arrays.asList(c), dir, name).file;
 	}
@@ -1412,11 +1491,11 @@ public class BpmCommands implements Function<String, String>
 	/** A written shot: the file, and the size of the picture in it (what the {@code shot} answer reports). */
 	static final class Shot
 	{
-		final File file;
+		final Filepath file;
 		final int width;
 		final int height;
 
-		Shot(File file, int width, int height)
+		Shot(Filepath file, int width, int height)
 		{
 			this.file = file;
 			this.width = width;

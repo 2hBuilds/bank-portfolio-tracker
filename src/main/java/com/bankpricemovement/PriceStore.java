@@ -3,15 +3,13 @@ package com.bankpricemovement;
 import com.google.gson.Gson;
 import com.google.gson.JsonParseException;
 import com.google.gson.stream.JsonReader;
-import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.StringReader;
-import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.FileAlreadyExistsException;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.time.LocalDate;
@@ -25,14 +23,16 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 import javax.annotation.Nullable;
-import net.runelite.client.RuneLite;
+import net.runelite.client.util.Filepath;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * The plugin's four kinds of JSON file under {@code ~/.runelite/bank-portfolio-tracker/} (contract C17-C19,
- * rewritten by K11 and extended by addendum L line L4):
+ * The plugin's four kinds of JSON file under {@code ~/.runelite/plugin-data/bank-portfolio-tracker/} (contract
+ * C17-C19, rewritten by K11, extended by addendum L line L4 and moved into RuneLite's own plugin-data directory
+ * by addendum AD):
  * <ul>
  * <li>{@code bank-<accountHash>-<profileType>.json} - the last bank seen for one account on one
  * {@code RuneScapeProfileType}, so the panel can show the items (and their movements) at the Grand Exchange
@@ -73,10 +73,16 @@ import org.slf4j.LoggerFactory;
  * caller ({@code PriceService}) owns the threading and runs these on its injected
  * {@code ScheduledExecutorService}, exactly so a disk write can never land on the client thread or the EDT - a
  * synchronous write on the client thread froze the client for 3-5 s once already (playbook 7.2). Nothing here
- * touches Swing, the client, or any RuneLite state beyond the constant {@link RuneLite#RUNELITE_DIR}
- * ({@code runelite-client/src/main/java/net/runelite/client/RuneLite.java:101}), so the store needs no thread
- * of its own and holds no mutable state - two callers on two threads only race on the file system, where the
- * atomic replace of {@link #writeAtomic} makes the last write win whole.
+ * touches Swing or the client, and the only RuneLite state it reaches is the {@link Filepath} its
+ * {@link Directory} hands it - {@code Plugin.getPluginDirectory()} in production - so the store needs no thread
+ * of its own and holds no mutable state beyond the memo of that one lookup; two callers on two threads only race
+ * on the file system, where the atomic replace of {@link #writeAtomic} makes the last write win whole.
+ *
+ * <p><b>Every byte goes through {@link Filepath}</b> (addendum AD), RuneLite's sandboxed path wrapper: a
+ * {@code Filepath} cannot name anything outside the root it was made from, so the store is unable - not merely
+ * unwilling - to write outside its own directory. That is the Plugin Hub's file-I/O rule
+ * ({@code templateplugin/AGENTS.md}, "All file i/o must go through the Filepath utility"), and
+ * {@code FileIoRuleTest} holds the whole package to it.
  *
  * <p><b>Failure policy</b> (C18, copied in shape from {@code BeamStore.readJson}, {@code BeamStore.java:1404-1434}):
  * a missing file reads as EMPTY; a file that parses to nothing useful is moved aside as
@@ -93,7 +99,13 @@ public class PriceStore
 {
 	private static final Logger log = LoggerFactory.getLogger(PriceStore.class);
 
-	/** Directory name under {@link RuneLite#RUNELITE_DIR}; matches the config group and the hub slug (D10). */
+	/**
+	 * The plugin's own directory name, and the one spelling of it (D10): the hub slug, the
+	 * {@code @PluginDescriptor} {@code internalName} that {@code Plugin.getPluginDirectory()} requires, and the
+	 * {@code legacyDataDirectory} whose {@code ~/.runelite/bank-portfolio-tracker/} RuneLite moves into
+	 * {@code ~/.runelite/plugin-data/} the first time that method is called (addendum AD). An annotation takes
+	 * only a constant expression, which is exactly what this is, so the descriptor and the store cannot drift.
+	 */
 	public static final String DIR_NAME = "bank-portfolio-tracker";
 	/** Prefix of a remembered bank file; the account hash and profile type follow (C17). */
 	public static final String BANK_PREFIX = "bank-";
@@ -123,7 +135,7 @@ public class PriceStore
 
 	private static final String TMP_SUFFIX = ".tmp";
 	/**
-	 * How many temp NAMES {@link #writeAtomic(File, String)} will try before it gives up. Every collision means
+	 * How many temp NAMES {@link #writeAtomic(Filepath, String)} will try before it gives up. Every collision means
 	 * another writer holds that exact name at that exact moment, so three is already far past unlucky.
 	 */
 	private static final int TMP_ATTEMPTS = 3;
@@ -147,41 +159,145 @@ public class PriceStore
 	private static final String SCHEMA_KEY = "schema";
 
 	private final Gson gson;
-	private final File dir;
+	private final Directory directory;
+	/**
+	 * The resolved directory, remembered after the first successful lookup. Volatile because two of the
+	 * service's tasks can reach it on two threads; a race only costs a second call of {@link Directory#get()},
+	 * which answers the same path.
+	 */
+	@Nullable
+	private volatile Filepath resolved;
+	/**
+	 * Whether the failure below has already been logged. A broken disk would otherwise print the same warning
+	 * a dozen times per refresh - once per path this store builds - and a per-event log line is exactly what
+	 * the Plugin Hub's reviewers look for.
+	 */
+	private volatile boolean warnedNoDirectory;
 
 	/**
-	 * @param gson RuneLite's injected Gson ({@code RuneLiteModule.java:138} binds the one instance);
-	 *             constructing one here is a Plugin Hub blocker (C46)
-	 * @param dir  the directory the files live in, created lazily on the first write so an installed-but-never-used
-	 *             plugin leaves nothing behind; {@link #defaultDir()} in production, a {@code TemporaryFolder}
-	 *             in tests
+	 * Where the store's directory comes from, resolved on first use rather than in the constructor.
+	 *
+	 * <p>It is a seam because {@code Plugin.getPluginDirectory()} is neither free nor infallible: it creates
+	 * {@code ~/.runelite/plugin-data/} (RuneLite's own folder, shared by every plugin that stores anything),
+	 * performs the one-time move of this plugin's legacy folder, and throws {@link IOException} when the disk
+	 * says no. Resolving it lazily keeps two properties the store had before addendum AD - no disk work on the
+	 * thread that starts the plugin, and a transient failure costing one save rather than the whole session -
+	 * and it is what lets a test hand over a {@code TemporaryFolder}.
+	 *
+	 * <p>The plugin's OWN directory is still not created until the first save: {@code getPluginDirectory()}
+	 * names it without making it (RuneLite's {@code rooted()} does no {@code mkdir}), so an installed but
+	 * never-used plugin leaves behind nothing of its own.
 	 */
-	public PriceStore(final Gson gson, final File dir)
+	public interface Directory
+	{
+		/** This plugin's own directory. */
+		Filepath get() throws IOException;
+	}
+
+	/**
+	 * @param gson      RuneLite's injected Gson ({@code RuneLiteModule.java:138} binds the one instance);
+	 *                  constructing one here is a Plugin Hub blocker (C46)
+	 * @param directory where the files live, asked for on the first read or write so an installed-but-never-used
+	 *                  plugin leaves nothing behind; {@code BankPriceMovementPlugin::getPluginDirectory} in
+	 *                  production, a {@code TemporaryFolder} in tests
+	 */
+	public PriceStore(final Gson gson, final Directory directory)
 	{
 		this.gson = Objects.requireNonNull(gson, "gson");
-		this.dir = Objects.requireNonNull(dir, "dir");
+		this.directory = Objects.requireNonNull(directory, "directory");
 	}
 
 	/**
-	 * {@code ~/.runelite/bank-portfolio-tracker} (C17). Hub rule C46: every file this plugin writes is under
-	 * {@link RuneLite#RUNELITE_DIR}
-	 * ({@code runelite-client/src/main/java/net/runelite/client/RuneLite.java:101}).
+	 * The store on a directory that is already known - what a test builds, and what any caller holding a
+	 * {@link Filepath} of its own can use. Production takes the {@link Directory} overload instead, because
+	 * {@code Plugin.getPluginDirectory()} must not be called before it is needed.
 	 */
-	public static File defaultDir()
+	public PriceStore(final Gson gson, final Filepath dir)
 	{
-		return new File(RuneLite.RUNELITE_DIR, DIR_NAME);
+		this(gson, () -> dir);
+		Objects.requireNonNull(dir, "dir");
 	}
 
-	/** The directory this store reads and writes; not created until the first save. */
-	public File dir()
+	/**
+	 * The directory this store reads and writes, or {@code null} when it cannot be had at all - the disk refused,
+	 * or the plugin has no {@code internalName}. Not created until the first save.
+	 *
+	 * <p>A failure is logged once per attempt and answered with null rather than thrown, on the store's standing
+	 * failure policy: prices and a remembered bank are a convenience, and losing them must never take the panel
+	 * down. Every path accessor below answers null in the same case, and every reader and writer here treats a
+	 * null path as "no such file".
+	 */
+	@Nullable
+	public Filepath dir()
 	{
-		return dir;
+		final Filepath known = resolved;
+		if (known != null)
+		{
+			return known;
+		}
+
+		final Filepath found;
+		try
+		{
+			found = directory.get();
+		}
+		catch (IOException | RuntimeException e)
+		{
+			warnOnce(e);
+			return null;
+		}
+
+		if (found == null)
+		{
+			warnOnce(null);
+			return null;
+		}
+		resolved = found;
+		// Once per session, at debug: the one line that answers "where did my files go?" after the addendum AD
+		// move, and the only way to notice a directory that is not the one the user expects.
+		log.debug("bank-portfolio-tracker: data directory is {}", found);
+		return found;
+	}
+
+	/** The "no directory" warning, at most once per client session however many paths ask for one. */
+	private void warnOnce(@Nullable final Exception cause)
+	{
+		if (warnedNoDirectory)
+		{
+			return;
+		}
+		warnedNoDirectory = true;
+		if (cause == null)
+		{
+			log.warn("bank-portfolio-tracker: no data directory (nothing will be saved or loaded)");
+		}
+		else
+		{
+			log.warn("bank-portfolio-tracker: no data directory (nothing will be saved or loaded)", cause);
+		}
+	}
+
+	/**
+	 * One file in this store's directory, or null when there is no directory. The name is built by the callers
+	 * below and {@link Filepath#join} checks it: a separator, a traversal or a Windows device name throws rather
+	 * than escaping, which is the whole point of the wrapper (addendum AD).
+	 */
+	@Nullable
+	private Filepath file(final String name)
+	{
+		final Filepath dir = dir();
+		// joinSegment rather than join: every name here is ONE path component, and joinSegment is the overload
+		// that says so - it refuses a separator outright where join would quietly resolve "a/b" into a
+		// sub-directory. Nothing can reach it with a separator (safeProfile strips them, and the rest are
+		// constants), which is exactly why the stricter call costs nothing.
+		return dir == null ? null : dir.joinSegment(name);
 	}
 
 	/** {@code bank-<accountHash>-<profileType>.json} for one account on one profile (C17). */
-	public File bankFile(final long accountHash, @Nullable final String profileType)
+	@Nullable
+	public Filepath bankFile(final long accountHash, @Nullable final String profileType)
 	{
-		return new File(dir, BANK_PREFIX + accountHash + "-" + safeProfile(profileType) + JSON_SUFFIX);
+		return file(BANK_PREFIX + accountHash + "-" + safeProfile(profileType) + JSON_SUFFIX);
 	}
 
 	/**
@@ -190,28 +306,32 @@ public class PriceStore
 	 * method keeps its pre-K name because {@code PriceService} calls it and this wave does not rename across
 	 * agent boundaries.
 	 */
-	public File bucketFile(final MovementWindow window)
+	@Nullable
+	public Filepath bucketFile(final MovementWindow window)
 	{
 		Objects.requireNonNull(window, "window");
-		return new File(dir, BASELINE_PREFIX + window.name() + JSON_SUFFIX);
+		return file(BASELINE_PREFIX + window.name() + JSON_SUFFIX);
 	}
 
 	/** {@value #MAPPING_FILE} (K11). */
-	public File mappingFile()
+	@Nullable
+	public Filepath mappingFile()
 	{
-		return new File(dir, MAPPING_FILE);
+		return file(MAPPING_FILE);
 	}
 
 	/** {@value #REVINDEX_FILE} (L4). */
-	public File revisionIndexFile()
+	@Nullable
+	public Filepath revisionIndexFile()
 	{
-		return new File(dir, REVINDEX_FILE);
+		return file(REVINDEX_FILE);
 	}
 
 	/** {@value #TRADED_LATEST_FILE} (T2). */
-	public File tradedLatestFile()
+	@Nullable
+	public Filepath tradedLatestFile()
 	{
-		return new File(dir, TRADED_LATEST_FILE);
+		return file(TRADED_LATEST_FILE);
 	}
 
 	/**
@@ -219,10 +339,11 @@ public class PriceStore
 	 * that window counts back to from the live snapshot (U1). The file is named for the WINDOW; which day it holds
 	 * is inside it, and the two are only ever checked against each other by {@code PriceService}.
 	 */
-	public File tradedFile(final MovementWindow window)
+	@Nullable
+	public Filepath tradedFile(final MovementWindow window)
 	{
 		Objects.requireNonNull(window, "window");
-		return new File(dir, TRADED_PREFIX + window.name() + JSON_SUFFIX);
+		return file(TRADED_PREFIX + window.name() + JSON_SUFFIX);
 	}
 
 	// ---- banks
@@ -664,17 +785,36 @@ public class PriceStore
 	 */
 	public int deleteStaleFiles()
 	{
-		final File[] files = dir.listFiles();
-		if (files == null)
+		final Filepath dir = dir();
+		if (dir == null)
+		{
+			return 0;
+		}
+
+		final List<Filepath> files = new ArrayList<>();
+		try (Stream<Filepath> walk = dir.walk(1))
+		{
+			// Depth 1 is this directory and its children; the directory itself comes back first and is not a file
+			// to judge. There are no sub-directories to descend into - the dev-mode shots folder is the only one,
+			// and no rule below can match it.
+			walk.forEach(entry ->
+			{
+				if (!dir.equals(entry))
+				{
+					files.add(entry);
+				}
+			});
+		}
+		catch (IOException | RuntimeException e)
 		{
 			// No directory yet (a fresh install), or it is not readable: nothing to sweep either way.
 			return 0;
 		}
 
 		int deleted = 0;
-		for (final File file : files)
+		for (final Filepath file : files)
 		{
-			final String name = file.getName();
+			final String name = file.getFileName();
 			if (!isStale(file, name))
 			{
 				continue;
@@ -682,11 +822,13 @@ public class PriceStore
 
 			try
 			{
-				if (Files.deleteIfExists(file.toPath()))
-				{
-					deleted++;
-					log.debug("bank-portfolio-tracker: removed the stale file {}", file);
-				}
+				file.delete();
+				deleted++;
+				log.debug("bank-portfolio-tracker: removed the stale file {}", file);
+			}
+			catch (NoSuchFileException e)
+			{
+				// Gone between the walk and the delete: somebody else's sweep, and not this one's to count.
 			}
 			catch (IOException | RuntimeException e)
 			{
@@ -697,7 +839,7 @@ public class PriceStore
 	}
 
 	/** The six rules of {@link #deleteStaleFiles()}, in order. */
-	private boolean isStale(final File file, final String name)
+	private boolean isStale(final Filepath file, final String name)
 	{
 		if (LEGACY_LATEST_FILE.equals(name))
 		{
@@ -779,12 +921,12 @@ public class PriceStore
 	 * deleted anyway.
 	 */
 	@Nullable
-	private BaselineHeader readBaselineHeader(final File file)
+	private BaselineHeader readBaselineHeader(final Filepath file)
 	{
 		final String json;
 		try
 		{
-			json = new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8);
+			json = readAll(file);
 		}
 		catch (IOException | RuntimeException e)
 		{
@@ -838,12 +980,12 @@ public class PriceStore
 	 * thousand entries below it are never even lexed in a file this build wrote.
 	 */
 	@Nullable
-	private Integer readSchemaHeader(final File file)
+	private Integer readSchemaHeader(final Filepath file)
 	{
 		final String json;
 		try
 		{
-			json = new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8);
+			json = readAll(file);
 		}
 		catch (IOException | RuntimeException e)
 		{
@@ -888,6 +1030,24 @@ public class PriceStore
 	// ---- the file layer
 
 	/**
+	 * A whole file as UTF-8 text.
+	 *
+	 * <p>The bytes are read in one go and decoded afterwards, which is what {@code Files.readAllBytes} did before
+	 * addendum AD and what every caller here depends on: a read that fails part way through must fail as a READ
+	 * (the file is then kept, and judged by nothing) rather than arriving as a truncated document that parses to
+	 * something wrong. {@link Filepath#openReader} would decode as it went and could not promise that.
+	 *
+	 * @throws IOException if the file is missing, locked, or cannot be read to the end
+	 */
+	private static String readAll(final Filepath file) throws IOException
+	{
+		try (InputStream in = file.openInputStream())
+		{
+			return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+		}
+	}
+
+	/**
 	 * One document into {@code target}, replacing it whole (C19). The temp file is written in the same
 	 * directory as the target so the move is a rename inside one file system, and it carries
 	 * {@code System.nanoTime()} in its name so two writers (or two clients) never fill one temp file between
@@ -917,32 +1077,35 @@ public class PriceStore
 	 *
 	 * @throws IOException if the bytes cannot be written or the move fails; the target is untouched
 	 */
-	public static void writeAtomic(final File target, final String text) throws IOException
+	public static void writeAtomic(final Filepath target, final String text) throws IOException
 	{
 		Objects.requireNonNull(target, "target");
 		Objects.requireNonNull(text, "text");
-		writeAtomic(target, text, () -> new File(target.getParentFile(),
-			target.getName() + "." + System.nanoTime() + TMP_SUFFIX).toPath());
+		final Filepath parent = target.getParent();
+		final String name = target.getFileName();
+		writeAtomic(target, text, () -> parent.joinSegment(name + "." + System.nanoTime() + TMP_SUFFIX));
 	}
 
 	/**
-	 * {@link #writeAtomic(File, String)} with the temp NAMES handed in, which is the only way a test can stage
+	 * {@link #writeAtomic(Filepath, String)} with the temp NAMES handed in, which is the only way a test can stage
 	 * the collision the {@code CREATE_NEW} rule exists for - a name is a nanosecond count and cannot be
 	 * predicted from outside. Production passes the counter; nothing else should call this.
 	 *
 	 * @param tempNames a fresh candidate path each time it is asked, in the target's own directory
 	 */
-	static void writeAtomic(final File target, final String text, final Supplier<Path> tempNames) throws IOException
+	static void writeAtomic(final Filepath target, final String text, final Supplier<Filepath> tempNames)
+		throws IOException
 	{
-		final Path dst = target.toPath();
 		FileAlreadyExistsException taken = null;
 		for (int attempt = 0; attempt < TMP_ATTEMPTS; attempt++)
 		{
-			final Path tmp = tempNames.get();
-			try (Writer writer = Files.newBufferedWriter(tmp, StandardCharsets.UTF_8,
-				StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE))
+			final Filepath tmp = tempNames.get();
+			try
 			{
-				writer.write(text);
+				// Filepath.write opens a UTF-8 writer, writes the whole string and closes it - the same three
+				// steps the try-with-resources did before addendum AD, with the charset no longer a parameter
+				// because Filepath has no other.
+				tmp.write(text, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
 			}
 			catch (FileAlreadyExistsException e)
 			{
@@ -960,11 +1123,11 @@ public class PriceStore
 			{
 				try
 				{
-					Files.move(tmp, dst, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+					tmp.moveTo(target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
 				}
 				catch (AtomicMoveNotSupportedException e)
 				{
-					Files.move(tmp, dst, StandardCopyOption.REPLACE_EXISTING);
+					tmp.moveTo(target, StandardCopyOption.REPLACE_EXISTING);
 				}
 			}
 			catch (IOException | RuntimeException e)
@@ -978,11 +1141,11 @@ public class PriceStore
 	}
 
 	/** Best effort: the write already failed, and the leftover is inert. */
-	private static void deleteQuietly(final Path path)
+	private static void deleteQuietly(final Filepath path)
 	{
 		try
 		{
-			Files.deleteIfExists(path);
+			path.deleteIfExists();
 		}
 		catch (IOException | RuntimeException ignored)
 		{
@@ -998,15 +1161,23 @@ public class PriceStore
 	 * bank, the caller is an executor task that would silently swallow the exception anyway, and the next fetch
 	 * writes again.
 	 */
-	private void write(final File target, final Object document)
+	private void write(@Nullable final Filepath target, final Object document)
 	{
+		if (target == null)
+		{
+			// No directory at all. dir() has already said so once, at warn; this is the per-save line that
+			// says WHICH save went nowhere, at debug so a broken disk cannot fill the client's log.
+			log.debug("bank-portfolio-tracker: no data directory, so nothing was saved");
+			return;
+		}
 		try
 		{
-			// The third check is not redundant: mkdirs answers false when another thread won the race.
-			if (!dir.isDirectory() && !dir.mkdirs() && !dir.isDirectory())
+			final Filepath parent = target.getParent();
+			if (!parent.isDirectory())
 			{
-				log.warn("could not create {}", dir);
-				return;
+				// createDirectories is idempotent, so the check is only to keep the syscall off every save; two
+				// threads racing here both succeed.
+				parent.createDirectories();
 			}
 			writeAtomic(target, gson.toJson(document));
 		}
@@ -1022,7 +1193,7 @@ public class PriceStore
 	 * thrown; the catch is belt and braces, so that a future change in that method still cannot stop the panel
 	 * from opening on a stale price file (D9, fail soft).
 	 */
-	private PriceMap readMap(final File file)
+	private PriceMap readMap(@Nullable final Filepath file)
 	{
 		final PriceMapDto dto = readJson(file, PriceMapDto.class);
 		if (dto == null)
@@ -1051,16 +1222,16 @@ public class PriceStore
 	 * read).
 	 */
 	@Nullable
-	private <T> T readJson(final File file, final Class<T> type)
+	private <T> T readJson(@Nullable final Filepath file, final Class<T> type)
 	{
-		if (!file.exists())
+		if (file == null || !file.exists())
 		{
 			return null;
 		}
 		final String json;
 		try
 		{
-			json = new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8);
+			json = readAll(file);
 		}
 		catch (IOException | RuntimeException e)
 		{
@@ -1085,16 +1256,20 @@ public class PriceStore
 	 * Moves an unusable file aside as {@code <name>.corrupt-<millis>}. A failure to rename is logged and
 	 * nothing else: the file still reads as EMPTY, and the next save replaces it whole anyway.
 	 */
-	private void quarantine(final File file)
+	private void quarantine(final Filepath file)
 	{
-		final File backup = new File(file.getParentFile(), file.getName() + CORRUPT_SUFFIX + System.currentTimeMillis());
+		// Inside the try, all of it: getParent() throws on a Filepath that is its own root, and this method is
+		// reached from a load that promises never to throw. Nothing can pass a root today - every path comes
+		// from file(name) - and this is what keeps that a property of the method rather than of its callers.
 		try
 		{
-			Files.move(file.toPath(), backup.toPath(), StandardCopyOption.REPLACE_EXISTING);
+			final Filepath backup = file.getParent()
+				.joinSegment(file.getFileName() + CORRUPT_SUFFIX + System.currentTimeMillis());
+			file.moveTo(backup, StandardCopyOption.REPLACE_EXISTING);
 		}
 		catch (IOException | RuntimeException e)
 		{
-			log.warn("could not rename {} to {}", file, backup, e);
+			log.warn("could not move {} aside", file, e);
 		}
 	}
 

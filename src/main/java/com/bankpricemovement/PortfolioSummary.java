@@ -160,7 +160,8 @@ public final class PortfolioSummary
 
 	/**
 	 * How many of the {@link #itemsPriced()} stacks were valued at a LIVE traded mid rather than at the Jagex
-	 * guide price (addendum T, line T5) - the N of the card tooltip's "N of M stacks live". 0 whenever the
+	 * guide price (addendum T, line T5). It was the N of the card tooltip's "N of M stacks live" until addendum
+	 * AF took that hover down to the bank value alone; it now reaches a reader through the dev bridge. 0 whenever the
 	 * {@code livePrices} switch is off, which is every summary of addenda K to S.
 	 */
 	public int liveRows()

@@ -34,7 +34,21 @@ public enum SortMode
 	/** The percentage the unit price moved over the window. The default column ({@link RowFilter#DEFAULT}). */
 	PERCENT_MOVE("Percent change", "pct", "percent", "% move"),
 
-	/** The gp the price moved - one item's, or the whole stack's while {@code holdingOnRows} is on (Q6). */
+	/**
+	 * The gp the WHOLE STACK moved over the window ({@link MovementRow#holdingDeltaGp()}), under every switch
+	 * (addendum AO, line AO1).
+	 *
+	 * <p>It used to be ONE item's move, with {@code holdingOnRows} turning it into the stack's (Q6, and for one
+	 * addendum V1 did the same to {@link #UNIT_PRICE}); that key is deleted, and the stack is the reading that
+	 * survived it. This is a portfolio tracker, so "biggest gainers" means the holding that gained the most gp -
+	 * ten thousand feathers up a gp each are a bigger gain than one whip up two hundred - and since addendum AN
+	 * the row's headline line IS the stack, so the column now orders by the figure the eye lands on.
+	 *
+	 * <p><b>That changes the default ordering of this column for every existing user</b>: the deleted switch
+	 * defaulted to OFF, and OFF was the per-item reading. No stored {@code sortMode} moves - the constant, the
+	 * label and every alias are the ones they always were - but the list this column draws is ordered by a
+	 * different number than it was before AO.
+	 */
 	GP_MOVE("gp change", "gp", "amount", "gp move"),
 
 	/** What ONE item costs, under every switch (addendum W reverted addendum V's line V1). */

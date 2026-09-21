@@ -502,6 +502,54 @@ public class WidgetsTest
 	}
 
 	/**
+	 * What {@link Widgets#setFitted} leaves on a label, pinned in one place because addendum AH3 now READS it
+	 * back: the panel's {@code adoptFittedHover} takes whatever tooltip the fitter hung on a label and registers
+	 * it as that label's hover, so the "Show hover text" switch can silence it with the rest.
+	 *
+	 * <p>The rule is UNCONDITIONAL, and that is the half nothing pinned before: the whole text goes on the
+	 * tooltip whether the label had to be CUT or fitted whole, and only an empty (or null) text leaves a label
+	 * with none - which also CLEARS one already there. So a label a reader can read in full still carries a
+	 * hover, which is why the panel has to adopt every fitted label rather than the ones it expects to be cut,
+	 * and why {@code MovementRowPanel} clears the tooltip on its price label even though the fit order keeps a
+	 * price whole.
+	 */
+	@Test
+	public void everyFittedLabelCarriesItsWholeTextAsATooltipCutOrNot() throws Exception
+	{
+		onEdt(() ->
+		{
+			final Font face = Widgets.sansBold(14);
+
+			// Cut: the label shows an ellipsis and the tooltip is the only place the whole text survives.
+			final JLabel cut = Widgets.label("", face, Color.WHITE);
+			Widgets.setFitted(cut, "Karambwan vessel (baited)", 60);
+			assertNotEquals("the fixture has to be too wide, or this proves nothing",
+				"Karambwan vessel (baited)", cut.getText());
+			assertEquals("Karambwan vessel (baited)", cut.getToolTipText());
+
+			// Whole: room to spare, nothing lost - and the label is handed the tooltip anyway.
+			final JLabel whole = Widgets.label("", face, Color.WHITE);
+			Widgets.setFitted(whole, "1.52m", 200);
+			assertEquals("the label had room and was not cut", "1.52m", whole.getText());
+			assertEquals("...and it still arrives carrying a hover", "1.52m", whole.getToolTipText());
+
+			// setFittedName is the same body through the dose-keeping fitter, so it leaves the same thing.
+			final JLabel name = Widgets.label("", face, Color.WHITE);
+			Widgets.setFittedName(name, "Abyssal whip", 200);
+			assertEquals("Abyssal whip", name.getText());
+			assertEquals("Abyssal whip", name.getToolTipText());
+
+			// An empty text, and a null one, are the only ways out - and both clear what was there.
+			Widgets.setFitted(whole, "", 200);
+			assertEquals("", whole.getText());
+			assertNull("an empty text carries no tooltip", whole.getToolTipText());
+			Widgets.setFitted(cut, null, 60);
+			assertEquals("", cut.getText());
+			assertNull("and a null one clears the tooltip it replaces", cut.getToolTipText());
+		});
+	}
+
+	/**
 	 * B045: the one colour in this sidebar that is not a {@code ColorScheme} constant, and the reason it is
 	 * allowed - addendum N section 3 §2 pre-authorised (240, 92, 84) by name for red TEXT, on the condition the
 	 * 12 px red read dark in the first render. It clears 4.5:1 on the card grey where the constant does not.
@@ -523,9 +571,13 @@ public class WidgetsTest
 	 * flat - as a FIGURE with the lifted red, as a MARK with the {@code ColorScheme} constants, as an EDGE
 	 * darkened and with the card's own grey where there is no move to point at. Six methods across the panel and
 	 * the row read it, so the rule itself is pinned here, once.
+	 *
+	 * <p>Addendum AL's fourth role, {@link Widgets.Kind#QUIET}, has its own two tests below: it is the only one
+	 * whose colour is DERIVED from another role's rather than stated, so it is measured against the constants it
+	 * is derived from instead of being listed here beside three flat answers.
 	 */
 	@Test
-	public void theMoveRuleIsGreenUpRedDownAndQuietFlatInEachOfItsThreeRoles()
+	public void theMoveRuleIsGreenUpRedDownAndQuietFlatAsAMarkAFigureAndAnEdge()
 	{
 		assertEquals(ColorScheme.PROGRESS_COMPLETE_COLOR, Widgets.move(1, Widgets.Kind.MARK));
 		assertEquals(ColorScheme.PROGRESS_ERROR_COLOR, Widgets.move(-1, Widgets.Kind.MARK));
@@ -553,6 +605,138 @@ public class WidgetsTest
 		assertEquals(ColorScheme.LIGHT_GRAY_COLOR, Widgets.liftRed(ColorScheme.LIGHT_GRAY_COLOR));
 		assertEquals(ColorScheme.PROGRESS_ERROR_COLOR.darker(),
 			Widgets.liftRed(ColorScheme.PROGRESS_ERROR_COLOR.darker()));
+	}
+
+	// ---------------------------------------------------------------- the quiet gp figure (addendum AL)
+
+	/**
+	 * AL: the gp change and the percentage share a row's second line, and the user picked the variant that lets
+	 * the percentage be read on its own by taking the gp figure DOWN rather than by moving either of them. So
+	 * {@link Widgets.Kind#QUIET} is not a new colour - it is exactly what {@link Widgets.Kind#FIGURE} would have
+	 * painted, mixed {@link Widgets#QUIET_MIX_PERCENT}% of the way into the row's own {@code DARKER_GRAY} ground.
+	 *
+	 * <p>The expectation is COMPUTED from those two colours and that percentage rather than copied out as a hex,
+	 * so the day somebody tunes the mix by eye against the real list this test follows it instead of failing on a
+	 * number nobody can trace back to a decision.
+	 *
+	 * <p>The faller is the half worth stating out loud. {@code FIGURE} does not hand back
+	 * {@code PROGRESS_ERROR_COLOR}: it LIFTS it to {@link Widgets#MOVE_DOWN_TEXT} first, because the raw constant
+	 * measures 3.63:1 on the card where a small figure needs 4.5 (B045). QUIET therefore has to dim the LIFTED
+	 * red - dimming the raw one instead spends the lift twice over and leaves a row's fall darker than the very
+	 * rule it is meant to be a quieter copy of, which is the one way this can be wrong and still look plausible
+	 * in a screenshot.
+	 */
+	@Test
+	public void theQuietFigureIsTheFigureColourMixedTowardTheRowsOwnGround()
+	{
+		// A mix of none or of all is not a mix, and "strictly between" below would be vacuous against either.
+		// WHERE between the two it sits is deliberately not pinned - the constant's own javadoc measured that by
+		// eye at 213 px, and this file has no eye.
+		assertTrue("a QUIET that is not a mix says nothing: " + Widgets.QUIET_MIX_PERCENT,
+			Widgets.QUIET_MIX_PERCENT > 0 && Widgets.QUIET_MIX_PERCENT < 100);
+
+		final Color ground = ColorScheme.DARKER_GRAY_COLOR;
+		for (int signum : new int[]{1, -1})
+		{
+			final Color figure = Widgets.move(signum, Widgets.Kind.FIGURE);
+			final Color quiet = Widgets.move(signum, Widgets.Kind.QUIET);
+			assertEquals("signum " + signum, mixed(figure, ground, Widgets.QUIET_MIX_PERCENT), quiet);
+
+			// Strictly between, in both directions: quieter than the figure it copies, and still plainly there.
+			assertNotEquals("signum " + signum + ": a QUIET that is the loud figure is not quiet", figure, quiet);
+			assertNotEquals("signum " + signum + ": ...and one that is the ground is not a figure", ground, quiet);
+			assertTrue("signum " + signum + ": the quiet figure must sit nearer the ground than the loud one",
+				distance(quiet, ground) < distance(figure, ground));
+			assertTrue("signum " + signum + ": ...which is the same thing said as contrast on that ground",
+				contrast(quiet, ground) < contrast(figure, ground));
+			System.out.println("the quiet figure at signum " + signum + ": " + quiet + " at "
+				+ contrast(quiet, ground) + ":1, beside the loud " + figure + " at " + contrast(figure, ground));
+		}
+
+		// The faller is dimmed AFTER the lift and never instead of it (B045). The pair is self-checking: if the
+		// implementation dimmed the raw constant, the first assertion fails; if the two mixes were somehow the
+		// same colour - a fixture that would prove nothing - the second one does.
+		assertEquals("QUIET dims the LIFTED red",
+			mixed(Widgets.MOVE_DOWN_TEXT, ground, Widgets.QUIET_MIX_PERCENT),
+			Widgets.move(-1, Widgets.Kind.QUIET));
+		assertNotEquals("...and never the raw constant the lift exists to replace",
+			mixed(ColorScheme.PROGRESS_ERROR_COLOR, ground, Widgets.QUIET_MIX_PERCENT),
+			Widgets.move(-1, Widgets.Kind.QUIET));
+	}
+
+	/**
+	 * A flat move has nothing to out-shout, so QUIET hands back the quiet grey UNDIMMED - the same colour
+	 * {@link Widgets.Kind#FIGURE} gives it, which is why they are asserted equal rather than each against the
+	 * constant.
+	 *
+	 * <p>This is the edge a mix applied before the sign is read gets wrong, and it gets it wrong invisibly:
+	 * pushing {@code LIGHT_GRAY} into the ground leaves the row's dash at about 2:1 on a (30, 30, 30) row, a
+	 * smudge where every other row carries a readable figure - and a dash is the one figure whose whole job is to
+	 * say "nothing happened here" rather than leave the reader wondering what failed to draw.
+	 */
+	@Test
+	public void aFlatMoveIsTheQuietGreyUndimmed()
+	{
+		assertEquals("a flat QUIET is the flat FIGURE, undimmed", Widgets.move(0, Widgets.Kind.FIGURE),
+			Widgets.move(0, Widgets.Kind.QUIET));
+		assertEquals(ColorScheme.LIGHT_GRAY_COLOR, Widgets.move(0, Widgets.Kind.QUIET));
+		assertNotEquals("a dash must not be mixed into the row it stands on",
+			mixed(ColorScheme.LIGHT_GRAY_COLOR, ColorScheme.DARKER_GRAY_COLOR, Widgets.QUIET_MIX_PERCENT),
+			Widgets.move(0, Widgets.Kind.QUIET));
+		assertTrue("...so it still clears the small-text bar on the row",
+			contrast(Widgets.move(0, Widgets.Kind.QUIET), ColorScheme.DARKER_GRAY_COLOR) >= 4.5d);
+	}
+
+	/**
+	 * Every role answers for every signum, and answers to the SIGN rather than the magnitude - the callers hand
+	 * {@code Long.signum} in, but a role that read a raw gp figure would paint a 1 gp fall and a 4.6m one alike
+	 * only by accident.
+	 *
+	 * <p>The loop is over {@code values()} and the count is pinned beside it, so a fifth role cannot be added
+	 * without this file noticing: a new constant that nobody writes a branch for falls into {@link Widgets#move}'s
+	 * {@code default} and silently paints the undimmed {@code ColorScheme} pair, which is a plausible-looking
+	 * answer and the reason the count is worth failing on.
+	 */
+	@Test
+	public void everyRoleAnswersForEverySignumAndReadsItAsASign()
+	{
+		assertEquals("a new Kind needs its own rule pinned in this file", 4, Widgets.Kind.values().length);
+		for (Widgets.Kind kind : Widgets.Kind.values())
+		{
+			assertNotNull(kind + " has no flat colour", Widgets.move(0, kind));
+			assertNotNull(kind + " has no rising colour", Widgets.move(1, kind));
+			assertNotNull(kind + " has no falling colour", Widgets.move(-1, kind));
+			assertNotEquals(kind + " paints a rise and a fall the same way", Widgets.move(1, kind),
+				Widgets.move(-1, kind));
+			assertEquals(kind + " must read a magnitude as its sign", Widgets.move(1, kind),
+				Widgets.move(4_618_000, kind));
+			assertEquals(kind + " must read a magnitude as its sign", Widgets.move(-1, kind),
+				Widgets.move(-4_618_000, kind));
+		}
+	}
+
+	/**
+	 * {@code from} mixed {@code percent}% of the way into {@code to} - the arithmetic {@link Widgets#move} does
+	 * for {@link Widgets.Kind#QUIET}, written out here rather than reached for. The rounding is the same
+	 * {@code Math.round} per channel, so this is an independent statement of the rule and not a second reference
+	 * to the same code.
+	 */
+	private static Color mixed(Color from, Color to, int percent)
+	{
+		final double a = percent / 100.0;
+		return new Color(
+			(int) Math.round(from.getRed() + (to.getRed() - from.getRed()) * a),
+			(int) Math.round(from.getGreen() + (to.getGreen() - from.getGreen()) * a),
+			(int) Math.round(from.getBlue() + (to.getBlue() - from.getBlue()) * a));
+	}
+
+	/** How far apart two colours are in RGB: "nearer the background" measured rather than eyeballed. */
+	private static double distance(Color a, Color b)
+	{
+		final double dr = a.getRed() - b.getRed();
+		final double dg = a.getGreen() - b.getGreen();
+		final double db = a.getBlue() - b.getBlue();
+		return Math.sqrt(dr * dr + dg * dg + db * db);
 	}
 
 	/** WCAG relative-luminance contrast of two opaque colours, the ratio the addendum's figures are quoted in. */
@@ -673,22 +857,6 @@ public class WidgetsTest
 
 	// ---------------------------------------------------------------- the drawn glyphs (N section 7)
 
-	/** Every glyph paints headless, has the size the addendum gives it, and actually puts ink down. */
-	@Test
-	public void everyGlyphPaintsWithoutADisplayAndHasInk()
-	{
-		assertGlyph(Widgets.gearIcon(Widgets.GEAR_SIZE, ColorScheme.LIGHT_GRAY_COLOR), 12, 12);
-		assertGlyph(Widgets.gearIcon(Widgets.GEAR_SIZE, ColorScheme.BRAND_ORANGE), 12, 12);
-		assertGlyph(Widgets.triangle(true), 7, 7);
-		assertGlyph(Widgets.triangle(false), 7, 7);
-		assertGlyph(Widgets.triangleDown(ColorScheme.TEXT_COLOR), 7, 7);
-		assertGlyph(Widgets.triangleUp(ColorScheme.TEXT_COLOR), 7, 7);
-		assertGlyph(Widgets.triangle(true, 11, ColorScheme.BRAND_ORANGE), 11, 11);
-		assertGlyph(Widgets.clearIcon(ColorScheme.LIGHT_GRAY_COLOR), 11, 11);
-		assertGlyph(Widgets.clearIcon(ColorScheme.BRAND_ORANGE), 11, 11);
-		assertGlyph(Widgets.dotIcon(true), 7, 7);
-		assertGlyph(Widgets.dotIcon(false), 7, 7);
-	}
 
 	/**
 	 * The shipped sort chip's triangle must not have changed when the size/colour overload was added under
@@ -771,6 +939,28 @@ public class WidgetsTest
 	{
 		assertEquals(3, Widgets.triangle(true, 0, ColorScheme.BRAND_ORANGE).getIconWidth());
 		assertEquals(3, Widgets.triangle(false, -5, ColorScheme.BRAND_ORANGE).getIconHeight());
+	}
+
+	// ---------------------------------------------------------------- the check box (addendum AH)
+
+	/**
+	 * AH: the switch's glyph is an empty SQUARE when the switch is off and the same square with a tick through
+	 * it when it is on - so the two states have to be visibly different, and the empty one has to read as a box
+	 * with nothing in it rather than as a mark of its own.
+	 *
+	 * <p>Why the difference is asserted and not assumed. "Show hover text" ships OFF, so its box is the first
+	 * one a reader ever sees, and it is read with no ticked box beside it to compare against: if the two states
+	 * drew the same ink the menu would say nothing about what is on and what is off, which is the whole reason
+	 * addendum AH draws a box at all instead of leaving RuneLite's look and feel to paint blank space.
+	 */
+
+	/** Every glyph paints headless, has the size the addendum gives it, and actually puts ink down. */
+	@Test
+	public void everyGlyphPaintsWithoutADisplayAndHasInk()
+	{
+		assertGlyph(Widgets.gearIcon(Widgets.GEAR_SIZE, ColorScheme.LIGHT_GRAY_COLOR), 12, 12);
+		assertGlyph(Widgets.triangle(true), 7, 7);
+		assertGlyph(Widgets.triangle(false), 7, 7);
 	}
 
 	// ---------------------------------------------------------------- the older members are untouched

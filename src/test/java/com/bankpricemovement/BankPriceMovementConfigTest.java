@@ -30,12 +30,13 @@ public class BankPriceMovementConfigTest
 	private static final List<String> EXPECTED_KEYS = Arrays.asList(
 		"gpMin",
 		"gpMax",
-		// Addendum Z line Z1: the fourteenth key and the only free-text one - the three quick bands the fold's
-		// chips offer, as one line of gp shorthand. It sits beside the two bounds because it is about the same
-		// thing they are.
+		// Addendum Z line Z1: it landed as the fourteenth key and is the thirteenth since addendum AO, and it is
+		// the only free-text one - the three quick bands the fold's chips offer, as one line of gp shorthand. It
+		// sits beside the two bounds because it is about the same thing they are.
 		"bandPresets",
-		// Addendum AA line AA1: the fifteenth key - whether the fold those chips live in is open. Directly after
-		// the presets, because it decides whether they are on screen at all.
+		// Addendum AA line AA1: it landed as the fifteenth key and is the fourteenth since addendum AO - whether
+		// the fold those chips live in is open. Directly after the presets, because it decides whether they are
+		// on screen at all.
 		"foldOpen",
 		"sortMode",
 		"sortDescending",
@@ -45,15 +46,23 @@ public class BankPriceMovementConfigTest
 		"showBankValue",
 		"showBankMoveGp",
 		"showBankMovePct",
-		// Addendum Q line Q3: the gear menu's three view switches, carried as one ViewOptions.
+		// Addendum Q line Q3: the gear menu's view switches, carried as one ViewOptions. It brought THREE and has
+		// two - addendum AO line AO1 deleted "holdingOnRows", the second key to go for good after addendum N's
+		// "look", and theHoldingSwitchIsGone below is the guard that keeps it gone.
 		"countCash",
 		"countUntradeables",
-		"holdingOnRows",
-		// Addendum T line T1: the live-traded-price switch, the fourth field of the same ViewOptions.
+		// Addendum T line T1: the live-traded-price switch, the third field of the same ViewOptions since AO
+		// (it landed as the fourth).
 		"livePrices",
-		// Addendum Y line Y1: the carried switch, the fifth field of the same ViewOptions and the
-		// thirteenth key added to the group. On by default, unlike the two switches beside it.
-		"countInventory"
+		// Addendum Y line Y1: the carried switch, the fourth field of the same ViewOptions since AO (it landed as
+		// the fifth) and the thirteenth key added to the group. On by default, unlike the two switches beside it.
+		"countInventory",
+		// Addendum AH: it landed as the sixteenth key and the sixth field of the same ViewOptions, and is the
+		// fifteenth and the fifth since addendum AO - whether the sidebar shows hover text at all. OFF by default,
+		// alone on this page in showing LESS than the build before it. It was deleted for one day by addendum AI
+		// and restored by AJ, which is why a stored value under this spelling may have been swept once: the key
+		// never changed, so a profile that kept it still reads back.
+		"showHoverText"
 	);
 
 	/** Every zero-argument {@code @ConfigItem} method visible on the interface, inherited ones included. */
@@ -91,6 +100,21 @@ public class BankPriceMovementConfigTest
 		}
 	}
 
+	/**
+	 * The whole stored surface of the plugin in one assertion, and the place the Hub's "never rename a config key
+	 * without a migration" rule is guarded: {@link #EXPECTED_KEYS} is the frozen list, so a rename shows up here as
+	 * two failures at once (the old spelling missing, the new one unexpected) rather than as a silently discarded
+	 * setting on every user's profile. A key ADDED must be added to the list deliberately - which is the whole of
+	 * the ceremony, and the reason it is cheap enough to keep.
+	 *
+	 * <p>Fifteen since addendum AO, which took one away and put nothing in its place: {@code holdingOnRows} went
+	 * (AO1) because addendum AN's three-line row prints the stack and the item both, so the switch reached
+	 * nothing drawn. It went sixteen at addendum AH ({@code showHoverText}), fifteen when addendum AI deleted that
+	 * one, sixteen again when AJ restored it under the same spelling - a key that goes and comes back with its name
+	 * and its type intact reads its old stored value straight off the profile, so no migration was owed there - and
+	 * fifteen at AO. The deleted key is swept off old profiles rather than migrated
+	 * ({@link BankPriceMovementPlugin#unstickHolding()}), because nothing survives it to migrate INTO.
+	 */
 	@Test
 	public void declaresExactlyTheExpectedItems()
 	{
@@ -104,8 +128,18 @@ public class BankPriceMovementConfigTest
 		assertEquals("unexpected number of config items", 15, methods.size());
 	}
 
+	/**
+	 * Two keys may never share a spelling (a rename is a discarded setting) and two items may never share a
+	 * position, because RuneLite sorts the page on it and a tie is drawn in whatever order reflection answers in.
+	 *
+	 * <p>The positions also have to run 0, 1, 2 ... with no gap, which is worth pinning since addendum AO line
+	 * AO1: it is the first change that ever DELETED an item from the middle of the page, and the cheap version
+	 * of that change - leave the hole where {@code holdingOnRows} was - is exactly the one nobody would notice by
+	 * reading the interface. Positions are not frozen the way keys are, so renumbering is allowed and leaving a
+	 * hole is the thing being ruled out.
+	 */
 	@Test
-	public void keyNamesAndPositionsAreUnique()
+	public void keyNamesAndPositionsAreUniqueAndRunFromZeroWithNoGap()
 	{
 		final Set<String> keys = new HashSet<>();
 		final Set<Integer> positions = new HashSet<>();
@@ -115,6 +149,11 @@ public class BankPriceMovementConfigTest
 			assertTrue("duplicate keyName: " + item.keyName(), keys.add(item.keyName()));
 			assertTrue("duplicate position " + item.position() + " on " + item.keyName(),
 				positions.add(item.position()));
+		}
+		for (int position = 0; position < positions.size(); position++)
+		{
+			assertTrue("no config item sits at position " + position + ", so the settings page has a gap in it",
+				positions.contains(position));
 		}
 	}
 
@@ -205,23 +244,26 @@ public class BankPriceMovementConfigTest
 	}
 
 	/**
-	 * Addendum Q line Q3: the gear menu's three switches open on {@link ViewOptions#DEFAULT} - cash counted (it
-	 * always was, addendum P), untradeables left out and unit prices on the rows - so a user who never opens the
-	 * gear sees exactly the sidebar addendum P shipped. None of the three is a {@link RowFilter} field: two of
-	 * them change what the figures MEAN rather than which rows the band and the ordering select, and the third
-	 * changes only what a row prints.
+	 * Addendum Q line Q3: the gear menu's switches open on {@link ViewOptions#DEFAULT} - cash counted (it always
+	 * was, addendum P) and untradeables left out - so a user who never opens the gear sees exactly the sidebar
+	 * addendum P shipped. Neither is a {@link RowFilter} field: they change what the figures MEAN rather than
+	 * which rows the band and the ordering select.
+	 *
+	 * <p>Q3 brought a THIRD, {@code holdingOnRows}, which changed only what a row printed - and that is exactly
+	 * why addendum AO line AO1 could delete it once addendum AN's row printed both readings at once. The Q3
+	 * default it used to assert here ("a row prints the unit price until the user asks for the holding") is not
+	 * a thing a fresh profile can be asked any more; {@link #theHoldingSwitchIsGone()} guards the absence
+	 * instead.
 	 */
 	@Test
-	public void theThreeViewSwitchesDefaultToTheDefaultViewOptions()
+	public void theTwoSurvivingViewSwitchesDefaultToTheDefaultViewOptions()
 	{
 		final BankPriceMovementConfig config = new BankPriceMovementConfig()
 		{
 		};
 		assertTrue("coins and platinum count in the bank value on a fresh profile", config.countCash());
 		assertFalse("untradeables are left out until the user asks for them", config.countUntradeables());
-		assertFalse("a row prints the unit price until the user asks for the holding", config.holdingOnRows());
-		assertEquals(ViewOptions.DEFAULT,
-			new ViewOptions(config.countCash(), config.countUntradeables(), config.holdingOnRows()));
+		assertEquals(ViewOptions.DEFAULT, optionsOf(config));
 		assertEquals(RowFilter.DEFAULT, new RowFilter(config.gpMin(), config.gpMax(), config.sortMode(),
 			config.sortDescending(), config.window()));
 	}
@@ -236,8 +278,9 @@ public class BankPriceMovementConfigTest
 	 * for - and left every stored KEY where it was, which is the half that must never move: a renamed key
 	 * discards the setting.
 	 *
-	 * <p>The positions are the gear menu's order - the card's three show/hide switches, then these - with the
-	 * carried switch of Y1 between the untradeables and the holding, which is where the menu lists it.
+	 * <p>Two of the three are left. "Show stack value on rows" ({@code holdingOnRows}) was deleted whole by
+	 * addendum AO line AO1, so the words Y4 chose for it are history and are not pinned anywhere any more; the
+	 * positions of these two did not move with it, because it sat BELOW them.
 	 */
 	@Test
 	public void theViewSwitchesAreNamedAsTheGearMenuNamesThem()
@@ -252,29 +295,23 @@ public class BankPriceMovementConfigTest
 		assertEquals("List untradeable stacks at their tradeable parts' value, or else their High Alchemy value,"
 			+ " and count them in the bank value", untradeables.description());
 		assertEquals(11, untradeables.position());
-
-		final ConfigItem holding = item("holdingOnRows");
-		assertEquals("Show stack value on rows", holding.name());
-		assertEquals("Rows show the stack's value, and the stack's change, instead of the unit price",
-			holding.description());
-		assertEquals(13, holding.position());
 	}
 
 	/**
-	 * Y1: the thirteenth key is ON for a fresh profile - a "bank value" that ignored the gear the player is
-	 * standing in is not the figure they mean - and it is the FIFTH field of {@link ViewOptions}, never a
+	 * Y1: the key it added is ON for a fresh profile - a "bank value" that ignored the gear the player is
+	 * standing in is not the figure they mean - and it is the FOURTH field of {@link ViewOptions} since addendum
+	 * AO line AO1 took {@code holdingOnRows} out from above it (it landed as the fifth). Never a
 	 * {@link RowFilter} field: it changes what a stack's quantity IS and which stacks are rows at all, not
 	 * which of them the band and the ordering select.
 	 */
 	@Test
-	public void theCarriedSwitchDefaultsToOnAndIsTheFifthViewOption()
+	public void theCarriedSwitchDefaultsToOnAndIsTheFourthViewOption()
 	{
 		final BankPriceMovementConfig config = new BankPriceMovementConfig()
 		{
 		};
 		assertTrue("the inventory and the worn gear count on a fresh profile (Y1)", config.countInventory());
-		assertEquals(ViewOptions.DEFAULT, new ViewOptions(config.countCash(), config.countUntradeables(),
-			config.holdingOnRows(), config.livePrices(), config.countInventory()));
+		assertEquals(ViewOptions.DEFAULT, optionsOf(config));
 		assertTrue("and DEFAULT carries it", ViewOptions.DEFAULT.countInventory());
 		assertEquals(RowFilter.DEFAULT, new RowFilter(config.gpMin(), config.gpMax(), config.sortMode(),
 			config.sortDescending(), config.window()));
@@ -297,10 +334,19 @@ public class BankPriceMovementConfigTest
 	}
 
 	/**
-	 * Y4 as one list: the nine entries of the gear menu in the order it draws them, minus the Refresh item
-	 * (which is the panel's, not a config key). The user asked for "more layman names" and agreed these, so
-	 * they are pinned in one place as well as beside their own items - a rename here is a user-visible change
-	 * and has to be a deliberate one.
+	 * Y4 as one list: the entries of the gear menu in the order it draws them, minus the Refresh item, the preset
+	 * boxes, "Reset to default" and the OK button (which are the panel's, not config keys). The user asked for
+	 * "more layman names" and agreed these, so they are pinned in one place as well as beside their own items - a
+	 * rename here is a user-visible change and has to be a deliberate one.
+	 *
+	 * <p>Addendum AH added the last, in the same plain voice: "Show hover text". Addendum AI deleted it
+	 * with the row hover it used to silence, and addendum AJ put it back a wave later because the card's hover
+	 * and every control's were still on and still had no switch. It is drawn in the row ABOVE the bottom
+	 * [Reset to default][OK] row, which is where the user pointed.
+	 *
+	 * <p>Nine became EIGHT with addendum AO line AO1: "Show stack value on rows" is gone from the menu and from
+	 * the settings page both, so the list here is one shorter and the menu's view group now ends on "Include
+	 * inventory and worn gear".
 	 */
 	@Test
 	public void theGearMenusEightConfigItemsReadInTheWordsOfAddendumY()
@@ -312,25 +358,25 @@ public class BankPriceMovementConfigTest
 		assertEquals("Include coins and platinum tokens", item("countCash").name());
 		assertEquals("Include untradeable items", item("countUntradeables").name());
 		assertEquals("Include inventory and worn gear", item("countInventory").name());
-		assertEquals("Show stack value on rows", item("holdingOnRows").name());
+		assertEquals("Show hover text", item("showHoverText").name());
 	}
 
 	/**
-	 * Addendum T line T1: the twelfth item is ON for a fresh profile, because the user chose that - "for the
+	 * Addendum T line T1: the item it added is ON for a fresh profile, because the user chose that - "for the
 	 * current 24 hour window if its accurate we should use live prices" - and because the switch only ever
 	 * REPLACES a guide price where an item passed all three liquidity checks, so a default-on profile still shows
-	 * the daily guide figure for everything thin. It is the fourth field of {@link ViewOptions} and not a
+	 * the daily guide figure for everything thin. It is the THIRD field of {@link ViewOptions} since addendum AO
+	 * line AO1 took {@code holdingOnRows} out from above it (it landed as the fourth), and not a
 	 * {@link RowFilter} field: it changes what a figure IS, never which rows the band and the ordering select.
 	 */
 	@Test
-	public void theLivePricesSwitchDefaultsToOnAndIsTheFourthViewOption()
+	public void theLivePricesSwitchDefaultsToOnAndIsTheThirdViewOption()
 	{
 		final BankPriceMovementConfig config = new BankPriceMovementConfig()
 		{
 		};
 		assertTrue("live prices are on for a fresh profile (T1)", config.livePrices());
-		assertEquals(ViewOptions.DEFAULT, new ViewOptions(config.countCash(), config.countUntradeables(),
-			config.holdingOnRows(), config.livePrices()));
+		assertEquals(ViewOptions.DEFAULT, optionsOf(config));
 		assertTrue("and DEFAULT carries it", ViewOptions.DEFAULT.livePrices());
 		assertEquals(RowFilter.DEFAULT, new RowFilter(config.gpMin(), config.gpMax(), config.sortMode(),
 			config.sortDescending(), config.window()));
@@ -341,8 +387,15 @@ public class BankPriceMovementConfigTest
 	 * same switch, so they are read in the same sentence, and the sentence is pinned here because it is the whole
 	 * of what a user has to go on when deciding whether to leave it on: it says what qualifies ("actively traded")
 	 * and what happens to everything else ("thin items keep the daily guide price"), with no jargon in between.
-	 * Its position puts it LAST of the fifteen, which is where the settings page draws it; the name is the one
-	 * addendum Y line Y4 gave it ("Live prices" read as a heading rather than as a switch).
+	 * The name is the one addendum Y line Y4 gave it ("Live prices" read as a heading rather than as a switch).
+	 *
+	 * <p><b>Its position is 14.</b> It has been the LAST item on the settings page since addendum T, and it still
+	 * is - addendum AH inserted {@code showHoverText} above it and pushed it down, exactly as Z and AA renumbered
+	 * the items below them; addendum AI took that item away and AJ put it back in the same slot; addendum AO
+	 * deleted {@code holdingOnRows} from above both and moved this one back up from 15 to 14. Positions are not
+	 * frozen and keys are, so this assertion is about the ORDER a reader meets the page in and about nothing
+	 * stored: what it pins is that every arrival and departure above has been slotted in rather than appended
+	 * past this one, and that the page has no gap in it.
 	 */
 	@Test
 	public void theLivePricesSwitchIsNamedAsTheGearMenuNamesIt()
@@ -352,6 +405,80 @@ public class BankPriceMovementConfigTest
 		assertEquals("Actively traded items use the wiki's live traded prices for every figure;"
 			+ " thin items keep the daily guide price", live.description());
 		assertEquals(14, live.position());
+		// ...and last means last: nothing on the page sits below it.
+		for (Method m : itemMethods())
+		{
+			final ConfigItem other = m.getAnnotation(ConfigItem.class);
+			assertTrue("\"" + other.name() + "\" is drawn below the last item on the page",
+				other.position() <= live.position());
+		}
+	}
+
+	/**
+	 * Addendum AH, restored by addendum AJ: the key it added is OFF for a fresh profile, and it is the only item
+	 * on this page whose default shows LESS than the build before it did. The user asked for exactly that - "i
+	 * would like it to be default 'off' and only display hover text if turned on" (2026-09-20) - after addenda AF
+	 * and AG had already cut both data hovers down, and asked for the switch BACK when addendum AI deleted it
+	 * ("where is the show hover text box and wording and default 'off' setting?").
+	 *
+	 * <p>It is the FIFTH and last field of {@link ViewOptions} since addendum AO line AO1 took
+	 * {@code holdingOnRows} out from above it (it landed as the sixth), and not a {@link RowFilter} field: it
+	 * changes whether a figure is EXPLAINED, never what the figure is or which rows the band and the ordering
+	 * select, so a fresh profile's filter is untouched by its arrival and flipping it refetches nothing.
+	 */
+	@Test
+	public void theHoverTextSwitchDefaultsToOffAndIsTheFifthViewOption()
+	{
+		final BankPriceMovementConfig config = new BankPriceMovementConfig()
+		{
+		};
+		assertFalse("the hover text is off until the user asks for it (AH)", config.showHoverText());
+		assertFalse("and DEFAULT carries the same answer", ViewOptions.DEFAULT.showHoverText());
+		assertEquals(ViewOptions.DEFAULT, optionsOf(config));
+		assertEquals(RowFilter.DEFAULT, new RowFilter(config.gpMin(), config.gpMax(), config.sortMode(),
+			config.sortDescending(), config.window()));
+	}
+
+	/**
+	 * AH's exact words as addendum AJ narrowed them. The gear menu's last check item and RuneLite's settings page
+	 * are the same switch, so they are read in the same sentence - the menu item IS this {@code name}, and its own
+	 * hover IS this {@code description} (pinned against {@link BankPriceMovementPanel#SHOW_HOVER_TEXT_TEXT} and
+	 * {@link BankPriceMovementPanel#SHOW_HOVER_TEXT_TIP}, because the words are written in two files and only a
+	 * test can see both).
+	 *
+	 * <p>The description names the TWO places the switch reaches, and the list has moved twice. AH's first cut
+	 * spared every tooltip that explains a control and said so here ("The buttons keep their own labels"); the
+	 * user turned the switch off, was still met with hover text, and overruled it - "make sure there is no hover
+	 * text at all unless it is on" - so AH3 widened it to three places, the item ROWS among them. Addendum AI
+	 * then moved a row's description out of its hover and into the cell it opens, so a row carries no tooltip at
+	 * ANY setting and is silent whether this is on or off. Naming the rows here would now be a promise the
+	 * sidebar cannot keep in either direction, which is why the sentence is pinned WITH a guard against that word
+	 * rather than only as a literal.
+	 *
+	 * <p>Position 13 - it was 14 until addendum AO deleted the item above it - puts it second to last on the
+	 * settings page, directly above "Use live prices". In the gear menu it is drawn LAST of the switches, in the
+	 * row ABOVE the bottom [Reset to default][OK] row - which is where the user pointed ("it should be the row
+	 * above OK") - so this is one of the few items whose two homes do not list it in the same place, and the
+	 * position pins the settings page's.
+	 */
+	@Test
+	public void theHoverTextSwitchIsNamedAsTheGearMenuNamesIt()
+	{
+		final ConfigItem hover = item("showHoverText");
+		assertEquals("Show hover text", hover.name());
+		assertEquals("the settings page and the gear menu name it with one string (AH)",
+			BankPriceMovementPanel.SHOW_HOVER_TEXT_TEXT, hover.name());
+		assertEquals("Show hover text anywhere in the sidebar: the bank value and the controls",
+			hover.description());
+		assertEquals("and the menu item's own hover is that same sentence",
+			BankPriceMovementPanel.SHOW_HOVER_TEXT_TIP, hover.description());
+		assertFalse("the description must not promise the controls keep talking - AH3 silenced them too",
+			hover.description().contains("keep their own labels"));
+		assertFalse("...nor claim the item rows, which carry no hover at any setting since addendum AI",
+			hover.description().contains("row"));
+		assertEquals(13, hover.position());
+		// Directly above the item that is last on the page.
+		assertEquals(14, item("livePrices").position());
 	}
 
 	/**
@@ -425,8 +552,7 @@ public class BankPriceMovementConfigTest
 		assertTrue("the price fold is open on a fresh profile (AA1)", config.foldOpen());
 		assertEquals(RowFilter.DEFAULT, new RowFilter(config.gpMin(), config.gpMax(), config.sortMode(),
 			config.sortDescending(), config.window()));
-		assertEquals(ViewOptions.DEFAULT, new ViewOptions(config.countCash(), config.countUntradeables(),
-			config.holdingOnRows(), config.livePrices(), config.countInventory()));
+		assertEquals(ViewOptions.DEFAULT, optionsOf(config));
 	}
 
 	/**
@@ -454,6 +580,19 @@ public class BankPriceMovementConfigTest
 		// them as on the settings page.
 		assertEquals(2, item("bandPresets").position());
 		assertEquals(4, item("sortMode").position());
+	}
+
+	/**
+	 * The five view switches read off a config, in the order and arity
+	 * {@code BankPriceMovementPlugin.optionsFromConfig()} reads them - which is the point of doing it here rather
+	 * than writing the constructor out in each test: five booleans in a row are five chances to pin the wrong
+	 * round trip, and addendum AO line AO1 removed a field from the MIDDLE of that list, where a stale call
+	 * would still have compiled.
+	 */
+	private static ViewOptions optionsOf(BankPriceMovementConfig config)
+	{
+		return new ViewOptions(config.countCash(), config.countUntradeables(), config.livePrices(),
+			config.countInventory(), config.showHoverText());
 	}
 
 	/** The {@code @ConfigItem} of one stored key, by name; fails rather than returning null when it is gone. */
@@ -525,5 +664,36 @@ public class BankPriceMovementConfigTest
 			assertFalse("the look config item was deleted by addendum O (O1)",
 				BankPriceMovementPlugin.LEGACY_LOOK_KEY.equals(m.getAnnotation(ConfigItem.class).keyName()));
 		}
+	}
+
+	/**
+	 * AO1, the same guard for the second key this plugin has deleted for good: {@code holdingOnRows} ("Show stack
+	 * value on rows", addendum Q line Q3) chose whether a row printed the per-ITEM reading or the per-STACK one, and
+	 * addendum AN's three-line row prints both - line 2 is the stack, line 3 is one item - so the switch reached
+	 * nothing drawn and the user, asked whether to keep it, answered "if it doesnt do anything anymore then
+	 * remove it".
+	 *
+	 * <p>A profile written before addendum AO may still hold the KEY -
+	 * {@link BankPriceMovementPlugin#unstickHolding()} sweeps it at startUp, exactly as
+	 * {@link BankPriceMovementPlugin#unstickLook()} sweeps addendum N's - but no item here may ever declare it
+	 * again. This file is where a deleted key coming back by a merge is caught: the set assertion above would
+	 * fail too, and would be read as "somebody forgot to update the list", which is the wrong reading and the
+	 * reason this test says which addendum took it and why.
+	 *
+	 * <p>Nothing replaces it. The one behaviour it still had is now unconditional: {@link SortMode#GP_MOVE}
+	 * compares {@code MovementRow.holdingDeltaGp()} - the whole STACK's move - under every setting, which is
+	 * what the switch gave when it was ON rather than the per-item reading it defaulted to. That is a
+	 * user-visible change to one column's ordering, and there is no key left to undo it with.
+	 */
+	@Test
+	public void theHoldingSwitchIsGone()
+	{
+		for (Method m : itemMethods())
+		{
+			assertFalse("the holdingOnRows config item was deleted by addendum AO (AO1)",
+				BankPriceMovementPlugin.LEGACY_HOLDING_KEY.equals(m.getAnnotation(ConfigItem.class).keyName()));
+		}
+		assertFalse("...and no item may declare it under the old name either",
+			EXPECTED_KEYS.contains(BankPriceMovementPlugin.LEGACY_HOLDING_KEY));
 	}
 }

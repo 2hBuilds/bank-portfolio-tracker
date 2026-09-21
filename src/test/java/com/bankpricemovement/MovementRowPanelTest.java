@@ -1,9 +1,12 @@
 package com.bankpricemovement;
 
 import java.awt.BorderLayout;
+import java.awt.Color;
 import java.awt.Component;
 import java.awt.Container;
 import java.awt.Dimension;
+import java.awt.Font;
+import java.awt.Insets;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseListener;
 import java.awt.image.BufferedImage;
@@ -12,6 +15,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
@@ -20,7 +24,9 @@ import javax.swing.JLabel;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
+import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
+import net.runelite.api.Constants;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.util.AsyncBufferedImage;
 import org.junit.Test;
@@ -34,9 +40,9 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 /**
- * {@link MovementRowPanel}: the 213 x 48 card, its rail, its name line, the gp figure and the percentage on
- * line 2, the quantity-1 rule, the fit order, the guide-price tooltip and the two-entry right-click - built
- * for real on the EDT and measured off-screen (playbook 7.6, REAL SWING OFF-SCREEN).
+ * {@link MovementRowPanel}: the 213 x 62 card, its rail, its name line, the STACK line and the ITEM line under
+ * it, the two gp columns, the guide-price tooltip and the two-entry right-click - built for real on the EDT and
+ * measured off-screen (playbook 7.6, REAL SWING OFF-SCREEN).
  *
  * <p><b>What addendum N changed here, and what it deliberately did not.</b> The row grew from 40 px to 48,
  * lost its zebra ({@code setStripe} / {@code stripe()} are gone with it), gained a 3 px rail in the move's
@@ -50,10 +56,13 @@ import static org.junit.Assert.fail;
  * figures are the product and are NOT hideable; addendum O's three switches belong to the hero card
  * ({@link HeroVisibility}) and never reach a row.
  *
- * <p><b>Addendum Q's two row switches</b> ({@link ViewOptions}): an untradeable stack prints its High Alchemy
- * price with a grey "alch" tag where the move figures go and says so in one tooltip sentence (Q5), and with
- * {@code holdingOnRows} on the price figure is the whole stack and the gp figure is the whole stack's change
- * (Q6). Both are decided when the row is BUILT, so every assertion below builds the row it measures.
+ * <p><b>Addendum Q's row switches, of which ONE is left</b> ({@link ViewOptions}): an untradeable stack prints
+ * its High Alchemy price with a grey "alch" tag where the move figures go and says so in one tooltip sentence
+ * (Q5). The other was {@code holdingOnRows}, which chose whether a row printed the STACK's figures or one
+ * ITEM's (Q6) - and the Q4 format prints both, so it reached nothing here and addendum AO deleted the key
+ * outright (AO1), taking the {@code priceText} / {@code gpText} / {@code quantityText} helpers that expressed
+ * its two readings with it. Q5 is decided when the row is BUILT, so every assertion below builds the row it
+ * measures.
  *
  * <p><b>Addendum R splits the untradeables in two</b> (R4): a stack RuneLite can take apart is worth what its
  * tradeable PARTS are worth, so it has a baseline and a move and must paint as an ordinary guide row does, with
@@ -61,9 +70,70 @@ import static org.junit.Assert.fail;
  * The tests below hold both halves of that - what the parts row must look like, and what the alch row still
  * does.
  *
+ * <p><b>Addendum AI moved the description off the hover and into the CELL.</b> A row is now a FACE over a
+ * DETAIL block inside the one card border: a left click shows the detail and the row grows by the height that
+ * detail MEASURES, a second click shuts it and the row is exactly {@link MovementRowPanel#ROW_HEIGHT} again.
+ * A row therefore carries no tooltip at all, on itself or on any child, and the tests that pinned the short
+ * hover, its named AG6 form and the text a toggle handed to Swing went with {@code briefTooltip} and
+ * {@code MORE_INFO}. What AI did NOT change is the COLLAPSED geometry, which the four pinned renders depend on.
+ *
+ * <p><b>Addendum AK rewrote what that cell SAYS</b>, and the tooltip tests below stopped describing it. The cell
+ * is now the label column {@link MovementRowPanel#detail(MovementRow, MovementWindow, java.time.LocalDate,
+ * ViewOptions, boolean)} writes - "Worth now / Was / You have / Change 1d", and under it only the notes that say
+ * something - which is pinned under "addendum AK" near the end of this file. The long builder
+ * ({@link MovementRowPanel#tooltip(MovementRow, MovementWindow, java.time.LocalDate, ViewOptions)}) is UNCHANGED
+ * and still exists, so the tooltip tests below still describe it exactly; nothing in the sidebar draws it any
+ * more, and if it is ever deleted they go with it.
+ *
+ * <p><b>Addendum AL quietened the gp figure on the FACE</b>: it takes
+ * {@link MovementRowPanel#quietChangeColor} - the percentage's colour mixed toward the card - while the
+ * percentage keeps {@link MovementRowPanel#textChangeColor}, so the two stop competing. Nothing else about a row
+ * moves, and the geometry above is untouched: a colour does not change a box.
+ *
+ * <p><b>Addendum AJ put the "Show hover text" switch back, and a row is outside its reach.</b> AI had deleted
+ * addendum AH's switch along with the hover it was written for, which left the hero card's exact-gp hover and
+ * every control tooltip permanently on; AJ restores it for those, and for those only. A ROW carries no tooltip
+ * at EITHER setting - its description is the block the cell opens - so the switch has nothing to silence here
+ * and nothing to give back, and the click that opens the cell answers whatever the switch says. Both halves of
+ * that are pinned under "addendum AJ" at the end of this file: they are the facts a reader who found a sixth
+ * switch in {@link ViewOptions} would otherwise get wrong.
+ *
+ * <p><b>The Q4 row format (2026-09-20) is what the card now draws</b>, and it is the one change since addendum N
+ * that moved the GEOMETRY the four pinned renders are pictures of. A row is three lines in a 62 px cell rather
+ * than two in 48:
+ *
+ * <pre>
+ * Divine ranging poti...(3)
+ * 226k            +3.0k   +10.2%   &lt;- the STACK: its value, its gp move, the percentage
+ * 7 x 32.3k       +428             &lt;- ONE item: the working, and one item's gp move
+ * </pre>
+ *
+ * <p>The two gp figures stand in one right-aligned {@code GP_COLUMN} and the percentage in its own
+ * {@code PCT_COLUMN} beside it, which is what lets the format read DOWN a page rather than along a line - pinned
+ * by {@link #theTwoGpFiguresStandInOneColumnAndThePercentageInItsOwn}, the one assertion here that lays the row
+ * out for real. One rule the user corrected during the design survives as its own pin: a stack of ONE prints its
+ * working but no item gp (Q4.7 - {@link #aStackOfOnePrintsItsWorkingAndNoItemGp}).
+ *
+ * <p><b>The other one is gone, and so is the word it was about</b> (addendum AO line AO2). Q4.6 made the word
+ * "Total" part of line 2, and AN6 then made it UNCONDITIONAL at the user's own instruction, because a build that
+ * printed it only where it fitted dropped it on exactly the richest rows. The user has since seen it in a client
+ * over a real bank - "1,851 Total", "68.6k Total", "5,750 Total" down the page - and asked for it to go, so line
+ * 2 is now the stack's value and the two columns and nothing else. The guard that pinned the word is replaced
+ * rather than deleted ({@link #noLabelOnARowPrintsTheWordTotal}): a word removed by request that creeps back in
+ * is the same class of bug as a word that vanished, and this file is where either would show.
+ *
+ * <p>Two consequences worth stating, because a reader of the tests below will otherwise take them for bugs.
+ * First, the face's gp figure is now COMPACT in the thousands - "+3.4k" where every build from N to AL printed
+ * "+3,432" ({@link #theFaceGpFigureIsCompactInTheThousands}); the exact gp is still in the block the cell opens.
+ * Second, nothing in {@link ViewOptions} changes a single thing a row DRAWS any more: the Q4 format printed both
+ * of {@code holdingOnRows}'s readings at once, which is what let addendum AO delete that key, and the switches
+ * that are left reach the description and never the face.
+ *
  * <p><b>No literal pixel widths.</b> {@code Font.DIALOG} maps to a different face on every platform, so every
  * width assertion here measures the components it is about and compares them with
- * {@link MovementRowPanel#TEXT_WIDTH} (addendum N line N6), never with a number copied out of the spec.
+ * {@link MovementRowPanel#TEXT_WIDTH} (addendum N line N6), never with a number copied out of the spec. The
+ * open HEIGHTS follow the same rule: a test asks the row's own detail block what it measures rather than
+ * naming a number, which is what lets it tell a measured height from a guessed constant.
  */
 public class MovementRowPanelTest
 {
@@ -100,31 +170,98 @@ public class MovementRowPanelTest
 		return new MovementRow(2, name, quantity, true, unit, then, deltaGp, deltaPct, holding, null);
 	}
 
-	// ---- geometry (addendum N section 2: 213 x 48, and section 3 §4: a 156 px text block)
+	// ---- geometry (the Q4 format: 213 x 62, a 36 x 32 picture and a 162 px text block)
 
+	/**
+	 * The card the four renders are pictures of. Q4 took the row from two lines in 48 px to three in 62, and paid
+	 * for the third line's width out of the margins beside the picture - the gap after it from 8 to 4 and the
+	 * left padding from 4 to 2 - so the text block came out WIDER (162, was 156) with a whole extra line under it.
+	 *
+	 * <p>AN had narrowed the picture cell to 32 as well, for a 166 px block. Addendum AP put it back: see
+	 * {@link #thePictureCellIsExactlyTheClientsItemSprite}.
+	 */
 	@Test
-	public void everyRowIs213By48WithA36By32PictureCell() throws Exception
+	public void everyRowIs213By62WithA36By32PictureCell() throws Exception
 	{
 		onEdt(() ->
 		{
 			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY);
-			assertEquals("row", new Dimension(213, 48), p.getPreferredSize());
-			assertEquals("picture", new Dimension(36, 32), p.iconLabel().getPreferredSize());
+			assertEquals("row", new Dimension(213, 62), p.getPreferredSize());
+			assertEquals("the picture cell: the whole 36 x 32 sprite and the 2 px nudge beside it",
+				new Dimension(36 + 2, 32), p.iconLabel().getPreferredSize());
 			assertEquals(MovementRowPanel.ROW_WIDTH, Widgets.CONTENT_WIDTH);
-			assertEquals("the row's height overrides C31's 40", 48, MovementRowPanel.ROW_HEIGHT);
-			// 213 - 3 (rail) - 4 - 6 (padding) - 36 (picture) - 8 (gap): the name's whole line.
-			assertEquals("the text block", 156, MovementRowPanel.TEXT_WIDTH);
+			assertEquals("the row's height overrides addendum N's 48 and C31's 40", 62,
+				MovementRowPanel.ROW_HEIGHT);
+			// 213 - 3 (rail) - 3 - 6 (padding) - 38 (picture and nudge) - 1 (gap): the name's whole line, and the
+			// line the stack and the item lines under it are laid out in.
+			assertEquals("the text block", 162, MovementRowPanel.TEXT_WIDTH);
+
+			// Three lines, in the order the format reads: the name, the stack, then the one item.
+			assertNotNull("line 1, the name", nameLabel(p));
+			assertNotNull("line 2, the stack", line2(p));
+			assertNotNull("line 3, the item", line3(p));
 		});
 	}
 
 	/**
-	 * N6: with the widest figures the formatters can produce and a name no sidebar could hold, neither line
-	 * asks for more than the text block and the row is still exactly 213 x 48. The fixtures are addendum N
-	 * section 3 §9's: a 2,147m unit price on a stack of 28,000 moving 100 %, and the same row with a -999.9m
-	 * change. One walk, not one per ordering: since addendum O nothing on the face varies with the sort (O1).
+	 * AI's invariant, and the reason it is pinned here: a COLLAPSED row must be the same arrangement of the same
+	 * pixels every build before AI drew, because the four pinned renders the sidebar is checked against are
+	 * pictures of collapsed rows. (The renders are re-pinned under a new dated name at addendum AM, which moves
+	 * two controls in the panel's control row; a row's GEOMETRY is untouched by AK, AL and AM alike - only the gp
+	 * figure's colour moves, and a colour does not change a box.)
+	 *
+	 * <p>So the FACE - which is what AI wrapped the old row's contents in - has to be exactly the box those
+	 * contents used to have: the card's 213 px less the 3 px rail and the 2 / 6 px padding, and the 62 px height
+	 * less the 3 / 2 px padding. The arithmetic is asserted from {@link MovementRowPanel#ROW_WIDTH} and the
+	 * border's OWN insets rather than from four copied numbers, so a change to either end of it fails here.
+	 *
+	 * <p>Q4 moved both ends at once - the card is 62 px and the left padding is 2 - which is exactly what this
+	 * assertion is shaped to catch, and the renders are re-pinned under Q4's own addendum letter.
 	 */
 	@Test
-	public void neitherLineOverflowsWithTheWidestFigures() throws Exception
+	public void aCollapsedRowIsTheCardAndItsFaceIsTheBoxInsideTheRailAndThePadding() throws Exception
+	{
+		onEdt(() ->
+		{
+			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY);
+			assertEquals("the collapsed card", new Dimension(MovementRowPanel.ROW_WIDTH, MovementRowPanel.ROW_HEIGHT),
+				p.getPreferredSize());
+
+			final Insets in = p.getBorder().getBorderInsets(p);
+			assertEquals("the rail is the card's left edge", Widgets.EDGE_WIDTH + 3, in.left);
+			assertEquals(6, in.right);
+			assertEquals(3, in.top);
+			assertEquals(2, in.bottom);
+			assertEquals("the face is the row less the rail and the padding",
+				MovementRowPanel.ROW_WIDTH - in.left - in.right, MovementRowPanel.INNER_WIDTH);
+			assertEquals(MovementRowPanel.ROW_HEIGHT - in.top - in.bottom, MovementRowPanel.FACE_HEIGHT);
+			assertEquals("...and that is the box it is pinned to",
+				new Dimension(MovementRowPanel.INNER_WIDTH, MovementRowPanel.FACE_HEIGHT),
+				face(p).getPreferredSize());
+
+			// The face is where the picture and the text block live, so the arrangement inside it is untouched.
+			final BorderLayout inside = (BorderLayout) face(p).getLayout();
+			assertSame("the picture", p.iconLabel(), inside.getLayoutComponent(BorderLayout.WEST));
+			assertSame("the text block", textBlock(p), inside.getLayoutComponent(BorderLayout.CENTER));
+		});
+	}
+
+	/**
+	 * N6, read against the THREE lines Q4 draws: with the widest figures the formatters can produce and a name no
+	 * sidebar could hold, no line asks for more than the text block and the row is still exactly 213 x 62. The
+	 * absurd fixtures are addendum N section 3 §9's - a 2,147m unit price on a stack of 28,000 moving 100 %, and
+	 * the same row with a -999.9m change - walked beside the two rows whose left half is a tag or a sum of parts
+	 * rather than a price, and the row that has no price at all.
+	 *
+	 * <p>Line 3 is in the walk because Q4 added it and it is NOT fitted: the working ("9,999 x 18.2m") is set as
+	 * it comes. It stays inside the block only because every figure on it is in stack style, which
+	 * {@code QuantityFormatter.quantityToStackSize} caps at five characters - so this is the assertion that would
+	 * fail first if a future addendum printed an exact number there.
+	 *
+	 * <p>One walk, not one per ordering: since addendum O nothing on the face varies with the sort (O1).
+	 */
+	@Test
+	public void noLineOverflowsTheTextBlockWithTheWidestFigures() throws Exception
 	{
 		onEdt(() ->
 		{
@@ -132,34 +269,94 @@ public class MovementRowPanelTest
 				2_147_000_000L, 1_073_500_000L, 100.0);
 			final MovementRow crash = stack("Karambwan vessel (baited)", 28_000, 2_147_000_000L,
 				-999_900_000L, -100.0);
-			for (MovementRow r : new MovementRow[]{huge, crash, whip()})
+			final MovementRow crowded = stack("Coins", 9_999, 9_999L, -9_999L, -99.9);
+			for (MovementRow r : new MovementRow[]{huge, crash, crowded, whip(),
+				alch("Graceful hood", 4, 20_000L), body("Crystal body", seeds()),
+				row("Mystery box", null, null, null, null)})
 			{
 				final MovementRowPanel p = new MovementRowPanel(r, null, MovementWindow.D180, THEN_DAY);
-				assertEquals(r.name(), new Dimension(213, 48), p.getPreferredSize());
+				assertEquals(r.name(), new Dimension(213, 62), p.getPreferredSize());
 				assertFits(r.name() + " name", nameLabel(p));
 				assertFits(r.name() + " line 2", line2(p));
+				assertFits(r.name() + " line 3", line3(p));
+
+				// The fit order, as Q4 leaves it (the M4 count idiom): the two right-hand columns are sized FIRST
+				// - they are the point of the row - and the stack value is fitted into what they left.
+				assertTrue(r.name() + ": the stack value is fitted into what the columns left",
+					priceLabel(p).getPreferredSize().width
+						<= MovementRowPanel.TEXT_WIDTH - figures(p).getPreferredSize().width);
 			}
 		});
 	}
 
 	/**
-	 * The fit order (the M4 count idiom): the figures on the right are sized first, the price takes what is
-	 * left, and the stack text is added only if it still fits - so an absurd stack loses its "x28,000" rather
-	 * than the price losing its digits.
+	 * AO2, and the guard that replaced Q4.6's: <b>no label on a row prints the word "Total".</b> The word opened
+	 * line 2's figure from the Q4 format until addendum AO, and AN6 had made it unconditional on the user's own
+	 * instruction; the user then saw it in a client over a real bank - "1,851 Total", "68.6k Total", "5,750
+	 * Total" down the page - and asked for it to be removed. That is a request, not a fit problem, so the answer
+	 * is that the label does not exist rather than that it is drawn when there is room.
+	 *
+	 * <p>The walk is the one Q4.6's guard used, led by the rows the pre-AN fit check dropped the word on - the
+	 * widest stack value there is, beside the widest gp figure and percentage - because those are the rows where
+	 * a later hand looking for pixels would be tempted to put a conditional label back. The whole card is swept
+	 * for the text and not just line 2: a word that came back somewhere else would be the same bug wearing a
+	 * different hat.
+	 *
+	 * <p>Line 2's SHAPE is pinned with it, which is the structural half of the same fact: two children, the
+	 * fitted stack value and the two-column figures group, and no third component between them. The 31 px the
+	 * word used to take are back in the price's fit budget - it is now fitted to the whole of what the columns
+	 * leave ({@link #noLineOverflowsTheTextBlockWithTheWidestFigures} measures that) - and the air before the
+	 * figures is the panel's ordinary gap again rather than the narrowest one that fitted, which is asserted
+	 * against the air after the gp figure instead of against a number (the file's no-literal-pixels rule).
 	 */
 	@Test
-	public void theStackTextIsDroppedBeforeThePriceIsCut() throws Exception
+	public void noLabelOnARowPrintsTheWordTotal() throws Exception
 	{
 		onEdt(() ->
 		{
-			// The widest line the formatters can make: a five-figure price, a five-figure stack and both
-			// movement figures at their widest. Something has to go, and it is the "x9,999".
-			final MovementRow crowded = stack("Coins", 9_999, 9_999L, -9_999L, -99.9);
-			assertEquals("x9,999", MovementRowPanel.quantityText(crowded));
-			final MovementRowPanel p = new MovementRowPanel(crowded, null, MovementWindow.D1, THEN_DAY);
-			assertEquals("the price is whole", MovementRowPanel.priceText(crowded), p.priceText());
-			assertEquals("the stack text went, not the price", "", p.quantityText());
-			assertFits("line 2", line2(p));
+			final MovementRow widest = stack("Twisted bow", 28_000, 2_147_000_000L, -999_900_000L, -100.0);
+			final MovementRow[] rows = {
+				widest,
+				stack("Coins", 9_999, 9_999L, -9_999L, -99.9),
+				whip(),
+				stack("Green hat", 1, 1_086L, 12L, 1.1),
+				alch("Graceful hood", 4, 20_000L),
+				body("Crystal body", seeds()),
+				row("Mystery box", null, null, null, null),
+			};
+			for (MovementRow r : rows)
+			{
+				final MovementRowPanel p = new MovementRowPanel(r, null, MovementWindow.D180, THEN_DAY);
+				assertNull(r.name() + ": the word is gone, on the narrowest row and the widest alike",
+					label(p, "Total"));
+				final List<JComponent> children = new ArrayList<>();
+				collect(p, children);
+				for (JComponent c : children)
+				{
+					if (c instanceof JLabel)
+					{
+						assertFalse(r.name() + ": \"" + ((JLabel) c).getText() + "\" still says it",
+							((JLabel) c).getText().contains("Total"));
+					}
+				}
+				assertFits(r.name() + " line 2 without the word", line2(p));
+			}
+
+			// Line 2's shape: the fitted stack value, then the columns, and nothing in between where the word
+			// used to stand.
+			final MovementRowPanel p = new MovementRowPanel(widest, null, MovementWindow.D180, THEN_DAY);
+			final BorderLayout layout = (BorderLayout) line2(p).getLayout();
+			assertEquals("two children, and the word is not a third", 2, line2(p).getComponentCount());
+			assertSame("the stack value, straight into the line and not through a wrapper", priceLabel(p),
+				layout.getLayoutComponent(BorderLayout.WEST));
+			assertSame(figures(p), layout.getLayoutComponent(BorderLayout.EAST));
+
+			// AO restored the air before the figures to the gap the rest of the panel uses; it had been cut to
+			// buy the gp column the px line 2 needed while it carried a value, a word, a gp figure and a
+			// percentage at once. Read against the air after the gp figure, so no number is copied in here.
+			assertEquals("the air before the columns is the panel's ordinary gap again",
+				gpLabel(p).getInsets().right, figures(p).getInsets().left);
+			assertTrue("...and it is real air", figures(p).getInsets().left > 0);
 		});
 	}
 
@@ -169,7 +366,7 @@ public class MovementRowPanelTest
 	 * text block, which is what buys "Confliction gauntlets" its last two letters back.
 	 */
 	@Test
-	public void aLongNameIsCutToTheTextBlockAndKeptWholeInTheTooltip() throws Exception
+	public void aLongNameIsCutToTheTextBlockAndKeptWholeInTheDescription() throws Exception
 	{
 		onEdt(() ->
 		{
@@ -179,7 +376,9 @@ public class MovementRowPanelTest
 			assertTrue(p.nameText(), p.nameText().endsWith(Widgets.ELLIPSIS));
 			assertNotEquals(monster, p.nameText());
 			assertFits("the cut name", nameLabel(p));
-			assertTrue("the whole name is in the tooltip", p.tooltipHtml().contains(monster));
+			// AI: the whole name is one click away, in the block the row opens - the long description has bolded
+			// it at the top since K8, which is why AG6's named short hover could go.
+			assertTrue("the whole name is in the description", p.tooltipHtml().contains(monster));
 
 			final MovementRowPanel short0 = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY);
 			assertEquals("a name that fits is not touched", "Abyssal whip", short0.nameText());
@@ -201,16 +400,20 @@ public class MovementRowPanelTest
 		{
 			final MovementRow r = whip();
 			assertEquals("+1.3%", MovementRowPanel.changeText(r));
-			assertEquals("+20k", MovementRowPanel.gpText(r));
 
+			// Q4: line 2 is the STACK, so the gp figure beside the percentage is the whole stack's move
+			// (12 x +20,000 = +240k) and ONE item's is on the line under it. The percentage is the same number
+			// per item and per stack, so it is untouched by that.
 			final MovementRowPanel p = new MovementRowPanel(r, null, MovementWindow.D1, THEN_DAY);
-			assertEquals("+20k", p.gpText());
+			assertEquals("+240k", p.gpText());
+			assertEquals("+20k", itemGpLabel(p).getText());
 			assertEquals("+1.3%", p.changeText());
 			assertEquals(ColorScheme.PROGRESS_COMPLETE_COLOR, p.changeColor());
 
 			// ...and a row built with contract C31's constructor - no baseline day - prints it too.
 			final MovementRowPanel untold = new MovementRowPanel(r, null, MovementWindow.D1);
-			assertEquals("+20k", untold.gpText());
+			assertEquals("+240k", untold.gpText());
+			assertEquals("+20k", itemGpLabel(untold).getText());
 			assertEquals("+1.3%", untold.changeText());
 		});
 	}
@@ -224,34 +427,262 @@ public class MovementRowPanelTest
 			final MovementRow none = row("Coal", 150L, null, null, null);
 			final MovementRowPanel p = new MovementRowPanel(none, null, MovementWindow.D7, null);
 			assertEquals("gp", "", p.gpText());
+			assertEquals("...and the item's line says nothing either", "", itemGpLabel(p).getText());
 			assertEquals("pct", MovementMath.DASH, p.changeText());
 			assertEquals("colour", ColorScheme.LIGHT_GRAY_COLOR, p.changeColor());
-			assertEquals("", MovementRowPanel.gpText(none));
+		});
+	}
+
+	// ---- the Q4 format: a stack line over an item line, in two shared columns
+
+	/**
+	 * What the two lines under the name ARE, piece by piece, in the faces the format gives them: line 2 is the
+	 * STACK - what the whole holding is worth (13 px white), the stack's gp move and the percentage - and line 3
+	 * is ONE item, the working behind the figure above it ("12 x 1.52m", 11 px grey) and that one item's gp move.
+	 * The word "Total" stood between the first two until addendum AO removed it (AO2,
+	 * {@link #noLabelOnARowPrintsTheWordTotal}); the 13 px face it was sized against did NOT move with it, which
+	 * is why that size is still asserted here.
+	 *
+	 * <p>The faces are compared against {@link Widgets} calls rather than against sizes copied out of the design
+	 * doc, so a change of scale has to be made in one place; the SIZES are the format, because it is the contrast
+	 * between the 15 px percentage and the 10 px gp figure that the user picked variant F for.
+	 */
+	@Test
+	public void lineTwoIsTheStackAndLineThreeIsOneItem() throws Exception
+	{
+		onEdt(() ->
+		{
+			final MovementRow r = whip();
+			final MovementRowPanel p = new MovementRowPanel(r, null, MovementWindow.D1, THEN_DAY);
+
+			// Line 2, left to right.
+			assertEquals("the whole holding, 12 x 1,520,000", "18.2m", priceLabel(p).getText());
+			assertEquals(Widgets.sans(13), priceLabel(p).getFont());
+			assertEquals(Color.WHITE, priceLabel(p).getForeground());
+			assertEquals("the stack's move", "+240k", gpLabel(p).getText());
+			assertEquals(Widgets.sans(10), gpLabel(p).getFont());
+			assertEquals("AL's quiet colour, so the percentage is the one the eye lands on",
+				MovementRowPanel.quietChangeColor(r), gpLabel(p).getForeground());
+			assertEquals("+1.3%", label(p, "+1.3%").getText());
+			assertEquals("the biggest figure on the row", Widgets.sansBold(15), label(p, "+1.3%").getFont());
+			assertEquals(MovementRowPanel.textChangeColor(r), label(p, "+1.3%").getForeground());
+
+			// Line 3, left to right. A lowercase "x" and not the multiplication sign: the bitmap faces box a
+			// glyph they lack, and this label is drawn in one of them on some machines.
+			assertEquals("12 x 1.52m", workingLabel(p).getText());
+			assertTrue(workingLabel(p).getText().contains(" x "));
+			assertFalse("never the multiplication sign", workingLabel(p).getText().contains("\u00d7"));
+			assertEquals(Widgets.sans(11), workingLabel(p).getFont());
+			assertEquals(ColorScheme.LIGHT_GRAY_COLOR, workingLabel(p).getForeground());
+			assertEquals("one item's move", "+20k", itemGpLabel(p).getText());
+			assertEquals("the same face as the figure above it", Widgets.sans(10), itemGpLabel(p).getFont());
+			assertEquals(MovementRowPanel.quietChangeColor(r), itemGpLabel(p).getForeground());
+
+			// The two lines are different numbers, which is the whole reason there are two of them.
+			assertNotEquals(priceLabel(p).getText(), workingLabel(p).getText());
+			assertNotEquals(gpLabel(p).getText(), itemGpLabel(p).getText());
+		});
+	}
+
+	/**
+	 * The shape the format stands on, and the only assertion in this file that lays a row out for real: the two
+	 * gp figures share ONE right-aligned column, the stack's directly over the item's, and the percentage has a
+	 * column of its own to the right of it that the gp figures never reach into. That is what lets a reader run
+	 * an eye straight down a page of rows instead of hunting along each one - the reason every single-line
+	 * arrangement was rejected during the design.
+	 *
+	 * <p>Laid out by hand rather than through {@code validate()}, which wants a peer this machine has no display
+	 * to give it; {@link #layOut(MovementRowPanel)} makes the same {@code layoutContainer} calls down the tree.
+	 * Positions are then read in the ROW's coordinates, so what is compared is where the two figures really stand
+	 * on the card and not where they stand inside two different parents.
+	 */
+	@Test
+	public void theTwoGpFiguresStandInOneColumnAndThePercentageInItsOwn() throws Exception
+	{
+		onEdt(() ->
+		{
+			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY);
+			layOut(p);
+
+			final JLabel stackGp = gpLabel(p);
+			final JLabel itemGp = itemGpLabel(p);
+			final JLabel pct = label(p, p.changeText());
+			assertNotNull("the percentage is on the row", pct);
+
+			final int gpLeft = leftEdge(stackGp, p);
+			assertTrue("a column with no width is not a column", stackGp.getWidth() > 0);
+			assertEquals("the two gp figures share one left edge", gpLeft, leftEdge(itemGp, p));
+			assertEquals("...and one width", stackGp.getWidth(), itemGp.getWidth());
+			// Right-aligned inside that width, with the same air after them, so the DIGITS line up and not just
+			// the boxes - a left-aligned "+428" under a right-aligned "+3.0k" would read as two columns.
+			assertEquals(SwingConstants.RIGHT, stackGp.getHorizontalAlignment());
+			assertEquals(SwingConstants.RIGHT, itemGp.getHorizontalAlignment());
+			assertEquals("the same air on the right of both", stackGp.getInsets().right,
+				itemGp.getInsets().right);
+			assertTrue("...and it is real air", stackGp.getInsets().right > 0);
+
+			// The percentage: its own column, wholly to the right of the gp column and never over it.
+			final int pctLeft = leftEdge(pct, p);
+			assertTrue(pct.getWidth() > 0);
+			assertTrue("the percentage starts at " + pctLeft + " where the gp column ends at "
+				+ (gpLeft + stackGp.getWidth()), pctLeft >= gpLeft + stackGp.getWidth());
+
+			// Line 3 keeps that width EMPTY rather than letting its gp figure slide right into it, which is what
+			// holds the column above it true - the spacer is the format, not padding.
+			final JComponent spacer = pctSpacer(p);
+			assertEquals("the spacer stands under the percentage", pctLeft, leftEdge(spacer, p));
+			assertEquals("...and is exactly as wide", pct.getWidth(), spacer.getWidth());
+
+			// Both lines end on the same right edge, and that edge is inside the text block.
+			assertEquals(pctLeft + pct.getWidth(), leftEdge(spacer, p) + spacer.getWidth());
+			assertTrue("the columns end inside the card", pctLeft + pct.getWidth() <= MovementRowPanel.ROW_WIDTH);
+		});
+	}
+
+	/**
+	 * Q4.7, the second of the two rules the user corrected: <b>a stack of ONE prints its working but no item
+	 * gp.</b> The user, on the variant that printed both: "if there's only 1 item then only show the Total rows
+	 * gp move" - otherwise "+744" sits directly under "+744" and the row says one thing twice.
+	 *
+	 * <p>The working still prints at a quantity of one ("1 x 1.63b"), so every row in the list reads the same way
+	 * down the page, and the gp column is still THERE - empty, not absent - so the percentage above it keeps its
+	 * place on a list that is mostly single items.
+	 */
+	@Test
+	public void aStackOfOnePrintsItsWorkingAndNoItemGp() throws Exception
+	{
+		onEdt(() ->
+		{
+			final MovementRowPanel one = new MovementRowPanel(stack("Twisted bow", 1, 1_632_000_000L,
+				-58_000_000L, -3.4), null, MovementWindow.D1, THEN_DAY);
+			assertEquals("the working still prints", "1 x 1.63b", workingLabel(one).getText());
+			assertEquals("the stack's own move is the only one", "-58m", one.gpText());
+			assertEquals("...and the item's would be the same figure directly under it", "",
+				itemGpLabel(one).getText());
+
+			// A stack of many: both figures, and they are different numbers.
+			final MovementRowPanel many = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY);
+			assertEquals("12 x 1.52m", workingLabel(many).getText());
+			assertEquals("+240k", many.gpText());
+			assertEquals("+20k", itemGpLabel(many).getText());
+			assertNotEquals("the two lines say different things", many.gpText(), itemGpLabel(many).getText());
+
+			// The empty column is still a column, or a page of single items would lose its right edge.
+			assertEquals(itemGpLabel(many).getPreferredSize().width,
+				itemGpLabel(one).getPreferredSize().width);
+		});
+	}
+
+	/**
+	 * Q4 §6, the one behaviour change under the format rather than in it: the face's gp figure is COMPACT in the
+	 * thousands - "+3.4k" where every build from addendum N to AL printed "+3,432" - because the column does not
+	 * fit beside a 15 px percentage otherwise. Below 1,000 and from 10,000 up it is the game's own stack text,
+	 * which it always was; the tenths only exist in the gap between.
+	 *
+	 * <p>Both edges of that gap are asked, and so is the rounding INSIDE it, which is where this would be wrong
+	 * without being obviously wrong: 9,949 is "9.9k" and 9,950 is "10.0k", so the compact form can print a "10.0k"
+	 * that the plain form would print as "10k" one gp later. Driven through a built row's own label rather than
+	 * through a helper, because the compacting is private to the panel and the FACE is where it matters.
+	 *
+	 * <p>The precision that is lost here is not lost from the plugin: the last leg checks that the exact figure is
+	 * still in the block the cell opens, which is the trade the user accepted.
+	 */
+	@Test
+	public void theFaceGpFigureIsCompactInTheThousands() throws Exception
+	{
+		onEdt(() ->
+		{
+			// Under a thousand: the plain figure, as it always was.
+			assertEquals("+999", faceGp(999L));
+			assertEquals("-999", faceGp(-999L));
+
+			// The tenths, and the rounding inside them.
+			assertEquals("+1.0k", faceGp(1_000L));
+			assertEquals("the user's own example", "+3.4k", faceGp(3_432L));
+			assertEquals("+9.9k", faceGp(9_949L));
+			assertEquals("rounded to the nearest tenth, not truncated", "+10.0k", faceGp(9_950L));
+			assertEquals("+10.0k", faceGp(9_999L));
+			assertEquals("a negative keeps its sign", "-3.4k", faceGp(-3_432L));
+			assertEquals("-10.0k", faceGp(-9_999L));
+
+			// Ten thousand and up: the existing compact form, unchanged.
+			assertEquals("+10k", faceGp(10_000L));
+			assertEquals("-10k", faceGp(-10_000L));
+			assertEquals("+20k", faceGp(20_000L));
+			assertEquals("+1.52m", faceGp(1_520_000L));
+
+			// ...and the exact gp the face gave up is still one click away, in the block the cell opens.
+			final MovementRow r = stack("Coins", 1, 2_000_000_000L, 3_432L, 0.1);
+			final MovementRowPanel p = new MovementRowPanel(r, null, MovementWindow.D1, THEN_DAY);
+			assertEquals("+3.4k", p.gpText());
+			assertTrue(detail(p).getText(), detail(p).getText().contains("+3,432"));
+		});
+	}
+
+	/**
+	 * Addendum AK's open cell is untouched by Q4: the block is the same label column, wrapped to the same cell,
+	 * and the row's OPEN height is still the face plus what that block MEASURES - which is the assertion that had
+	 * to be re-read, because the face it is added to grew by 14 px.
+	 */
+	@Test
+	public void theOpenCellIsUnchangedAndStillMeasuresItsOwnHeightFromTheTallerFace() throws Exception
+	{
+		onEdt(() ->
+		{
+			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY);
+			assertEquals("the block is the one AK writes, not re-written by Q4",
+				MovementRowPanel.detail(whip(), MovementWindow.D1, THEN_DAY, ViewOptions.DEFAULT, false),
+				detail(p).getText());
+			assertTrue("wrapped to the cell, which Q4 widened by the two px it took off the left padding",
+				detail(p).getText().startsWith("<html><div width=\"" + MovementRowPanel.INNER_WIDTH + "\">"));
+
+			leftClick(p);
+			assertTrue(p.expanded());
+			assertEquals("the open row is the 62 px face plus the block's own measurement",
+				MovementRowPanel.ROW_HEIGHT + detailHeight(p), p.getPreferredSize().height);
+			assertEquals("...which is 62 and not 48", 62 + detailHeight(p), p.getPreferredSize().height);
+
+			leftClick(p);
+			assertEquals("and shut again it is exactly the card the renders are of",
+				new Dimension(213, 62), p.getPreferredSize());
 		});
 	}
 
 	// ---- the quantity-1 rule
 
+	/**
+	 * Where the quantity went. Every build up to the Q4 format put an "x3" tag on line 2 beside the price, and
+	 * the format moved the count into line 3's working ("3 x 1,086") - so the tag is nowhere on the card at any
+	 * quantity, and what line 2 opens with is the whole stack's worth instead.
+	 *
+	 * <p>The helper that answered the old tag ({@code quantityText}) went with the config key addendum AO
+	 * deleted, along with the two pure price and gp helpers beside it, so what is pinned here is what the CARD
+	 * draws. That is the right place for it in any case: the tag left the face at Q4 and a helper nobody drew
+	 * was only pinning a string.
+	 */
 	@Test
-	public void theStackTextIsEmptyAtAQuantityOfOne() throws Exception
+	public void theCountIsOnLineThreeAndNoStackTagIsOnTheCard() throws Exception
 	{
 		onEdt(() ->
 		{
-			assertEquals("", MovementRowPanel.quantityText(stack("Green hat", 1, 1_086L, 12L, 1.1)));
-			assertEquals("x3", MovementRowPanel.quantityText(stack("Green hat", 3, 1_086L, 12L, 1.1)));
-			assertEquals("x9,999", MovementRowPanel.quantityText(stack("Coins", 9_999, 1L, 0L, 0.0)));
-			// The stack count is the game's own stack text, so a big one shortens itself the way the game does.
-			assertEquals("x28k", MovementRowPanel.quantityText(stack("Coins", 28_000, 1L, 0L, 0.0)));
-			// ...and the holding value has left the face for the tooltip's "Holding:" line.
-			assertFalse(MovementRowPanel.quantityText(stack("Green hat", 3, 1_086L, 12L, 1.1)).contains("-"));
-
 			final MovementRowPanel one = new MovementRowPanel(stack("Green hat", 1, 1_086L, 12L, 1.1), null,
 				MovementWindow.D1, THEN_DAY);
-			assertEquals("", one.quantityText());
-			assertEquals("1,086", one.priceText());
+			assertEquals("the stack of one IS worth one item", "1,086", one.priceText());
+			assertEquals("1 x 1,086", workingLabel(one).getText());
+			assertNull("no \"x1\" beside the price", label(one, "x1"));
+
 			final MovementRowPanel three = new MovementRowPanel(stack("Green hat", 3, 1_086L, 12L, 1.1), null,
 				MovementWindow.D1, THEN_DAY);
-			assertEquals("x3", three.quantityText());
+			assertEquals("3 x 1,086 = 3,258", "3,258", three.priceText());
+			assertEquals("3 x 1,086", workingLabel(three).getText());
+			assertNull("no \"x3\" anywhere on the card any more", label(three, "x3"));
+
+			// A big stack: the count on line 3 is the game's own stack text, so it shortens itself the way the
+			// game does rather than running a five-digit number into the price beside it.
+			final MovementRowPanel big = new MovementRowPanel(stack("Coins", 28_000, 1L, 0L, 0.0), null,
+				MovementWindow.D1, THEN_DAY);
+			assertEquals("28k x 1", workingLabel(big).getText());
+			assertNull("and still no tag", label(big, "x28k"));
 		});
 	}
 
@@ -301,6 +732,12 @@ public class MovementRowPanelTest
 
 	// ---- texts and colours
 
+	/**
+	 * The whole of the Q4 face on one row, in the order it is read: the name, then the stack (its value, its
+	 * move, the percentage), then the one item (the working, and one item's move). Every figure is a
+	 * short form - {@code formatGp} is the game's own stack text, so 20,000 is "20k" and never "20.0k"
+	 * (QuantityFormatter, A1 as landed) - and the two gp figures are compact even in the thousands (Q4 §6).
+	 */
 	@Test
 	public void textsAreTheMathsShortForms() throws Exception
 	{
@@ -308,36 +745,49 @@ public class MovementRowPanelTest
 		{
 			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY);
 			assertEquals("Abyssal whip", p.nameText());
-			assertEquals("1.52m", p.priceText());
-			assertEquals("x12", p.quantityText());
-			// formatGp is the game's stack text: 20,000 is "20k", not "20.0k" (QuantityFormatter, A1 as landed).
-			assertEquals("+20k", p.gpText());
+
+			// Line 2, the stack: 12 x 1,520,000 = 18,240,000, moving 12 x +20,000 = +240,000.
+			assertEquals("18.2m", p.priceText());
+			assertEquals("+240k", p.gpText());
 			assertEquals("+1.3%", p.changeText());
 			assertEquals(ColorScheme.PROGRESS_COMPLETE_COLOR, p.changeColor());
+
+			// Line 3, one item: the working behind the figure above it, and that one item's own move.
+			assertEquals("12 x 1.52m", workingLabel(p).getText());
+			assertEquals("+20k", itemGpLabel(p).getText());
 		});
 	}
 
 	@Test
-	public void aFallIsRedAZeroMoveAndNoMoveAreGrey()
+	public void aFallIsRedAZeroMoveAndNoMoveAreGrey() throws Exception
 	{
-		// -21.47 truncates toward zero to -21.4, never rounds to -21.5 (L2): the row never prints a move
-		// larger than the one that happened.
-		final MovementRow fall = row("Rune scimitar", 15_000L, 19_100L, -4_100L, -21.47);
-		assertEquals("-21.4%", MovementRowPanel.changeText(fall));
-		assertEquals("-4,100", MovementRowPanel.gpText(fall));
-		assertEquals(ColorScheme.PROGRESS_ERROR_COLOR, MovementRowPanel.changeColor(fall));
+		onEdt(() ->
+		{
+			// -21.47 truncates toward zero to -21.4, never rounds to -21.5 (L2): the row never prints a move
+			// larger than the one that happened.
+			final MovementRow fall = row("Rune scimitar", 15_000L, 19_100L, -4_100L, -21.47);
+			assertEquals("-21.4%", MovementRowPanel.changeText(fall));
+			assertEquals(ColorScheme.PROGRESS_ERROR_COLOR, MovementRowPanel.changeColor(fall));
+			// The gp figure is read off a BUILT row since addendum AO deleted the pure helper that answered it
+			// per switch: line 2 prints what the STACK of five moved, compacted (Q4 section 6), and line 3 what
+			// one of them did.
+			final MovementRowPanel fell = new MovementRowPanel(fall, null, MovementWindow.D1, THEN_DAY);
+			assertEquals("the stack, 5 x -4,100", "-20.5k", fell.gpText());
+			assertEquals("one item, compacted", "-4.1k", itemGpLabel(fell).getText());
 
-		final MovementRow flat = row("Coal", 150L, 150L, 0L, 0.0);
-		assertEquals("0.0%", MovementRowPanel.changeText(flat));
-		assertEquals("a price that did not move prints its percentage and nothing else (B055)", "",
-			MovementRowPanel.gpText(flat));
-		assertEquals(ColorScheme.LIGHT_GRAY_COLOR, MovementRowPanel.changeColor(flat));
+			final MovementRow flat = row("Coal", 150L, 150L, 0L, 0.0);
+			assertEquals("0.0%", MovementRowPanel.changeText(flat));
+			assertEquals(ColorScheme.LIGHT_GRAY_COLOR, MovementRowPanel.changeColor(flat));
+			final MovementRowPanel level = new MovementRowPanel(flat, null, MovementWindow.D1, THEN_DAY);
+			assertEquals("a price that did not move prints its percentage and nothing else (B055)", "",
+				level.gpText());
 
-		// A row that is priced but has no baseline - the guide history has not landed, or the wiki table
-		// carries no name for it - shows ONE dash and the dim grey.
-		final MovementRow noBaseline = row("Coal", 150L, null, null, null);
-		assertEquals("one dash, never two", MovementMath.DASH, MovementRowPanel.changeText(noBaseline));
-		assertEquals(ColorScheme.LIGHT_GRAY_COLOR, MovementRowPanel.changeColor(noBaseline));
+			// A row that is priced but has no baseline - the guide history has not landed, or the wiki table
+			// carries no name for it - shows ONE dash and the dim grey.
+			final MovementRow noBaseline = row("Coal", 150L, null, null, null);
+			assertEquals("one dash, never two", MovementMath.DASH, MovementRowPanel.changeText(noBaseline));
+			assertEquals(ColorScheme.LIGHT_GRAY_COLOR, MovementRowPanel.changeColor(noBaseline));
+		});
 	}
 
 	/**
@@ -374,12 +824,12 @@ public class MovementRowPanelTest
 		onEdt(() ->
 		{
 			final MovementRow none = row("Mystery box", null, null, null, null);
-			assertEquals(MovementMath.DASH, MovementRowPanel.priceText(none));
-			assertEquals("x5", MovementRowPanel.quantityText(none));
 			assertEquals(MovementMath.DASH, MovementRowPanel.changeText(none));
 
 			final MovementRowPanel p = new MovementRowPanel(none, null, MovementWindow.D1, null);
+			// A stack with no price is not worth 0: the dash is asked of the UNIT price, on both lines.
 			assertEquals(MovementMath.DASH, p.priceText());
+			assertEquals("5 x " + MovementMath.DASH, workingLabel(p).getText());
 			assertEquals(MovementMath.DASH, p.changeText());
 			assertEquals("", p.gpText());
 			assertEquals("no rail without a price", ColorScheme.DARKER_GRAY_COLOR, p.railColor());
@@ -659,8 +1109,8 @@ public class MovementRowPanelTest
 	}
 
 	/**
-	 * T6: a LIVE row paints EXACTLY as a guide row with the same figures does - same name, same price, same stack
-	 * text, same gp figure, same percentage, same rail, same size. No tag, no colour of its own: a live price is a
+	 * T6: a LIVE row paints EXACTLY as a guide row with the same figures does - same name, same stack value, same
+	 * working, same gp figure, same percentage, same rail, same size. No tag, no colour of its own: a live price is a
 	 * price, and a badge on every liquid row would be a badge on most of the list. The tooltip is the one thing
 	 * that differs.
 	 */
@@ -674,7 +1124,7 @@ public class MovementRowPanelTest
 			final MovementRowPanel b = new MovementRowPanel(guideBow(), null, MovementWindow.D1, TRADED_DAY);
 			assertEquals(b.nameText(), a.nameText());
 			assertEquals(b.priceText(), a.priceText());
-			assertEquals(b.quantityText(), a.quantityText());
+			assertEquals("line 3's working", workingLabel(b).getText(), workingLabel(a).getText());
 			assertEquals(b.gpText(), a.gpText());
 			assertEquals(b.changeText(), a.changeText());
 			assertEquals(b.getPreferredSize(), a.getPreferredSize());
@@ -761,21 +1211,31 @@ public class MovementRowPanelTest
 		});
 	}
 
+	/**
+	 * Playbook 7.5, which is a rule about REACH: a component that carries a tooltip becomes its own mouse target,
+	 * so the hover text, the hover listener and the popup must reach every child of the card. A listener on the
+	 * row alone would lose the hover the moment the pointer crossed onto the name, and a child with no tooltip of
+	 * its own would answer with none over most of the 213 x 62 card.
+	 *
+	 * <p>Addendum AI took the TEXT away - a row says nothing on hover any more, and the silence is pinned by
+	 * {@link #everyRowAndEveryChildIsSilentOpenOrShut} - but not the reach: the LISTENER and the POPUP still have
+	 * to be on every child, because the click that opens the cell has to work wherever it lands and the two
+	 * right-click entries have to open over the whole card. A listener on the row alone would leave the name -
+	 * the biggest thing on it, and the obvious place to aim - dead to both.
+	 */
 	@Test
-	public void everyChildCarriesTheTooltipTheHoverListenerAndThePopup() throws Exception
+	public void everyChildCarriesTheHoverListenerAndThePopup() throws Exception
 	{
 		onEdt(() ->
 		{
 			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY);
-			final String tip = p.tooltipHtml();
-			assertEquals(tip, p.getToolTipText());
 			assertNotNull(p.getComponentPopupMenu());
 			final List<JComponent> children = new ArrayList<>();
 			collect(p, children);
-			assertTrue("the picture, the text block, two lines, two groups, five labels", children.size() >= 9);
+			assertTrue("the face, the picture, the text block, three lines, two figure groups, six labels, the detail",
+				children.size() >= 9);
 			for (JComponent c : children)
 			{
-				assertEquals(c.getClass().getSimpleName() + " tooltip", tip, c.getToolTipText());
 				assertTrue(c.getClass().getSimpleName() + " hover listener", c.getMouseListeners().length >= 1);
 				assertTrue(c.getClass().getSimpleName() + " inherits the popup", c.getInheritsPopupMenu());
 			}
@@ -804,7 +1264,154 @@ public class MovementRowPanelTest
 			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1);
 			assertNull(((JLabel) p.iconLabel()).getIcon());
 			assertNull(p.icon());
-			assertEquals(new Dimension(36, 32), p.iconLabel().getPreferredSize());
+			// The cell keeps its size with nothing in it, so a row whose picture has not loaded yet is laid out
+			// exactly like one whose picture has, and the text does not jump sideways when it arrives.
+			assertEquals(new Dimension(MovementRowPanel.PICTURE_WIDTH, Constants.ITEM_SPRITE_HEIGHT),
+				p.iconLabel().getPreferredSize());
+		});
+	}
+
+	/**
+	 * Addendum AR: where the ARTWORK stands between the rail and the name's first drawn pixel - measured on a
+	 * painted row the way the user measured their screenshots, from "the edge of the green line" to "the start of
+	 * the words", and not asserted from the constants that produce it.
+	 *
+	 * <p>The sprite here is drawn the way the client draws real item art: centred on x = 15 of its 36 px frame,
+	 * which is where the art sat on three of the four rows of the user's screenshot. By that measurement a 3 px
+	 * nudge puts it dead centre, and AR landed 3. <b>The user then looked in the client and said "shift it 2
+	 * pixels to the left"</b> (AR3) and then <b>"shift it 1 pixel to the right"</b> (AR4), so the position pinned
+	 * here is theirs: 1 px left of the measured midpoint.
+	 * It is pinned rather than left loose because a picture that drifts a pixel is exactly what the user has
+	 * now looked at three times. Half a pixel is allowed because the empty span can be an odd number of pixels
+	 * wide, and a picture cannot stand on a half.
+	 */
+	@Test
+	public void theArtworkStandsWhereTheUserPlacedIt() throws Exception
+	{
+		onEdt(() ->
+		{
+			final int art = 0xFF00FFFF;
+			final AsyncBufferedImage sprite = new AsyncBufferedImage(null, Constants.ITEM_SPRITE_WIDTH,
+				Constants.ITEM_SPRITE_HEIGHT, BufferedImage.TYPE_INT_ARGB);
+			// Columns 5..25: centred on 15, where the client centres item art in its frame.
+			for (int x = 5; x <= 25; x++)
+			{
+				for (int y = 6; y <= 26; y++)
+				{
+					sprite.setRGB(x, y, art);
+				}
+			}
+			final MovementRowPanel p = new MovementRowPanel(
+				stack("Blighted super restore(4)", 164, 3_253L, 183L, 5.9d), sprite, MovementWindow.D1, THEN_DAY);
+			layOut(p);
+			final BufferedImage shot = new BufferedImage(p.getWidth(), p.getHeight(), BufferedImage.TYPE_INT_ARGB);
+			final java.awt.Graphics2D g = shot.createGraphics();
+			try
+			{
+				p.paint(g);
+			}
+			finally
+			{
+				g.dispose();
+			}
+
+			// The artwork, in the row's own coordinates.
+			final int artRow = SwingUtilities.convertPoint(p.iconLabel(), 0, p.iconLabel().getHeight() / 2, p).y;
+			int artLeft = -1;
+			int artRight = -1;
+			for (int x = 0; x < shot.getWidth(); x++)
+			{
+				if (shot.getRGB(x, artRow) == art)
+				{
+					artLeft = artLeft < 0 ? x : artLeft;
+					artRight = x;
+				}
+			}
+			assertTrue("the artwork was painted", artLeft >= 0);
+
+			// The name's first drawn pixel: the leftmost bright pixel anywhere in the name label's band.
+			final JLabel name = nameLabel(p);
+			final java.awt.Point at = SwingUtilities.convertPoint(name, 0, 0, p);
+			int nameStart = Integer.MAX_VALUE;
+			for (int y = at.y; y < at.y + name.getHeight(); y++)
+			{
+				for (int x = at.x; x < at.x + name.getWidth() && x < nameStart; x++)
+				{
+					final int c = shot.getRGB(x, y);
+					if (((c >> 16) & 0xFF) > 150 && ((c >> 8) & 0xFF) > 150 && (c & 0xFF) > 150)
+					{
+						nameStart = x;
+					}
+				}
+			}
+			assertTrue("the name was painted", nameStart < Integer.MAX_VALUE);
+
+			// The empty span runs from the first pixel after the rail to the last before the name.
+			final double midpoint = (Widgets.EDGE_WIDTH + (nameStart - 1)) / 2.0;
+			final double artCentre = (artLeft + artRight) / 2.0;
+			assertEquals("the artwork's centre is 1 px left of the measured midpoint, where the user put it (AR4)"
+					+ " (rail ends " + (Widgets.EDGE_WIDTH - 1) + ", art " + artLeft + ".." + artRight
+					+ ", name starts " + nameStart + ")",
+				midpoint - 1.0, artCentre, 0.5);
+		});
+	}
+
+	/**
+	 * Addendum AP: the picture cell is the client's own item sprite size, taken from {@link Constants} and not
+	 * typed, and it is asserted against a sprite drawn to the edge so a narrower cell fails here rather than in
+	 * the user's bank.
+	 *
+	 * <p>This was a real bug, and the belief behind it is worth writing down so it is not believed again. AN
+	 * narrowed the cell to 32 on the idea that an item sprite is 32 px square and "the two px either side" were
+	 * spare. A sprite is 36 x 32. The label CENTRES its icon, so 2 px went off each side - and the client paints a
+	 * stackable item's quantity hard against the sprite's LEFT edge, so on the user's first live look every stack
+	 * number in the list ("3290" on earth runes, "5000" on lizardman fangs, "32590" on water runes) had lost part
+	 * of its first digit. None of the renders showed it, because the harness's stand-in sprite has no number.
+	 */
+	@Test
+	public void thePictureCellIsExactlyTheClientsItemSprite() throws Exception
+	{
+		assertEquals("the client's own constant, not a typed number",
+			Constants.ITEM_SPRITE_WIDTH, MovementRowPanel.ICON_WIDTH);
+		assertEquals(Constants.ITEM_SPRITE_HEIGHT, MovementRowPanel.ICON_HEIGHT);
+		assertEquals("which is 36 x 32, and NOT square", 36, MovementRowPanel.ICON_WIDTH);
+
+		onEdt(() ->
+		{
+			// A sprite whose leftmost and rightmost columns are both painted, where the quantity sits.
+			final AsyncBufferedImage sprite = new AsyncBufferedImage(null, Constants.ITEM_SPRITE_WIDTH,
+				Constants.ITEM_SPRITE_HEIGHT, BufferedImage.TYPE_INT_ARGB);
+			for (int y = 0; y < Constants.ITEM_SPRITE_HEIGHT; y++)
+			{
+				sprite.setRGB(0, y, 0xFFFFFF00);
+				sprite.setRGB(Constants.ITEM_SPRITE_WIDTH - 1, y, 0xFFFFFF00);
+			}
+			final MovementRowPanel p = new MovementRowPanel(whip(), sprite, MovementWindow.D1, THEN_DAY);
+			final JLabel cell = (JLabel) p.iconLabel();
+			cell.setSize(cell.getPreferredSize());
+			final BufferedImage painted = new BufferedImage(cell.getWidth(), cell.getHeight(),
+				BufferedImage.TYPE_INT_ARGB);
+			final java.awt.Graphics2D g = painted.createGraphics();
+			try
+			{
+				cell.paint(g);
+			}
+			finally
+			{
+				g.dispose();
+			}
+			final int middle = Constants.ITEM_SPRITE_HEIGHT / 2;
+			assertEquals("the cell is the whole sprite plus the nudge (AR)",
+				Constants.ITEM_SPRITE_WIDTH + MovementRowPanel.ART_NUDGE, cell.getWidth());
+			assertEquals("the sprite's first column is inside the cell - a stack number's first digit is drawn",
+				0xFFFFFF00, painted.getRGB(MovementRowPanel.ART_NUDGE, middle));
+			assertEquals("...and so is its last - a whip's tip, a godsword's blade",
+				0xFFFFFF00, painted.getRGB(cell.getWidth() - 1, middle));
+			for (int x = 0; x < MovementRowPanel.ART_NUDGE; x++)
+			{
+				assertEquals("the nudge is air on the sprite's LEFT, not a cut off its right (column " + x + ")",
+					0, painted.getRGB(x, middle) >>> 24);
+			}
 		});
 	}
 
@@ -834,9 +1441,15 @@ public class MovementRowPanelTest
 
 	/**
 	 * B040: a potion keeps its DOSE when its name has to be cut. All four of "Super combat potion(1..4)"
-	 * measure 164 px in the row's bold 14 against a 156 px block, and the plain cut made one string of them -
-	 * four consecutive rows headed "Super combat potio...", with the only thing that told them apart in the
-	 * part that was thrown away.
+	 * measure 164 px in the row's bold 14 against the 156 px block addendum N gave the name, and the plain cut
+	 * made one string of them - four consecutive rows headed "Super combat potio...", with the only thing that
+	 * told them apart in the part that was thrown away.
+	 *
+	 * <p>Q4 widened that block to 166, which is wide enough to hold those four whole - so a second, longer potion
+	 * is walked beside them and its cut is asserted out loud. Without that leg the rule would be pinned only by
+	 * fixtures the row no longer has to cut, and B040 could be undone without a single assertion noticing.
+	 * "Divine ranging potion(3)" is the name on the picture the user approved the format from
+	 * ({@code docs/handoff/lab/row-format-Q4-2026-09-20.png}), where it reads "Divine ranging poti...(3)".
 	 */
 	@Test
 	public void theFourDosesOfAPotionKeepTheirDoseWhenTheNameIsCut() throws Exception
@@ -854,6 +1467,21 @@ public class MovementRowPanelTest
 				shown.add(p.nameText());
 			}
 			assertEquals("four rows, four different headlines", 4, new java.util.HashSet<>(shown).size());
+
+			// The same four doses of a name the 166 px block really has to cut, which is where the rule earns its
+			// keep: each one is cut AND still says which dose it is.
+			final List<String> cut = new ArrayList<>();
+			for (int dose = 1; dose <= 4; dose++)
+			{
+				final MovementRowPanel p = new MovementRowPanel(row("Divine ranging potion(" + dose + ")",
+					32_300L, 31_900L, 400L, 1.2), null, MovementWindow.D1, THEN_DAY);
+				assertTrue("the fixture has to be cut, or this leg proves nothing: " + p.nameText(),
+					p.nameText().contains(Widgets.ELLIPSIS));
+				assertTrue(p.nameText(), p.nameText().endsWith("(" + dose + ")"));
+				assertFits("divine dose " + dose, nameLabel(p));
+				cut.add(p.nameText());
+			}
+			assertEquals("four cut rows, four different headlines", 4, new java.util.HashSet<>(cut).size());
 
 			// A qualifier is NOT a dose (it carries a space before its bracket) and takes the plain cut.
 			final MovementRowPanel baited = new MovementRowPanel(row("Karambwan vessel (baited)", 3_235L, 3_223L,
@@ -899,7 +1527,11 @@ public class MovementRowPanelTest
 		});
 	}
 
-	/** B055: a row whose price did not move prints its percentage alone - "0" beside "0.0%" says it twice. */
+	/**
+	 * B055: a row whose price did not move prints its percentage alone - "0" beside "0.0%" says it twice, and
+	 * under Q4 it would say it FOUR times, once in each gp column and once in each of the two figures' place.
+	 * The rule is the same on both of Q4's lines: the stack's move and the item's move are both nothing to print.
+	 */
 	@Test
 	public void aRowThatDidNotMovePrintsNoGpFigure() throws Exception
 	{
@@ -908,6 +1540,7 @@ public class MovementRowPanelTest
 			final MovementRowPanel p = new MovementRowPanel(row("Coal", 150L, 150L, 0L, 0.0), null,
 				MovementWindow.D1, THEN_DAY);
 			assertEquals("", p.gpText());
+			assertEquals("...and the item's move is nothing to print either", "", itemGpLabel(p).getText());
 			assertEquals("0.0%", p.changeText());
 			assertEquals("no rail either: a quiet day is a quiet list", ColorScheme.DARKER_GRAY_COLOR, p.railColor());
 			assertFits("line 2", line2(p));
@@ -937,7 +1570,7 @@ public class MovementRowPanelTest
 		});
 	}
 
-	// ---- addendum Q: the untradeable tag (Q5) and the holding figures (Q6)
+	// ---- addendum Q: the untradeable tag (Q5); the holding switch (Q6) went with addendum AO
 
 	/**
 	 * Q5: an untradeable stack is listed at its High Alchemy value, so line 2 prints that price exactly as it
@@ -986,79 +1619,50 @@ public class MovementRowPanelTest
 		});
 	}
 
+	/*
+	 * DELETED by addendum AO, with the config key they were written about:
+	 *
+	 *   theHoldingHelpersStillPrintTheStacksWorthAndTheStacksChange - the contract of MovementRowPanel's two
+	 *   pure priceText / gpText pairs, which answered the unit figures by default and the stack's while
+	 *   holdingOnRows was on;
+	 *   theFaceShowsTheStackWhateverTheHoldingSwitchSays             - that a row built with the switch on and
+	 *   one built with it off drew the same face, figure for figure;
+	 *   theHoldingGpFigureFollowsTheSameNothingToPrintRule           - the three "nothing to print" edges read
+	 *   through those helpers under the switch.
+	 *
+	 * The first two have no subject left in any form: the key is gone (AO1) and the helpers went with it, so
+	 * there is neither a switch to set nor a method to ask. The equality the second one pinned - that a row's
+	 * face does not vary with a ViewOptions - is still pinned, by aRowIsSilentAtEitherSettingOfTheHoverSwitch,
+	 * which walks the same figures across the one switch that is left.
+	 *
+	 * The third's RULE is alive and is pinned on built rows, which is where it belongs now that no helper
+	 * stands between the fixture and the label: no baseline by aRowWithoutMovementHasNoGpFigure, a flat price
+	 * by aRowThatDidNotMovePrintsNoGpFigure, and no price at all by aRowWithoutAPriceShowsDashes. Re-pointing
+	 * it here would have made a fourth copy of those three rather than covering anything new.
+	 */
+
 	/**
-	 * Q6: with {@code holdingOnRows} on, line 2 prints what the whole STACK is worth and what the whole stack
-	 * moved - the two figures the tooltip has carried alone since addendum N - and nothing else about the row
-	 * changes: the percentage is the same number per item and per stack, the "x12" stays, and the tooltip
-	 * already carries both readings.
+	 * The width case the holding reading used to own, read as what it now is: the widest stack figures the
+	 * formatters can make are what line 2 prints on EVERY row, so the box they have to fit is the same 166 px
+	 * box every other row's is.
+	 *
+	 * <p>It is worth keeping after addendum AO for a reason the switch never gave it: line 2's arithmetic MOVED.
+	 * The word "Total" is gone from the fit budget and the air before the columns went back from 3 px to 6, so
+	 * roughly 31 px changed hands on this line - and a walk that was comfortable under the old sums is the
+	 * cheapest way to find out that it is still comfortable under the new ones. The fixtures are the two real
+	 * items that made the widest figures in the calibration bank (a Twisted bow at 1.63b, Confliction gauntlets
+	 * at -851k) beside the two absurd N6 rows, where a stack of 28,000 multiplies both figures at once.
 	 */
 	@Test
-	public void holdingOnRowsPrintsTheStacksWorthAndTheStacksChange() throws Exception
+	public void theWidestStackFiguresFitTheSameBoxEveryOtherRowFits() throws Exception
 	{
 		onEdt(() ->
 		{
-			final MovementRow r = whip();
-			final ViewOptions holding = ViewOptions.DEFAULT.withHoldingOnRows(true);
-			assertEquals("1.52m", MovementRowPanel.priceText(r));
-			assertEquals("12 x 1,520,000", "18.2m", MovementRowPanel.priceText(r, holding));
-			assertEquals("+20k", MovementRowPanel.gpText(r));
-			assertEquals("12 x +20,000", "+240k", MovementRowPanel.gpText(r, holding));
-
-			final MovementRowPanel p = new MovementRowPanel(r, null, MovementWindow.D1, THEN_DAY, holding);
-			assertEquals("18.2m", p.priceText());
-			assertEquals("+240k", p.gpText());
-			assertEquals("the percentage is unchanged", "+1.3%", p.changeText());
-			assertEquals("and so is the stack text", "x12", p.quantityText());
-			assertEquals("and so is the tooltip",
-				MovementRowPanel.tooltip(r, MovementWindow.D1, THEN_DAY), p.tooltipHtml());
-			assertEquals("and so is the rail", ColorScheme.PROGRESS_COMPLETE_COLOR.darker(), p.railColor());
-			assertFits("line 2", line2(p));
-
-			// A null ViewOptions is the default reading, and the default is the unit price.
-			assertEquals("1.52m", MovementRowPanel.priceText(r, null));
-			assertEquals("+20k", MovementRowPanel.gpText(r, null));
-		});
-	}
-
-	/**
-	 * Q6, the two edges of the "nothing to print" rule under the holding reading: a row with no movement has no
-	 * gp figure either way, and a stack whose change came out at zero prints nothing beside its own "0.0%" -
-	 * asked of the figure that will be DRAWN, not of the unit change behind it.
-	 */
-	@Test
-	public void theHoldingGpFigureFollowsTheSameNothingToPrintRule() throws Exception
-	{
-		onEdt(() ->
-		{
-			final ViewOptions holding = ViewOptions.DEFAULT.withHoldingOnRows(true);
-			final MovementRow none = row("Coal", 150L, null, null, null);
-			assertEquals("", MovementRowPanel.gpText(none, holding));
-			assertEquals(MovementMath.DASH, new MovementRowPanel(none, null, MovementWindow.D1, THEN_DAY, holding).changeText());
-
-			final MovementRow flat = row("Coal", 150L, 150L, 0L, 0.0);
-			assertEquals("", MovementRowPanel.gpText(flat, holding));
-
-			final MovementRow noPrice = row("Mystery box", null, null, null, null);
-			assertEquals("a stack with no price is not worth 0", MovementMath.DASH,
-				MovementRowPanel.priceText(noPrice, holding));
-		});
-	}
-
-	/**
-	 * Q6's width case: the widest holding figure the fixture can make ("1.63b", a Twisted bow) and the widest
-	 * holding change ("-851k") have to fit the same 156 px box the unit figures fit - and so does every N6
-	 * fixture read as a holding, where a stack multiplies both figures.
-	 */
-	@Test
-	public void theWidestHoldingFiguresFitTheSameBoxTheUnitFiguresFit() throws Exception
-	{
-		onEdt(() ->
-		{
-			final ViewOptions holding = ViewOptions.DEFAULT.withHoldingOnRows(true);
 			final MovementRow bow = stack("Twisted bow", 1, 1_632_000_000L, -58_000_000L, -3.4);
 			final MovementRow gauntlets = stack("Confliction gauntlets", 1, 64_300_000L, -851_000L, -1.3);
-			assertEquals("1.63b", MovementRowPanel.priceText(bow, holding));
-			assertEquals("-851k", MovementRowPanel.gpText(gauntlets, holding));
+			assertEquals("1.63b", new MovementRowPanel(bow, null, MovementWindow.D180, THEN_DAY).priceText());
+			assertEquals("-851k",
+				new MovementRowPanel(gauntlets, null, MovementWindow.D180, THEN_DAY).gpText());
 
 			final MovementRow huge = stack("Ancient ceremonial legs of the utterly absurd", 28_000,
 				2_147_000_000L, 1_073_500_000L, 100.0);
@@ -1066,10 +1670,16 @@ public class MovementRowPanelTest
 				-999_900_000L, -100.0);
 			for (MovementRow r : new MovementRow[]{bow, gauntlets, huge, crash, whip()})
 			{
-				final MovementRowPanel p = new MovementRowPanel(r, null, MovementWindow.D180, THEN_DAY, holding);
-				assertEquals(r.name(), new Dimension(213, 48), p.getPreferredSize());
+				final MovementRowPanel p = new MovementRowPanel(r, null, MovementWindow.D180, THEN_DAY);
+				assertEquals(r.name(), new Dimension(213, 62), p.getPreferredSize());
 				assertFits(r.name() + " name", nameLabel(p));
-				assertFits(r.name() + " line 2 as a holding", line2(p));
+				assertFits(r.name() + " line 2", line2(p));
+				assertFits(r.name() + " line 3", line3(p));
+				// The 31 px AO handed back are the price's: it is fitted into the whole of what the two columns
+				// leave, with nothing reserved beside it.
+				assertTrue(r.name() + ": the stack value has all of the room the columns left",
+					priceLabel(p).getPreferredSize().width
+						<= MovementRowPanel.TEXT_WIDTH - figures(p).getPreferredSize().width);
 			}
 		});
 	}
@@ -1252,7 +1862,1004 @@ public class MovementRowPanelTest
 		});
 	}
 
+	// ---- addendum AI: the cell opens and shuts, and the description is inside it
+
+	/**
+	 * AI's resting state: a fresh row is the card the renders are pictures of, and the block under its face is
+	 * BUILT but not shown. Built rather than created on the first click because its measured height is what the
+	 * open row's height is computed from, and a height that only existed after the click would make the cell
+	 * snap twice.
+	 */
+	@Test
+	public void aFreshRowIsRowHeightAndItsDetailIsHidden() throws Exception
+	{
+		onEdt(() ->
+		{
+			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY);
+			assertFalse("a fresh row is shut", p.expanded());
+			assertFalse("...and says nothing under its face", detail(p).isVisible());
+			assertEquals(new Dimension(MovementRowPanel.ROW_WIDTH, MovementRowPanel.ROW_HEIGHT),
+				p.getPreferredSize());
+			assertTrue("the hidden block is already measurable", detailHeight(p) > 0);
+		});
+	}
+
+	/**
+	 * The click of addendum AI, driven through the listener the row installed (see {@link #leftClick}): the
+	 * detail appears, the CELL grows by what that detail measures - one cell, not a second widget under a row
+	 * that stayed 62 px - and a second click puts it back to exactly {@link MovementRowPanel#ROW_HEIGHT}.
+	 *
+	 * <p>The row's width never moves: it is the sidebar's content width, and a cell that widened as it opened
+	 * would push the column's scroll bar about.
+	 */
+	@Test
+	public void aLeftClickShowsTheDetailAndGrowsTheCellAndASecondClickShutsIt() throws Exception
+	{
+		onEdt(() ->
+		{
+			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY);
+			final int shut = p.getPreferredSize().height;
+			final int block = detailHeight(p);
+
+			leftClick(p);
+			assertTrue("the row is open", p.expanded());
+			assertTrue("the detail is showing", detail(p).isVisible());
+			assertEquals("the cell grew by the block's own height",
+				MovementRowPanel.ROW_HEIGHT + block, p.getPreferredSize().height);
+			assertTrue("...which is taller than it was", p.getPreferredSize().height > shut);
+			assertEquals("the width is the sidebar's, open or shut", MovementRowPanel.ROW_WIDTH,
+				p.getPreferredSize().width);
+
+			leftClick(p);
+			assertFalse(p.expanded());
+			assertFalse(detail(p).isVisible());
+			assertEquals("exactly the 62 px card again, which is what the renders are of",
+				new Dimension(MovementRowPanel.ROW_WIDTH, MovementRowPanel.ROW_HEIGHT), p.getPreferredSize());
+		});
+	}
+
+	/**
+	 * What the block says since addendum AK: the LABEL COLUMN
+	 * {@link MovementRowPanel#detail(MovementRow, MovementWindow, java.time.LocalDate, ViewOptions, boolean)}
+	 * writes, wrapped for the cell - and no longer the long hover's prose, which is what AI had put in here and
+	 * what the user could not read ("This looks really hard to read").
+	 *
+	 * <p>Asserted as a RELATIONSHIP to the pure builder and never as a copied literal: the two must not be able
+	 * to drift, and a literal here would have to be edited by every future addendum that touches a line of the
+	 * block, which is exactly how a copy stops describing the original. WHAT that builder writes is pinned line
+	 * by line under "addendum AK" below.
+	 *
+	 * <p>The {@code showName} argument is derived here the same way the row derives it - the name repeats only
+	 * when the FACE had to cut it - so this assertion also pins that the row asks for the block AFTER
+	 * {@code Widgets.setFittedName} has run, which is the one ordering AK depends on.
+	 *
+	 * <p>The wrapper is load-bearing and is AI's: a tooltip is laid out to whatever width it likes, and a block
+	 * inside a 225 px sidebar has to be told one or Swing draws the whole description on one unreadable line.
+	 */
+	@Test
+	public void theDetailIsTheLabelColumnWrappedForTheCell() throws Exception
+	{
+		onEdt(() ->
+		{
+			for (MovementRow r : new MovementRow[]{whip(), alch("Graceful hood", 4, 20_000L),
+				body("Crystal body", seeds()), row("Mystery box", null, null, null, null), longDescription()})
+			{
+				final MovementRowPanel p = new MovementRowPanel(r, null, MovementWindow.D1, THEN_DAY);
+				assertEquals(r.name() + ": the block, as the pure builder writes it and not re-written",
+					MovementRowPanel.detail(r, MovementWindow.D1, THEN_DAY, ViewOptions.DEFAULT,
+						!r.name().equals(p.nameText())),
+					detail(p).getText());
+				assertTrue(r.name() + ": wrapped to the cell", detail(p).getText()
+					.startsWith("<html><div width=\"" + MovementRowPanel.INNER_WIDTH + "\">"));
+				assertTrue(r.name(), detail(p).getText().endsWith("</div></html>"));
+			}
+
+			// The long hover's prose is what AK replaced, so none of its lines are in the cell any more - and the
+			// figures they carried are all still there, in the column that replaced them.
+			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY);
+			final String block = detail(p).getText();
+			assertNotEquals("the cell is no longer the long description", p.tooltipHtml(), block);
+			assertFalse(block, block.contains("Holding: 12 = 18,240,000 gp"));
+			assertFalse(block, block.contains("Change per item:"));
+			assertFalse(block, block.contains("Guide price:"));
+			assertTrue(block, block.contains("18,240,000 gp"));
+			assertTrue(block, block.contains("+20,000 each"));
+		});
+	}
+
+	/**
+	 * The open height is MEASURED, not a constant - the assertion a guessed number could not survive, and the
+	 * reason it is re-read after addendum AK changed what the block says. An alch row's block is two labelled
+	 * lines and one note; a live parts row carrying a carried split and a traded note is four lines and three
+	 * notes, each of them long enough to wrap again inside a 200 px cell. A constant tall enough for the second
+	 * leaves a hole under the first, and one sized for the first clips the second, so the two are built here and
+	 * their open heights compared.
+	 *
+	 * <p>Neither height is named. Each row is asked what its OWN block measures, which is the only way to say
+	 * "measured" on a machine whose Dialog face wraps these lines somewhere this test cannot know.
+	 */
+	@Test
+	public void theOpenHeightIsTheRowsOwnMeasurementAndNotOneConstant() throws Exception
+	{
+		onEdt(() ->
+		{
+			final MovementRowPanel small = new MovementRowPanel(alch("Graceful hood", 4, 20_000L), null,
+				MovementWindow.D1, THEN_DAY);
+			final MovementRowPanel big = new MovementRowPanel(longDescription(), null, MovementWindow.D1,
+				THEN_DAY);
+			assertEquals("both start as the same card", small.getPreferredSize(), big.getPreferredSize());
+			assertNotEquals("the two blocks have to say different things, or this proves nothing",
+				detail(small).getText(), detail(big).getText());
+
+			leftClick(small);
+			leftClick(big);
+			assertEquals(MovementRowPanel.ROW_HEIGHT + detailHeight(small), small.getPreferredSize().height);
+			assertEquals(MovementRowPanel.ROW_HEIGHT + detailHeight(big), big.getPreferredSize().height);
+			assertTrue("the long description is the taller block: " + detailHeight(small) + " vs "
+				+ detailHeight(big), detailHeight(big) > detailHeight(small));
+			assertTrue("...so the two open rows are not the same height",
+				big.getPreferredSize().height > small.getPreferredSize().height);
+		});
+	}
+
+	/**
+	 * The click works wherever it LANDS. Every child is its own mouse target (playbook 7.5), so a reader who
+	 * clicks the item's name - the biggest thing on the card, and the obvious place to aim - must flip the same
+	 * row as a reader who clicks its padding.
+	 */
+	@Test
+	public void aClickOnTheNameFlipsTheRowJustTheSame() throws Exception
+	{
+		onEdt(() ->
+		{
+			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY);
+			final JLabel name = label(p, "Abyssal whip");
+			assertNotNull(name);
+			leftClick(name);
+			assertTrue(p.expanded());
+			assertTrue("the whole cell opened, not the label the click landed on", detail(p).isVisible());
+			assertEquals(MovementRowPanel.ROW_HEIGHT + detailHeight(p), p.getPreferredSize().height);
+
+			leftClick(name);
+			assertFalse(p.expanded());
+			assertEquals(new Dimension(MovementRowPanel.ROW_WIDTH, MovementRowPanel.ROW_HEIGHT),
+				p.getPreferredSize());
+		});
+	}
+
+	/**
+	 * The right button is the popup's, and only the popup's (K8). A right-click that also toggled would change
+	 * the hover under a menu the reader opened for something else - and on the platforms where the trigger is the
+	 * PRESS, the menu and the flipped hover would fight for the same corner of the screen.
+	 *
+	 * <p>Both guards in the handler are asked: the button, and the popup-trigger flag - the second because a
+	 * Control-click on macOS is a left button carrying it.
+	 *
+	 * <p>Since AI the cost of getting it wrong is larger than a swapped hover: a right-click that also toggled
+	 * would move every row under the menu it just opened.
+	 */
+	@Test
+	public void aRightClickTogglesNothing() throws Exception
+	{
+		onEdt(() ->
+		{
+			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY);
+			final Dimension shut = p.getPreferredSize();
+
+			click(p, MouseEvent.BUTTON3, false);
+			assertFalse("the right button is the popup's", p.expanded());
+
+			click(p, MouseEvent.BUTTON3, true);
+			assertFalse(p.expanded());
+
+			click(p, MouseEvent.BUTTON1, true);
+			assertFalse("a left button carrying the popup trigger is still a popup", p.expanded());
+
+			assertFalse("nothing opened", detail(p).isVisible());
+			assertEquals("and the cell never moved", shut, p.getPreferredSize());
+		});
+	}
+
+	/** K8's two entries are untouched by the toggle: the menu opens, and both still browse, on an expanded row. */
+	@Test
+	public void thePopupStillWorksAfterAToggle() throws Exception
+	{
+		onEdt(() ->
+		{
+			final AtomicReference<String> opened = new AtomicReference<>();
+			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY,
+				ViewOptions.DEFAULT, opened::set);
+			leftClick(p);
+			assertTrue(p.expanded());
+
+			final JPopupMenu menu = p.getComponentPopupMenu();
+			assertEquals("entries", 2, menu.getComponentCount());
+			((JMenuItem) menu.getComponent(0)).doClick(0);
+			assertEquals("https://secure.runescape.com/m=itemdb_oldschool/viewitem?obj=4151", opened.get());
+			((JMenuItem) menu.getComponent(1)).doClick(0);
+			assertEquals("https://prices.runescape.wiki/osrs/item/4151", opened.get());
+		});
+	}
+
+	/**
+	 * The seam of addendum AG, which AI keeps exactly as it was: the state lives OUTSIDE the row, is read as the
+	 * row is built and written on every toggle. That is what makes it survive the rebuild - {@code addPage}
+	 * throws every row away and builds the page again on every publish (a refresh, a bank opening, the
+	 * half-hourly recheck), so a row that held the flag itself would fold up under a reader who had just opened
+	 * it, with nothing on screen to explain why. Under AI that reader is watching a cell CLOSE, which is a good
+	 * deal more startling than a hover changing length.
+	 */
+	@Test
+	public void theExpansionSeamIsReadAtBuildTimeAndWrittenOnEveryToggle() throws Exception
+	{
+		onEdt(() ->
+		{
+			final RecordingExpansion seam = new RecordingExpansion();
+			seam.setExpanded(4151, true);
+			seam.writes = 0;
+
+			final MovementRowPanel opened = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY,
+				ViewOptions.DEFAULT, seam);
+			assertTrue("a row whose id is already expanded is open", opened.expanded());
+			assertEquals("reading the seam writes nothing to it", 0, seam.writes);
+
+			leftClick(opened);
+			assertFalse("the click was recorded outside the row", seam.isExpanded(4151));
+			assertEquals(1, seam.writes);
+			assertFalse("...and the cell shut", detail(opened).isVisible());
+			assertEquals(new Dimension(MovementRowPanel.ROW_WIDTH, MovementRowPanel.ROW_HEIGHT),
+				opened.getPreferredSize());
+
+			leftClick(opened);
+			assertTrue(seam.isExpanded(4151));
+			assertEquals(2, seam.writes);
+			assertTrue(detail(opened).isVisible());
+
+			// The whole point: the next publish builds a NEW row from the same seam, and it stands where the
+			// reader left it - keyed by item id, so a re-sort or a change of price band does not lose it either.
+			final MovementRowPanel rebuilt = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY,
+				ViewOptions.DEFAULT, seam);
+			assertTrue(rebuilt.expanded());
+
+			// ...and one row's state is one ITEM's: another id in the same seam is untouched by all of that.
+			final MovementRowPanel other = new MovementRowPanel(alch("Graceful hood", 4, 20_000L), null,
+				MovementWindow.D1, THEN_DAY, ViewOptions.DEFAULT, seam);
+			assertFalse(other.expanded());
+			assertFalse(detail(other).isVisible());
+		});
+	}
+
+	/**
+	 * The other half of that seam, and the half AI made VISIBLE: a row the reader had opened before the publish
+	 * has to come back DRAWN open, not merely reporting that it is.
+	 *
+	 * <p>Before AI the two could not come apart - the state chose which of two texts the row was handed, and it
+	 * was handed one as it was built. AI made the state decide a child's visibility and the row's own height,
+	 * which are seeded once and then only changed by a click, so a row built from an already-open seam can
+	 * report {@code expanded()} while standing 62 px tall with its description hidden. A reader would then find
+	 * their open rows shut by an invisible refresh, and their next click would shut them again - two clicks to
+	 * reopen one row.
+	 */
+	@Test
+	public void aRowBuiltFromAnAlreadyOpenSeamIsDrawnOpen() throws Exception
+	{
+		onEdt(() ->
+		{
+			final RecordingExpansion seam = new RecordingExpansion();
+			seam.setExpanded(4151, true);
+
+			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY,
+				ViewOptions.DEFAULT, seam);
+			assertTrue("the state is read at build time", p.expanded());
+			assertTrue("...and the cell it decides is open", detail(p).isVisible());
+			assertEquals("a rebuilt open row stands at its open height",
+				MovementRowPanel.ROW_HEIGHT + detailHeight(p), p.getPreferredSize().height);
+
+			// ...so ONE click shuts it, which is what the reader expects of the row in front of them.
+			leftClick(p);
+			assertFalse(p.expanded());
+			assertFalse(detail(p).isVisible());
+			assertEquals(new Dimension(MovementRowPanel.ROW_WIDTH, MovementRowPanel.ROW_HEIGHT),
+				p.getPreferredSize());
+		});
+	}
+
+	/**
+	 * No seam, no shared state: a row built with null keeps one boolean of its own, which is what every caller
+	 * that never rebuilds a page wants (the bridge, the renderer and every older constructor). It starts shut
+	 * and toggles for as long as it exists, and two rows of the SAME item are strangers.
+	 */
+	@Test
+	public void aRowWithNoExpansionKeepsItsOwnState() throws Exception
+	{
+		onEdt(() ->
+		{
+			final MovementRowPanel a = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY,
+				ViewOptions.DEFAULT, (MovementRowPanel.Expansion) null);
+			final MovementRowPanel b = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY,
+				ViewOptions.DEFAULT, (MovementRowPanel.Expansion) null);
+			assertFalse("both start shut", a.expanded());
+			assertFalse(b.expanded());
+
+			leftClick(a);
+			assertTrue(a.expanded());
+			assertTrue(detail(a).isVisible());
+			assertFalse("the other row of the same item is a stranger", b.expanded());
+			assertFalse(detail(b).isVisible());
+			assertEquals("...and is still the 62 px card",
+				new Dimension(MovementRowPanel.ROW_WIDTH, MovementRowPanel.ROW_HEIGHT), b.getPreferredSize());
+
+			leftClick(a);
+			assertFalse(a.expanded());
+			assertFalse(detail(a).isVisible());
+		});
+	}
+
+	// ---- addendum AI: the row is silent, open or shut
+
+	/**
+	 * AI: a row says NOTHING on hover - null, not "", on the row and on every one of its children, whether it is
+	 * open or shut. The description is the block the click opens, so a tooltip would be a second copy of it, and a
+	 * hover over every row the pointer crossed is what the reader asked to be rid of. There is no switch to read
+	 * any more: silence is what a row IS, which is why nothing here builds a fixture to turn it on.
+	 *
+	 * <p>Null and not "" because Swing tells the two apart: {@code ToolTipManager} registers a component the moment
+	 * it is given any non-null text and opens an empty box for "", which is a hover the reader can neither read nor
+	 * dismiss. Only null takes the component back off the manager.
+	 *
+	 * <p>Every child for the reason every hover on this card ever reached every child (playbook 7.5): each one is
+	 * its own mouse target, so a row that cleared only its own text would go on answering over the icon and the
+	 * five labels - most of the 213 x 62 card - and, once it is open, over the description as well.
+	 */
+	@Test
+	public void everyRowAndEveryChildIsSilentOpenOrShut() throws Exception
+	{
+		onEdt(() ->
+		{
+			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY);
+			assertNull("the row", p.getToolTipText());
+
+			final List<JComponent> children = new ArrayList<>();
+			collect(p, children);
+			assertTrue("the face, the picture, the text block, three lines, two figure groups, six labels, the detail",
+				children.size() >= 9);
+			for (JComponent c : children)
+			{
+				assertNull(c.getClass().getSimpleName() + " must be silent too", c.getToolTipText());
+			}
+
+			// ...and opening the cell hands nobody a hover on the way past.
+			leftClick(p);
+			assertTrue(p.expanded());
+			assertNull("the open row", p.getToolTipText());
+			final List<JComponent> afterwards = new ArrayList<>();
+			collect(p, afterwards);
+			for (JComponent c : afterwards)
+			{
+				assertNull(c.getClass().getSimpleName() + " must be silent while open", c.getToolTipText());
+			}
+		});
+	}
+
+	/**
+	 * The children that would otherwise still answer, and the reason the row has to CLEAR rather than merely
+	 * decline to set: {@code Widgets.setFittedName} and {@code Widgets.setFitted} leave the WHOLE text on every
+	 * label they fit, as that label's own tooltip - which is how a cut name was readable before addendum AG - so
+	 * the name label and the price label both arrive at the end of the constructor already carrying one.
+	 *
+	 * <p>A row that stopped walking its children would therefore leave those two behind, and the biggest thing on
+	 * the card would go on opening a hover in a sidebar that is meant to have none. So the fixtures are built to
+	 * be cut: a name too long for any metrics, and then the widest row the formatters can make, where the price
+	 * prints a stack of 28,000 at 2.1b and is squeezed by the widest gp figure and percentage there are. That
+	 * second fixture used to be read under {@code holdingOnRows}; since addendum AO deleted the key, line 2
+	 * prints the stack on every row and the fixture alone is what makes it wide.
+	 *
+	 * <p>Whether this machine's Dialog face cuts one, both or neither is not asserted (the file's rule: no literal
+	 * pixel widths), and it does not need to be - the leftover is UNCONDITIONAL
+	 * ({@code WidgetsTest.everyFittedLabelCarriesItsWholeTextAsATooltipCutOrNot}), so both labels arrive carrying
+	 * one either way. That there WAS something to clear is proved against twin labels put through the same call
+	 * rather than read off the row, which has already cleared them by the time a test can look.
+	 */
+	@Test
+	public void theFittedLabelsLoseTheirOwnLeftoverTooltipsToo() throws Exception
+	{
+		onEdt(() ->
+		{
+			final MovementRow long0 = row("Twisted ancestral robe bottom", 1_000L, 900L, 100L, 11.1);
+			final MovementRowPanel p = new MovementRowPanel(long0, null, MovementWindow.D1, THEN_DAY);
+			assertNotEquals("the face had to cut it, so setFittedName left the whole name on the label",
+				long0.name(), p.nameText());
+			assertNull("...and the silent row cleared it", nameLabel(p).getToolTipText());
+			assertNull("the price label is fitted the same way", label(p, p.priceText()).getToolTipText());
+			assertLeftoverWasThere("the name", Widgets.sansBold(14), long0.name(), MovementRowPanel.TEXT_WIDTH);
+			// What line 2 opens with, said in the test's own terms now that no helper answers it: the stack's
+			// worth in the game's stack style, which is exactly what the row hands the fitter.
+			assertLeftoverWasThere("the price", Widgets.sans(13),
+				MovementMath.formatGp(long0.holdingValue()), MovementRowPanel.TEXT_WIDTH);
+
+			final MovementRow crowded = stack("Twisted ancestral robe bottom of the utterly absurd", 28_000,
+				2_147_000_000L, -999_900_000L, -100.0);
+			final MovementRowPanel squeezed = new MovementRowPanel(crowded, null, MovementWindow.D180, THEN_DAY);
+			assertNotEquals("the name is cut at any metrics", crowded.name(), squeezed.nameText());
+			assertNull("the row", squeezed.getToolTipText());
+			assertNull("the name label", nameLabel(squeezed).getToolTipText());
+			assertNull("the price label", label(squeezed, squeezed.priceText()).getToolTipText());
+			assertLeftoverWasThere("the squeezed name", Widgets.sansBold(14), crowded.name(),
+				MovementRowPanel.TEXT_WIDTH);
+			assertLeftoverWasThere("the stack price", Widgets.sans(13),
+				MovementMath.formatGp(crowded.holdingValue()), MovementRowPanel.TEXT_WIDTH);
+
+			// And the clearing survives the click: opening the cell must not put a leftover back on either label.
+			leftClick(squeezed);
+			assertTrue(squeezed.expanded());
+			assertNull("the name label, open", nameLabel(squeezed).getToolTipText());
+			assertNull("the price label, open", label(squeezed, squeezed.priceText()).getToolTipText());
+			assertNull("the description itself", detail(squeezed).getToolTipText());
+		});
+	}
+
+	/**
+	 * That a label of this text, in this face, in this much room, comes back from {@code Widgets.setFitted}
+	 * carrying a tooltip - the leftover the silent row above has to clear. Measured on a twin rather than read
+	 * off the row, because the row has already cleared it by the time a test can look.
+	 *
+	 * <p>{@code setFitted} stands in for the name's {@code setFittedName} as well: the two are one private method
+	 * with a different cutter handed to it, and the {@code setToolTipText(full)} is in that shared method.
+	 */
+	private static void assertLeftoverWasThere(String what, Font face, String text, int width)
+	{
+		final JLabel twin = Widgets.label("", face, Color.WHITE);
+		Widgets.setFitted(twin, text, width);
+		assertEquals(what + ": the fitter leaves the whole text on the label", text, twin.getToolTipText());
+	}
+
+	// ---- addendum AJ: the hover switch is back, and a row is outside its reach
+
+	/**
+	 * The view switches with AJ's restored "Show hover text" ON. Nothing a row builds reads it - which is the
+	 * whole point of the two tests below - so the fixture exists to make the ON leg a real setting rather than an
+	 * absent one, and both tests say so out loud before they use it.
+	 */
+	private static final ViewOptions HOVERS_ON = ViewOptions.DEFAULT.withShowHoverText(true);
+
+	/**
+	 * AJ restored the switch addendum AI had deleted, and narrowed it: it governs the hero card's exact-gp hover
+	 * (AF) and every CONTROL tooltip - the sort button and its menu, the chips, the band button, Refresh, the
+	 * update line, the preset row and the gear's own items - and it does NOT reach an item row.
+	 *
+	 * <p>That is the fact a reader of this file would otherwise get wrong, because {@link ViewOptions} carries a
+	 * switch named after hover text and a row is built from a {@link ViewOptions}. Since AI a row carries
+	 * no tooltip whatever the options say: its description is the block the cell opens on a click
+	 * ({@link #theDetailIsTheLabelColumnWrappedForTheCell}), so the switch has nothing here to silence and
+	 * nothing to hand back. Wiring it into a row would be a regression at BOTH settings - ON it would put back the
+	 * hover over every row the pointer crossed that the user asked to be rid of, and OFF it would remove a text
+	 * that is not there.
+	 *
+	 * <p>The fixture is a row built to be CUT, because a leftover is where a switch that had crept back in would
+	 * show first: {@code Widgets.setFittedName} and {@code Widgets.setFitted} hang the whole text on the name and
+	 * the price labels as their own tooltip, and a constructor that skipped its clearing under one setting would
+	 * leave the biggest thing on the card speaking. Both labels are read by name as well as by the sweep over the
+	 * children, and the sweep is repeated with the cell OPEN, where the description is a child too.
+	 */
+	@Test
+	public void aRowIsSilentAtEitherSettingOfTheHoverSwitch() throws Exception
+	{
+		onEdt(() ->
+		{
+			assertFalse("the switch's own default is OFF (AH, restored by AJ)", ViewOptions.DEFAULT.showHoverText());
+			assertTrue("...and the ON fixture really is on, or this test has one leg", HOVERS_ON.showHoverText());
+
+			final MovementRow long0 = row("Twisted ancestral robe bottom", 1_000L, 900L, 100L, 11.1);
+			for (ViewOptions view : new ViewOptions[]{HOVERS_ON, ViewOptions.DEFAULT})
+			{
+				final String state = view.showHoverText() ? "hovers on" : "hovers off";
+				final MovementRowPanel p = new MovementRowPanel(long0, null, MovementWindow.D1, THEN_DAY, view);
+				assertNotEquals(state + ": the face had to cut the name, so the fitter left the whole of it behind",
+					long0.name(), p.nameText());
+				assertNull(state + ": the row", p.getToolTipText());
+				assertNull(state + ": the name label", nameLabel(p).getToolTipText());
+				assertNull(state + ": the price label", label(p, p.priceText()).getToolTipText());
+
+				final List<JComponent> children = new ArrayList<>();
+				collect(p, children);
+				assertTrue(state + ": the face, the picture, the text block, three lines, two figure groups, six labels,"
+					+ " the detail", children.size() >= 9);
+				for (JComponent c : children)
+				{
+					assertNull(state + ": " + c.getClass().getSimpleName(), c.getToolTipText());
+				}
+
+				// ...and an OPEN row is silent too: its description is on the screen, not under the pointer.
+				leftClick(p);
+				assertTrue(state + ": the cell opened", p.expanded());
+				assertNull(state + ": the open row", p.getToolTipText());
+				final List<JComponent> afterwards = new ArrayList<>();
+				collect(p, afterwards);
+				for (JComponent c : afterwards)
+				{
+					assertNull(state + ": " + c.getClass().getSimpleName() + ", open", c.getToolTipText());
+				}
+			}
+
+			// There WAS something to clear at both settings - measured on twins put through the same call, because
+			// the row has cleared its own by the time a test can look at it.
+			assertLeftoverWasThere("the name", Widgets.sansBold(14), long0.name(), MovementRowPanel.TEXT_WIDTH);
+			assertLeftoverWasThere("the price", Widgets.sans(13),
+				MovementMath.formatGp(long0.holdingValue()), MovementRowPanel.TEXT_WIDTH);
+
+			// And the switch changes nothing ELSE about a row either: same face, same card, same description.
+			// Since addendum AO this is the WHOLE of "a row's face does not vary with a ViewOptions" - the
+			// deleted holding switch had its own equality test, and this walk inherited the job.
+			final MovementRowPanel on = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY, HOVERS_ON);
+			final MovementRowPanel off = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY,
+				ViewOptions.DEFAULT);
+			assertEquals(off.nameText(), on.nameText());
+			assertEquals(off.priceText(), on.priceText());
+			assertEquals(off.gpText(), on.gpText());
+			assertEquals(off.changeText(), on.changeText());
+			assertEquals("line 3's working", workingLabel(off).getText(), workingLabel(on).getText());
+			assertEquals("line 3's gp", itemGpLabel(off).getText(), itemGpLabel(on).getText());
+			assertEquals(off.railColor(), on.railColor());
+			assertEquals(off.getPreferredSize(), on.getPreferredSize());
+			assertEquals("the description is built either way", off.tooltipHtml(), on.tooltipHtml());
+			assertEquals("...and reaches the cell either way", detail(off).getText(), detail(on).getText());
+		});
+	}
+
+	/**
+	 * The other half of AJ's reach, and the regression it is here to stop: a row OPENS at either setting of the
+	 * switch. AH - the switch as it first shipped - made a click do nothing while the hovers were off, because
+	 * back then the click's only job was to lengthen a hover, and that is exactly what sent the user to AI
+	 * ("when we click an item it does not expand because our hover text button is off"). AI moved the description
+	 * into the cell, so the click is no longer about hover text at all, and AJ must not carry the old coupling
+	 * back in with the switch.
+	 *
+	 * <p>The seam is read as well as the cell, because a row that opened on screen while writing nothing would
+	 * fold itself up again on the next publish - which under the switch's OFF setting would be a reader's whole
+	 * experience of it.
+	 */
+	@Test
+	public void theCellOpensAndShutsAtEitherSettingOfTheHoverSwitch() throws Exception
+	{
+		onEdt(() ->
+		{
+			for (ViewOptions view : new ViewOptions[]{HOVERS_ON, ViewOptions.DEFAULT})
+			{
+				final String state = view.showHoverText() ? "hovers on" : "hovers off";
+				final RecordingExpansion seam = new RecordingExpansion();
+				final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY, view,
+					seam);
+				assertFalse(state + ": a fresh row is shut", p.expanded());
+				assertFalse(state + ": and says nothing under its face", detail(p).isVisible());
+				assertEquals(state + ": building only reads the seam", 0, seam.writes);
+
+				leftClick(p);
+				assertTrue(state + ": the click opened it", p.expanded());
+				assertTrue(state + ": the description is showing", detail(p).isVisible());
+				assertEquals(state + ": the cell grew by the block's own height",
+					MovementRowPanel.ROW_HEIGHT + detailHeight(p), p.getPreferredSize().height);
+				assertTrue(state + ": ...and the seam knows, so the next publish brings it back open",
+					seam.isExpanded(4151));
+
+				leftClick(p);
+				assertFalse(state + ": and a second click shuts it", p.expanded());
+				assertFalse(state + ": the description is hidden again", detail(p).isVisible());
+				assertEquals(state + ": exactly the 62 px card, which is what the four renders are of",
+					new Dimension(MovementRowPanel.ROW_WIDTH, MovementRowPanel.ROW_HEIGHT), p.getPreferredSize());
+				assertFalse(state, seam.isExpanded(4151));
+				assertEquals(state + ": one write per click, whatever the switch says", 2, seam.writes);
+			}
+		});
+	}
+
+	// ---- addendum AK: the open cell is a label column
+
+	/**
+	 * AK's shape, and the order it prints in: four labelled lines, the value of each beside its own label, ended
+	 * by {@code </table>}. The user could not read the prose AI put in this cell - "Live traded price: 4,618 gp
+	 * (buy 4,796, sell 4,440; 6,565 traded yesterday)" is seventy-five characters in a cell about thirty-two
+	 * wide - so the eye now runs down one edge instead of hunting along a sentence.
+	 *
+	 * <p>Asserted in ORDER rather than as four {@code contains} calls: a column whose lines arrived in any order
+	 * would satisfy the weaker assertion, and the order is the whole point of a column.
+	 */
+	@Test
+	public void theOpenCellIsFourLabelledLinesInOrder()
+	{
+		final String html = block(whip(), MovementWindow.D1);
+		assertInOrder(html, "<table",
+			MovementRowPanel.L_NOW, "1,520,000 gp each",
+			MovementRowPanel.L_WAS, "1,500,000 gp", "(07 Sep)",
+			MovementRowPanel.L_HAVE, "12&nbsp; =&nbsp; 18,240,000 gp",
+			MovementRowPanel.L_CHANGE + "1d", "+20,000 each", "+1.3%",
+			"</table>");
+		// The labels are the block's, pinned so a rename has to be deliberate.
+		assertEquals("Worth now", MovementRowPanel.L_NOW);
+		assertEquals("Was", MovementRowPanel.L_WAS);
+		assertEquals("You have", MovementRowPanel.L_HAVE);
+		assertEquals("Change ", MovementRowPanel.L_CHANGE);
+		// A table, not padded spaces: these faces are proportional, so only a column lines the figures up.
+		assertTrue(html, html.contains("<table cellpadding=0 cellspacing=0>"));
+		// The one coloured figure is the change, and it takes the FULL colour - it has nothing beside it here.
+		assertTrue(html, html.contains("<font color='#"
+			+ String.format("%06X", MovementRowPanel.textChangeColor(whip()).getRGB() & 0xFFFFFF)
+			+ "'>+20,000 each&nbsp; +1.3%</font>"));
+	}
+
+	/**
+	 * The user's own correction to AK: "i find the change confusing, make it show how many days (1d, 7d, 30d,
+	 * 90d, 180d) so itll be Change 1d or Change 7d for example". A line reading "Change" beside a figure says
+	 * nothing about whether it is a day's move or half a year's, and the lit chip is at the top of the sidebar
+	 * rather than beside the number.
+	 *
+	 * <p>Every window is walked, and each is checked to claim ONLY its own label - a builder that hard-coded
+	 * "1d" would pass a test that looked at one window, and that is exactly the bug the correction was about.
+	 */
+	@Test
+	public void theChangeLineNamesTheWindowItIsMeasuring()
+	{
+		for (MovementWindow w : MovementWindow.values())
+		{
+			final String html = block(whip(), w);
+			assertTrue(html, html.contains(MovementRowPanel.L_CHANGE + w.label()));
+			for (MovementWindow other : MovementWindow.values())
+			{
+				if (other != w)
+				{
+					assertFalse(w.label() + " also claims " + other.label() + ": " + html,
+						html.contains(MovementRowPanel.L_CHANGE + other.label()));
+				}
+			}
+		}
+		assertTrue("a null window reads as the default, like every other reader of one",
+			MovementRowPanel.detail(whip(), null, THEN_DAY, ViewOptions.DEFAULT, false)
+				.contains(MovementRowPanel.L_CHANGE + MovementWindow.DEFAULT.label()));
+	}
+
+	/**
+	 * A row with no price dashes every value that needs one and invents nothing: a "0" here would claim the
+	 * stack is worthless rather than unpriced, which is the rule the face has followed since addendum N and the
+	 * block has to follow too. The quantity is still printed, because that figure IS known.
+	 */
+	@Test
+	public void aRowWithNoPriceDashesEveryFigureAndGuessesNoZero()
+	{
+		final MovementRow none = row("Mystery box", null, null, null, null);
+		final String html = MovementRowPanel.detail(none, MovementWindow.D7, null, ViewOptions.DEFAULT, false);
+		assertInOrder(html,
+			MovementRowPanel.L_NOW, MovementMath.DASH,
+			MovementRowPanel.L_WAS, MovementMath.DASH, "(-)",
+			MovementRowPanel.L_HAVE, "5&nbsp; =&nbsp; " + MovementMath.DASH,
+			MovementRowPanel.L_CHANGE + "7d", MovementMath.DASH,
+			"</table>");
+		assertFalse("an absent price is never a zero", html.contains("0 gp"));
+		assertFalse("and an absent move is never a +0", html.contains("+0"));
+		assertFalse("a dash carries no unit", html.contains("- gp"));
+		assertFalse("nothing is coloured: there is no direction to say", html.contains("<font"));
+	}
+
+	/**
+	 * Q5 in the new block: an untradeable stack listed at its High Alchemy value prints what it is worth and
+	 * what you have, and NEITHER of the two lines it cannot know - a constant is not a series, so there is no
+	 * baseline day to stamp and no change to print. {@link MovementRowPanel#ALCH_NOTE} says the whole of it
+	 * under the table.
+	 */
+	@Test
+	public void anAlchRowPrintsWorthNowAndYouHaveAndNeitherWasNorChange()
+	{
+		final MovementRow hood = alch("Graceful hood", 4, 20_000L);
+		final String html = block(hood, MovementWindow.D30);
+		assertInOrder(html, MovementRowPanel.L_NOW, "20,000 gp each",
+			MovementRowPanel.L_HAVE, "4&nbsp; =&nbsp; 80,000 gp", "</table>", MovementRowPanel.ALCH_NOTE);
+		assertFalse("an alch row has no baseline to show", html.contains(MovementRowPanel.L_WAS));
+		assertFalse("...and no change either", html.contains(MovementRowPanel.L_CHANGE));
+		assertFalse("so it stamps no day", html.contains("(07 Sep)"));
+		assertEquals("Untradeable - High Alchemy value, not in the movement figures", MovementRowPanel.ALCH_NOTE);
+		assertFalse("the note does not repeat the value that is two lines above it",
+			MovementRowPanel.ALCH_NOTE.contains("20,000"));
+	}
+
+	/**
+	 * R4 in the new block: a stack valued at its tradeable PARTS has a real baseline and a real move, so it
+	 * prints all four lines exactly as a guide row does, and gains the one note naming what the price is a sum
+	 * of. Without that note a Crystal body simply reads 16.6m and nothing says why it is not its 900k alch value.
+	 */
+	@Test
+	public void aPartsRowPrintsAllFourLinesAndNamesItsParts()
+	{
+		final MovementRow crystal = body("Crystal body", seeds());
+		final String html = block(crystal, MovementWindow.D1);
+		assertInOrder(html, MovementRowPanel.L_NOW, "16,694,766 gp each",
+			MovementRowPanel.L_WAS, "18,300,000 gp",
+			MovementRowPanel.L_HAVE, "1&nbsp; =&nbsp; 16,694,766 gp",
+			MovementRowPanel.L_CHANGE + "1d", "-1,605,234 each", "-8.7%",
+			"</table>", "Untradeable - valued as its parts: 3 x Crystal armour seed");
+		assertFalse("a parts row is not an alch row", html.contains(MovementRowPanel.ALCH_NOTE));
+		// A guide row with the same figures has the four lines and no note at all.
+		final String guide = block(body("Crystal body", null), MovementWindow.D1);
+		assertFalse(guide, guide.contains("Untradeable"));
+		assertTrue(guide, guide.endsWith("</table></div></html>"));
+	}
+
+	/**
+	 * Y3 in the new block: the carried split is there exactly when it has something to add - never with the
+	 * switch off, and never on a stack the bank holds whole, where "5 in bank" under "You have 5" is one fact
+	 * twice.
+	 */
+	@Test
+	public void theCarriedSplitIsInTheCellOnlyWhileTheInventorySwitchIsOn()
+	{
+		final MovementRow split = carried(3, 1, 1);
+		final String on = MovementRowPanel.detail(split, MovementWindow.D1, THEN_DAY, ViewOptions.DEFAULT, false);
+		assertTrue(on, on.contains("</table>3 in bank, 1 in inventory, 1 worn"));
+
+		final String off = MovementRowPanel.detail(split, MovementWindow.D1, THEN_DAY,
+			ViewOptions.DEFAULT.withCountInventory(false), false);
+		assertFalse(off, off.contains("in bank"));
+		assertFalse(off, off.contains("worn"));
+		assertTrue("...and the four lines are untouched by the switch", off.endsWith("</table></div></html>"));
+
+		assertFalse("a stack the bank holds whole says nothing",
+			MovementRowPanel.detail(carried(5, 0, 0), MovementWindow.D1, THEN_DAY, ViewOptions.DEFAULT, false)
+				.contains("in bank"));
+	}
+
+	/**
+	 * What survives of AK's dropped live line, and what does not.
+	 *
+	 * <p>The VOLUME survives as a note, because that is what says whether a live price can be trusted. The
+	 * buy/sell SPREAD is gone: it was the densest thing the old block carried and it serves a flipper, who has
+	 * the Grand Exchange open anyway. Its absence is asserted out loud - "buy " and "sell " appear NOWHERE -
+	 * because a deliberate removal is exactly the kind of thing a future hand puts back while restoring
+	 * something else, and nothing else in this file would notice.
+	 *
+	 * <p>The refusal line is the other live note and is pinned here with it: a reader who switched live prices
+	 * on wants to know which of their rows are actually live, and the two notes are the only answer.
+	 */
+	@Test
+	public void theTradedNoteSurvivesAndTheBuySellSpreadAppearsNowhere()
+	{
+		final MovementRow live = liveBow(MovementRow.PriceSource.LIVE);
+		final String html = block(live, MovementWindow.D1);
+		assertTrue(html, html.contains("Live price, 517 traded yesterday"));
+		assertFalse("the spread is gone (AK), on purpose: " + html, html.contains("buy "));
+		assertFalse("the spread is gone (AK), on purpose: " + html, html.contains("sell "));
+		assertFalse(html, html.contains("63.6m"));
+		assertFalse(html, html.contains("63.3m"));
+		assertFalse("and the old prose line went with it", html.contains(MovementRowPanel.LIVE_PRICE_PREFIX));
+
+		// A guide row has no traded note, and neither has the same live row with the switch off.
+		assertFalse(block(guideBow(), MovementWindow.D1).contains("traded yesterday"));
+		assertFalse(MovementRowPanel.detail(live, MovementWindow.D1, TRADED_DAY, LIVE_OFF, false)
+			.contains("traded yesterday"));
+
+		// ...nor a live row the feed recorded no volume for: the note exists to carry a figure.
+		final MovementRow unmeasured = guideBow().asLive(null, null,
+			new MovementRow.LiveFacts(63_600_000L, 63_300_000L, 0L, null));
+		assertFalse(block(unmeasured, MovementWindow.D1).contains("Live price,"));
+
+		// The other live note: which check kept a row on the guide series, and only while the switch is on.
+		final MovementRow thin = whip().withLiveRefusal(
+			new MovementRow.LiveFacts(1_540_000L, 1_200_000L, 12L, "12 traded yesterday"));
+		assertTrue(block(thin, MovementWindow.D1)
+			.contains("</table>Guide price - live not used: 12 traded yesterday"));
+		assertFalse(MovementRowPanel.detail(thin, MovementWindow.D1, THEN_DAY, LIVE_OFF, false)
+			.contains("live not used"));
+	}
+
+	/**
+	 * The name is repeated above the table ONLY when the row's FACE had to cut it, which is the one case a
+	 * reader cannot read it from the cell they are looking at. Repeating it on every row would waste the top
+	 * line of every open cell on a word already an inch above it.
+	 *
+	 * <p>Both legs are driven twice: through the pure builder's {@code showName} argument, and through a built
+	 * row, which derives the argument from its own fitted label.
+	 */
+	@Test
+	public void theNameIsBoldedAboveTheTableOnlyWhenTheFaceHadToCutIt() throws Exception
+	{
+		assertInOrder(MovementRowPanel.detail(whip(), MovementWindow.D1, THEN_DAY, ViewOptions.DEFAULT, true),
+			"<b>Abyssal whip</b>", "<table");
+		assertFalse("a name the face shows whole is not repeated",
+			block(whip(), MovementWindow.D1).contains("<b>"));
+
+		onEdt(() ->
+		{
+			final String monster = "A very long item name that goes on and on and on for ever";
+			final MovementRowPanel cut = new MovementRowPanel(row(monster, 1_000L, 900L, 100L, 11.1), null,
+				MovementWindow.D1, THEN_DAY);
+			assertNotEquals("the fixture has to be cut, or this test has one leg", monster, cut.nameText());
+			assertTrue(detail(cut).getText(), detail(cut).getText().contains("<b>" + monster + "</b>"));
+
+			final MovementRowPanel whole = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY);
+			assertEquals("...and this one must not be", "Abyssal whip", whole.nameText());
+			assertFalse(detail(whole).getText(), detail(whole).getText().contains("<b>"));
+		});
+	}
+
+	/**
+	 * Everything that comes from the GAME is escaped - the item name and the part names - and everything built
+	 * here is not: the block is HTML, so a name carrying an angle bracket would otherwise open a tag inside it,
+	 * and a figure run through the escaper twice would print "&amp;nbsp;" where a space belongs.
+	 */
+	@Test
+	public void theNameIsEscapedAndTheFiguresAreNotDoubleEscaped()
+	{
+		final MovementRow odd = row("Zulrah's <scales> & co", 100L, 90L, 10L, 11.1);
+		final String html = MovementRowPanel.detail(odd, MovementWindow.D1, THEN_DAY, ViewOptions.DEFAULT, true);
+		assertTrue(html, html.contains("<b>Zulrah&#39;s &lt;scales&gt; &amp; co</b>"));
+		assertFalse("the raw name would open a tag inside the block", html.contains("<scales>"));
+
+		assertTrue("the markup this class writes is markup", html.contains("&nbsp;"));
+		assertFalse("...and is not escaped a second time", html.contains("&amp;nbsp;"));
+		assertTrue(html, html.contains("<font color='#"));
+		assertFalse(html, html.contains("&lt;font"));
+		assertFalse(html, html.contains("&lt;table"));
+		assertFalse("the labels carry no entities of their own", html.contains("&amp;lt;"));
+
+		// A part name comes from the game too, and is escaped where the note appends it.
+		final String parts = MovementRowPanel.detail(
+			body("Crystal body", Collections.singletonList(new BankItem.Part(23956, 3L, "Zulrah's <seed>"))),
+			MovementWindow.D1, THEN_DAY, ViewOptions.DEFAULT, false);
+		assertTrue(parts, parts.contains("3 x Zulrah&#39;s &lt;seed&gt;"));
+		assertFalse(parts, parts.contains("<seed>"));
+	}
+
+	/**
+	 * The spacing rule under the table, which has no other guard and was a real visual bug: {@code </table>} has
+	 * already ended the line, so a {@code <br>} on top of it opened a blank line the width of the cell between
+	 * the figures and their note. The FIRST note therefore takes no break and every note after it does - and a
+	 * block with no notes at all ends on the table.
+	 */
+	@Test
+	public void theFirstNoteFollowsTheTableAndASecondTakesABreak()
+	{
+		final String one = block(alch("Graceful hood", 1, 20_000L), MovementWindow.D1);
+		assertTrue(one, one.contains("</table>" + MovementRowPanel.ALCH_NOTE));
+		assertFalse("the first note takes no break of its own", one.contains("</table><br>"));
+		assertTrue(one, one.endsWith(MovementRowPanel.ALCH_NOTE + "</div></html>"));
+
+		// Two notes: the second takes one, or it runs on to the end of the first.
+		final MovementRow worn = new MovementRow(7, "Graceful hood", 1, false, 20_000L, null, null, null,
+			20_000L, MovementRow.PriceSource.ALCH, null, null, null, null, 0, 0, 1);
+		final String two = block(worn, MovementWindow.D1);
+		assertTrue(two, two.contains("</table>" + MovementRowPanel.ALCH_NOTE + "<br>1 worn"));
+		assertTrue(two, two.endsWith("1 worn</div></html>"));
+
+		// Three, on the tallest block this plugin writes: one break fewer than there are notes, always.
+		final String three = block(longDescription(), MovementWindow.D1);
+		assertFalse(three, three.contains("</table><br>"));
+		assertEquals("one <br> per note after the first", 2, countOf(three, "<br>"));
+
+		// And none at all ends the block on the table.
+		assertTrue(block(whip(), MovementWindow.D1), block(whip(), MovementWindow.D1)
+			.endsWith("</table></div></html>"));
+	}
+
+	// ---- addendum AL: the gp figure on the face goes quiet
+
+	/**
+	 * AL, at row level: the gp figure takes {@link MovementRowPanel#quietChangeColor} and the percentage beside
+	 * it keeps {@link MovementRowPanel#textChangeColor}, so the two stop competing for the same glance. The
+	 * user, looking at a full list: "can you brainstorm some ideas for making the change in gp (+3,432) and the
+	 * percent change (+23.5%) ... be more isolated from each other?" - four variants were rendered at the real
+	 * width and they picked the dimmed one.
+	 *
+	 * <p>On a FLAT row and a row with no baseline the two are the same colour: there is nothing there to
+	 * out-shout, and pushing a dash toward the background only makes it hard to read. Those legs are asked of
+	 * the pure helpers, because such a row prints no gp label at all to read a colour off.
+	 */
+	@Test
+	public void theGpFigureTakesTheQuietColourAndThePercentageTheFullOne() throws Exception
+	{
+		onEdt(() ->
+		{
+			final MovementRow rise = whip();
+			final MovementRowPanel up = new MovementRowPanel(rise, null, MovementWindow.D1, THEN_DAY);
+			assertEquals("the gp figure", MovementRowPanel.quietChangeColor(rise), gpLabel(up).getForeground());
+			assertEquals("the percentage", MovementRowPanel.textChangeColor(rise), up.changeColor());
+			assertNotEquals("...and on a riser the two differ, which is the whole of AL",
+				MovementRowPanel.textChangeColor(rise), MovementRowPanel.quietChangeColor(rise));
+
+			final MovementRow fall = row("Rune scimitar", 15_000L, 19_100L, -4_100L, -21.47);
+			final MovementRowPanel down = new MovementRowPanel(fall, null, MovementWindow.D1, THEN_DAY);
+			assertEquals(MovementRowPanel.quietChangeColor(fall), gpLabel(down).getForeground());
+			assertEquals("the lifted red is still the percentage's (B045)", Widgets.MOVE_DOWN_TEXT,
+				down.changeColor());
+			assertNotEquals(MovementRowPanel.textChangeColor(fall), MovementRowPanel.quietChangeColor(fall));
+			assertEquals("the rail is untouched by AL", ColorScheme.PROGRESS_ERROR_COLOR.darker(),
+				down.railColor());
+
+			final MovementRow flat = row("Coal", 150L, 150L, 0L, 0.0);
+			assertEquals("a flat move is not dimmed: there is nothing to out-shout",
+				MovementRowPanel.textChangeColor(flat), MovementRowPanel.quietChangeColor(flat));
+			assertEquals(ColorScheme.LIGHT_GRAY_COLOR, MovementRowPanel.quietChangeColor(flat));
+			final MovementRow noBaseline = row("Coal", 150L, null, null, null);
+			assertEquals("...and neither is a row with nothing to compare",
+				MovementRowPanel.textChangeColor(noBaseline), MovementRowPanel.quietChangeColor(noBaseline));
+		});
+	}
+
+	/**
+	 * What "quiet" means, computed and never copied: the gp figure's colour is strictly CLOSER to the card the
+	 * row is painted on than the percentage's is, in both directions. A hex literal here would pass whatever the
+	 * mix produced, which is the one thing this assertion must not do.
+	 *
+	 * <p>Two guards on the other side of it: the quiet colour is not the background itself (a figure that
+	 * vanished would stop saying which way the price went at all), and it is not the full colour either.
+	 */
+	@Test
+	public void theQuietColourIsStrictlyCloserToTheCardThanTheFullOne()
+	{
+		for (MovementRow r : new MovementRow[]{whip(), row("Rune scimitar", 15_000L, 19_100L, -4_100L, -21.47)})
+		{
+			final Color full = MovementRowPanel.textChangeColor(r);
+			final Color quiet = MovementRowPanel.quietChangeColor(r);
+			final double toQuiet = distance(quiet, ColorScheme.DARKER_GRAY_COLOR);
+			final double toFull = distance(full, ColorScheme.DARKER_GRAY_COLOR);
+			assertTrue(r.name() + ": quiet " + quiet + " is " + toQuiet + " from the card while full " + full
+				+ " is " + toFull, toQuiet < toFull);
+			assertNotEquals(r.name() + ": a quiet figure is still a figure", ColorScheme.DARKER_GRAY_COLOR, quiet);
+			assertTrue(r.name() + ": ...and has not reached the card", toQuiet > 0.0);
+			assertNotEquals(r.name() + ": nor is it simply the full colour", full, quiet);
+		}
+	}
+
 	// ---- helpers
+
+	/** The open cell's block for one row, under the default switches and the fixed baseline day. */
+	private static String block(MovementRow row, MovementWindow window)
+	{
+		return MovementRowPanel.detail(row, window, THEN_DAY, ViewOptions.DEFAULT, false);
+	}
+
+	/**
+	 * That {@code parts} appear in {@code html} in this order, each after the last. A column is an ORDER, and
+	 * four {@code contains} calls would pass on a block that printed its lines backwards.
+	 */
+	private static void assertInOrder(String html, String... parts)
+	{
+		int at = -1;
+		for (String part : parts)
+		{
+			final int found = html.indexOf(part, at + 1);
+			assertTrue("\"" + part + "\" is missing or out of order in " + html, found > at);
+			at = found;
+		}
+	}
+
+	/** How many times {@code needle} occurs in {@code text}, without overlaps. */
+	private static int countOf(String text, String needle)
+	{
+		int count = 0;
+		for (int at = text.indexOf(needle); at >= 0; at = text.indexOf(needle, at + needle.length()))
+		{
+			count++;
+		}
+		return count;
+	}
+
+	/**
+	 * The gp figure's label, found by the text it prints - line 2 carries no other label with that text. It is
+	 * only in the row at all when there is a figure to print, so the empty case is refused rather than matching
+	 * the first label whose text happens to be "".
+	 */
+	private static JLabel gpLabel(MovementRowPanel p)
+	{
+		assertFalse("this row prints no gp figure", p.gpText().isEmpty());
+		final JLabel found = label(p, p.gpText());
+		assertNotNull("the gp figure is not on the row", found);
+		return found;
+	}
+
+	/** Straight-line distance between two colours in RGB, for AL's "closer to the card" rule. */
+	private static double distance(Color a, Color b)
+	{
+		final int dr = a.getRed() - b.getRed();
+		final int dg = a.getGreen() - b.getGreen();
+		final int db = a.getBlue() - b.getBlue();
+		return Math.sqrt((double) dr * dr + (double) dg * dg + (double) db * db);
+	}
 
 	/**
 	 * An Abyssal whip the player holds in {@code bank} + {@code inventory} + {@code worn} places at once, as the
@@ -1287,6 +2894,27 @@ public class MovementRowPanelTest
 		return Collections.singletonList(new BankItem.Part(23956, 3L, "Crystal armour seed"));
 	}
 
+	/**
+	 * The tallest description this plugin can write: every optional line at once. The name, a live traded price
+	 * with both sides and the volume (T6), a parts line (R4), a window line stamped with the traded day and its
+	 * "(traded average)" note (U3), the holding, a three-way carried split (Y3) and the change - seven lines,
+	 * against the three an alch row has, and every one of them long enough to wrap again inside the cell.
+	 *
+	 * <p>Synthetic, and deliberately so: no real item is both untradeable-with-parts and liquid enough to be
+	 * priced live. It is a HEIGHT fixture, and what it has to be is the row whose description wraps to the most
+	 * lines - which is the only thing the test that uses it asserts about it.
+	 */
+	private static MovementRow longDescription()
+	{
+		final Map<MovementWindow, MovementRow.PriceSource> sources = new EnumMap<>(MovementWindow.class);
+		sources.put(MovementWindow.D1, MovementRow.PriceSource.LIVE);
+		final Map<MovementWindow, LocalDate> days = new EnumMap<>(MovementWindow.class);
+		days.put(MovementWindow.D1, TRADED_DAY);
+		return new MovementRow(23975, "Crystal body", 5, false, 16_694_766L, 18_300_000L, -1_605_234L,
+			-1_605_234d * 100.0 / 18_300_000d, 83_473_830L, MovementRow.PriceSource.LIVE, seeds(), sources, days,
+			new MovementRow.LiveFacts(16_800_000L, 16_600_000L, 517L, null), 3, 1, 1);
+	}
+
 	/** An untradeable stack as the service lists one (Q5): the alch price, no baseline, no move. */
 	private static MovementRow alch(String name, int quantity, long haPrice)
 	{
@@ -1310,10 +2938,46 @@ public class MovementRowPanelTest
 			width <= MovementRowPanel.TEXT_WIDTH);
 	}
 
-	/** The text block: the row's only {@link JPanel} child, the picture being a label. */
+	/**
+	 * The face: the cell every build before AI called the row - 48 px then, 62 since Q4 - now the NORTH child of
+	 * the card. Found by
+	 * its place in the layout rather than by "the first panel", because the row has a second child since AI.
+	 */
+	private static JPanel face(MovementRowPanel p)
+	{
+		final Component north = ((BorderLayout) p.getLayout()).getLayoutComponent(BorderLayout.NORTH);
+		if (!(north instanceof JPanel))
+		{
+			fail("the row has no face");
+		}
+		return (JPanel) north;
+	}
+
+	/**
+	 * The detail block: the CENTER child of the card, hidden until the row is clicked (AI). Asked of the layout
+	 * and not of the visible children, because a test has to be able to read it while it is invisible - that is
+	 * where the row's open height comes from.
+	 */
+	private static JLabel detail(MovementRowPanel p)
+	{
+		final Component centre = ((BorderLayout) p.getLayout()).getLayoutComponent(BorderLayout.CENTER);
+		if (!(centre instanceof JLabel))
+		{
+			fail("the row has no detail block");
+		}
+		return (JLabel) centre;
+	}
+
+	/** What the row is {@link MovementRowPanel#ROW_HEIGHT} taller by while it is open: the detail's own ask. */
+	private static int detailHeight(MovementRowPanel p)
+	{
+		return detail(p).getPreferredSize().height;
+	}
+
+	/** The text block: the face's only {@link JPanel} child, the picture beside it being a label. */
 	private static JPanel textBlock(MovementRowPanel p)
 	{
-		for (Component c : p.getComponents())
+		for (Component c : face(p).getComponents())
 		{
 			if (c instanceof JPanel)
 			{
@@ -1334,6 +2998,97 @@ public class MovementRowPanelTest
 	{
 		final JPanel text = textBlock(p);
 		return (JComponent) ((BorderLayout) text.getLayout()).getLayoutComponent(BorderLayout.CENTER);
+	}
+
+	/** Line 3, the ITEM line Q4 added: the text block's SOUTH child, under line 2. */
+	private static JComponent line3(MovementRowPanel p)
+	{
+		final JPanel text = textBlock(p);
+		return (JComponent) ((BorderLayout) text.getLayout()).getLayoutComponent(BorderLayout.SOUTH);
+	}
+
+	/** Line 2's right-hand group: the gp column and the percentage column, sized first by the fit order. */
+	private static JComponent figures(MovementRowPanel p)
+	{
+		return (JComponent) ((BorderLayout) line2(p).getLayout()).getLayoutComponent(BorderLayout.EAST);
+	}
+
+	/**
+	 * The stack value on the left of line 2. Found by its PLACE in the layout and not by its text, because that
+	 * text is a figure the fixture chose and two labels on a row can print the same one.
+	 *
+	 * <p>It is line 2's WEST child DIRECTLY since addendum AO: the label and the word "Total" used to share a
+	 * wrapper panel there, and with the word deleted a one-child wrapper was deleted with it.
+	 */
+	private static JLabel priceLabel(MovementRowPanel p)
+	{
+		return (JLabel) ((BorderLayout) line2(p).getLayout()).getLayoutComponent(BorderLayout.WEST);
+	}
+
+	/** The working on the left of line 3 ("12 x 1.52m"). */
+	private static JLabel workingLabel(MovementRowPanel p)
+	{
+		return (JLabel) ((BorderLayout) line3(p).getLayout()).getLayoutComponent(BorderLayout.WEST);
+	}
+
+	/**
+	 * ONE item's gp figure, in line 3's half of the shared gp column. By place and never by text: it is empty on
+	 * a stack of one (Q4.7) and on a row with no movement, and it prints the same string as the figure above it
+	 * whenever the stack is one item.
+	 */
+	private static JLabel itemGpLabel(MovementRowPanel p)
+	{
+		return (JLabel) ((BorderLayout) line3Figures(p).getLayout()).getLayoutComponent(BorderLayout.WEST);
+	}
+
+	/** Line 3's empty stand-in for the percentage column, which is what keeps the gp column above it true. */
+	private static JComponent pctSpacer(MovementRowPanel p)
+	{
+		return (JComponent) ((BorderLayout) line3Figures(p).getLayout()).getLayoutComponent(BorderLayout.EAST);
+	}
+
+	private static JComponent line3Figures(MovementRowPanel p)
+	{
+		return (JComponent) ((BorderLayout) line3(p).getLayout()).getLayoutComponent(BorderLayout.EAST);
+	}
+
+	/**
+	 * Lays a row out for real, off-screen and top down. {@link Container#validate()} does nothing without a peer
+	 * and there is no display here, so each container is handed its preferred size and told to lay itself out -
+	 * the same {@code layoutContainer} calls {@code validate} would make, without the peer.
+	 */
+	private static void layOut(MovementRowPanel p)
+	{
+		p.setSize(p.getPreferredSize());
+		layOut((Container) p);
+	}
+
+	private static void layOut(Container c)
+	{
+		c.doLayout();
+		for (Component child : c.getComponents())
+		{
+			if (child instanceof Container)
+			{
+				layOut((Container) child);
+			}
+		}
+	}
+
+	/** Where {@code c}'s left edge stands in the ROW's own coordinates, after {@link #layOut(MovementRowPanel)}. */
+	private static int leftEdge(Component c, MovementRowPanel row)
+	{
+		return SwingUtilities.convertPoint(c, 0, 0, row).x;
+	}
+
+	/**
+	 * What line 2's gp column prints for a move of {@code deltaGp}, read off a built row. The stack is ONE item,
+	 * so the stack's move and the item's are the same figure and this is the compacting on its own.
+	 */
+	private static String faceGp(long deltaGp)
+	{
+		return new MovementRowPanel(stack("Coins", 1, 2_000_000_000L, deltaGp, 0.1), null, MovementWindow.D1,
+			THEN_DAY).gpText();
 	}
 
 	private static JLabel label(Container c, String text)
@@ -1378,6 +3133,52 @@ public class MovementRowPanelTest
 			l.mouseEntered(new MouseEvent(target, MouseEvent.MOUSE_ENTERED, 0L, 0, 1, 1, 0, false));
 		}
 		assertTrue(row.hovered());
+	}
+
+	/**
+	 * A left click on one of the row's own mouse targets, driven the way {@link #enter} drives a hover: the
+	 * listeners the row installed on that component are handed a real {@link MouseEvent}. Synthesising the event
+	 * rather than calling {@code toggleExpanded} directly is what keeps the WIRING under test - that the listener
+	 * is on the component at all, and that both of the handler's guards (the left button, and never a popup
+	 * trigger) are the ones deciding.
+	 */
+	private static void leftClick(Component target)
+	{
+		click(target, MouseEvent.BUTTON1, false);
+	}
+
+	/** {@link #leftClick} with the button and the popup-trigger flag spelled out, for the right-click rule. */
+	private static void click(Component target, int button, boolean popupTrigger)
+	{
+		final MouseEvent e = new MouseEvent(target, MouseEvent.MOUSE_CLICKED, 0L, 0, 3, 3, 1, popupTrigger,
+			button);
+		for (MouseListener l : target.getMouseListeners())
+		{
+			l.mouseClicked(e);
+		}
+	}
+
+	/**
+	 * A {@link MovementRowPanel.Expansion} of the test's own, standing in for the one the panel holds: it
+	 * records what a click wrote, and counts the writes so a test can prove that BUILDING a row only reads.
+	 */
+	private static final class RecordingExpansion implements MovementRowPanel.Expansion
+	{
+		private final Map<Integer, Boolean> state = new HashMap<>();
+		private int writes;
+
+		@Override
+		public boolean isExpanded(int itemId)
+		{
+			return Boolean.TRUE.equals(state.get(itemId));
+		}
+
+		@Override
+		public void setExpanded(int itemId, boolean expanded)
+		{
+			state.put(itemId, expanded);
+			writes++;
+		}
 	}
 
 	private static void exit(Component target, MovementRowPanel row)

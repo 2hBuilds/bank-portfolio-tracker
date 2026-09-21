@@ -143,7 +143,7 @@ public final class MovementMath
 	 * never happened.
 	 *
 	 * <p>The holding is the alch value times the quantity, as for any other row, which is what puts the stack in
-	 * the bank value and what the row prints in holding mode (Q6).
+	 * the bank value and what the row's headline line prints (addendum AN).
 	 *
 	 * @param item the bank stack; never null. A stack that is not untradeable, or whose alch value is 0, has no
 	 *             price here at all and renders as the dash - the caller decides whether such a row is worth
@@ -184,8 +184,9 @@ public final class MovementMath
 	}
 
 	/**
-	 * What a stack's price CHANGED by: the unit change times the quantity (addendum Q, line Q6) - the figure a
-	 * row prints in holding mode and the key the {@link SortMode#GP_MOVE} column sorts on then.
+	 * What a stack's price CHANGED by: the unit change times the quantity - the gp figure the row's headline
+	 * line prints (addendum AN) and the key the {@link SortMode#GP_MOVE} column sorts on, since addendum AO
+	 * line AO1 under every switch rather than only while {@code holdingOnRows} was on (Q6).
 	 *
 	 * <p>Not {@link #holdingValue}: a change is signed, so the overflow clamp has to pick an END rather than
 	 * always {@link Long#MAX_VALUE}. A fall clamped upwards would sort a collapse to the top of the gainers.
@@ -221,28 +222,16 @@ public final class MovementMath
 	 * cannot say anything about an item that has no price, and the count line would otherwise claim items the
 	 * filter never considered.
 	 *
+	 * <p>The band judges the price of ONE item whatever a row prints - it is "gp min / max" on the unit price
+	 * (design D4), and a band that silently meant something else would be a different feature. Nothing but the
+	 * {@link RowFilter} reaches this any more: the overload the view switches used to arrive by existed for the
+	 * single key {@code holdingOnRows}, and went with it (addendum AO, line AO1).
+	 *
 	 * @param rows   every bank row; null reads as empty
 	 * @param filter the band, sort, direction and window; null reads as {@link RowFilter#DEFAULT}
 	 * @return a new unmodifiable list
 	 */
 	public static List<MovementRow> apply(final List<MovementRow> rows, final RowFilter filter)
-	{
-		return apply(rows, filter, ViewOptions.DEFAULT);
-	}
-
-	/**
-	 * The same, with the view switches the list is being drawn under (addendum Q). Only ONE column reads them:
-	 * with {@code holdingOnRows} on, {@link SortMode#GP_MOVE} sorts on the STACK's change rather than one item's
-	 * (Q6), because that is the figure those rows are then printing. Nothing else moves - since addendum W the
-	 * stack's WORTH has a column of its own ({@link SortMode#STACK_VALUE}), so {@link SortMode#UNIT_PRICE} means
-	 * the price of one item under every switch (W1 reverted addendum V's line V1). The band still judges the unit
-	 * price whatever the rows print - it is "gp min / max" on the price of ONE item (design D4), and a band that
-	 * silently meant something else when a display switch moved would be a different feature.
-	 *
-	 * @param options the view switches; null reads as {@link ViewOptions#DEFAULT}, which is today's behaviour
-	 */
-	public static List<MovementRow> apply(final List<MovementRow> rows, final RowFilter filter,
-		final ViewOptions options)
 	{
 		final RowFilter used = filter == null ? RowFilter.DEFAULT : filter;
 		final List<MovementRow> kept = new ArrayList<>();
@@ -263,7 +252,7 @@ public final class MovementMath
 			}
 		}
 
-		kept.sort(comparator(used.sort(), used.descending(), options));
+		kept.sort(comparator(used.sort(), used.descending()));
 		return Collections.unmodifiableList(kept);
 	}
 
@@ -275,38 +264,26 @@ public final class MovementMath
 	 * with dashes), and equal keys fall back to name then id so the list never shuffles between two
 	 * recomputes of the same data.
 	 *
+	 * <p><b>Every key is a property of the row alone.</b> {@code holdingOnRows} used to make
+	 * {@link SortMode#GP_MOVE} compare the whole STACK's change (Q6) and, for one addendum, {@link
+	 * SortMode#UNIT_PRICE} the whole stack's WORTH (V1) - the question V was answering, that a hundred Robin
+	 * hood hats are a large holding though one hat is not a dear item, having since been given a column of its
+	 * own in {@link SortMode#STACK_VALUE} (W1, which reverted V1). Addendum AO then deleted the key outright:
+	 * the gp column compares the stack's change always (AO1), the price column one item's price always, and the
+	 * percentage column is the same number however many are held. So no view switch reaches the ordering, and
+	 * this takes no {@link ViewOptions}.
+	 *
 	 * @param sort       which key to compare; null reads as {@link SortMode#PERCENT_MOVE}
 	 * @param descending true for biggest first
 	 */
 	public static Comparator<MovementRow> comparator(final SortMode sort, final boolean descending)
 	{
-		return comparator(sort, descending, ViewOptions.DEFAULT);
-	}
-
-	/**
-	 * The same, under the view switches (addendum Q line Q6): with {@code holdingOnRows} on,
-	 * {@link SortMode#GP_MOVE} compares {@link MovementRow#holdingDeltaGp()} - the change over the whole stack -
-	 * because that is the figure those rows are then printing. That is the ONLY thing the switch moves.
-	 *
-	 * <p>Addendum V had {@link SortMode#UNIT_PRICE} follow the switch too (line V1), so that the dearest-first
-	 * list meant the stack while it was on; addendum W reverted it, because the question V was answering - a hundred
-	 * Robin hood hats ARE a large holding though one hat is not a dear item (the user, 2026-09-12) - now has a
-	 * column of its own in {@link SortMode#STACK_VALUE} and does not need to borrow another one's meaning. So
-	 * the price column is the price of ONE item whatever the switch says, and the percentage column is unmoved
-	 * either way: a percentage is the same number whether one item or a thousand is held.
-	 *
-	 * @param options the view switches; null reads as {@link ViewOptions#DEFAULT}
-	 */
-	public static Comparator<MovementRow> comparator(final SortMode sort, final boolean descending,
-		final ViewOptions options)
-	{
 		final SortMode used = sort == null ? SortMode.PERCENT_MOVE : sort;
-		final boolean holding = (options == null ? ViewOptions.DEFAULT : options).holdingOnRows();
 
 		return (a, b) ->
 		{
-			final Double keyA = key(a, used, holding);
-			final Double keyB = key(b, used, holding);
+			final Double keyA = key(a, used);
+			final Double keyB = key(b, used);
 
 			if (keyA == null || keyB == null)
 			{
@@ -351,21 +328,21 @@ public final class MovementMath
 	 * 0 sorts as the cheapest thing in the bank rather than as a dash. The same gate the price column has always
 	 * used therefore serves both, and a priceless row is last under either whichever way the arrow points.
 	 *
-	 * @param holding only the gp key reads it: the whole stack's change rather than one item's (Q6). Its NULL
-	 *                test does not move - {@link MovementRow#deltaGp()} still decides it, because a row with no
-	 *                move has no gp key under either reading and {@link MovementRow#holdingDeltaGp()} would
-	 *                answer a plain 0 for it
+	 * <p>{@link SortMode#GP_MOVE} is gated the same way, on {@link MovementRow#deltaGp()}, though what it
+	 * compares is {@link MovementRow#holdingDeltaGp()} (AO1): a row with no move has no gp key under either
+	 * reading, and the stack's change answers a plain 0 for it, which would sort it among the unmoved instead
+	 * of behind them.
+	 *
 	 * @return null when this row has no such key - the "always last" case
 	 */
-	private static Double key(final MovementRow row, final SortMode sort, final boolean holding)
+	private static Double key(final MovementRow row, final SortMode sort)
 	{
 		switch (sort)
 		{
 			case PERCENT_MOVE:
 				return row.deltaPct();
 			case GP_MOVE:
-				return row.deltaGp() == null ? null
-					: (double) (holding ? row.holdingDeltaGp() : row.deltaGp());
+				return row.deltaGp() == null ? null : (double) row.holdingDeltaGp();
 			case UNIT_PRICE:
 				return row.unitPrice() == null ? null : (double) row.unitPrice();
 			case STACK_VALUE:

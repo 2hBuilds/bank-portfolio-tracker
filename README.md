@@ -1,4 +1,4 @@
-# Bank Portfolio Tracker
+# 2h Bank Portfolio Tracker
 
 Your whole bank, priced, with what each item's Grand Exchange price has done over the last day, week, month,
 quarter or half year - live traded prices for the items the market is actually trading, the daily guide price
@@ -8,72 +8,136 @@ for the rest, and your inventory and worn gear counted in.
 
 **The Bank value card**, at the top, is your whole bank as one figure:
 
-- the **total** - every stack that has a guide price, `unit price x quantity`, summed, **plus your coins and
-  platinum tokens** (1,000 gp each), so it matches the figure RuneLite's own Bank plugin puts in the bank
-  window's title bar whenever every stack has a guide price (an untradeable or unpriced stack is counted by
-  neither);
+- the **total** - every stack that has a price, `unit price x quantity`, summed, **plus your coins and
+  platinum tokens** (1,000 gp each), and by default what you are carrying and wearing too (see below). With
+  *Include inventory and worn gear* and *Use live prices* both off, it matches the figure RuneLite's own Bank
+  plugin puts in the bank window's title bar whenever every stack has a guide price (an untradeable or unpriced
+  stack is counted by neither);
 - the **gp move** and the **percentage** for the window you have lit, computed over the stacks that had a price
   on *both* days, so the two ends of the comparison are the same basket;
 - the **window chips** `1d | 7d | 30d | 90d | 180d` - click one and the whole panel follows it;
 - a **provenance footnote** ("1d vs 08 Sep - bank 09:00") saying which day the figures are measured against and
-  when the bank was last read - hover the card for the whole sentence;
+  when the bank was last read;
+- **hover the card** - once you have turned on *Show hover text*, see below - and you get one thing: the total
+  written out to the last gp, commas and all - *"446,901,681 gp"* - which is the one figure the rounding on the
+  card takes away. Everything else is already on the card or one chip away, so the hover does not repeat it;
 - a last line reading **"Item prices update every 24hrs"**, because Jagex publishes the guide price once a day
-  and that is how often any of these figures can move - hover it for why, and for when the plugin last checked;
+  and that is how often any of these figures can move - with *Show hover text* on, hover it for why, and for
+  when the plugin last checked;
 - a **Refresh** link, with a 30 second cooldown (a refusal, or any other problem, prints in a line under the
   controls rather than interrupting anything). It answers a tap in two words: *Refreshing...*, then **Up to
   date**, which fades back to *Refresh* on its own a minute later. Guide prices only move once a day, so a
-  refresh usually brings the same figures back - hovering the line above tells you when the prices on screen
-  were last read, so you can tell "nothing changed" from "nothing happened";
+  refresh usually brings the same figures back - with *Show hover text* on, hovering the line above tells you
+  when the prices on screen were last read, so you can tell "nothing changed" from "nothing happened";
 - a small **gear**, just under the Refresh link, which opens the panel's **Options** menu: *Refresh prices
-  now*, the three switches for the card's own figures, the five that decide what the panel counts and
-  prints (see *Settings* - they are the same switches as RuneLite's settings page, so either place works), and
-  at its foot the three **Preset price ranges** boxes with *Reset to default* under them. An **OK** button at
-  the bottom right closes the menu - it takes the boxes with it on the way out, which closing the menu does
-  anyway, since everything in here saves itself as you set it. Clicking the gear again while the menu is open
-  closes it too: the gear is a switch, not just a way in.
+  now*, the three switches for the card's own figures, the four that decide what the panel counts and which
+  stacks get a row (see *Settings* - they are the same switches as RuneLite's settings page, so either place
+  works),
+  then the three **Preset price ranges** boxes, and last in the list **Show hover text**, with a small box
+  beside it - empty when it is off, ticked when it is on. Along the bottom sit two buttons: **Reset to
+  default** on the left, which puts *100k / 1m / 10m* back into the preset boxes, and **OK** on the right,
+  which closes the menu - it takes the boxes with it on the way out, which closing the menu does anyway, since
+  everything in here saves itself as you set it. Clicking the gear again while the menu is open closes it too:
+  the gear is a switch, not just a way in.
 
 The gp band you set does **not** apply here: a portfolio is everything you own, coins included. Each of the
 three figures has its own switch, and a switch you turn off **removes** the line rather than blanking it - the
-card shrinks, and its tooltip stops mentioning the figure too.
+card shrinks. Turn the **total** itself off and its hover goes with it, since there is no longer a number there
+to write out in full.
 
-**One row per GE-tradeable stack**, 48 px tall:
+**One row per GE-tradeable stack.** A row is the item's picture and three lines:
 
-- the item's picture, its name, and its **unit guide price**;
-- `x<qty>` when you hold more than one;
-- the window's move as **gp and percent**, green for a rise, red for a fall, grey for a flat row;
-- a coloured left rail on movers only - a flat row, a row with no baseline and a row with no price carry none;
-- a **tooltip** carrying the figures the row has no room for: the exact guide price, the baseline and its day,
-  your **holding value** (`qty = exact gp`) and the exact **change**. Those two live nowhere else - unless you
-  turn on *Show stack value on rows* in the Options menu, which puts them on the row itself: the price figure
-  becomes what the whole stack is worth and the gp figure becomes what that stack made or lost. The percentage
-  is the same either way, and *gp change* is the one column that follows the switch - it then orders by what
-  the whole stack made or lost, so the list agrees with what it prints. To order by what a stack is *worth*,
-  pick *Stack price*: that column reads the whole stack whatever this switch is set to.
+```
+Divine ranging poti...(3)
+32.3k            +3.0k    +10.2%
+7 x 4,618        +428
+```
+
+- **The name**, on its own line.
+- **What the whole stack is worth**, and what it did. `32.3k` is the value of everything you hold of that item -
+  the big figure on the row. Beside it: what that stack **made or lost** over the window you have lit, and the
+  **percentage**. Green for a rise, red for a fall, grey for a flat row.
+- **The working underneath it.** `7 x 4,618` is how many you hold and what one of them costs - multiply them and
+  you get the line above, which is how you can always tell the big figure is the whole stack rather than a price
+  per item. At the end of that line is what **one** item made or lost. (Hold exactly one of something and this
+  figure is left off, because it would be the same number as the one above it.)
+- **a coloured left rail** on movers only - a flat row, a row with no baseline and a row with no price carry none.
+
+The two gp figures sit in a column, the stack's directly over the item's, so you can run your eye down the page
+on either. The percentage is the biggest figure on the row and the gp figures are drawn a shade quieter - the
+same green or red, just turned down - because they say the same thing in two units and a list of two hundred rows
+should not ask you to choose between them on every line. A flat row prints no gp figures at all, just a grey
+`0.0%`.
+
+**The gp figures on the row are rounded** the way every other figure here is: a change of 3,432 gp reads `+3.4k`.
+Click the row for the exact number.
+
+- **click the row and it opens.** The row grows, and the detail appears underneath it, inside the same card, as
+  four labelled lines:
+
+  ```
+  Worth now    4,618 gp each
+  Was          4,190 gp  (19 Sep)
+  You have     7  =  32,326 gp
+  Change 1d    +428 each  +10.2%
+  ```
+
+  **Change** always names the window you are on - *Change 1d*, *Change 7d*, *Change 30d* - so the figure says
+  what it is measuring without you looking back up at the chips. Under those four sit only the lines that have
+  something to add: that the item is untradeable and priced at its parts or its alch value, where the stack is
+  split between your bank, your inventory and what you are wearing, whether the price is live and how many
+  traded yesterday, or which test a live price failed. An untradeable held at its alch value has no *Was* and no
+  *Change* at all - there is no earlier price for it, so the lines are simply not there rather than showing a
+  dash. The item's full name is printed in bold at the top **when the row was too narrow to show it whole**, and
+  left off when you can already read it on the row.
+
+  Click it again and the row folds back to its usual height. It opens as tall as it needs to be and pushes the
+  rows under it down - nothing covers anything, and it stays open while you read it and scroll past it.
+- Open as many rows as you like. Each one remembers, so refreshing, re-sorting, changing the window or setting
+  a price band leaves them open. Nothing in the panel opens a hover over a row - the detail is on the page, one
+  click away, which is also where you read an item's name when it is too long to fit on the row.
 - **right-click** a row for *Open on the Grand Exchange* (the item's page on `secure.runescape.com`) or *Open
   price history on the wiki*.
 
-**The control row** under the card:
+**The control row** under the card, one button at each end:
 
-- a **sort button** naming the column the list is ordered on, with a small **arrow** for the direction: down
-  for biggest first, up for smallest. Click it for the four columns - *Percent change*, *gp change*, *Item
-  price*, *Stack price* - and click the lit one again to flip it; a column you have just picked always starts
-  biggest first. *Item price* is what one of the item costs; *Stack price* is what the whole stack is worth
-  (price x quantity), so a hundred robin hood hats climb above one item that costs more each. *gp change* is
-  the change in the unit price - or in the whole stack's worth while *Show stack value on rows* is on, the
-  one column that switch moves, and a row prints the very figure it is ordered by. Rows with nothing to sort on
-  come last in either direction.
-- a **band button** that states its own band ("All items", "1m+", "100k - 5m") and folds the **price fold** away
+- on the **left**, a **band button** that states its own band ("All items", "1m+", "100k - 5m") and folds the
+  **price fold** away
   or back. The fold is **open when you first install the plugin**: presets *All / 100k+ / 1m+ / 10m+* over a Min
-  and a Max field, sitting under the sort row. They accept `100k`, `1.5m`, `2b`, `1,000`; an empty field means no
+  and a Max field, sitting under the controls. They accept `100k`, `1.5m`, `2b`, `1,000`; an empty field means no
   bound; text the parser refuses turns the field red and changes nothing. The band filters on the **unit** price.
   Click the band button to fold the whole strip away if you want a shorter header - the choice is remembered, and
   *Show preset price ranges* in the settings does the same thing. **The three presets are yours to set**:
   *Preset price ranges*, at the foot of the Options menu (the gear, under the Refresh link), carries a box for
   each, and typing a new amount into one re-cuts that chip - so a big bank can read *1m+ / 10m+ / 100m+*. *Reset
-  to default* under them puts *100k / 1m / 10m* back.
+  to default*, bottom left of that menu, puts *100k / 1m / 10m* back.
+- on the **right**, a **sort button** naming the column the list is ordered on, with a small **arrow** for the
+  direction: down for biggest first, up for smallest. Click it for the four columns - *Percent change*, *gp
+  change*, *Item price*, *Stack price* - and click the lit one again to flip it; a column you have just picked
+  always starts biggest first. *Item price* is what one of the item costs; *Stack price* is what the whole stack
+  is worth (price x quantity), so a hundred robin hood hats climb above one item that costs more each. *gp
+  change* is what the whole **stack** made or lost - the figure on the row's second line - so a big pile of a
+  small mover beats a single item that moved further. Every one of those figures is printed on the row, so
+  whichever you pick, the list agrees with something you can read. Rows with nothing to sort on come last in
+  either direction.
 
 Rows come in pages of 250 with a "Show *n* more" button under them, so an 800-item bank does not freeze the
 sidebar. If a band matches nothing, the panel says so and offers *Clear price range* in one click.
+
+## Hover text
+
+**Hover text is off until you ask for it.** Turn on **Show hover text** - last in the Options menu, under the
+gear, in the row above *OK* - and the panel starts explaining itself when you rest the pointer on something: the
+bank value gives you the exact total to the last gp, and the sort button, the band button, the Refresh link, the
+*"Item prices update every 24hrs"* line and every item in the Options menu say what they do. Leave it off and
+nothing opens anywhere. It is off when you install the plugin, and it remembers whichever way you set it.
+
+**An item row never opens a hover, at either setting.** Its detail is not a tooltip - you **click the row** and it
+opens on the page, under the row's own line, and stays there until you close it. That is also where you read an
+item's name when it is too long to fit on the row. So this switch changes nothing about the rows: click one and it
+opens whether the hover text is on or off.
+
+The rows you leave open are remembered while you use the panel.
 
 ## Where the numbers come from
 
@@ -120,10 +184,9 @@ watched in between - eat a shark with the bank closed and the row sits still unt
 That is deliberate: reading two containers on every inventory change would be work on the game's own thread for
 a number that moves back a second later.
 
-An item you hold in **both** places is **one row** with the quantities added together, and its tooltip names the
-split under the *Holding* line: *"3 in bank, 1 in inventory, 1 worn"* (a worn-only item just says *"1 worn"*).
-The Bank value card counts the lot, and hovering it says so: *"... over 519 of 538 stacks, including inventory
-and worn gear, ..."*.
+An item you hold in **both** places is **one row** with the quantities added together, and clicking the row
+names the split under its figures: *"3 in bank, 1 in inventory, 1 worn"* (a
+worn-only item just says *"1 worn"*). The Bank value card counts the lot.
 
 One consequence worth knowing: **RuneLite's own bank title bar will read lower than this card**, by roughly what
 you are carrying and wearing, because it counts the bank container and nothing else. Turn the switch off and the
@@ -143,7 +206,8 @@ With it on, an item that is *actively traded* is priced from the wiki's live tra
 price you see is the midpoint of what people are paying and asking right now, the 1d figure compares it against
 that item's traded average for the day before, and a Refresh really does move it. Every window works the same
 way - **each one compares against that many calendar days before today**, so 1d is yesterday, 7d is a week ago
-to the day, and the tooltip names the day it used. Everything else in your bank carries on exactly as it did.
+to the day, and clicking the row names the day it used. Everything else in your bank
+carries on exactly as it did.
 
 **"Actively traded" is five tests, and an item has to pass all of them:**
 
@@ -162,10 +226,10 @@ to the day, and the tooltip names the day it used. Everything else in your bank 
   somebody pushing a 1 gp item to 2 gp. This is your own rule about ignoring live changes over 50 %, applied
   to yesterday as well as to the guide.
 
-Anything that fails a test keeps the daily guide price, and its tooltip says which test it failed first -
-*"Guide price - live not used: 12 traded yesterday"*, or *"buy/sell gap 100 % yesterday"*, or *"live price
-181 % from yesterday's average"*. Nothing is hidden and nothing is estimated; every row is one series or the
-other, and the row tells you which.
+Anything that fails a test keeps the daily guide price, and clicking the row says which test
+it failed first - *"Guide price - live not used: 12 traded yesterday"*, or *"buy/sell gap 100 % yesterday"*,
+or *"live price 181 % from yesterday's average"*. Nothing is hidden and nothing is estimated; every row is one
+series or the other, and the row tells you which.
 
 This matters more than it sounds. On a real 500-stack bank, pricing *everything* live moved 87 rows by over
 20 % on the 1d window against 1 row under the guide price - and almost all of those 87 were junk nobody buys,
@@ -192,7 +256,7 @@ follows.
 | Min unit price (gp) | Hide items whose unit price is below this. 0 = no lower bound. |
 | Max unit price (gp) | Hide items whose unit price is above this. 0 = no upper bound. |
 | Preset price ranges | The three quick bands under the band button, in gp shorthand and smallest first - for example 1m, 10m, 100m. |
-| Show preset price ranges | Keep the preset price ranges and the Min / Max fields open under the sort button. Clicking the band button folds them away or back. On by default. |
+| Show preset price ranges | Keep the preset price ranges and the Min / Max fields open under the control row. Clicking the band button folds them away or back. On by default. |
 | Sort column | Which column the list is ordered on: Percent change, gp change, Item price or Stack price - pressing the lit column again in the sidebar flips the direction. |
 | Biggest first | On is biggest first and the sidebar's arrow points down; off is smallest first and it points up. Items with nothing to sort on always come last. |
 | Movement window | How far back the guide-price change is measured: 1d, 7d, 30d, 90d or 180d. |
@@ -202,19 +266,19 @@ follows.
 | Include coins and platinum tokens | Coins and platinum tokens (1,000 gp each) count in the bank value. On by default. |
 | Include untradeable items | List untradeable stacks at their tradeable parts' value, or else their High Alchemy value, and count them in the bank value. |
 | Include inventory and worn gear | Items in your inventory and worn gear count in the bank value and are listed with the bank's stacks. They are read when you open the bank or press Refresh. On by default. |
-| Show stack value on rows | Rows show the stack's value, and the stack's change, instead of the unit price; the *gp change* column follows the rows. |
+| Show hover text | The bank value and the panel's controls explain themselves when you rest the pointer on them. Off by default. Item rows never use hover text either way - click a row to open its detail. |
 | Use live prices | Actively traded items use the wiki's live traded prices for every figure; thin items keep the daily guide price. On by default. |
 
-The last eight are also check items in the panel's own **Options** menu, under the gear beneath the Refresh
-link - the three that decide what the card draws, then *Use live prices* and the four that decide what the card
-counts and what the rows print. *Preset price ranges* is in that menu too, as three boxes at its foot with
-*Reset to default* under them, an *OK* button at the bottom right, and *Refresh prices now* at its top. *Show
-preset price ranges* has no check item of its own: the band button in the sidebar is the switch, and this row
+Eight of them are also switches in the panel's own **Options** menu, under the gear beneath the Refresh link -
+the three that decide what the card draws, then *Use live prices* and the three that decide what the card counts
+and which stacks get a row, and last of all *Show hover text*. *Preset price ranges* is in that menu too, as three
+boxes, with *Refresh prices now* at its top and a *Reset to default* and an *OK* button along the bottom.
+*Show preset price ranges* has no entry of its own: the band button in the sidebar is the switch, and this row
 is where it reads back.
 
 ## Where its files live
 
-Everything is under `~/.runelite/bank-portfolio-tracker/`:
+Everything is under `~/.runelite/plugin-data/bank-portfolio-tracker/`:
 
 | File | What it holds |
 |---|---|
@@ -224,6 +288,9 @@ Everything is under `~/.runelite/bank-portfolio-tracker/`:
 | `baseline-D1.json` … `baseline-D180.json` | one guide table per window |
 | `traded-latest.json` | the newest live traded snapshot (only while *Use live prices* is on) |
 | `traded-D1.json` … `traded-D180.json` | one day's traded averages per window (only while *Use live prices* is on) |
+
+If you ran an earlier build, these files sat in `~/.runelite/bank-portfolio-tracker/`; RuneLite moves that folder
+to the new place for you the first time the plugin runs, and nothing is lost.
 
 Settings live in RuneLite's config group `bankpricemovement`. **Nothing about your bank ever leaves the
 machine**: the only outbound requests are the wiki GETs above - and, while *Use live prices* is on, the wiki's own
@@ -241,20 +308,20 @@ there the moment you open the sidebar.
 
 - The guide price moves at Jagex's pace, roughly once a day, and everything *Use live prices* leaves on it is a
   day-over-day comparison rather than a ticker: refreshing more often than that changes nothing for those rows.
-  Hover the line at the foot of the card and it says which world you are in, with the time the prices on screen
-  were last read. The guide price is the one shown on the Grand Exchange website, so **the plugin agrees with
-  that site only with *Use live prices* off**. RuneLite's own item hover uses the wiki's traded price by default,
+  The line at the foot of the card says why when you hover it - with *Show hover text* on - along with the time
+  the prices on screen were last checked. The guide price is the one shown on the Grand Exchange website, so
+  **the plugin agrees with that site only with *Use live prices* off**. RuneLite's own item hover uses the wiki's traded price by default,
   which differs most on thinly traded items - so a guide row here can sit a long way from that hover on
   something rarely traded, and a live row will usually sit close to it. Jagex moves a guide price by at most
   about 5% a day, so a large move shows over several days.
 - A percentage here can differ from the GE site's by a tenth: the site prints whole percents of the same
   truncated figure.
 - An item with no baseline on the chosen day shows "-" and sorts last under every ordering.
-- Bank value counts every stack that has a guide price, plus your coins and platinum tokens unless you switch
+- Bank value counts every stack that has a price, plus your coins and platinum tokens unless you switch
   them off. Untradeable items are not in it until you ask for them, and even then the ones RuneLite cannot take
   apart are counted at their High Alchemy value, which is not what anyone would pay you for them. The ones it
-  can are counted at their parts' guide price, which is. The card's "over 553 of 553 stacks" line
-  is worth a glance whenever the total looks short.
+  can are counted at their parts' guide price, which is. Whenever the total looks short, the stacks reading "-"
+  in the list are the ones it is leaving out.
 
 ## Licence
 

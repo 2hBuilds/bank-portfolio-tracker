@@ -22,24 +22,47 @@ import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.SwingConstants;
+import javax.swing.SwingUtilities;
 import javax.swing.border.EmptyBorder;
+import net.runelite.api.Constants;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.util.AsyncBufferedImage;
 import net.runelite.client.util.LinkBrowser;
 
 /**
- * One bank item in the sidebar list: a 213 x 48 card with the item's picture on the left, its name across the
- * whole text block, and a second line carrying the unit price, the stack and the window's movement as a gp
- * figure and a percentage (addendum N section 2 "Rows" and section 4.5, the "Ticker" row;
- * {@code docs/bank-price-movement-addendum-N-2026-09-09.md}). The 48 px height and this anatomy OVERRIDE
- * contract C31's 213 x 40 strip and its two-number line.
+ * One bank item in the sidebar list: a 213 x 62 card with the item's picture on the left and THREE text lines
+ * beside it (the Q4 format, {@code docs/handoff/row-format-Q4-2026-09-20.md}, over addendum N section 2 "Rows"
+ * and section 4.5, the "Ticker" row; {@code docs/bank-price-movement-addendum-N-2026-09-09.md}). This anatomy
+ * OVERRIDES contract C31's 213 x 40 strip and its two-number line.
  *
  * <pre>
- * +-+----+-----------------------------+
- * |#|    | Abyssal whip                |
- * |#|icon| 1.52m  x12    +14.2k +1.8%  |
- * +-+----+-----------------------------+
+ * +-+----+-----------------------------------+
+ * |#|    | Divine ranging poti...(3)         |
+ * |#|icon| 32.3k           +3.0k      +10.2% |
+ * |#|    | 7 x 4,618       +428              |
+ * +-+----+-----------------------------------+
  * </pre>
+ *
+ * <p><b>Which line says what.</b> Line 1 is the name, the row's headline. Line 2 is the STACK: what the whole
+ * holding is worth, then what the holding moved and the percentage. Line 3 is ONE item: the working behind
+ * line 2 - "7 x 4,618" - and what one item moved. The two gp figures stand in one right-aligned
+ * {@code GP_COLUMN}, the stack's directly over the item's, which is the whole point of the arrangement: a
+ * reader who wants the per-item number never has to divide.
+ *
+ * <p>The user rejected every single-line version of this for exactly that reason - a row printing a per-ITEM
+ * price beside an "x7" and then a per-ITEM gp move "makes the user have to do mental math" - and the three
+ * lines are what pay for it, at 14 px of extra height per row.
+ *
+ * <p><b>The word "Total" is gone, and that undoes Q4.6 / AN2 and AN6</b> (addendum AO, line AO2). The Q4
+ * format opened line 2 with "226k Total", and AN6 then made that word UNCONDITIONAL on the user's own
+ * instruction, because a build that printed it only where it fitted dropped it on exactly the richest rows.
+ * The user has now seen the word in a client over a real bank - "1,851 Total", "68.6k Total", "5,750 Total"
+ * down the page - and asked for it to be removed. So line 2 is the stack's value and the two figure columns,
+ * nothing else, and the argument AN6 won is simply no longer being had: the label is not conditional, it does
+ * not exist. What told a reader which figure was which is now the arrangement alone - line 2's number is the
+ * big one and line 3 spells out the sum it came from - and the block the cell opens still labels every figure
+ * in words ({@link #detail}). This is recorded rather than quietly applied because a format that loses a word
+ * it once argued for reads as a bug to the next person who opens the file.
  *
  * <p><b>One look, since addendum O</b> ({@code docs/bank-price-movement-addendum-O-2026-09-09.md}, line O1).
  * Addendum N built this row in two designs behind a switch so the user could pick a winner; the user picked
@@ -58,12 +81,15 @@ import net.runelite.client.util.LinkBrowser;
  * painted rectangle, so it survives every hover repaint without a custom {@code paintComponent}.
  *
  * <p><b>Width.</b> The row is pinned to {@link #ROW_WIDTH} x {@link #ROW_HEIGHT} and the text block gets
- * {@link #TEXT_WIDTH}. The fit order on line 2 is the M4 count idiom: the right-hand group is sized FIRST (it
- * is the point of the row), the unit price is fitted into what is left, and the stack text is added only if it
- * still fits - dropped otherwise, since "x28,000" is worth less than a whole price. The name is fitted to the
- * whole 156 px through {@link Widgets#setFittedName}, which keeps a potion's dose when it has to cut
- * ("Super combat pot...(4)"), because the four doses are otherwise cut to one identical headline. Everything cut
- * is whole in the tooltip.
+ * {@link #TEXT_WIDTH}. The right-hand figures are no longer FITTED, they are COLUMNS: {@code GP_COLUMN} and
+ * {@code PCT_COLUMN} are pinned widths, so the two lines' figures line up whatever they say, and the left of
+ * each line is fitted into what the columns leave. That is what replaced the M4 count idiom - under it the
+ * stack text was added only when it happened to fit, and a figure that comes and goes down a list reads as a
+ * bug. (That rule is about the COLUMNS and still holds; the word addendum AN argued the same way about is a
+ * separate question, and AO2 answered it by deleting the word outright rather than making it conditional
+ * again.) The name is fitted to the whole {@link #TEXT_WIDTH} through {@link Widgets#setFittedName}, which keeps a
+ * potion's dose when it has to cut ("Super combat pot...(4)"), because the four doses are otherwise cut to one
+ * identical headline. Everything cut is whole in the block the row opens.
  *
  * <p><b>The picture.</b> {@code ItemManager.getImage(id, quantity, stackable)} answers an
  * {@link AsyncBufferedImage} that may still be blank
@@ -73,7 +99,7 @@ import net.runelite.client.util.LinkBrowser;
  * {@code LootTrackerBox.java:304} show theirs. The reference is kept on the row (the manager's cache holds
  * 128 images, {@code ItemManager.java:221-222}) so the picture survives the cache moving on.
  *
- * <p><b>Mouse.</b> The hover colour and the tooltip are on the row AND on every child: a component with a
+ * <p><b>Mouse.</b> The hover colour and the click are on the row AND on every child: a component with a
  * tooltip becomes its own mouse target (playbook 7.5), so a listener on the row alone would lose the hover
  * the moment the pointer crossed onto the name. Hover is {@code DARKER_GRAY_HOVER_COLOR}, RuneLite's paired
  * hover for a {@code DARKER_GRAY} card (N section 2). There is no zebra any more - every card is
@@ -93,15 +119,21 @@ import net.runelite.client.util.LinkBrowser;
  * step per UTC day (L-A) and the wiki's bot republishes it at a random hour (L-C), so the publication clock the
  * K build printed here said nothing about which day's prices the reader was looking at.
  *
- * <p>The tooltip is UNCHANGED by addendum N, and it is now load-bearing: the holding value and the exact gp
- * change both left the face of the row, so its "Holding:" and "Change per item:" lines are the only place they
- * exist.
+ * <p>The block the row opens stays load-bearing, for a narrower reason than before. Its figures are EXACT and
+ * the face's are not: {@code signedGp} prints "+3.4k" where the block prints "+3,432", because a gp column
+ * wide enough for five digits and a comma does not fit beside a {@code PCT_COLUMN}. Every figure on the face
+ * was already compact - the prices, the stack total - so the loss is one step further in the same direction,
+ * but it IS a loss of precision on the face and the block is where the reader gets it back.
  *
  * <p>The change is signed by the gp figure, not by the percentage (L2): a fall too small to survive
  * truncation still reads "-0.0%" and still paints red, exactly as the GE site's own row does.
  *
- * <p><b>Four switches reach the row</b> ({@link ViewOptions}, handed in at build time - a row is
- * built once and never re-read, so a switch that moves rebuilds the page).
+ * <p><b>Three switches are handed to the row</b> ({@link ViewOptions}, at build time - a row is built once and
+ * never re-read, so a switch that moves rebuilds the page). There were four until addendum AO: the fourth was
+ * {@code holdingOnRows}, which chose between the per-stack reading and the per-item one because only one of
+ * them fitted on a 48 px row, and the three-line face prints BOTH. It reached nothing here after the Q4
+ * format and the key is now deleted (AO1), so its bullet, the {@code priceText}, {@code gpText} and
+ * {@code quantityText} statics and the private {@code holding} predicate that read it have gone with it.
  *
  * <ul>
  * <li><b>Untradeables</b> (Q5, as addendum R rewrote them;
@@ -127,11 +159,6 @@ import net.runelite.client.util.LinkBrowser;
  * face moves, which is the whole of T6. Since addendum U (line U3) that window line also stamps the day the ROW
  * compared against ({@link #stampedDay}) rather than the guide's baseline day, because the two are different days
  * whenever Jagex has not yet published today's table.</li>
- * <li><b>Holding on rows</b> (Q6). With {@code holdingOnRows} on the price figure is what the whole STACK is
- * worth and the gp figure is what the whole stack moved ({@link MovementRow#holdingDeltaGp()}) - the two
- * figures the tooltip has carried alone since addendum N. The percentage, the stack text and the tooltip are
- * the same either way: a percentage is the same number per item and per stack, and the tooltip already
- * carries both readings.</li>
  * <li><b>Inventory and worn gear</b> (addendum Y, line Y3). Nothing on the FACE moves: a merged stack is one row
  * with the combined quantity, which is what the row would have drawn had the bank held them all. The tooltip is
  * where the merge is explained, in one line under the holding ({@link #splitLine}), and only on a row that is not
@@ -145,13 +172,50 @@ public class MovementRowPanel extends JPanel
 	/** The row's width: the sidebar's content width (contract C28/C31). */
 	public static final int ROW_WIDTH = Widgets.CONTENT_WIDTH;
 	/**
-	 * The row's height (addendum N section 2 and section 3 §4, overriding contract C31's 40): 3 px of top
-	 * padding, a 19 px name line, a 24 px figure line and 2 px below.
+	 * The row's height (the Q4 format, over addendum N section 2 and section 3 §4 and contract C31's 40): 3 px
+	 * of top padding, the name line, the stack line, the item line and 2 px below. It was 48 while the face
+	 * carried two lines; the third costs 14 px, which is the price of never making the reader divide.
 	 */
-	public static final int ROW_HEIGHT = 48;
-	/** The picture cell: an item sprite is 36 x 32 px ({@code ItemManager} draws them at that size). */
-	public static final int ICON_WIDTH = 36;
-	public static final int ICON_HEIGHT = 32;
+	public static final int ROW_HEIGHT = 62;
+	/**
+	 * The picture cell: exactly the size the client draws an item sprite at ({@link Constants#ITEM_SPRITE_WIDTH}
+	 * x {@link Constants#ITEM_SPRITE_HEIGHT}, 36 x 32), named from the client rather than typed so the two can
+	 * never drift apart again.
+	 *
+	 * <p>They did once. Addendum AN narrowed this cell to 32 to give the text block 4 px, on the theory that a
+	 * sprite's edges are mostly transparent and only a whip or a godsword would notice. The first live look said
+	 * otherwise (addendum AP): the label centres the picture, so 2 px went off EACH side, and the client paints
+	 * a stackable item's quantity - "32590" on a stack of water runes, "5000" on lizardman fangs - hard against
+	 * the sprite's LEFT edge, so every stack number in the list lost part of its first digit. It is the only
+	 * number on the row the game draws rather than this class, and cutting it is worse than cutting a name.
+	 */
+	public static final int ICON_WIDTH = Constants.ITEM_SPRITE_WIDTH;
+	public static final int ICON_HEIGHT = Constants.ITEM_SPRITE_HEIGHT;
+	/**
+	 * How far right of its frame's natural place every picture is drawn, so the ARTWORK - not the frame - stands
+	 * midway between the rail and the name (addendum AR).
+	 *
+	 * <p>The client does not centre an item's artwork in its 36 px frame. Measured on the user's own screenshot
+	 * of four rows, the art's centre sat at x = 15 of the frame on three of them (two potions and a stack of
+	 * unidentified minerals) and at 13 on the fourth, where the frame's middle is 17.5. With the frame itself
+	 * centred (addendum AQ) the pictures therefore still read 3 px left of the middle - which is what the user
+	 * saw and asked about. It is a property of the game's item art, the same in the bank and the inventory, and
+	 * nearly constant across items, so one constant corrects it; centring each item on its own visible pixels
+	 * would not work, because a stackable's quantity is painted into the same image and would drag it sideways.
+	 *
+	 * <p>The air is taken from the gap after the picture, not the text: {@link #GAP} drops by exactly this much,
+	 * so {@link #TEXT_WIDTH} and every name keep their room. The frame's right-hand columns are the ones the art
+	 * leaves empty, so nothing drawn comes closer to the name than the art's own margin.
+	 *
+	 * <p><b>2, and not the 3 the measurement gave.</b> Addendum AR landed 3; the user looked at it in the client
+	 * and said "shift it 2 pixels to the left" (AR3), then "shift it 1 pixel to the right" (AR4). The eye in the
+	 * client is the judge of where a picture looks centred - the measurement was four rows of one screenshot, and
+	 * a picture is weighed by where its mass sits, not by its bounding box - so this is the user's number, and the
+	 * test that pins it says so.
+	 */
+	static final int ART_NUDGE = 2;
+	/** The picture's cell: the whole sprite, right-aligned, with {@link #ART_NUDGE} of air on its left. */
+	static final int PICTURE_WIDTH = ICON_WIDTH + ART_NUDGE;
 	/** The wiki's price-history page for one item, followed by the item id (K8). */
 	public static final String WIKI_ITEM_URL = "https://prices.runescape.wiki/osrs/item/";
 	/**
@@ -218,33 +282,102 @@ public class MovementRowPanel extends JPanel
 	public static final String IN_INVENTORY = " in inventory";
 	public static final String WORN = " worn";
 
-	/** The card's padding inside the coloured edge (N section 3 §4): 213 - 3 - 4 - 6 = 200 px of inner width. */
-	private static final Insets PADDING = new Insets(3, 4, 2, 6);
-	/** Between the picture and the text block. */
-	private static final int GAP = 8;
 	/**
-	 * What the two text lines share: the row minus the rail, the padding, the picture and the gap after it.
-	 * 213 - 3 - 4 - 6 - 36 - 8 = 156, against the 124-134 px the name had before addendum N.
+	 * The card's padding inside the coloured edge (N section 3 §4): 213 - 3 - 3 - 6 = 201 px of inner width.
+	 *
+	 * <p>The LEFT inset is one half of the picture's frame, and {@link #GAP} is the other: the two are equal so
+	 * the picture stands exactly midway between the rail and the text (addendum AQ, the user: "the edge of the
+	 * green line and the start of the words ... solve for the middle point between them and have all imgs at the
+	 * center point"). The Q4 format had them at 2 and 4, which put every picture 1 px left of the middle before
+	 * the name's own first-letter margin made it look like two.
+	 */
+	private static final Insets PADDING = new Insets(3, 3, 2, 6);
+	/**
+	 * The face's own box, inside the card's rail and padding (AI). Every build before AI pinned {@code this}
+	 * to {@link #ROW_WIDTH} x {@link #ROW_HEIGHT} and laid the icon and the text straight into it; the face now
+	 * holds exactly that box, so a collapsed row is the same arrangement of the same pixels. The Q4 format grew
+	 * the box - a third text line - and changed nothing about the seam.
+	 */
+	static final int INNER_WIDTH = ROW_WIDTH - Widgets.EDGE_WIDTH - PADDING.left - PADDING.right;
+	static final int FACE_HEIGHT = ROW_HEIGHT - PADDING.top - PADDING.bottom;
+	/** Air between the face and the detail block of an open row, in px. */
+	private static final int DETAIL_GAP = 4;
+	/**
+	 * Between the picture's cell and the text block. Addendum AQ made it equal to {@code PADDING.left} (3), which
+	 * centred the FRAME; addendum AR moved {@link #ART_NUDGE} of it to the other side of the picture, to centre
+	 * the ARTWORK where the user's eye puts it. The total either side of the picture is unchanged, so the text
+	 * never moved.
+	 */
+	private static final int GAP = 3 - ART_NUDGE;
+	/**
+	 * What the three text lines share: the row minus the rail, the padding, the picture and the gap after it.
+	 * 213 - 3 - 3 - 6 - (36 + 2) - 1 = 162, against the 156 the two-line face had and the 124-134 px the name had
+	 * before addendum N. The 6 px came from the left margins (the padding and the gap); addendum AN took 4 more
+	 * from the picture and addendum AP gave them back, because the picture could not spare them.
 	 */
 	static final int TEXT_WIDTH = ROW_WIDTH - Widgets.EDGE_WIDTH - PADDING.left - PADDING.right
-		- ICON_WIDTH - GAP;
-	/** Between the price group on the left of line 2 and the figures on the right. */
+		- PICTURE_WIDTH - GAP;
+	/**
+	 * Between the stack's value on the left of line 2 and the figures on the right. Six again, as it was before
+	 * the Q4 format: it was cut to three only to buy the four px {@link #GP_COLUMN} needed once line 2 carried a
+	 * five-character stack value, a word, a five-character gp figure and a percentage all at once, and addendum
+	 * AO took the word away. Line 2 has 31 px back, so the gap is the one the rest of the panel uses rather than
+	 * the narrowest one that fitted.
+	 */
 	private static final int LINE2_GAP = 6;
-	/** Between the unit price and the grey stack text. */
-	private static final int STACK_GAP = 6;
-	/** Between the small gp figure and the percentage beside it. */
+	/** Between a gp figure and whatever stands to its right - the percentage on line 2, the spacer on line 3. */
 	private static final int FIGURE_GAP = 6;
+	/**
+	 * The pinned width of the gp figure's box on BOTH figure lines, {@link #FIGURE_GAP} included. It is a column
+	 * and not a fitted label because the point of the Q4 format is that the stack's move stands directly over
+	 * one item's: two right-aligned labels of the same width do that on every row of the list, and two fitted
+	 * ones would wander by a few px per row and read as a wobble.
+	 *
+	 * <p>42 = the 36 px {@link #signedGp}'s widest output measures at {@link #GP_SIZE}, plus {@link #FIGURE_GAP}.
+	 * The widest is not the obvious one: {@code QuantityFormatter} caps a compact amount at five characters, so
+	 * "+1,00m" (what 999,999,999 comes out as) and "+1.66m" both measure 36 and nothing measures more. It was
+	 * 38 when this format was first drawn, which held every figure in the fixture and clipped a real bank's
+	 * millions to "-1.6...". That is why {@link #signedGp} is compact in the thousands as well: without it the
+	 * column wants 48 and there is not 48 to give.
+	 */
+	private static final int GP_COLUMN = 42;
+	/**
+	 * The pinned width of the percentage's box, the outermost column on line 2 and an empty spacer on line 3.
+	 * Wider than {@link #GP_COLUMN} because {@link #PCT_SIZE} is the biggest face on the row and "-100.0%" is
+	 * the worst case it has to hold whole.
+	 */
+	private static final int PCT_COLUMN = 54;
+	/**
+	 * The multiplication sign of line 3's working. A lower-case ASCII "x" and deliberately not "&times;": these
+	 * faces are bitmap at these sizes and their glyph for it is unreliable, and a row is the wrong place to
+	 * discover that on someone else's machine.
+	 */
+	private static final String TIMES = "x";
 
 	/** T3 of addendum N section 3 §2: the item name, bold, white, the row's headline. */
 	private static final int NAME_SIZE = 14;
-	/** T4: the unit price. */
-	private static final int PRICE_SIZE = 14;
-	/** T7: the grey stack count. */
+	/**
+	 * T4, as the Q4 format reassigned it: the STACK's value, line 2's opening figure. One step down from 14,
+	 * which is what the word "Total" beside it was paid for. Addendum AO deleted the word and left the size
+	 * where it was: the size is not an argument about the word, it is what keeps line 2's figure the second
+	 * loudest thing on the row behind the name, and raising it now would be a change to the drawn row that
+	 * nobody asked for.
+	 */
+	private static final int PRICE_SIZE = 13;
+	/** T7: line 3's working, and the {@value #ALCH_TAG} tag standing in for an untradeable row's figures. */
 	private static final int SMALL_SIZE = 11;
-	/** The percentage - bold, but one step of the scale down, because it shares the line with the gp figure. */
-	private static final int PCT_SIZE = 14;
-	/** The gp figure (N section 4, "the gp change (12 px, in the move colour)"). */
-	private static final int GP_SIZE = 12;
+	/**
+	 * The percentage. The biggest face on the row and the one the eye is meant to land on first - the user tried
+	 * this against a same-sized gp figure and asked for the two to "be more isolated from each other", and SIZE
+	 * is what separated them: 15 px bold against {@link #GP_SIZE}.
+	 */
+	private static final int PCT_SIZE = 15;
+	/**
+	 * The gp figures, on both lines. It was 12 (N section 4) and then, once there were two of them stacked in
+	 * one column beside a 15 px percentage, 10: small enough that {@link #GP_COLUMN} fits beside
+	 * {@link #PCT_COLUMN}, and quiet enough that the percentage wins the line.
+	 */
+	private static final int GP_SIZE = 10;
 	/** T6: the two right-click entries, the same face the sort menu one control row away is drawn in. */
 	private static final int MENU_SIZE = 12;
 
@@ -267,12 +400,22 @@ public class MovementRowPanel extends JPanel
 	private final Consumer<String> browser;
 	private final JLabel iconLabel;
 	private final JLabel nameLabel;
+	/** Line 2's opening figure. The Q4 format made it the STACK's value; the field keeps its older name. */
 	private final JLabel priceLabel;
-	private final JLabel quantityLabel;
 	private final JLabel changeLabel;
+	/** Line 2's gp figure: what the whole STACK moved. Line 3's is built in {@link #itemLine} and not kept. */
 	private final JLabel gpLabel;
 	private final Color rail;
+	/** The long description, built once at construction; what an OPEN cell shows under its face (AI). */
 	private final String tooltip;
+	/** The {@link #ROW_HEIGHT} px cell every build before AI called the row: the picture, the name, the figures. */
+	private final JPanel face;
+
+	/** The block under the face, shown only while the row is open (AI). */
+	private final JLabel detailLabel;
+
+	/** Where this row's clicked/unclicked state lives, so it survives the next publish rebuilding the page. */
+	private final Expansion expansion;
 	private boolean hovered;
 
 	/** Contract C31's constructor: no baseline day known, so the tooltip stamps the "then" line with "-". */
@@ -303,9 +446,11 @@ public class MovementRowPanel extends JPanel
 	 * The list builder's constructor since addendum Q.
 	 *
 	 * @param options the view switches the page is being built under; null reads as {@link ViewOptions#DEFAULT}.
-	 *                Only {@code holdingOnRows} reaches the face here - whether an untradeable stack is LISTED at
-	 *                all is the service's decision (Q5), and by the time a row arrives the question is only how
-	 *                to draw it - and, since addendum T, {@code livePrices} reaches the TOOLTIP
+	 *                NOTHING on the face reads them since the Q4 format - whether an untradeable stack is LISTED
+	 *                at all is the service's decision (Q5), and the three-line face prints both the stack and
+	 *                the item reading, which is what left {@code holdingOnRows} with nothing to choose and is
+	 *                why addendum AO could delete that key outright. Since addendum T
+	 *                {@code livePrices} reaches the TOOLTIP
 	 *                ({@link #tooltip(MovementRow, MovementWindow, LocalDate, ViewOptions)}): a live row paints
 	 *                exactly as a guide row does (T6), so the face still reads only the one switch. Addendum Y's
 	 *                {@code countInventory} is the third that reaches the tooltip alone (Y3) - a merged stack is
@@ -317,89 +462,132 @@ public class MovementRowPanel extends JPanel
 		this(row, icon, window, thenDay, options, LinkBrowser::browse);
 	}
 
+	/**
+	 * The list builder's constructor since addendum AG.
+	 *
+	 * @param expansion where the row's clicked/unclicked hover state lives - the PANEL's, so it outlives the
+	 *                  rebuild every publish performs; null gives the row one of its own
+	 */
+	public MovementRowPanel(MovementRow row, @Nullable AsyncBufferedImage icon, MovementWindow window,
+		@Nullable LocalDate thenDay, @Nullable ViewOptions options, @Nullable Expansion expansion)
+	{
+		this(row, icon, window, thenDay, options, LinkBrowser::browse, expansion);
+	}
+
 	/** @param browser what the two right-click entries hand their URL to; the tests record, the client browses */
 	MovementRowPanel(MovementRow row, @Nullable AsyncBufferedImage icon, MovementWindow window,
 		@Nullable LocalDate thenDay, @Nullable ViewOptions options, Consumer<String> browser)
+	{
+		this(row, icon, window, thenDay, options, browser, null);
+	}
+
+	/**
+	 * @param expansion where the clicked/unclicked state of addendum AG lives; null gives the row one of its
+	 *                  own, which is what every caller that never rebuilds a page wants - the row then simply
+	 *                  starts short and toggles for as long as it exists
+	 */
+	MovementRowPanel(MovementRow row, @Nullable AsyncBufferedImage icon, MovementWindow window,
+		@Nullable LocalDate thenDay, @Nullable ViewOptions options, Consumer<String> browser,
+		@Nullable Expansion expansion)
 	{
 		final ViewOptions view = options == null ? ViewOptions.DEFAULT : options;
 		this.row = Objects.requireNonNull(row, "row");
 		this.icon = icon;
 		this.browser = Objects.requireNonNull(browser, "browser");
+		this.expansion = expansion == null ? new OwnExpansion() : expansion;
 		this.tooltip = tooltip(row, window, thenDay, view);
 		this.rail = railColor(row);
 
-		setLayout(new BorderLayout(GAP, 0));
+		// AI: the cell is a FACE over a DETAIL block, both inside the one card border, so an opened row grows
+		// downward as a single cell with its rail running the whole new height - rather than a second widget
+		// appearing under a row that stayed 48 px. The face is what every build before AI called the row, and
+		// it keeps its exact geometry, which is what lets a collapsed list stay pixel-identical.
+		setLayout(new BorderLayout(0, 0));
 		setBorder(Widgets.card(rail, PADDING));
 		setBackground(ColorScheme.DARKER_GRAY_COLOR);
+
+		face = transparent(new BorderLayout(GAP, 0));
+		Widgets.fixed(face, INNER_WIDTH, FACE_HEIGHT);
+		add(face, BorderLayout.NORTH);
+
+		// AI: the detail, under the face and inside the same border. Built with the row and kept HIDDEN, not
+		// built on the first click: a JLabel costs nothing while invisible, and measuring its height is what
+		// the row's own height is computed from - a measurement that must be available before the click, so
+		// the cell can grow in one beat rather than snapping twice.
+		detailLabel = Widgets.label("", SMALL_FONT, ColorScheme.LIGHT_GRAY_COLOR);
+		detailLabel.setVerticalAlignment(SwingConstants.TOP);
+		detailLabel.setBorder(new EmptyBorder(DETAIL_GAP, 0, 0, 0));
+		detailLabel.setVisible(false);
+		add(detailLabel, BorderLayout.CENTER);
 		Widgets.fixed(this, ROW_WIDTH, ROW_HEIGHT);
 
 		iconLabel = new JLabel();
-		iconLabel.setHorizontalAlignment(SwingConstants.CENTER);
+		// RIGHT, in a cell ART_NUDGE wider than the sprite: the whole sprite is drawn (AP) and the air goes on
+		// its left, which is what puts the game's off-centre artwork in the middle (AR).
+		iconLabel.setHorizontalAlignment(SwingConstants.RIGHT);
 		iconLabel.setVerticalAlignment(SwingConstants.CENTER);
-		Widgets.fixed(iconLabel, ICON_WIDTH, ICON_HEIGHT);
+		Widgets.fixed(iconLabel, PICTURE_WIDTH, ICON_HEIGHT);
 		if (icon != null)
 		{
 			icon.addTo(iconLabel);
 		}
-		add(iconLabel, BorderLayout.WEST);
+		face.add(iconLabel, BorderLayout.WEST);
 
 		// Line 1: the name across the whole block - the row's headline, and the only thing on its line. Fitted
 		// through setFittedName, so a potion keeps its dose when it is cut (all four of "Super combat potion(1..4)"
 		// are wider than the block, and the plain cut made one string of them).
 		nameLabel = Widgets.label("", NAME_FONT, Color.WHITE);
 		Widgets.setFittedName(nameLabel, row.name(), TEXT_WIDTH);
+		// AK: set HERE and not with the label above, because whether the block repeats the item's name
+		// depends on whether the face had to CUT it - not known until setFittedName has run.
+		detailLabel.setText(detail(row, window, thenDay, view, !row.name().equals(nameLabel.getText())));
 
-		// Line 2, right-hand group first (the fit order): the percentage, and the gp figure beside it - or, on an
-		// untradeable row, the grey "alch" tag standing in for both (Q5).
+		// Line 2 is the STACK. The right-hand columns are built first because the left is fitted into what they
+		// leave: the percentage, the gp figure beside it - or, on an untradeable row, the grey "alch" tag
+		// standing in for both (Q5).
 		final Color moveColour = textChangeColor(row);
 		changeLabel = isAlch(row)
 			? Widgets.label(ALCH_TAG, SMALL_FONT, ColorScheme.LIGHT_GRAY_COLOR)
 			: Widgets.label(changeText(row), PCT_FONT, moveColour);
-		gpLabel = Widgets.label(gpText(row, view), GP_FONT, moveColour);
+		// AL: the gp figure takes the QUIET role - the same green or red, mixed toward the row's background - so
+		// the percentage beside it is the one the eye lands on. The user, looking at a full list: "the change in
+		// gp ... and the percent change ... be more isolated from each other".
+		gpLabel = Widgets.label(stackGp(row), GP_FONT, quietChangeColor(row));
 		// Every gap on this line is an inset and never a layout hgap: BorderLayout charges its hgap for the WEST
-		// and the EAST child alike, so a 6 px hgap here would quietly cost 12 px and the fit order would hand the
-		// price 6 px it does not have (measured, 2026-09-09: the widest gp row asked for 160 of 156).
+		// and the EAST child alike, so a 6 px hgap here would quietly cost 12 px and the fit would hand the
+		// price 6 px it does not have (measured, 2026-09-09, when the block was 156 px wide: the widest gp row
+		// asked for 160 of it).
 		final JPanel figures = transparent(new BorderLayout(0, 0));
 		figures.setBorder(new EmptyBorder(0, LINE2_GAP, 0, 0));
-		if (!gpLabel.getText().isEmpty())
-		{
-			gpLabel.setBorder(new EmptyBorder(0, 0, 0, FIGURE_GAP));
-			figures.add(gpLabel, BorderLayout.WEST);
-		}
+		gpLabel.setHorizontalAlignment(SwingConstants.RIGHT);
+		gpLabel.setBorder(new EmptyBorder(0, 0, 0, FIGURE_GAP));
+		Widgets.fixed(gpLabel, GP_COLUMN, gpLabel.getPreferredSize().height);
+		figures.add(gpLabel, BorderLayout.WEST);
+		changeLabel.setHorizontalAlignment(SwingConstants.RIGHT);
+		Widgets.fixed(changeLabel, PCT_COLUMN, changeLabel.getPreferredSize().height);
 		figures.add(changeLabel, BorderLayout.EAST);
 
-		// ...then the price into what is left, and the stack only if it still fits.
+		// ...then the stack's value into what the columns left. AO2 took the word "Total" off this line, so the
+		// price is fitted to the whole of the rest of it; the fit stays because the columns are pinned and the
+		// price is the only thing on the row that can be asked to give way. Nothing in a real bank reaches it -
+		// the widest stack value measures 36 and this leaves far more - but the day a formatter grows a
+		// character, a cut price is a readable failure and an overlap is not.
 		priceLabel = Widgets.label("", PRICE_FONT, Color.WHITE);
-		quantityLabel = Widgets.label("", SMALL_FONT, ColorScheme.LIGHT_GRAY_COLOR);
-		final int room = TEXT_WIDTH - figures.getPreferredSize().width;
-		Widgets.setFitted(priceLabel, priceText(row, view), room);
-		final String stack = quantityText(row);
-		final JPanel prices = transparent(new BorderLayout(0, 0));
-		prices.add(priceLabel, BorderLayout.WEST);
-		if (!stack.isEmpty())
-		{
-			quantityLabel.setText(stack);
-			final int stackWidth = quantityLabel.getPreferredSize().width;
-			if (priceLabel.getPreferredSize().width + STACK_GAP + stackWidth <= room)
-			{
-				quantityLabel.setBorder(new EmptyBorder(0, STACK_GAP, 0, 0));
-				prices.add(quantityLabel, BorderLayout.CENTER);
-			}
-			else
-			{
-				quantityLabel.setText("");
-			}
-		}
+		Widgets.setFitted(priceLabel, stackText(row), TEXT_WIDTH - figures.getPreferredSize().width);
 
 		final JPanel line2 = transparent(new BorderLayout(0, 0));
-		line2.add(prices, BorderLayout.WEST);
+		line2.add(priceLabel, BorderLayout.WEST);
 		line2.add(figures, BorderLayout.EAST);
-		alignBaselines(priceLabel, quantityLabel, gpLabel, changeLabel);
+
+		final JPanel line3 = itemLine(row);
+		// Line 2's three labels only: line 3 is a line of its own, below them, and has nothing to sit level with.
+		alignBaselines(priceLabel, gpLabel, changeLabel);
 
 		final JPanel text = transparent(new BorderLayout(0, 0));
 		text.add(nameLabel, BorderLayout.NORTH);
 		text.add(line2, BorderLayout.CENTER);
-		add(text, BorderLayout.CENTER);
+		text.add(line3, BorderLayout.SOUTH);
+		face.add(text, BorderLayout.CENTER);
 
 		// K8's two entries, in the order a reader wants them: first where this row's number is published, then
 		// the history behind it. Unchanged by addendum N.
@@ -431,14 +619,274 @@ public class MovementRowPanel extends JPanel
 			{
 				setHovered(false);
 			}
+
+			/**
+			 * AG: the left button toggles the hover's length. The right button is untouched - it opens the two
+			 * entries of K8 through {@code setComponentPopupMenu}, and a popup trigger must never also toggle.
+			 */
+			@Override
+			public void mouseClicked(MouseEvent e)
+			{
+				if (SwingUtilities.isLeftMouseButton(e) && !e.isPopupTrigger()
+					&& e.getSource() instanceof JComponent)
+				{
+					toggleExpanded((JComponent) e.getSource(), e);
+				}
+			}
 		};
-		setToolTipText(tooltip);
 		addMouseListener(hover);
 		for (JComponent c : children())
 		{
-			c.setToolTipText(tooltip);
 			c.setInheritsPopupMenu(true);
 			c.addMouseListener(hover);
+		}
+		clearHovers();
+		// AI: draw whatever the seam already says. A page is rebuilt from new instances on every publish - a
+		// refresh, a bank opening, the half-hourly recheck - so a row whose item the reader had opened must
+		// come back OPEN. Without this the cell stood 48 px tall while expanded() answered true, and the next
+		// click would have closed a row that looked shut: two clicks to reopen it.
+		applyExpansion();
+	}
+
+	/**
+	 * A row says nothing on hover (AI). Its description is the block the click opens, so a tooltip would be a
+	 * second copy of it - and a hover over every row the pointer crossed is what the reader asked to be rid of.
+	 *
+	 * <p>Called once, at the end of construction, because two of the labels give themselves a hover:
+	 * {@code Widgets.setFittedName} and {@code Widgets.setFitted} hang the FULL text on any label they have to
+	 * cut, which is how a cut name and a cut price would still have spoken. A silent row has to be silent
+	 * wherever the pointer can land on it.
+	 */
+	private void clearHovers()
+	{
+		setToolTipText(null);
+		for (JComponent c : children())
+		{
+			c.setToolTipText(null);
+		}
+	}
+
+	/** The label column of the open cell (AK), in the order the block prints them. */
+	public static final String L_NOW = "Worth now";
+	public static final String L_WAS = "Was";
+	public static final String L_HAVE = "You have";
+	/** The change's label carries its WINDOW, so the figure beside it says what it is measuring: "Change 7d". */
+	public static final String L_CHANGE = "Change ";
+	/**
+	 * What an untradeable stack's cell says under its figures (AK). It does NOT repeat the value - "Worth now"
+	 * is two lines above it, and {@link #untradeableLine} spells the same number out again because it was
+	 * written for a hover that had no such line.
+	 */
+	public static final String ALCH_NOTE = "Untradeable - High Alchemy value, not in the movement figures";
+
+	/**
+	 * The open cell's description (addendum AK): four labelled lines, and a note only where one carries
+	 * something the four cannot.
+	 *
+	 * <pre>
+	 * Worth now    4,618 gp each
+	 * Was          4,190 gp  (19 Sep)
+	 * You have     7  =  32,326 gp
+	 * Change 1d    +428 each  +10.2%
+	 * </pre>
+	 *
+	 * <p><b>Why it was rewritten.</b> Until AK this block was the old hover's prose, and the user could not read
+	 * it: "Live traded price: 4,618 gp (buy 4,796, sell 4,440; 6,565 traded yesterday)" is seventy-five
+	 * characters in a cell about thirty-two wide, so it wrapped three times and the figure that mattered was
+	 * buried inside its own parenthesis. A label column fixes both faults - the eye runs down one edge instead
+	 * of hunting along a sentence, and every line carries one idea.
+	 *
+	 * <p><b>The change names its window</b> ({@link #L_CHANGE} plus {@code window.label()}), the user's own
+	 * correction: a line reading "Change" beside a figure says nothing about whether it is a day's move or half
+	 * a year's, and the lit chip is at the top of the sidebar rather than beside the number.
+	 *
+	 * <p><b>The buy/sell spread is gone.</b> It was the densest thing here and it serves a flipper, who has the
+	 * Grand Exchange open anyway; the traded VOLUME survives as a note, because that is what says whether a live
+	 * price can be trusted. Nothing else was dropped: an alch row still says it is untradeable, a parts row
+	 * still names its parts, a carried stack still says where it is, and a row the live rule refused still says
+	 * which check refused it.
+	 *
+	 * <p>A table rather than padded spaces, because these faces are proportional: "You have" and "Was" are
+	 * different widths in pixels however many spaces follow them, and only a column lines the figures up.
+	 *
+	 * @param showName whether to bold the item's name above the table - true only when the row's face had to cut
+	 *                 it, which is the one case a reader cannot read it from the cell they are looking at
+	 */
+	public static String detail(MovementRow row, @Nullable MovementWindow window, @Nullable LocalDate thenDay,
+		@Nullable ViewOptions options, boolean showName)
+	{
+		Objects.requireNonNull(row, "row");
+		final ViewOptions view = options == null ? ViewOptions.DEFAULT : options;
+		final boolean live = view.livePrices();
+		final boolean alch = isAlch(row);
+		// The defaulted window is used by BOTH lines that name one - the "Was" day and the "Change" label. They
+		// read a null window the same way or the block would say "Change 1d" over a day D1 never chose.
+		final MovementWindow w = window == null ? MovementWindow.DEFAULT : window;
+
+		final StringBuilder sb = new StringBuilder(384);
+		sb.append("<html><div width=\"").append(INNER_WIDTH).append("\">");
+		if (showName)
+		{
+			sb.append("<b>").append(Widgets.escapeHtml(row.name())).append("</b>");
+		}
+		sb.append("<table cellpadding=0 cellspacing=0>");
+
+		cell(sb, L_NOW, row.unitPrice() == null
+			? MovementMath.DASH : MovementMath.formatExact(row.unitPrice()) + " gp each", null);
+
+		if (!alch)
+		{
+			cell(sb, L_WAS, (row.thenPrice() == null
+				? MovementMath.DASH : MovementMath.formatExact(row.thenPrice()) + " gp")
+				+ "&nbsp; (" + MovementMath.formatDay(stampedDay(row, w, thenDay, live)) + ")", null);
+		}
+
+		cell(sb, L_HAVE, MovementMath.formatExact(row.quantity()) + "&nbsp; =&nbsp; "
+			+ (row.unitPrice() == null ? MovementMath.DASH
+			: MovementMath.formatExact(row.holdingValue()) + " gp"), null);
+
+		if (!alch)
+		{
+			// The one coloured figure in the block, in the row's own green or red - the FULL colour, not the
+			// quiet one its face uses (AL), because here it has nothing beside it to compete with.
+			cell(sb, L_CHANGE + w.label(), row.hasMovement()
+				? signedExact(row.deltaGp()) + " each&nbsp; " + MovementMath.formatPct(row.deltaPct(), row.deltaGp())
+				: MovementMath.DASH, row.hasMovement() ? textChangeColor(row) : null);
+		}
+		sb.append("</table>");
+
+		final List<String> notes = new ArrayList<>(4);
+		addNote(notes, alch ? ALCH_NOTE : partsLine(row));
+		addNote(notes, view.countInventory() ? splitLine(row) : "");
+		addNote(notes, live ? liveRefusalLine(row) : "");
+		addNote(notes, live ? tradedNote(row) : "");
+		for (int i = 0; i < notes.size(); i++)
+		{
+			note(sb, notes.get(i), i == 0);
+		}
+		return sb.append("</div></html>").toString();
+	}
+
+	/** One labelled line; {@code colour} paints the value, null leaves it the block's own grey. */
+	private static void cell(StringBuilder sb, String label, String value, @Nullable Color colour)
+	{
+		sb.append("<tr><td>").append(Widgets.escapeHtml(label)).append("&nbsp;&nbsp;</td><td>");
+		if (colour != null)
+		{
+			sb.append("<font color='#").append(String.format("%06X", colour.getRGB() & 0xFFFFFF)).append("'>")
+				.append(value).append("</font>");
+		}
+		else
+		{
+			sb.append(value);
+		}
+		sb.append("</td></tr>");
+	}
+
+	/** Adds a note if it says anything at all. */
+	private static void addNote(List<String> notes, String text)
+	{
+		if (!text.isEmpty())
+		{
+			notes.add(text);
+		}
+	}
+
+	/**
+	 * One note under the table.
+	 *
+	 * <p>The FIRST takes no break of its own: {@code </table>} has already ended the line, and a {@code <br>} on
+	 * top of that opened a blank line the width of the cell between the figures and their note.
+	 */
+	private static void note(StringBuilder sb, String text, boolean first)
+	{
+		sb.append(first ? "" : "<br>").append(Widgets.escapeHtml(text));
+	}
+
+	/**
+	 * What survives of the live line (AK): how many traded yesterday, which is what says whether a live price
+	 * can be trusted. The buy and sell sides went with the spread - see {@link #detail}.
+	 */
+	private static String tradedNote(MovementRow row)
+	{
+		final MovementRow.LiveFacts facts = row.liveFacts();
+		if (!row.isLive() || facts == null || facts.volumeYesterday() <= 0L)
+		{
+			return "";
+		}
+		return "Live price, " + MovementMath.formatExact(facts.volumeYesterday()) + " traded yesterday";
+	}
+
+	/**
+	 * Opens or closes the cell (AI): the detail block appears under the face, and the row asks its column for
+	 * the height that now needs.
+	 *
+	 * <p>The height is MEASURED rather than guessed, because the text is a different number of lines on every
+	 * row - an alch row has three, a live parts row with a split line has eight - and a guessed constant would
+	 * clip the long ones and leave a gap under the short ones. {@code DynamicGridLayout}, which
+	 * {@code Widgets.column} gives the rows column, hands every child its preferred height, so re-pinning this
+	 * row and revalidating the column is all that moving the rows below it takes.
+	 */
+	private void applyExpansion()
+	{
+		final boolean open = expanded();
+		detailLabel.setVisible(open);
+		Widgets.fixed(this, ROW_WIDTH, open ? ROW_HEIGHT + detailHeight() : ROW_HEIGHT);
+		revalidate();
+		repaint();
+		final Container parent = getParent();
+		if (parent != null)
+		{
+			parent.revalidate();
+			parent.repaint();
+		}
+	}
+
+	/** What the detail block asks for at the cell's width, in px, including the air above it. */
+	private int detailHeight()
+	{
+		return detailLabel.getPreferredSize().height;
+	}
+
+	/** True while this row is showing the long hover. */
+	public boolean expanded()
+	{
+		return expansion.isExpanded(row.id());
+	}
+
+	/**
+	 * The click (AG, rebuilt by AI): the cell open, or shut again.
+	 *
+	 * <p>Until AI this swapped one tooltip for another and had to hand {@link javax.swing.ToolTipManager} a
+	 * synthetic move to make Swing reconsider what was under the pointer. There is no tooltip to reconsider
+	 * now - the description is a block inside the cell - so the click simply records the new state and lets
+	 * {@link #applyExpansion()} resize the row.
+	 *
+	 * @param source where the click landed; kept because every child of the row reports the click, and a
+	 *               future affordance would want to know which part of the cell was pressed
+	 * @param at     the click itself
+	 */
+	void toggleExpanded(JComponent source, MouseEvent at)
+	{
+		expansion.setExpanded(row.id(), !expanded());
+		applyExpansion();
+	}
+
+	/** A row's own state, for every caller that hands over no {@link Expansion} - see that interface. */
+	private static final class OwnExpansion implements Expansion
+	{
+		private boolean expanded;
+
+		@Override
+		public boolean isExpanded(int itemId)
+		{
+			return expanded;
+		}
+
+		@Override
+		public void setExpanded(int itemId, boolean expanded)
+		{
+			this.expanded = expanded;
 		}
 	}
 
@@ -473,6 +921,48 @@ public class MovementRowPanel extends JPanel
 	}
 
 	/**
+	 * Line 3, the ITEM line: the working behind line 2's stack value on the left - "7 x 4,618" - and what ONE
+	 * item moved on the right, in the same {@link #GP_COLUMN} the stack's figure above it stands in.
+	 *
+	 * <p>It repeats the SHAPE of line 2 on every row, so the list has one format throughout and the two gp
+	 * figures are always in one column. That is what the empty {@link #PCT_COLUMN} spacer on the far right is
+	 * for: without it {@link BorderLayout} would push the gp figure out to the edge of the block and it would no
+	 * longer sit under the stack's.
+	 *
+	 * <p>Neither label is kept in a field, because nothing reads line 3 after it is built - it never changes,
+	 * and a row is thrown away and rebuilt on every publish.
+	 *
+	 * @param row the row being drawn; a stack of ONE prints its working but no gp figure (Q4.7)
+	 */
+	private static JPanel itemLine(MovementRow row)
+	{
+		final JLabel workingLabel = Widgets.label("", SMALL_FONT, ColorScheme.LIGHT_GRAY_COLOR);
+		// Fitted, like line 2's price, since addendum AP gave the picture back its 4 px: the widest working a
+		// real bank makes ("9,999 x 9,999", 66 px) now fills the room the two columns leave EXACTLY, and an
+		// unfitted WEST label one character wider would be painted under the gp figure rather than cut. The
+		// hover setFitted hangs on a cut label is taken off again by clearHovers(), with every other one.
+		Widgets.setFitted(workingLabel,
+			MovementMath.formatGp(row.quantity()) + " " + TIMES + " " + unitText(row),
+			TEXT_WIDTH - GP_COLUMN - PCT_COLUMN);
+		// Q4.7: a stack of one IS the item, so its move is already printed on the line above. The working still
+		// shows ("1 x 10.7k", so every row reads the same way), but the figure beside it does not repeat itself
+		// - the user, on a render that did: "if there's only 1 item then only show the Total rows gp move".
+		final JLabel itemGpLabel = Widgets.label(row.quantity() > 1 ? itemGp(row) : "",
+			GP_FONT, quietChangeColor(row));
+		itemGpLabel.setHorizontalAlignment(SwingConstants.RIGHT);
+		itemGpLabel.setBorder(new EmptyBorder(0, 0, 0, FIGURE_GAP));
+		Widgets.fixed(itemGpLabel, GP_COLUMN, itemGpLabel.getPreferredSize().height);
+		final JPanel figures = transparent(new BorderLayout(0, 0));
+		figures.add(itemGpLabel, BorderLayout.WEST);
+		// 1 px tall: it is holding a width open, and a taller spacer would fight line 3's own height.
+		figures.add(Widgets.fixed(transparent(new BorderLayout(0, 0)), PCT_COLUMN, 1), BorderLayout.EAST);
+		final JPanel line = transparent(new BorderLayout(0, 0));
+		line.add(workingLabel, BorderLayout.WEST);
+		line.add(figures, BorderLayout.EAST);
+		return line;
+	}
+
+	/**
 	 * Puts every label of line 2 on ONE baseline: each is bottom-aligned in its (full-height) cell and given a
 	 * bottom inset of the difference between the deepest descent on the line and its own. The numbers come from
 	 * {@link FontMetrics} at build time rather than from the addendum's table, because {@code Font.DIALOG} maps
@@ -501,39 +991,100 @@ public class MovementRowPanel extends JPanel
 
 	// ---------------------------------------------------------------- texts (pure, for the tests)
 
-	/** The unit price as the game writes a stack ("1.52m"), or {@link MovementMath#DASH} without one. */
-	public static String priceText(MovementRow row)
-	{
-		return priceText(row, ViewOptions.DEFAULT);
-	}
-
 	/**
-	 * The price figure line 2 opens with: the price of ONE by default, and what the whole stack is worth while
-	 * {@code holdingOnRows} is on (Q6) - the same stack-style formatting either way, and the {@code x<qty>}
-	 * beside it stays, because a holding of 18.2m over "x12" is the reading the switch was asked for.
+	 * What line 2 opens with: the whole holding's value in stack style ("32.3k"), or {@link MovementMath#DASH}
+	 * without a price.
 	 *
-	 * <p>A row with no price prints {@link MovementMath#DASH} under both switches: {@link MovementRow#holdingValue()}
-	 * is 0 without a unit price, and a "0" there would claim the stack is worthless rather than unpriced.
+	 * <p>The dash is asked of the UNIT price and not of the holding, because {@link MovementRow#holdingValue()}
+	 * is 0 on an unpriced row and a "0" there would claim the stack is worthless rather than unpriced.
 	 */
-	public static String priceText(MovementRow row, @Nullable ViewOptions options)
+	private static String stackText(MovementRow row)
 	{
-		if (row.unitPrice() == null)
-		{
-			return MovementMath.DASH;
-		}
-		return MovementMath.formatGp(holding(options) ? row.holdingValue() : row.unitPrice());
+		return row.unitPrice() == null ? MovementMath.DASH : MovementMath.formatGp(row.holdingValue());
 	}
 
 	/**
-	 * The stack count in stack style ("x12", "x28,000"), and NOTHING at a quantity of one (addendum N section
-	 * 2): most of a bank is single items, and "x1" on every second row is noise that costs the price its width.
-	 * The holding value it used to carry ("x12 - 18.2m") has left the face for the tooltip's "Holding:" line,
-	 * which is now the only place it lives.
+	 * The right half of line 3's working: what ONE of them costs, in the same stack style as the stack's value
+	 * above it ("32.3k") so the two figures on the row are read on the same scale. Same dash rule as
+	 * {@link #stackText}.
 	 */
-	public static String quantityText(MovementRow row)
+	private static String unitText(MovementRow row)
 	{
-		return row.quantity() == 1 ? "" : "x" + MovementMath.formatGp(row.quantity());
+		return row.unitPrice() == null ? MovementMath.DASH : MovementMath.formatGp(row.unitPrice());
 	}
+
+	/**
+	 * A signed gp move narrow enough for {@link #GP_COLUMN} - and that is the whole reason it exists.
+	 *
+	 * <p><b>It is compact in the thousands where the rest of the panel is not:</b> "+3.4k" where the sidebar
+	 * printed "+3,432". {@link MovementMath#formatDelta} keeps four digits and a comma between 1,000 and 9,999,
+	 * which wants about 48 px at {@link #GP_SIZE} - and 48 plus a {@link #PCT_COLUMN} does not fit in
+	 * {@link #TEXT_WIDTH} beside a price. So this is a deliberate trade: ONE step of precision on the face,
+	 * bought to keep the percentage at the size the user asked for. It is a real loss and it is the only
+	 * rounding on the row that the exact figure does not appear anywhere beside - the block the cell opens is
+	 * where "+3,432" still lives.
+	 *
+	 * <p>Nothing else rounds: under 1,000 and at 10,000 and up, {@link MovementMath#formatGp} already fits.
+	 * Tenths are rounded half-up on the absolute value, so the sign never decides which way a figure goes.
+	 */
+	private static String signedGp(long d)
+	{
+		final long a = Math.abs(d);
+		final String sign = d > 0 ? "+" : d < 0 ? "-" : "";
+		if (a >= 1000L && a < 10_000L)
+		{
+			final long tenths = (a + 50L) / 100L;
+			return sign + (tenths / 10L) + "." + (tenths % 10L) + "k";
+		}
+		return sign + MovementMath.formatGp(a);
+	}
+
+	/**
+	 * Line 2's gp figure: what the whole HOLDING moved. "" on a row with nothing to say - no baseline, an
+	 * untradeable one, or a price that did not move at all - because the percentage beside it is already
+	 * printing the dash, the tag or "0.0%", and a row that says "0" three times says nothing three times.
+	 *
+	 * <p>That blank-zero rule came from {@code gpText}, the figure addendum N drew here, and outlived it
+	 * (addendum N, addendum AL, addendum AO): it costs the column nothing, because {@link #GP_COLUMN} is a fixed
+	 * box that an empty label holds open exactly as a filled one does. A flat stack is flat per item too
+	 * ({@code holdingDeltaGp} is {@code deltaGp} times a quantity of at least one), so both lines blank together
+	 * and the item's figure is never left standing alone under a gap.
+	 */
+	private static String stackGp(MovementRow row)
+	{
+		final long stack = row.hasMovement() ? row.holdingDeltaGp() : 0L;
+		return stack == 0L ? "" : signedGp(stack);
+	}
+
+	/**
+	 * Line 3's gp figure: what ONE item moved, the per-item reading the user asked to stop having to work out.
+	 * "" on a row with no movement, and on a row whose move is not known per item.
+	 *
+	 * <p>A stack of one prints nothing here, but that rule is the CALLER's ({@link #itemLine}, Q4.7) and not
+	 * this method's: the figure itself is perfectly well defined at a quantity of one, it is just the same
+	 * number as the line above.
+	 */
+	private static String itemGp(MovementRow row)
+	{
+		final Long gp = row.hasMovement() ? row.deltaGp() : null;
+		return gp == null || gp == 0L ? "" : signedGp(gp);
+	}
+
+	/*
+	 * DELETED by addendum AO, with the config key that was their whole reason to exist:
+	 *
+	 *   priceText(row) / priceText(row, options) - the price figure line 2 opened with before the Q4 format,
+	 *   the price of ONE or the value of the whole stack depending on holdingOnRows;
+	 *   gpText(row) / gpText(row, options)       - the gp figure beside the percentage, the same choice again;
+	 *   quantityText(row)                        - the "x12" stack tag line 2 carried before the Q4 format;
+	 *   holding(options)                         - the predicate the two pairs asked which reading to answer.
+	 *
+	 * The Q4 format stopped drawing every one of them: the face prints the stack on line 2 (stackText, stackGp)
+	 * and one item on line 3 (unitText, itemGp), so it makes no choice and needs no tag. They were kept after
+	 * that only because holdingOnRows was a stored key that nobody had retired, and AO1 retires it - so what
+	 * they expressed no longer exists anywhere in the plugin, and keeping them would leave five public methods
+	 * describing a switch a reader cannot find.
+	 */
 
 	/**
 	 * The percentage ("+1.8%", "-0.0%"), or one dash when the row has no baseline - the outermost figure on
@@ -541,8 +1092,9 @@ public class MovementRowPanel extends JPanel
 	 * survive truncation still shows its minus.
 	 *
 	 * <p>Addendum N moved the gp half of the old "+12.3k +0.8%" out of here into its own label, so the two
-	 * figures are sized separately - 14 px bold against 12 px plain - though they always share a colour
-	 * ({@link #gpText(MovementRow)}).
+	 * figures are sized separately - {@link #PCT_SIZE} bold against {@link #GP_SIZE} plain, a gap the Q4 format
+	 * widened - and since addendum AL they no longer share a colour either
+	 * ({@link #quietChangeColor(MovementRow)}).
 	 */
 	public static String changeText(MovementRow row)
 	{
@@ -551,48 +1103,6 @@ public class MovementRowPanel extends JPanel
 			return MovementMath.DASH;
 		}
 		return MovementMath.formatPct(row.deltaPct(), row.deltaGp());
-	}
-
-	/**
-	 * The small gp figure beside the percentage ("+14.2k", "-851k"), or "" when the row has nothing to print
-	 * there - an empty label rather than a dash, because the percentage beside it is already saying so.
-	 *
-	 * <p>"Nothing to print" is a row with no movement AND a row whose price did not move: a flat row's "0" beside
-	 * its own "0.0%" is two symbols for one fact, and on a quiet day it takes ~13 px off the fit budget that the
-	 * unit price and the stack count are competing for. A quiet row reads "1,086  x4      0.0%".
-	 */
-	public static String gpText(MovementRow row)
-	{
-		return gpText(row, ViewOptions.DEFAULT);
-	}
-
-	/**
-	 * {@link #gpText(MovementRow)} under the view switches: the change in ONE item's price by default, and the
-	 * change in the whole STACK while {@code holdingOnRows} is on (Q6, {@link MovementRow#holdingDeltaGp()}).
-	 *
-	 * <p>The "nothing to print" rule is the same in both readings and is asked of the figure that will be drawn:
-	 * a stack whose unit moved by a gp but whose holding is one item still prints that gp, and a holding change
-	 * that came out at zero prints nothing beside its own "0.0%".
-	 */
-	public static String gpText(MovementRow row, @Nullable ViewOptions options)
-	{
-		if (!row.hasMovement())
-		{
-			return "";
-		}
-		if (holding(options))
-		{
-			final long stack = row.holdingDeltaGp();
-			return stack == 0L ? "" : MovementMath.formatDelta(stack);
-		}
-		final Long gp = row.deltaGp();
-		return gp != null && gp != 0L ? MovementMath.formatDelta(gp) : "";
-	}
-
-	/** Whether the row prints the whole stack rather than one item; null options read as {@link ViewOptions#DEFAULT}. */
-	private static boolean holding(@Nullable ViewOptions options)
-	{
-		return options != null && options.holdingOnRows();
 	}
 
 	/**
@@ -633,26 +1143,12 @@ public class MovementRowPanel extends JPanel
 	}
 
 	/**
-	 * The one line a PARTS row's tooltip adds under its price (R4): "Untradeable - valued as its parts: 3 x
-	 * Crystal armour seed, Crystal shard". Each part is "&lt;n&gt; x &lt;name&gt;", the count left off at one
-	 * because "1 x Black mask" is a quantity nobody asked about, and the parts joined with ", " in the order
-	 * {@code ItemMapping} lists them.
-	 *
-	 * <p>Both halves are load-bearing, exactly as they are on an ALCH row's {@link #untradeableLine}: that the
-	 * item is untradeable at all, and WHICH tradeable thing the figure above it is the price of. Without the
-	 * second half a Crystal body simply reads 16.7m and a reader has no way to tell that from a guide price - and
-	 * the whole reason the row is worth 16.7m rather than 900k is the three seeds it reverts to.
-	 *
-	 * <p>"" when the row carries no parts, which is every row that is not a PARTS row, so a caller can ask blind.
-	 * Plain text, not HTML: the names come from the game, so the caller escapes what it appends.
-	 */
-	/**
 	 * The one line a CARRIED row's tooltip adds under its "Holding:" line (addendum Y, line Y3;
 	 * {@code docs/bank-price-movement-addendum-Y-2026-09-13.md}): "3 in bank, 1 in inventory, 1 worn" - where the
 	 * quantity on the line above it actually is.
 	 *
 	 * <p>It exists because addendum Y merges the three containers into ONE row: an item held in the bank and worn
-	 * is a single 48 px card with the quantities summed, which is the row a reader wants and also a row whose
+	 * is a single card with the quantities summed, which is the row a reader wants and also a row whose
 	 * quantity they cannot check against anything they can see. The three parts are named in the order a player
 	 * would look for them - the bank the list is about, then what they are carrying, then what they have on -
 	 * and a part at zero is DROPPED rather than printed as "0 worn", so a worn-only item reads "1 worn" and a
@@ -689,6 +1185,20 @@ public class MovementRowPanel extends JPanel
 		}
 	}
 
+	/**
+	 * The one line a PARTS row's tooltip adds under its price (R4): "Untradeable - valued as its parts: 3 x
+	 * Crystal armour seed, Crystal shard". Each part is "&lt;n&gt; x &lt;name&gt;", the count left off at one
+	 * because "1 x Black mask" is a quantity nobody asked about, and the parts joined with ", " in the order
+	 * {@code ItemMapping} lists them.
+	 *
+	 * <p>Both halves are load-bearing, exactly as they are on an ALCH row's {@link #untradeableLine}: that the
+	 * item is untradeable at all, and WHICH tradeable thing the figure above it is the price of. Without the
+	 * second half a Crystal body simply reads 16.7m and a reader has no way to tell that from a guide price - and
+	 * the whole reason the row is worth 16.7m rather than 900k is the three seeds it reverts to.
+	 *
+	 * <p>"" when the row carries no parts, which is every row that is not a PARTS row, so a caller can ask blind.
+	 * Plain text, not HTML: the names come from the game, so the caller escapes what it appends.
+	 */
 	public static String partsLine(MovementRow row)
 	{
 		final List<BankItem.Part> parts = row.parts();
@@ -799,6 +1309,16 @@ public class MovementRowPanel extends JPanel
 	}
 
 	/**
+	 * The gp figure's colour since addendum AL: {@link #textChangeColor} pushed toward the row's background, so
+	 * two figures on one line stop competing. Same sign rule, same source, so it can never disagree with the
+	 * percentage beside it or with the rail.
+	 */
+	public static Color quietChangeColor(MovementRow row)
+	{
+		return Widgets.move(signum(row), Widgets.Kind.QUIET);
+	}
+
+	/**
 	 * The 3 px left rail (addendum N section 2 and section 3 §4): the move's colour DARKENED for a mover, and
 	 * the card's own grey - so the rail is invisible without changing the card's width - for a flat row, a row
 	 * with no baseline and a row with no price. Movers only: a quiet day must look like one.
@@ -868,14 +1388,35 @@ public class MovementRowPanel extends JPanel
 	 * between the price and the baseline, naming the parts the price is a sum of ({@link #partsLine}). An ALCH
 	 * row (Q5) has no guide price, no baseline and no change at all, so the three lines that would all read "-"
 	 * give way to one sentence ({@link #untradeableLine}) over the holding, which is the only figure it does
-	 * have. The tooltip does not vary with {@code holdingOnRows} (Q6): it already carries the unit price and the
-	 * holding, and it is where a reader goes for the reading the face is not showing.
+	 * have. It never varied with the view switches' choice of reading either - it carries the unit price AND
+	 * the holding, which is why the switch that chose between them (Q6) could be deleted outright by addendum
+	 * AO without this text changing a character.
 	 *
 	 * @param thenDay the baseline table's UTC day; null stamps {@link MovementMath#DASH}
 	 */
 	public static String tooltip(MovementRow row, @Nullable MovementWindow window, @Nullable LocalDate thenDay)
 	{
 		return tooltip(row, window, thenDay, ViewOptions.DEFAULT);
+	}
+
+	/**
+	 * Which rows are showing the long hover, remembered somewhere that OUTLIVES a row (addendum AG).
+	 *
+	 * <p>It has to live outside, because a {@link MovementRowPanel} is not long-lived: every publish -
+	 * a refresh, a bank opening, the half-hourly recheck - runs {@code rowsColumn.removeAll()} and builds the
+	 * page again from new instances. A flag held in the row would therefore clear itself while the user was
+	 * reading, with nothing on screen to explain why. Keyed by ITEM ID rather than by list position so it
+	 * survives a re-sort and a change of price band as well.
+	 *
+	 * <p>The panel owns the one instance; a test can hand over its own and read what a click recorded.
+	 */
+	public interface Expansion
+	{
+		/** True while this item's row should carry the long hover. */
+		boolean isExpanded(int itemId);
+
+		/** Records a click. */
+		void setExpanded(int itemId, boolean expanded);
 	}
 
 	/**
@@ -1103,15 +1644,10 @@ public class MovementRowPanel extends JPanel
 		return nameLabel.getText();
 	}
 
+	/** Line 2's opening figure as this row DREW it: the stack's value, fitted ({@link #stackText}). */
 	String priceText()
 	{
 		return priceLabel.getText();
-	}
-
-	/** "x3", or "" at a quantity of one and whenever the fit order had to drop it. */
-	String quantityText()
-	{
-		return quantityLabel.getText();
 	}
 
 	/** The percentage, one dash, or the {@value #ALCH_TAG} tag on an untradeable row (Q5). */
@@ -1120,7 +1656,11 @@ public class MovementRowPanel extends JPanel
 		return changeLabel.getText();
 	}
 
-	/** The gp figure, or "" on a row with no movement - the dash beside it is already saying so. */
+	/**
+	 * Line 2's gp figure as this row DREW it: what the whole STACK moved ({@link #stackGp}), compact in the
+	 * thousands, or "" on a row with no movement - the dash beside it is already saying so. Line 3's figure is
+	 * not reachable from here; nothing keeps it (see {@link #itemLine}).
+	 */
 	String gpText()
 	{
 		return gpLabel.getText();

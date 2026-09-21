@@ -5,12 +5,24 @@ import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigItem;
 
 /**
- * The plugin's single config (contract C39; items 7-9 are addendum O line O2, items 10-12 addendum Q line Q3 and
- * addendum Y line Y1, items 13-14 addendum Q line Q3 and addendum T line T1). Fifteen items, and every one of
- * them is also a widget in the sidebar: the config panel and the sidebar are the same switch, so a change in
+ * The plugin's single config (contract C39; items 7-9 are addendum O line O2, items 10-11 addendum Q line Q3,
+ * item 12 addendum Y line Y1, item 13 addendum AH and item 14 addendum T line T1). Fifteen items, and every one
+ * of them is also a widget in the sidebar: the config panel and the sidebar are the same switch, so a change in
  * either place is written here and read back by the other through {@code ConfigChanged}.
  *
- * <p><b>Addendum AA added the fifteenth</b> (AA1): whether the price fold under the control row - the chip strip
+ * <p><b>Addendum AO took one away</b> (AO1), the first key this plugin has ever dropped: {@code holdingOnRows}
+ * ("Show stack value on rows", addendum Q line Q3), which chose whether a row printed the per-ITEM reading or the
+ * per-STACK one. Addendum AN's three-line row prints BOTH - line 2 is the stack, line 3 is one item - so the
+ * switch stopped reaching anything drawn, and the user, asked whether to keep it, answered "if it doesnt do
+ * anything anymore then remove it". The one thing it still did was pick {@link SortMode#GP_MOVE}'s comparison
+ * key, which is now the STACK's gp move permanently - the reading the switch gave when it was ON, because this is
+ * a portfolio tracker and "biggest gainers" over a bank means the holding that gained the most gp. That is a
+ * user-visible change to one column's default ordering, and it is recorded as one. A stored {@code holdingOnRows}
+ * is swept once at startUp the way addendum N's deleted {@code look} is
+ * ({@link BankPriceMovementPlugin#unstickLook()}), so no orphan sits in a profile forever. Sixteen items became
+ * fifteen and the two below it moved up by one.
+ *
+ * <p><b>Addendum AA added a fifteenth</b> (AA1): whether the price fold under the control row - the chip strip
  * over the Min / Max fields - is open. It is a remembered piece of the sidebar's SHAPE rather than a figure or a
  * band, so it takes a road of its own ({@link BankPriceMovementPlugin#isFoldKey}) that reaches the panel and
  * nobody else. It sits directly after {@code bandPresets}, the item it opens the reader's view onto, and the
@@ -259,7 +271,8 @@ public interface BankPriceMovementConfig extends Config
 	}
 
 	/**
-	 * Addendum Q line Q3, the first of three: whether coins and the 1,000 gp a platinum token is worth count in
+	 * Addendum Q line Q3, the first of the two it still has - the third, {@code holdingOnRows}, is gone with
+	 * addendum AO line AO1: whether coins and the 1,000 gp a platinum token is worth count in
 	 * the bank value. They always have (addendum P), and the user asked for the choice - "i would like options
 	 * for 1) include coins and platinum tokens in total" (2026-09-11) - so the item defaults to ON and is a way
 	 * to take the cash back OUT of the headline for a reader who thinks of their bank as the stacks alone.
@@ -268,7 +281,7 @@ public interface BankPriceMovementConfig extends Config
 	 * the switch needs no bank visit in either direction (Q4). It is not a {@link RowFilter} field - cash is
 	 * never a ROW - but unlike addendum O's three it is not presentation either: {@code PriceService} passes 0
 	 * into {@code PortfolioMath} while it is off, so the bank value and every window's two sides are recomputed.
-	 * The three of them travel as one {@link ViewOptions}.
+	 * It travels with the gear menu's other switches as one {@link ViewOptions}.
 	 */
 	@ConfigItem(
 		position = 10,
@@ -330,22 +343,21 @@ public interface BankPriceMovementConfig extends Config
 	}
 
 	/**
-	 * Q3, the third: whether a row prints what the whole STACK is worth instead of what one of the item is
-	 * (Q6). Default OFF - the unit price is the figure a Grand Exchange page shows and the one the gp band
-	 * filters on - and with it on the row's two left figures become {@code unit x quantity} and the stack's own
-	 * gp change, the percentage and the {@code x<qty>} unchanged. The two gp-move orderings follow the printed
-	 * figure while it is on, so the list still agrees with itself.
+	 * Addendum AH, narrowed by AI and AJ: whether the sidebar shows hover text at all. Default OFF, and the only
+	 * switch on this page whose default is the quieter sidebar.
 	 *
-	 * <p>Neither figure is new: the row's tooltip has carried the holding value and the exact change since the
-	 * first build. The switch moves them onto the row for a reader who thinks in portfolio terms.
+	 * <p>It reaches the bank value's hover and every CONTROL's - the sort button, the chips, Refresh, the gear's
+	 * own items, the "Item prices update every 24hrs" line. It does not reach the item rows, because since
+	 * addendum AI a row carries no tooltip at any setting: its description is the block the cell opens when it
+	 * is clicked, so there is nothing there for a switch to silence.
 	 */
 	@ConfigItem(
 		position = 13,
-		keyName = "holdingOnRows",
-		name = "Show stack value on rows",
-		description = "Rows show the stack's value, and the stack's change, instead of the unit price"
+		keyName = "showHoverText",
+		name = "Show hover text",
+		description = "Show hover text anywhere in the sidebar: the bank value and the controls"
 	)
-	default boolean holdingOnRows()
+	default boolean showHoverText()
 	{
 		return false;
 	}

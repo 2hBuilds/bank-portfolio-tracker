@@ -31,7 +31,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Bank Portfolio Tracker: every tradeable stack in your bank, with what it is worth now and what its guide price
+ * 2h Bank Portfolio Tracker: every tradeable stack in your bank, with what it is worth now and what its guide price
  * has done over the last day, week, month, quarter or half year, filtered by a gp band and sorted three ways.
  *
  * <p>Wiring (see {@code docs/bank-price-movement-design-2026-09-08.md}, addendum K, and
@@ -58,9 +58,16 @@ import org.slf4j.LoggerFactory;
  * forbids a plugin making its own (it would escape RuneLite's interceptors and its shared connection pool).
  */
 @PluginDescriptor(
-	name = "Bank Portfolio Tracker",
-	description = "Your bank's guide-price movements in the sidebar: gp filters, sort by % move, gp move or unit price",
-	tags = {"bank", "price", "prices", "ge", "grand exchange", "guide price", "portfolio", "wiki", "flipping", "money"}
+	name = "2h Bank Portfolio Tracker",
+	description = "Your bank's value and price movement over 1 to 180 days: live prices, your inventory and worn gear, gp filters, and sorting by percent, gp, item or stack price",
+	tags = {"bank", "price", "prices", "ge", "grand exchange", "guide price", "portfolio", "wiki", "flipping", "money"},
+	// The Plugin Hub slug, which is what Plugin.getPluginDirectory() names the data directory after and what it
+	// refuses to run without (addendum AD). PriceStore.DIR_NAME is the one spelling of it.
+	internalName = PriceStore.DIR_NAME,
+	// ...and the folder that directory is MOVED from, once, the first time it is asked for: every build up to
+	// addendum AC wrote ~/.runelite/bank-portfolio-tracker/, and a user who installs an updated plugin must keep
+	// their remembered bank, their baselines and their traded buckets rather than start over.
+	legacyDataDirectory = PriceStore.DIR_NAME
 )
 public class BankPriceMovementPlugin extends Plugin
 {
@@ -76,34 +83,46 @@ public class BankPriceMovementPlugin extends Plugin
 	static final String SHOW_GP_KEY = "showBankMoveGp";
 	static final String SHOW_PCT_KEY = "showBankMovePct";
 	/**
-	 * The three stored keys of addendum Q's gear menu (Q3), which travel together as one {@link ViewOptions}.
-	 * They are named here for the same three users as the hero keys above - the {@code ConfigChanged} route, the
-	 * pref seam the gear's check items write through and {@link #isOptionKey(String)} - but they take a DIFFERENT
-	 * road from there: two of the three change what the figures are, not merely whether they are painted, so the
-	 * service is told as well as the panel.
+	 * The two stored keys addendum Q's gear menu still has (Q3), which travel with the three below as one
+	 * {@link ViewOptions}. The menu opened with a third, {@code holdingOnRows}, which addendum AO deleted once
+	 * addendum AN's three-line row printed the stack AND the item and left it nothing to choose - see
+	 * {@link #LEGACY_HOLDING_KEY}. They are named here for the same three users as the hero keys above - the
+	 * {@code ConfigChanged} route, the pref seam the gear's check items write through and
+	 * {@link #isOptionKey(String)} - but they take a DIFFERENT road from there: both change what the figures are,
+	 * not merely whether they are painted, so the service is told as well as the panel.
 	 */
 	static final String COUNT_CASH_KEY = "countCash";
 	static final String COUNT_UNTRADEABLES_KEY = "countUntradeables";
-	static final String HOLDING_ON_ROWS_KEY = "holdingOnRows";
 	/**
-	 * Addendum T's live-price switch (T1), the fourth key of the same {@link ViewOptions} and so the fourth
-	 * passenger on the option road above. It is listed apart from the gear's original three only because it
-	 * arrived a wave later: {@link #isOptionKey(String)} treats all four alike, and it must, because this one
-	 * changes the most of any of them - with it on, {@link PriceService} fetches the wiki's traded feeds and an
-	 * item that passes the five liquidity checks (T3's three and addendum V's two) is priced from them instead of
-	 * from the daily guide table.
+	 * Addendum T's live-price switch (T1), which landed as the fourth key of the same {@link ViewOptions} and is
+	 * the third since addendum AO deleted {@code holdingOnRows}. It is listed apart from the gear's original keys
+	 * only because it arrived a wave later: {@link #isOptionKey(String)} treats every passenger alike, and it must,
+	 * because this one changes the most of any of them - with it on, {@link PriceService} fetches the wiki's traded
+	 * feeds and an item that passes the five liquidity checks (T3's three and addendum V's two) is priced from them
+	 * instead of from the daily guide table.
 	 */
 	static final String LIVE_PRICES_KEY = "livePrices";
 	/**
-	 * Addendum Y's carried switch (Y1), the fifth key of the same {@link ViewOptions} and the fifth passenger on
-	 * the option road. Like the live switch it is listed apart from the gear's original three only because it
-	 * arrived later; {@link #isOptionKey(String)} treats all five alike. What it changes is what the bank VALUE is
+	 * Addendum Y's carried switch (Y1), which landed as the fifth key of the same {@link ViewOptions} and is the
+	 * fourth since addendum AO. Like the live switch it is listed apart from the gear's original keys only because
+	 * it arrived later; {@link #isOptionKey(String)} treats them all alike. What it changes is what the bank VALUE is
 	 * and which stacks are rows, never a band or an ordering - so the service is told and the panel re-rendered,
 	 * and no fetch is made either way: the two containers behind it are read from the client, not from the wiki.
 	 */
 	static final String COUNT_INVENTORY_KEY = "countInventory";
 	/**
-	 * Addendum Z's three price presets (Z1), the fourteenth stored key and the only one of this plugin's that
+	 * Addendum AH's switch, which landed as the sixth and is the fifth since addendum AO - and is the only one of
+	 * them whose default is OFF: whether the sidebar's hover text is
+	 * shown at all. {@link #isOptionKey(String)} treats them all alike. Addendum AI took the ROWS out of its
+	 * reach - a row's description is the block the cell opens, and a row carries no tooltip at any setting - so
+	 * since AJ it governs the bank value's hover and every control's. The service is told like the rest even
+	 * though it does nothing with it: the option road is one road, and a switch that took a private path would
+	 * be the one nobody remembered to write.
+	 */
+	static final String SHOW_HOVER_TEXT_KEY = "showHoverText";
+	/**
+	 * Addendum Z's three price presets (Z1), which landed as the fourteenth stored key and is the thirteenth since
+	 * addendum AO - and the only one of this plugin's that
 	 * holds free text: the three gp bands the fold's chips offer, written as one line of shorthand
 	 * ({@code "100k, 1m, 10m"}). It takes a FOURTH {@code ConfigChanged} road ({@link #isPresetKey(String)})
 	 * because it is neither of the other three things - it is not the filter (the band a chip applies is
@@ -112,7 +131,8 @@ public class BankPriceMovementPlugin extends Plugin
 	 */
 	static final String BAND_PRESETS_KEY = "bandPresets";
 	/**
-	 * Addendum AA's fold switch (AA1), the fifteenth stored key: whether the price fold - the chip strip the key
+	 * Addendum AA's fold switch (AA1), which landed as the fifteenth stored key and is the fourteenth since
+	 * addendum AO: whether the price fold - the chip strip the key
 	 * above fills, over the Min / Max fields - stands open under the control row. It takes a FIFTH
 	 * {@code ConfigChanged} road ({@link #isFoldKey(String)}) of the same shape as the fourth, and for the same
 	 * reason: it is a piece of the sidebar's SHAPE and nothing else reads it. Not the filter - the fold is where a
@@ -125,6 +145,11 @@ public class BankPriceMovementPlugin extends Plugin
 	 * see {@link #unstickLook()}.
 	 */
 	static final String LEGACY_LOOK_KEY = "look";
+	/**
+	 * Addendum Q's stack-value switch (Q6), which addendum AO deleted (AO1). The key survives only as something
+	 * to SWEEP: see {@link #unstickHolding()}.
+	 */
+	static final String LEGACY_HOLDING_KEY = "holdingOnRows";
 	private static final Logger log = LoggerFactory.getLogger(BankPriceMovementPlugin.class);
 
 	@Inject
@@ -242,7 +267,7 @@ public class BankPriceMovementPlugin extends Plugin
 
 	/**
 	 * Non-null only while {@link #configPrefs()} is inside a write of its own - {@code save}'s five
-	 * {@code setConfiguration} calls, {@code saveHero}'s three, {@code saveOptions}' five or
+	 * {@code setConfiguration} calls, {@code saveHero}'s three, {@code saveOptions}' six or
 	 * {@code savePresets}' one - and it holds the thread making them.
 	 * {@code ConfigManager} posts {@code ConfigChanged} SYNCHRONOUSLY, on the caller's own thread and only when
 	 * the value really changed (clone ConfigManager.java:874-901), so a two-key change - "Clear price range"
@@ -284,11 +309,18 @@ public class BankPriceMovementPlugin extends Plugin
 		sentHash = 0L;
 		sentProfile = "";
 		// First, before anything reads the config: a profile written by the pre-addendum-K build still says
-		// window=H24, which no longer names a constant (K9), and one written by the addendum-N build still
-		// holds a look= this build has no item for (O1).
+		// window=H24, which no longer names a constant (K9), one written by the addendum-N build still
+		// holds a look= this build has no item for (O1), and one written by any build up to addendum AN holds a
+		// holdingOnRows= whose item went the same way (AO1).
 		unstickWindow();
 		unstickLook();
-		store = new PriceStore(gson, PriceStore.defaultDir());
+		unstickHolding();
+		// getPluginDirectory() is RuneLite's own: it answers a Filepath rooted at
+		// ~/.runelite/plugin-data/bank-portfolio-tracker/, moves the legacy folder in on the first call, and
+		// throws if the disk refuses. Handed over as a method reference rather than called here, so this method
+		// itself does no disk work - the first call is made by sweepStaleFiles() below, on the executor, never
+		// on the EDT that PluginManager runs startUp on (addendum AD).
+		store = new PriceStore(gson, this::getPluginDirectory);
 		// ...and the files that build left behind (K11). Disk work, so it goes to the executor rather than
 		// holding the EDT that PluginManager runs startUp on.
 		sweepStaleFiles();
@@ -339,10 +371,12 @@ public class BankPriceMovementPlugin extends Plugin
 		// Hub client binds developerMode false, so the handler stays null and nothing can reach the sidebar.
 		if (developerMode)
 		{
-			BpmDevBridge.handler = new BpmCommands(panel, service, gson, account());
+			// The shots folder sits inside this plugin's own directory, asked for only when a shot is taken.
+			BpmDevBridge.handler = new BpmCommands(panel, service, gson, account(),
+				() -> getPluginDirectory().joinSegment(BpmCommands.SHOT_DIR), panel::isShowing);
 		}
 		navButton = NavigationButton.builder()
-			.tooltip("Bank Portfolio Tracker")
+			.tooltip("2h Bank Portfolio Tracker")
 			.icon(NavIcon.create())
 			.priority(NAV_PRIORITY)
 			.panel(panel)
@@ -450,7 +484,7 @@ public class BankPriceMovementPlugin extends Plugin
 	 * parse} understands and {@code Enum.valueOf} does not is exactly the case this guard exists for.
 	 *
 	 * <p>Package-private so {@code BankPriceMovementWiringTest} can drive it with a mocked manager; the sweep
-	 * itself is {@link #dropStoredKey}, which {@link #unstickLook()} shares.
+	 * itself is {@link #dropStoredKey}, which {@link #unstickLook()} and {@link #unstickHolding()} share.
 	 */
 	void unstickWindow()
 	{
@@ -467,7 +501,7 @@ public class BankPriceMovementPlugin extends Plugin
 	 *
 	 * <p>Unlike {@link #unstickWindow()} this is housekeeping and not a repair: an orphaned key breaks nothing
 	 * while it sits there, because nothing reads it any more. It goes anyway, with ONE line at INFO, so a
-	 * profile that has been through the whole wave ends up holding exactly the eight keys this build declares -
+	 * profile that has been through the whole wave ends up holding exactly the keys this build declares -
 	 * and so a future item that happened to reuse the name could never inherit a value from the deleted enum.
 	 * {@code ConfigManager.unsetConfiguration} drops the value, invalidates the proxy cache and posts a
 	 * {@code ConfigChanged} (ConfigManager.java:972-993); that event's key is not one of ours, so
@@ -475,8 +509,8 @@ public class BankPriceMovementPlugin extends Plugin
 	 * a no-op by the time it lands.
 	 *
 	 * <p>Package-private so {@code BankPriceMovementWiringTest} can drive it with a mocked manager; the sweep
-	 * itself is {@link #dropStoredKey}, which {@link #unstickWindow()} shares. Nothing stored here is valid any
-	 * more, so the test it passes refuses every value rather than naming one.
+	 * itself is {@link #dropStoredKey}, which {@link #unstickWindow()} and {@link #unstickHolding()} share.
+	 * Nothing stored here is valid any more, so the test it passes refuses every value rather than naming one.
 	 */
 	void unstickLook()
 	{
@@ -485,9 +519,39 @@ public class BankPriceMovementPlugin extends Plugin
 	}
 
 	/**
-	 * The one sweep behind {@link #unstickWindow()} and {@link #unstickLook()}: read one stored key of this
-	 * plugin's group, and unset it unless it is empty or {@code stillValid} accepts it. Both callers wanted the
-	 * same five steps - read, ignore nothing-stored, test, say so once at INFO, unset - and every step of both
+	 * AO1. Drops {@code bankpricemovement.holdingOnRows} if a profile still holds it. Addendum Q put the choice
+	 * between a row's per-ITEM reading and its per-STACK one behind that item (Q6); addendum AN's three-line row
+	 * prints BOTH - the stack on line two, one item on line three - so by the time the user saw it in a client
+	 * the switch reached nothing drawn, and the last thing it still decided, which figure
+	 * {@link SortMode#GP_MOVE} compares, is now settled the other way for good: the gp column follows the STACK
+	 * whatever a profile says. So whichever of true or false a profile stored is a value with no item, no reader
+	 * and no way for a user to clear it by hand (RuneLite's config panel only lists the items the interface
+	 * declares).
+	 *
+	 * <p>Like {@link #unstickLook()} and unlike {@link #unstickWindow()} this is housekeeping and not a repair:
+	 * an orphaned key breaks nothing while it sits there, because nothing reads it any more. It goes anyway, with
+	 * ONE line at INFO, so a profile that has been through the whole wave ends up holding exactly the keys this
+	 * build declares - and so a future item that happened to reuse the name could never inherit a value from the
+	 * deleted switch. {@code ConfigManager.unsetConfiguration} drops the value, invalidates the proxy cache and
+	 * posts a {@code ConfigChanged} (ConfigManager.java:972-993); that event's key is no longer one of ours, so
+	 * {@link #onConfigChanged} treats it as a filter change and re-applies the filter it already has, which is a
+	 * no-op by the time it lands.
+	 *
+	 * <p>Package-private so {@code BankPriceMovementWiringTest} can drive it with a mocked manager; the sweep
+	 * itself is {@link #dropStoredKey}, which {@link #unstickWindow()} and {@link #unstickLook()} share. Nothing
+	 * stored here is valid any more, so the test it passes refuses every value rather than naming one.
+	 */
+	void unstickHolding()
+	{
+		dropStoredKey(LEGACY_HOLDING_KEY, stored -> false,
+			"addendum AN's row prints the stack and the item both, so the key has no item behind it any more");
+	}
+
+	/**
+	 * The one sweep behind {@link #unstickWindow()}, {@link #unstickLook()} and {@link #unstickHolding()}: read
+	 * one stored key of this plugin's group, and unset it unless it is empty or {@code stillValid} accepts it.
+	 * All three callers wanted the same five steps - read, ignore nothing-stored, test, say so once at INFO,
+	 * unset - and every step of each
 	 * has to survive a {@link ConfigManager} that is missing (a field never injected, as the unit tests leave it)
 	 * or that throws, because this runs first thing in {@link #startUp()} and a failed sweep may not take the
 	 * plugin down with it.
@@ -543,7 +607,7 @@ public class BankPriceMovementPlugin extends Plugin
 	}
 
 	/**
-	 * K11. Deletes what the pre-addendum-K build left in {@code ~/.runelite/bank-portfolio-tracker/} -
+	 * K11. Deletes what the pre-addendum-K build left in the plugin's data directory -
 	 * {@code prices-latest.json} and the baselines of windows that no longer exist or that hold trade-era
 	 * figures ({@link PriceStore#deleteStaleFiles()}). Files, so it runs on the executor: {@code startUp} is on
 	 * the EDT and a disk sweep there would stutter the client's UI. Queued with {@code submit} rather than the
@@ -861,9 +925,11 @@ public class BankPriceMovementPlugin extends Plugin
 	 * filter path - that would hand {@link PriceService} an identical filter and make the whole list recompute
 	 * because the user hid a number on the card.
 	 *
-	 * <p>Addendum Q's three gear switches take a THIRD road (Q3), because they are neither of those things: the
+	 * <p>Addendum Q's gear switches take a THIRD road (Q3), because they are neither of those things: the
 	 * list they produce is the same list under the same band and the same ordering (so not the filter), but what
-	 * the bank value counts and what a row prints do change (so not presentation). {@link PriceService#setOptions}
+	 * the bank value counts and which stacks are rows at all do change (so not presentation). Addendum AO left
+	 * two of that road's original three - {@code holdingOnRows} is gone, and with it the one passenger that only
+	 * changed a reading. {@link PriceService#setOptions}
 	 * recomputes the figures and {@link BankPriceMovementPanel#applyOptions} re-renders what is already on
 	 * screen; no fetch is made either way, because nothing here asks for a price this build has not got.
 	 *
@@ -877,7 +943,7 @@ public class BankPriceMovementPlugin extends Plugin
 	 * the band button are drawn from {@code bandPresets} and nothing else reads it, so the panel is told and
 	 * nobody else is. Not the filter road, which would rebuild the list for a change that moves no row - the band
 	 * a chip APPLIES is {@code gpMin} / {@code gpMax}, two keys this one never writes; not the option road, which
-	 * exists because those five switches change what the figures are.
+	 * exists because those switches change what the figures are.
 	 *
 	 * <p><b>Addendum AA's fold takes a FIFTH of the same shape</b> (AA1): {@code foldOpen} says whether those
 	 * chips and the two gp fields are on screen at all, which is the sidebar's shape and not its contents - so the
@@ -917,13 +983,12 @@ public class BankPriceMovementPlugin extends Plugin
 		}
 		if (isOptionKey(event.getKey()))
 		{
-			// Q3's third road, and since addendum T and addendum Y all five view switches take it. Not the
-			// filter's: not one of them touches the gp band or the sort, so handing PriceService an identical
-			// RowFilter would be a lie about what changed. Not the hero's either: the cash, untradeable and
-			// carried switches change what the SUMS are and which stacks are rows at all, so the service is told
-			// first (it recomputes and publishes) and the panel is re-rendered for the half that is pure
-			// painting - the holding figures on the rows - which must not wait for a publish that may be a fetch
-			// away.
+			// Q3's third road, and since addendum T, addendum Y and addendum AH all five view switches take it.
+			// Not the filter's: not one of them touches the gp band or the sort, so handing PriceService an
+			// identical RowFilter would be a lie about what changed. Not the hero's either: the cash, untradeable
+			// and carried switches change what the SUMS are and which stacks are rows at all, so the service is
+			// told first (it recomputes and publishes) and the panel is re-rendered for the half that is pure
+			// painting - the hover text - which must not wait for a publish that may be a fetch away.
 			final ViewOptions options = optionsFromConfig();
 			final PriceService withOptions = service;
 			if (withOptions != null)
@@ -1025,11 +1090,12 @@ public class BankPriceMovementPlugin extends Plugin
 	}
 
 	/**
-	 * The gear menu's five stored keys (Q3, T1, Y1) as one immutable value - the plugin's only reader of
-	 * {@code countCash} / {@code countUntradeables} / {@code holdingOnRows} / {@code livePrices} /
-	 * {@code countInventory}, and so the one place the config and {@link ViewOptions} are put in step. The panel's
+	 * The gear menu's five stored keys (Q3, T1, Y1, AH) as one immutable value - the plugin's only reader of
+	 * {@code countCash} / {@code countUntradeables} / {@code livePrices} / {@code countInventory} /
+	 * {@code showHoverText}, and so the one place the config and {@link ViewOptions} are put in step. The panel's
 	 * {@code Prefs.loadOptions}, the value {@link #startUp()} opens on, and what {@link #onConfigChanged} rebuilds
-	 * when one of the five is written anywhere.
+	 * when one of the five is written anywhere. Addendum AO took a sixth, {@code holdingOnRows}, off this list and
+	 * out of the group altogether (AO1).
 	 *
 	 * <p>It must name every field of {@link ViewOptions}: the value keeps shorter constructors that default
 	 * {@code livePrices} and {@code countInventory} to on, which is right for a caller that predates addendum T or
@@ -1039,13 +1105,15 @@ public class BankPriceMovementPlugin extends Plugin
 	 */
 	ViewOptions optionsFromConfig()
 	{
-		return new ViewOptions(config.countCash(), config.countUntradeables(), config.holdingOnRows(),
-			config.livePrices(), config.countInventory());
+		return new ViewOptions(config.countCash(), config.countUntradeables(), config.livePrices(),
+			config.countInventory(), config.showHoverText());
 	}
 
 	/**
-	 * Whether a {@code ConfigChanged} key is one of the gear menu's view switches - addendum Q's three (Q3),
-	 * addendum T's live-price switch (T1) or addendum Y's carried switch (Y1), which ride the same road for the
+	 * Whether a {@code ConfigChanged} key is one of the gear menu's view switches - addendum Q's two remaining
+	 * ones (Q3; the third, {@code holdingOnRows}, went with addendum AO and is swept by {@link #unstickHolding()}
+	 * rather than answered here), addendum T's live-price switch (T1), addendum Y's carried switch (Y1) or
+	 * addendum AH's hover switch, which ride the same road for the
 	 * same reason: they are neither a filter (no gp band changes, and no ordering) nor presentation (what a live
 	 * row's unit, "then" and move figures ARE changes, and so does the bank value built out of them, and so does
 	 * the quantity of a stack the player is half carrying), so the service is told and the panel is re-rendered,
@@ -1054,8 +1122,8 @@ public class BankPriceMovementPlugin extends Plugin
 	static boolean isOptionKey(@Nullable String key)
 	{
 		return COUNT_CASH_KEY.equals(key) || COUNT_UNTRADEABLES_KEY.equals(key)
-			|| HOLDING_ON_ROWS_KEY.equals(key) || LIVE_PRICES_KEY.equals(key)
-			|| COUNT_INVENTORY_KEY.equals(key);
+			|| LIVE_PRICES_KEY.equals(key) || COUNT_INVENTORY_KEY.equals(key)
+			|| SHOW_HOVER_TEXT_KEY.equals(key);
 	}
 
 	/**
@@ -1141,12 +1209,13 @@ public class BankPriceMovementPlugin extends Plugin
 	 * {@code Boolean} the panel treats as "nothing stored = open"; this implementation never answers null, the
 	 * config having a default of its own.
 	 *
-	 * <p><b>And so do the gear menu's five switches</b> (Q3, T1, Y1): {@code loadOptions} / {@code saveOptions} are
-	 * the way
-	 * to {@code countCash} / {@code countUntradeables} / {@code holdingOnRows} / {@code livePrices} /
-	 * {@code countInventory}. The save half does one thing more
+	 * <p><b>And so do the gear menu's five switches</b> (Q3, T1, Y1, AH): {@code loadOptions} /
+	 * {@code saveOptions} are the way
+	 * to {@code countCash} / {@code countUntradeables} / {@code livePrices} / {@code countInventory} /
+	 * {@code showHoverText} - a sixth, {@code holdingOnRows}, travelled here until addendum AO deleted it (AO1).
+	 * The save half does one thing more
 	 * than {@code saveHero} does, and the comment inside it says why: the switch it wrote is suppressed on the
-	 * {@code ConfigChanged} round trip as this thread's own write, and two of the three change figures the
+	 * {@code ConfigChanged} round trip as this thread's own write, and three of the five change figures the
 	 * SERVICE owns, so it is told directly.
 	 */
 	BankPriceMovementPanel.Prefs configPrefs()
@@ -1242,7 +1311,7 @@ public class BankPriceMovementPlugin extends Plugin
 				final ConfigManager cm = configManager;
 				if (cm != null)
 				{
-					// Five writes since addendum Y, one change of mind, guarded exactly as saveHero's three
+					// Five writes since addendum AO, one change of mind, guarded exactly as saveHero's three
 					// are: ConfigManager posts a ConfigChanged on this very thread as each key lands, and the
 					// check item that was ticked has already applied the switch itself. Unguarded, ticking one
 					// item would recompute the whole bank value again for every other key, from a config in
@@ -1257,8 +1326,6 @@ public class BankPriceMovementPlugin extends Plugin
 						cm.setConfiguration(BankPriceMovementConfig.GROUP, COUNT_CASH_KEY, options.countCash());
 						cm.setConfiguration(BankPriceMovementConfig.GROUP, COUNT_UNTRADEABLES_KEY,
 							options.countUntradeables());
-						cm.setConfiguration(BankPriceMovementConfig.GROUP, HOLDING_ON_ROWS_KEY,
-							options.holdingOnRows());
 						// T1, and the one of the five that is worth a fetch: PriceService stops asking for the
 						// traded feeds altogether when this goes off, so it must be stored before the service is
 						// told below or a relaunch would quietly turn them back on.
@@ -1268,6 +1335,11 @@ public class BankPriceMovementPlugin extends Plugin
 						// told below, or the choice would be forgotten by the next launch.
 						cm.setConfiguration(BankPriceMovementConfig.GROUP, COUNT_INVENTORY_KEY,
 							options.countInventory());
+						// AH. Nothing is fetched or recomputed for this one - it decides whether the sidebar's
+						// tooltips are handed to Swing at all - but it is stored with the rest so a reader who
+						// turned the hovers on does not meet a silent sidebar again next launch.
+						cm.setConfiguration(BankPriceMovementConfig.GROUP, SHOW_HOVER_TEXT_KEY,
+							options.showHoverText());
 					}
 					finally
 					{

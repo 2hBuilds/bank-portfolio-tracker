@@ -53,7 +53,8 @@ import static org.mockito.Mockito.when;
  * asked to, so the pictures taken before AA stay reproducible from this class.
  *
  * <p>Nothing here needs a display or the client: the panel is built on the EDT over a mocked
- * {@link ItemManager} (each sprite is a drawn 36 x 32 placeholder in a colour of the item's own) and a mocked
+ * {@link ItemManager} (each sprite is a drawn {@link MovementRowPanel#ICON_WIDTH} x {@link MovementRowPanel#ICON_HEIGHT}
+ * placeholder in a colour of the item's own) and a mocked
  * {@link PriceService} whose {@code currentRows} / {@code currentStatus} seed the panel exactly as the bridge
  * does, then sized, laid out top-down ({@link #layoutTree} - {@code validate()} needs a peer, {@code doLayout()}
  * does not) and printed into a {@link BufferedImage}. The fonts are the plain Swing sans through
@@ -74,16 +75,26 @@ import static org.mockito.Mockito.when;
  * settings - so on a Windows box with ClearType on, every glyph comes out with coloured subpixel fringes, and on
  * one with it off the same glyph is grey. The picture is identical to the eye either way and different in about
  * 18,000 of its 202,500 pixels. The acceptance shots in {@code docs/handoff/lab/} were all taken with the flag
- * (measured 2026-09-11: with it, this class reproduces {@code ticker-2026-09-11-Q.png} and
- * {@code ticker-hidden-2026-09-11-Q.png} to the byte; without it, neither matches while the picture is the
+ * (measured 2026-09-11: with it, this class reproduces {@code ticker-2026-09-20-AK.png} and
+ * {@code ticker-hidden-2026-09-20-AK.png} to the byte; without it, neither matches while the picture is the
  * same), so a comparison against them has to be taken the same way.
  */
 public final class LookRenderer
 {
 	/** The sidebar's width: {@link PluginPanel#PANEL_WIDTH}. */
 	public static final int WIDTH = PluginPanel.PANEL_WIDTH;
-	/** Tall enough for the header, twelve 48 px rows and the foot without a scroll bar (N5: 225 x 900). */
-	public static final int HEIGHT = 900;
+	/**
+	 * Tall enough for the header, the twelve-row fixture and the foot without a scroll bar - 225 x 900 when a row
+	 * was 48 px (N5), and 225 x 1080 since the Q4 row format made it 62 (addendum AN). A row's pitch is
+	 * {@link MovementRowPanel#ROW_HEIGHT} plus the 3 px gutter between cards, so twelve of them went from 612 px
+	 * to 780 and the picture had to find 168 somewhere; left at 900 the list grew a SCROLL BAR, which narrows the
+	 * column under the header and squeezes every row card, so the pictures would no longer be the sidebar.
+	 *
+	 * <p>It is deliberately a little more than the 168: the ground under the last row is where a reader sees that
+	 * the list ended rather than ran out, and {@code everyPictureIsTallEnoughForItsListWithTheFoldOpen} fails
+	 * loudly if this is ever short again.
+	 */
+	public static final int HEIGHT = 1080;
 	/**
 	 * The fold's own height at this width, measured (addendum AA, line AA3): the chip strip over the field row,
 	 * with the fold's padding - and therefore the distance everything under the control row moved when the fold
@@ -98,13 +109,14 @@ public final class LookRenderer
 	 * answers it for a CLOSED fold, so the addendum W picture can still be drawn from this class - a "reproducible"
 	 * that came back at another size would not be one.
 	 */
-	public static final int OPTIONS_HEIGHT_CLOSED = HEIGHT + MovementRowPanel.ROW_HEIGHT + 3;
+	public static final int OPTIONS_HEIGHT_CLOSED = HEIGHT + 3 * (MovementRowPanel.ROW_HEIGHT + 3);
 	/**
-	 * The options picture's height (R5, and {@link #FOLD_HEIGHT} taller again since AA3). {@link #HEIGHT} holds the
-	 * header and exactly FOURTEEN rows - the twelve of the fixture and addendum Q's two untradeable stacks - so the
-	 * fifteenth row addendum R adds would fall off the bottom and, worse, bring a scroll bar that narrows the list
-	 * under the header and squeezes every 213 px row card. One row pitch taller (the 48 px card plus the 3 px
-	 * gutter between cards) and the picture is the same sidebar with room for it.
+	 * The options picture's height (R5, and {@link #FOLD_HEIGHT} taller again since AA3). Its fixture carries
+	 * THREE rows the other three pictures do not - addendum Q's two untradeable stacks and addendum R's one
+	 * valued at its parts - so it is three row pitches taller than {@link #HEIGHT}, a pitch being the card plus
+	 * the 3 px gutter between cards. It was one pitch taller until addendum AN: at 48 px a row, {@link #HEIGHT}
+	 * had slack for two more rows and the arithmetic was never exercised; at 62 px it is, and a picture that is
+	 * short brings a scroll bar that narrows the list under the header and squeezes every 213 px row card.
 	 *
 	 * <p><b>The open fold costs the list the same thing</b> (AA3): the header grew by {@link #FOLD_HEIGHT} and the
 	 * list under it lost exactly that, and this was the one picture with no room to give - it ended on 7 px of bare
@@ -112,8 +124,9 @@ public final class LookRenderer
 	 * describes, so it is given back what the fold took. The other three pictures are NOT given it: they keep the
 	 * 900 px they are compared at, and the fold simply eats 57 px of the ground under their last row.
 	 *
-	 * <p>{@link #HEIGHT} itself is untouched on purpose: the acceptance shots are compared BYTE FOR BYTE against
-	 * the pictures the addendum before left behind, and a picture of another size cannot be.
+	 * <p>{@link #HEIGHT} is normally untouched on purpose - the acceptance shots are compared BYTE FOR BYTE
+	 * against the pictures the addendum before left behind, and a picture of another size cannot be - but
+	 * addendum AN is one of the rare changes that moves it, because the rows themselves changed height.
 	 */
 	public static final int OPTIONS_HEIGHT = OPTIONS_HEIGHT_CLOSED + FOLD_HEIGHT;
 	/** The picture with every hero figure shown (N5's name). */
@@ -138,8 +151,12 @@ public final class LookRenderer
 	 * and S left behind, and they say so by naming this constant rather than by taking the default of the day.
 	 */
 	public static final ViewOptions GUIDE_ONLY = ViewOptions.DEFAULT.withLivePrices(false);
-	/** What {@link #OPTIONS_FILE} is drawn with: untradeables counted and holdings on the rows (Q7), live off (T8). */
-	public static final ViewOptions OPTIONS = new ViewOptions(true, true, true, false);
+	/**
+	 * What {@link #OPTIONS_FILE} is drawn with: untradeables counted (Q7), live off (T8). It asked for
+	 * holdings on the rows as well until addendum AO deleted that switch - since addendum AN every row shows
+	 * the stack AND the item whatever is set, so the picture is unmoved by its going.
+	 */
+	public static final ViewOptions OPTIONS = ViewOptions.DEFAULT.withCountUntradeables(true).withLivePrices(false);
 	/** What {@link #LIVE_FILE} is drawn with: the twelve-row fixture with the live switch on (T8). */
 	public static final ViewOptions LIVE = ViewOptions.DEFAULT.withLivePrices(true);
 	/**
@@ -439,7 +456,7 @@ public final class LookRenderer
 	// ---------------------------------------------------------------- the recorded fixture
 
 	/**
-	 * A 36 x 32 stand-in for the item sprite: a rounded block in a colour derived from the id with a lighter
+	 * An {@link MovementRowPanel#ICON_WIDTH} x {@link MovementRowPanel#ICON_HEIGHT} stand-in for the item sprite: a rounded block in a colour derived from the id with a lighter
 	 * core, so the picture cell is visibly in use in the PNG. Never {@code loaded()}: the label paints the
 	 * pixels that are there, and nothing waits on a client thread.
 	 */
@@ -453,9 +470,12 @@ public final class LookRenderer
 			g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 			final float hue = ((id * 47) % 360) / 360f;
 			g.setColor(Color.getHSBColor(hue, 0.55f, 0.55f));
-			g.fillRoundRect(5, 3, 26, 26, 9, 9);
+			// Centred on x = 15 of the 36 px frame, not on its middle, because that is where the client puts real
+			// item art (addendum AR measured it on the user's screenshot) - a stand-in drawn dead centre would make
+			// every render show the pictures ART_NUDGE px right of where they really stand.
+			g.fillRoundRect(2, 3, 27, 26, 9, 9);
 			g.setColor(Color.getHSBColor(hue, 0.35f, 0.85f));
-			g.fillOval(11, 9, 14, 14);
+			g.fillOval(8, 9, 15, 14);
 		}
 		finally
 		{
@@ -630,7 +650,7 @@ public final class LookRenderer
 	{
 		if (options != null && options.livePrices())
 		{
-			// T5: the same whole-bank figures, with the count the card's tooltip prints - "3 of 529 stacks live".
+			// T5: the same whole-bank figures, with the live count the card's tooltip printed until addendum AF.
 			final PortfolioSummary base = summary();
 			return new PortfolioSummary(base.valueStacks(), base.itemsPriced(), base.itemsTotal(), base.moves(),
 				base.currencyGp(), LIVE_STACKS);

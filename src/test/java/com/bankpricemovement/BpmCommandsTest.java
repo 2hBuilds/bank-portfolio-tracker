@@ -5,7 +5,10 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import java.awt.Component;
+import java.awt.image.BufferedImage;
 import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -22,6 +25,7 @@ import javax.imageio.ImageIO;
 import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
 import net.runelite.client.game.ItemManager;
+import net.runelite.client.util.Filepath;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
@@ -55,7 +59,10 @@ import static org.mockito.Mockito.when;
  * themselves are {@code BankPriceMovementPanelTest}'s business.
  *
  * <p>{@code shot} writes into a {@link TemporaryFolder} through the package-private constructor; nothing here
- * writes into {@code ~/.runelite}.
+ * writes into {@code ~/.runelite}. Since addendum AD the bridge is handed a {@link PriceStore.Directory} rather
+ * than a {@code File}, and what it answers is a {@link Filepath} SANDBOXED to that folder - so a shot cannot land
+ * outside it even if a name tried to walk out - which is why {@link #shotDir()} is the one place this file names
+ * the temporary folder and {@link #shotFile(JsonObject)} is the one place an answer's path is read back.
  */
 public class BpmCommandsTest
 {
@@ -107,7 +114,7 @@ public class BpmCommandsTest
 		// The real fields answer true for anything parseGp takes; a test that wants a refusal stubs the text.
 		when(panel.applyMin(anyString())).thenReturn(true);
 		when(panel.applyMax(anyString())).thenReturn(true);
-		dev = new BpmCommands(panel, service, gson, account(), shots.getRoot(), showing::get);
+		dev = new BpmCommands(panel, service, gson, account(), shotDir(), showing::get);
 	}
 
 	// ---------------------------------------------------------------- parsing and dispatch
@@ -159,7 +166,7 @@ public class BpmCommandsTest
 	@Test
 	public void aSwingThreadThatNeverAnswersStillProducesAnAnswer() throws Exception
 	{
-		final BpmCommands quick = new BpmCommands(panel, service, gson, account(), shots.getRoot(), showing::get)
+		final BpmCommands quick = new BpmCommands(panel, service, gson, account(), shotDir(), showing::get)
 		{
 			@Override
 			long edtTimeoutMs()
@@ -640,14 +647,15 @@ public class BpmCommandsTest
 			new MovementRow(4151, "Abyssal whip", 5, false, 100L, 90L, 10L, 11.1, 500L,
 				MovementRow.PriceSource.GUIDE)));
 
-		when(panel.options()).thenReturn(new ViewOptions(true, false, false, true, true));
+		// The carried switch is ON in the default, so the fuller of the two readings is DEFAULT itself.
+		when(panel.options()).thenReturn(ViewOptions.DEFAULT);
 		final JsonObject on = ok("state").getAsJsonArray("rows").get(0).getAsJsonObject();
 		assertEquals(5, on.get("qty").getAsInt());
 		assertNotNull("the split is echoed while the switch is on", on.get("bankQty"));
 		assertNotNull(on.get("invQty"));
 		assertNotNull(on.get("wornQty"));
 
-		when(panel.options()).thenReturn(new ViewOptions(true, false, false, true, false));
+		when(panel.options()).thenReturn(ViewOptions.DEFAULT.withCountInventory(false));
 		final JsonObject off = ok("state").getAsJsonArray("rows").get(0).getAsJsonObject();
 		assertEquals("the quantity itself never moves", 5, off.get("qty").getAsInt());
 		assertNull("nothing is split while the switch is off", off.get("bankQty"));
@@ -889,56 +897,68 @@ public class BpmCommandsTest
 	 * switches also reach {@code PriceService}. So a {@code /bpm} session and a hand session leave the same
 	 * stored settings behind.
 	 *
-	 * <p>Every expectation names all FIVE fields since addendum Y: the shorter constructors default the live and
-	 * the carried switch to on, so a short expectation would have quietly asserted "live prices on, inventory
-	 * counted" whatever the verb did to them.
+	 * <p>The expectations are written as {@link ViewOptions#DEFAULT} plus ONE wither wherever the press is one
+	 * switch moving, because since addendum AO there is a single positional constructor and a line of five bare
+	 * booleans is exactly what made removing a middle field dangerous: five booleans written for the pre-AO order
+	 * still compile against the new one and mean something else, with no error anywhere to say so.
 	 */
 	@Test
 	public void optTogglesTheViewSwitchesThroughTheGearsOwnItems()
 	{
-		// A panel that has not been asked reads as DEFAULT - cash counted, untradeables and holding off, live
-		// prices and the carried items on - which is also what a fresh profile stores.
+		// A panel that has not been asked reads as DEFAULT - cash counted, untradeables off, live prices and the
+		// carried items on, the data hovers off - which is also what a fresh profile stores.
 		ok("opt=cash");
-		verify(panel).setOptions(new ViewOptions(false, false, false, true, true));
-		ok("opt=untradeables");
-		verify(panel).setOptions(new ViewOptions(true, true, false, true, true));
-		ok("opt=holding");
-		verify(panel).setOptions(new ViewOptions(true, false, true, true, true));
+		verify(panel).setOptions(ViewOptions.DEFAULT.withCountCash(false));
 		ok("opt=live");
-		verify(panel).setOptions(new ViewOptions(true, false, false, false, true));
+		verify(panel).setOptions(ViewOptions.DEFAULT.withLivePrices(false));
 		ok("opt=inventory");
-		verify(panel).setOptions(new ViewOptions(true, false, false, true, false));
+		verify(panel).setOptions(ViewOptions.DEFAULT.withCountInventory(false));
 
 		ok("opt=all");
-		verify(panel).setOptions(new ViewOptions(true, true, true, true, true));
+		verify(panel).setOptions(new ViewOptions(true, true, true, true, false));
 		ok("opt=none");
 		verify(panel).setOptions(new ViewOptions(false, false, false, false, false));
 
 		// The toggle is against what the sidebar is USING, not against the default: from cash off, a field word
 		// turns that one switch back on. The spellings are the generous ones a URL query gets typed with.
-		when(panel.options()).thenReturn(new ViewOptions(false, true, true, false, false));
+		//
+		// The base below carries the data hovers ON - no opt= word moves that switch - so every value expected
+		// here is one neither "all" nor "none" can produce. That matters since addendum AO: with the holding
+		// switch gone, turning untradeables on from the DEFAULT lands on exactly the five values "all" does, and
+		// Mockito would see one press where this test means two.
+		final ViewOptions base = new ViewOptions(false, true, false, false, true);
+		when(panel.options()).thenReturn(base);
 		ok("opt=coins");
-		verify(panel).setOptions(new ViewOptions(true, true, true, false, false));
-		ok("opt=alch");
-		verify(panel).setOptions(new ViewOptions(false, false, true, false, false));
-		ok("opt=stack");
-		verify(panel).setOptions(new ViewOptions(false, true, false, false, false));
+		verify(panel).setOptions(base.withCountCash(true));
+		ok("opt=untradeables");
+		verify(panel).setOptions(base.withCountUntradeables(false));
 		ok("opt=traded");
-		verify(panel).setOptions(new ViewOptions(false, true, true, true, false));
+		verify(panel).setOptions(base.withLivePrices(true));
 		ok("opt=worn");
-		verify(panel).setOptions(new ViewOptions(false, true, true, false, true));
+		verify(panel).setOptions(base.withCountInventory(true));
 
-		// Twelve presses, and every one of them through the check item rather than the bare applyOptions: the
+		// The untradeables alias, toggling the same switch the other way from a base of its own so the two
+		// presses are told apart by their values.
+		when(panel.options()).thenReturn(base.withCountUntradeables(false));
+		ok("opt=alch");
+		verify(panel).setOptions(base);
+
+		// Ten presses, and every one of them through the check item rather than the bare applyOptions: the
 		// difference between the two is whether the choice is remembered.
-		verify(panel, times(12)).setOptions(any());
+		verify(panel, times(10)).setOptions(any());
 		verify(panel, never()).applyOptions(any());
 	}
 
 	/**
-	 * T8 and Y1: {@code none} turns off all FIVE switches and {@code all} turns on all five. The word is the
-	 * only one whose whole promise is that nothing is left standing, and the shorter {@link ViewOptions}
-	 * constructors - which default the live and the carried switch to ON - are exactly how that promise would
-	 * have been broken silently.
+	 * T8 and Y1: {@code none} turns off every switch the verb reaches and {@code all} turns on every one but the
+	 * data hovers. The word is the only one whose whole promise is that nothing is left standing, so its
+	 * expectations are spelled in full rather than built with withers - and the one asymmetry is pinned here:
+	 * {@code all} leaves {@code showHoverText} OFF, which is the arity addendum AH gave it and has never been a
+	 * way to turn the hovers on.
+	 *
+	 * <p>Since addendum AO each word names FIVE fields rather than six - the holding switch is deleted - and a
+	 * press that quietly left one of the remaining five standing is exactly what a positional expectation
+	 * written for the old order would have hidden.
 	 */
 	@Test
 	public void allAndNoneReachTheLiveAndCarriedSwitchesToo()
@@ -949,7 +969,7 @@ public class BpmCommandsTest
 
 		when(panel.options()).thenReturn(new ViewOptions(false, false, false, false, false));
 		ok("opt=all");
-		verify(panel).setOptions(new ViewOptions(true, true, true, true, true));
+		verify(panel).setOptions(new ViewOptions(true, true, true, true, false));
 	}
 
 	/**
@@ -961,8 +981,8 @@ public class BpmCommandsTest
 	@Test
 	public void optInventoryTogglesTheCarriedSwitchUnderEveryName()
 	{
-		final ViewOptions on = new ViewOptions(true, false, false, true, true);
-		final ViewOptions off = new ViewOptions(true, false, false, true, false);
+		final ViewOptions on = ViewOptions.DEFAULT;
+		final ViewOptions off = ViewOptions.DEFAULT.withCountInventory(false);
 		for (String verb : new String[]{"inventory", "inv", "gear", "worn", "countinventory"})
 		{
 			when(panel.options()).thenReturn(on);
@@ -987,32 +1007,72 @@ public class BpmCommandsTest
 		assertTrue(bad.get("error").getAsString(), bad.get("error").getAsString().contains("live"));
 		// Y1: and the fifth.
 		assertTrue(bad.get("error").getAsString(), bad.get("error").getAsString().contains("inventory"));
+		// AO1: and the word that is gone is NOT in the list - it has a sentence of its own, below.
+		assertFalse(bad.get("error").getAsString(), bad.get("error").getAsString().contains("holding"));
 		assertFalse("a bare opt names no switch", send("opt").get("ok").getAsBoolean());
 		verify(panel, never()).setOptions(any());
 		verify(panel, never()).applyOptions(any());
 	}
 
 	/**
-	 * Every answer says which of the gear's five switches the sidebar is using, so a shot needs no second call
-	 * - and unlike {@code hero}, these are also the reason the figures below say what they say.
+	 * AO1: {@code opt=holding} is REMOVED, and answers one sentence that names the addendum and says what to
+	 * expect instead - a row shows the stack AND one item since addendum AN, and the gp column always compares
+	 * the stack. It is not "opt= wants cash, untradeables, ..." and not a no-op, for the reason {@code order=}
+	 * is not: the word is in the Q, T, U, V, Y and Z live acceptance lists and in whatever the operator has in
+	 * their shell history, so the one thing it has to do is tell its author where it went.
+	 */
+	@Test
+	public void optHoldingIsGoneAndTheVerbSaysWhatTookItsPlace()
+	{
+		final JsonObject bad = send("opt=holding");
+		assertFalse(bad.get("ok").getAsBoolean());
+		assertEquals("opt=holding is gone since addendum AO - a row now shows the stack and one item both,"
+			+ " and the gp column always compares the stack", bad.get("error").getAsString());
+
+		// Every spelling the verb used to accept for that switch gets the same sentence, the stored key
+		// included, and the text is case-folded the way a hand-typed URL query needs.
+		for (String verb : new String[]{"holdings", "stack", "stacks", "holdingonrows", "Holding", "HOLDINGONROWS"})
+		{
+			assertEquals(verb, bad.get("error").getAsString(), send("opt=" + verb).get("error").getAsString());
+		}
+		// ...and none of them presses anything: the sidebar is left exactly as it was.
+		verify(panel, never()).setOptions(any());
+		verify(panel, never()).applyOptions(any());
+
+		// The same word is still a COLUMN. opt= and sort= are different verbs, and addendum W's fourth column
+		// is untouched by any of this - which is why the switch's spellings are caught by opt= alone.
+		ok("sort=stack");
+		verify(panel).clickSort(SortMode.STACK_VALUE);
+	}
+
+	/**
+	 * Every answer says which of the gear's switches the sidebar is using, so a shot needs no second call - and
+	 * unlike {@code hero}, these are also the reason the figures below say what they say.
+	 *
+	 * <p>There are FIVE keys since addendum AO, not six: {@code holding} went with the switch behind it (AO1),
+	 * and the count is asserted so a key cannot be added or lost here without a test saying so.
 	 */
 	@Test
 	public void everyAnswerEchoesTheViewSwitches()
 	{
 		final JsonObject fresh = ok("state").getAsJsonObject("options");
+		assertEquals("cash, untradeables, live, inventory, hover (AO1)", 5, fresh.entrySet().size());
 		assertTrue("a panel that has not been asked reads as the default", fresh.get("cash").getAsBoolean());
 		assertFalse(fresh.get("untradeables").getAsBoolean());
-		assertFalse(fresh.get("holding").getAsBoolean());
 		assertTrue("live prices are on by default (T1)", fresh.get("live").getAsBoolean());
 		assertTrue("and so are the carried items (Y1)", fresh.get("inventory").getAsBoolean());
+		assertFalse("the data hovers are the one switch that defaults off (AH)", fresh.get("hover").getAsBoolean());
+		assertNull("holding went with the switch addendum AO deleted", fresh.get("holding"));
 
-		when(panel.options()).thenReturn(new ViewOptions(false, true, false, false, true));
+		when(panel.options()).thenReturn(ViewOptions.DEFAULT
+			.withCountCash(false).withCountUntradeables(true).withLivePrices(false));
 		final JsonObject some = ok("state").getAsJsonObject("options");
 		assertFalse(some.get("cash").getAsBoolean());
 		assertTrue(some.get("untradeables").getAsBoolean());
-		assertFalse(some.get("holding").getAsBoolean());
 		assertFalse(some.get("live").getAsBoolean());
 		assertTrue(some.get("inventory").getAsBoolean());
+		assertFalse(some.get("hover").getAsBoolean());
+		assertNull(some.get("holding"));
 	}
 
 	/** Q7: there is no {@code gear} verb - the menu is a Swing popup, and {@code shot=} is how it is looked at. */
@@ -1084,7 +1144,7 @@ public class BpmCommandsTest
 		final AtomicReference<BankPriceMovementPanel> real = new AtomicReference<>();
 		MovementRowPanelTest.onEdt(() -> real.set(new BankPriceMovementPanel(mock(ItemManager.class), service, prefs())));
 		final BankPriceMovementPanel p = real.get();
-		final BpmCommands bridge = new BpmCommands(p, service, gson, account(), shots.getRoot(), showing::get);
+		final BpmCommands bridge = new BpmCommands(p, service, gson, account(), shotDir(), showing::get);
 		try
 		{
 			assertTrue(reply(bridge, "max=1.5m").get("ok").getAsBoolean());
@@ -1280,8 +1340,7 @@ public class BpmCommandsTest
 		final AtomicReference<BankPriceMovementPanel> real = new AtomicReference<>();
 		MovementRowPanelTest.onEdt(() -> real.set(new BankPriceMovementPanel(mock(ItemManager.class), service,
 			prefs())));
-		final BpmCommands bridge = new BpmCommands(real.get(), service, gson, account(), shots.getRoot(),
-			showing::get);
+		final BpmCommands bridge = new BpmCommands(real.get(), service, gson, account(), shotDir(), showing::get);
 		try
 		{
 			// The seam above remembers nothing, so this is the FRESH-INSTALL reading (loadFoldOpen answers null).
@@ -1330,7 +1389,7 @@ public class BpmCommandsTest
 		};
 		final AtomicReference<BankPriceMovementPanel> real = new AtomicReference<>();
 		MovementRowPanelTest.onEdt(() -> real.set(new BankPriceMovementPanel(mock(ItemManager.class), service, prefs)));
-		final BpmCommands bridge = new BpmCommands(real.get(), service, gson, account(), shots.getRoot(), showing::get);
+		final BpmCommands bridge = new BpmCommands(real.get(), service, gson, account(), shotDir(), showing::get);
 		try
 		{
 			// Not 1d: that is already the default, and an unchanged filter is deliberately not saved again.
@@ -1400,7 +1459,7 @@ public class BpmCommandsTest
 		};
 		final AtomicReference<BankPriceMovementPanel> real = new AtomicReference<>();
 		MovementRowPanelTest.onEdt(() -> real.set(new BankPriceMovementPanel(mock(ItemManager.class), service, prefs)));
-		final BpmCommands bridge = new BpmCommands(real.get(), service, gson, account(), shots.getRoot(), showing::get);
+		final BpmCommands bridge = new BpmCommands(real.get(), service, gson, account(), shotDir(), showing::get);
 		try
 		{
 			// RowFilter.DEFAULT is (PERCENT_MOVE, descending), so this names the column that is already lit.
@@ -1574,8 +1633,8 @@ public class BpmCommandsTest
 	{
 		for (long hash : new long[]{0L, -1L})
 		{
-			final BpmCommands loggedOut = new BpmCommands(panel, service, gson, account(hash),
-				shots.getRoot(), showing::get);
+			final BpmCommands loggedOut = new BpmCommands(panel, service, gson, account(hash), shotDir(),
+				showing::get);
 			final JsonObject r = gson.fromJson(loggedOut.apply("bank=4151:2"), JsonObject.class);
 			assertFalse("account " + hash + " is nobody", r.get("ok").getAsBoolean());
 			assertEquals(BpmCommands.NOT_LOGGED_IN, r.get("error").getAsString());
@@ -1587,9 +1646,14 @@ public class BpmCommandsTest
 		verify(service).setBank(any(), eq(false));
 	}
 
-	/** The contract's three-argument constructor serves every verb but the one that needs the live account. */
+	/**
+	 * The contract's three-argument constructor serves every verb that needs no seam of its own: {@code bank=} is
+	 * refused because there is no live account to stamp the snapshot with, and since addendum AD {@code shot} is
+	 * refused too because there is no directory to write into - that one is pinned on its own, just below, since
+	 * it is a rule about a file rather than about the account.
+	 */
 	@Test
-	public void theContractConstructorRefusesOnlyTheSyntheticBank()
+	public void theContractConstructorRefusesTheSyntheticBankAndServesTheRestOfTheVerbs()
 	{
 		final BpmCommands bare = new BpmCommands(panel, service, gson);
 		final JsonObject noBank = gson.fromJson(bare.apply("bank=4151:1"), JsonObject.class);
@@ -1622,20 +1686,45 @@ public class BpmCommandsTest
 		when(panel.shotComponents()).thenReturn(parts(213, 120, 213, 400));
 
 		final JsonObject r = ok("shot=list");
-		final File png = new File(r.get("path").getAsString());
-		assertTrue(png.getAbsolutePath(), png.isFile());
-		assertTrue("the name the caller asked for is in the file name", png.getName().startsWith("list-"));
+		// Addendum AD: the answer's "path" is still the absolute path, now spelled by Filepath.toString() - and
+		// shotFile is what proves it landed INSIDE the directory the bridge was handed rather than anywhere else.
+		final Filepath png = shotFile(r);
+		assertTrue(png.toString(), png.isFile());
+		assertTrue("the name the caller asked for is in the file name", png.getFileName().startsWith("list-"));
+		assertTrue("a PNG with no bytes in it is no picture", png.size() > 0L);
 		assertEquals(213, r.get("width").getAsInt());
 		assertEquals("the whole sidebar, not the viewport", 520, r.get("height").getAsInt());
-		assertEquals(213, ImageIO.read(png).getWidth());
-		assertEquals(520, ImageIO.read(png).getHeight());
+		final BufferedImage image = readPng(png);
+		assertEquals(213, image.getWidth());
+		assertEquals(520, image.getHeight());
 		assertTrue("every verb answers the state as well (C40)", r.has("filter") && r.has("status") && r.has("rows"));
 
 		// Two shots in the same second do not overwrite each other.
-		final File second = new File(ok("shot=list").get("path").getAsString());
-		assertNotNull(second);
-		assertTrue(second.isFile());
-		assertFalse(second.getName().equals(png.getName()));
+		final Filepath second = shotFile(ok("shot=list"));
+		assertTrue(second.toString(), second.isFile());
+		assertFalse(second.getFileName().equals(png.getFileName()));
+	}
+
+	/**
+	 * Addendum AD: a bridge built without a directory cannot take a shot, and SAYS so. Only the plugin can ask
+	 * RuneLite for a data directory ({@code Plugin.getPluginDirectory()} is protected), so the contract's
+	 * three-argument constructor hands the bridge a seam that throws - and the sentence an operator reads names
+	 * the reason rather than a bare {@code IOException} they would have to decode. The sidebar is deliberately
+	 * SHOWING and the parts deliberately sized here, so the refusal can only be about the missing directory.
+	 */
+	@Test
+	public void aBridgeWithNoDirectoryRefusesTheShotRatherThanWritingAnywhere()
+	{
+		when(panel.shotComponents()).thenReturn(parts(213, 120));
+		// The bare constructor asks the panel itself, and a panel no window ever realised answers false.
+		when(panel.isShowing()).thenReturn(true);
+		final BpmCommands bare = new BpmCommands(panel, service, gson);
+
+		final JsonObject r = gson.fromJson(bare.apply("shot=nowhere"), JsonObject.class);
+		assertFalse("a shot with nowhere to go is an answer, never a throw", r.get("ok").getAsBoolean());
+		assertTrue(r.get("error").getAsString(), r.get("error").getAsString().contains(BpmCommands.NO_SHOT_DIR));
+		assertFalse("...and it names no file, because there is none", r.has("path"));
+		assertEquals("nothing may be written when there is nowhere to write it", 0, shots.getRoot().list().length);
 	}
 
 	@Test
@@ -1651,6 +1740,52 @@ public class BpmCommandsTest
 	}
 
 	// ---------------------------------------------------------------- fixtures
+
+	/**
+	 * Where {@code shot} writes: the {@link TemporaryFolder}, as the sandboxed {@link Filepath} the bridge takes
+	 * since addendum AD. It is a SUPPLIER rather than a value because that is the shape the bridge holds - in the
+	 * client it is {@code getPluginDirectory().join(SHOT_DIR)}, asked for when a shot is taken rather than at
+	 * construction, so a disk that says no becomes {@code shot}'s own error answer instead of a plugin that will
+	 * not start. Handing each bridge its own supplier over the same folder keeps every test's shots together
+	 * where {@link #shotFile(JsonObject)} can find them.
+	 */
+	private PriceStore.Directory shotDir()
+	{
+		return () -> TestFilepaths.rooted(shots.getRoot());
+	}
+
+	/**
+	 * The file a {@code shot} answer names, as the {@link Filepath} it now is. The answer still carries the
+	 * absolute path ({@code shot.file.toString()}), and this reads it back the one way that also PROVES the port:
+	 * the path must start inside the directory the bridge was handed - {@code SHOT_DIR} is now just "shots" and it
+	 * is the plugin that joins it onto its own data directory, so nothing here may expect a folder name of its own -
+	 * and the file is then reached by joining onto that root rather than by building a bare {@code File}.
+	 */
+	private Filepath shotFile(JsonObject answer)
+	{
+		final Filepath dir = TestFilepaths.rooted(shots.getRoot());
+		final String path = answer.get("path").getAsString();
+		final String prefix = dir.toString() + File.separator;
+		assertTrue("the shot must land in the directory the bridge was given (" + prefix + "): " + path,
+			path.startsWith(prefix));
+		return dir.join(path.substring(prefix.length()));
+	}
+
+	/**
+	 * The picture inside a written shot, read through the {@link Filepath} instead of around it - the stream
+	 * overload rather than {@code ImageIO.read(File)}, which is the same choice {@code writeShot} makes on the
+	 * writing side. A stream ImageIO cannot decode answers null, so that is said out loud rather than arriving as
+	 * an NPE two lines later.
+	 */
+	private static BufferedImage readPng(Filepath file) throws IOException
+	{
+		try (InputStream in = file.openInputStream())
+		{
+			final BufferedImage image = ImageIO.read(in);
+			assertNotNull("the shot must be a readable PNG: " + file, image);
+			return image;
+		}
+	}
 
 	/** Sized (but never realised) panels standing in for the header and the scroll pane's view. */
 	private static List<Component> parts(int... widthHeightPairs)

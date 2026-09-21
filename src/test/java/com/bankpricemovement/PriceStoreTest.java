@@ -10,12 +10,10 @@ import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import com.google.gson.Gson;
-import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileAlreadyExistsException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -23,7 +21,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import net.runelite.client.RuneLite;
+import net.runelite.client.util.Filepath;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -43,6 +41,11 @@ import org.junit.rules.TemporaryFolder;
  *
  * <p>Real disk, no mocks and no sleeps: the store is synchronous by contract (the caller owns the executor), so
  * every assertion here is on what is on the file system when the call returns.
+ *
+ * <p>Since addendum AD the store speaks {@link Filepath} rather than {@link java.io.File}, so the temporary
+ * folder is handed over as a ROOT ({@link TestFilepaths#rooted}) and every path below is a join onto it -
+ * exactly how the plugin builds its own from {@code Plugin.getPluginDirectory()}. Nothing here can name a file
+ * outside {@code tmp}, which is a property of the wrapper and not of this test's manners.
  */
 public class PriceStoreTest
 {
@@ -58,24 +61,59 @@ public class PriceStoreTest
 
 	private PriceStore store()
 	{
-		return new PriceStore(gson, tmp.getRoot());
+		return new PriceStore(gson, TestFilepaths.rooted(tmp.getRoot()));
 	}
 
-	// ---- file names and the directory (C17, K11)
+	// ---- file names and the directory (C17, K11, AD)
 
+	/**
+	 * What {@code PriceStore.defaultDir()} used to guard, re-pinned (addendum AD). That method is GONE: the
+	 * directory now comes from {@code Plugin.getPluginDirectory()}, which no unit test may call, because calling
+	 * it would create - and perform the one-time legacy move into - the developer's own
+	 * {@code ~/.runelite/plugin-data}. What the old test really protected was never the folder's name but that
+	 * the store reaches nowhere else, and {@link Filepath} turns that from a habit into a rule: a path built from
+	 * this root cannot name anything above it, so a whole session of saves and a sweep leave the temporary folder
+	 * holding exactly what they wrote and the rest of the disk untouched.
+	 */
 	@Test
-	public void defaultDirIsBankPriceMovementUnderTheRuneliteDir()
+	public void everyPathTheStoreNamesIsInsideTheDirectoryItWasBuiltOver()
 	{
-		final File dir = PriceStore.defaultDir();
-		assertEquals("the directory name is the hub slug (C17/D10)", "bank-portfolio-tracker", dir.getName());
-		assertEquals("every file the plugin writes lives under ~/.runelite (hub rule C46)",
-			RuneLite.RUNELITE_DIR, dir.getParentFile());
+		assertEquals("the directory name is still the hub slug (C17/D10) - the descriptor's internalName since AD",
+			"bank-portfolio-tracker", PriceStore.DIR_NAME);
+
+		final Filepath root = TestFilepaths.rooted(tmp.getRoot());
+		final PriceStore store = new PriceStore(gson, root);
+		assertEquals("the store reads and writes the directory it was given", root, store.dir());
+
+		for (final Filepath file : Arrays.asList(store.bankFile(1234L, "STANDARD"), store.bankFile(7L, "../../etc"),
+			store.mappingFile(), store.revisionIndexFile(), store.tradedLatestFile(),
+			store.bucketFile(MovementWindow.D1), store.tradedFile(MovementWindow.D180)))
+		{
+			assertTrue(file + " is outside the store's directory", file.startsWith(root));
+			assertEquals("and it is a child of it, not a grandchild", root, file.getParent());
+		}
+
+		try
+		{
+			root.join("..");
+			fail("a Filepath cannot name its own parent - that is the whole point of the wrapper");
+		}
+		catch (IllegalArgumentException expected)
+		{
+			// the point of the test
+		}
+
+		store.saveBank(snapshot(42L, "STANDARD", 1L, item(4151, 1, "Whip", false)));
+		store.saveBucket(MovementWindow.D1, guideMap(658, 1124L));
+		assertEquals("a sweep of a directory this build wrote takes nothing", 0, store.deleteStaleFiles());
+		assertEquals("and what was written is all that is there", Arrays.asList("bank-42-STANDARD.json",
+			"baseline-D1.json"), names());
 	}
 
 	@Test
 	public void theDirectoryIsCreatedLazilyOnTheFirstWriteAndNotBeforeIt()
 	{
-		final File missing = new File(tmp.getRoot(), "never-used");
+		final Filepath missing = TestFilepaths.at(tmp.getRoot(), "never-used");
 		final PriceStore store = new PriceStore(gson, missing);
 
 		assertSame("a load must not create anything", PriceMap.EMPTY, store.loadBucket(MovementWindow.D1));
@@ -87,22 +125,23 @@ public class PriceStoreTest
 
 		store.saveBucket(MovementWindow.D1, guideMap(658, 1124L));
 		assertTrue("the first write creates the directory", missing.isDirectory());
-		assertTrue(new File(missing, "baseline-D1.json").isFile());
+		assertTrue(missing.join("baseline-D1.json").isFile());
 	}
 
 	@Test
 	public void theFourKindsOfFileAreNamedByTheContract()
 	{
 		final PriceStore store = store();
-		assertEquals("bank-1234-STANDARD.json", store.bankFile(1234L, "STANDARD").getName());
-		assertEquals("mapping.json", store.mappingFile().getName());
-		assertEquals("revindex.json", store.revisionIndexFile().getName());
-		assertEquals("baseline-D1.json", store.bucketFile(MovementWindow.D1).getName());
-		assertEquals("baseline-D7.json", store.bucketFile(MovementWindow.D7).getName());
-		assertEquals("baseline-D30.json", store.bucketFile(MovementWindow.D30).getName());
-		assertEquals("baseline-D90.json", store.bucketFile(MovementWindow.D90).getName());
-		assertEquals("baseline-D180.json", store.bucketFile(MovementWindow.D180).getName());
-		assertEquals("the store reads and writes the directory it was given", tmp.getRoot(), store.dir());
+		assertEquals("bank-1234-STANDARD.json", store.bankFile(1234L, "STANDARD").getFileName());
+		assertEquals("mapping.json", store.mappingFile().getFileName());
+		assertEquals("revindex.json", store.revisionIndexFile().getFileName());
+		assertEquals("baseline-D1.json", store.bucketFile(MovementWindow.D1).getFileName());
+		assertEquals("baseline-D7.json", store.bucketFile(MovementWindow.D7).getFileName());
+		assertEquals("baseline-D30.json", store.bucketFile(MovementWindow.D30).getFileName());
+		assertEquals("baseline-D90.json", store.bucketFile(MovementWindow.D90).getFileName());
+		assertEquals("baseline-D180.json", store.bucketFile(MovementWindow.D180).getFileName());
+		assertEquals("the store reads and writes the directory it was given",
+			TestFilepaths.rooted(tmp.getRoot()), store.dir());
 	}
 
 	/** A separator in the profile type would write outside the store's directory. */
@@ -110,18 +149,21 @@ public class PriceStoreTest
 	public void aProfileTypeIsSanitisedIntoTheFileNameAndBlankBecomesUnknown()
 	{
 		final PriceStore store = store();
-		assertEquals("bank-7-a_b_c.json", store.bankFile(7L, "a/b\\c").getName());
+		assertEquals("bank-7-a_b_c.json", store.bankFile(7L, "a/b\\c").getFileName());
 
-		final File traversal = store.bankFile(7L, "../../etc");
-		assertEquals("a traversal cannot walk out of the store's directory", tmp.getRoot(), traversal.getParentFile());
-		assertFalse(traversal.getName().contains(".."));
-		assertFalse(traversal.getName().contains("/"));
-		assertFalse(traversal.getName().contains("\\"));
+		final Filepath traversal = store.bankFile(7L, "../../etc");
+		assertEquals("a traversal cannot walk out of the store's directory", store.dir(), traversal.getParent());
+		assertTrue("and since addendum AD it could not even if the sanitiser let it through: the path is a join "
+			+ "onto the store's own root, which throws rather than escaping", traversal.startsWith(store.dir()));
+		assertFalse(traversal.getFileName().contains(".."));
+		assertFalse(traversal.getFileName().contains("/"));
+		assertFalse(traversal.getFileName().contains("\\"));
 
-		assertEquals("bank-7-UNKNOWN.json", store.bankFile(7L, "").getName());
-		assertEquals("bank-7-UNKNOWN.json", store.bankFile(7L, "   ").getName());
-		assertEquals("bank-7-UNKNOWN.json", store.bankFile(7L, null).getName());
-		assertEquals("a logged-out account hash is -1", "bank--1-STANDARD.json", store.bankFile(-1L, "STANDARD").getName());
+		assertEquals("bank-7-UNKNOWN.json", store.bankFile(7L, "").getFileName());
+		assertEquals("bank-7-UNKNOWN.json", store.bankFile(7L, "   ").getFileName());
+		assertEquals("bank-7-UNKNOWN.json", store.bankFile(7L, null).getFileName());
+		assertEquals("a logged-out account hash is -1", "bank--1-STANDARD.json",
+			store.bankFile(-1L, "STANDARD").getFileName());
 	}
 
 	// ---- banks (C18)
@@ -176,7 +218,7 @@ public class PriceStoreTest
 	{
 		final PriceStore store = store();
 		store.saveBank(snapshot(99L, "BETA", 4_000L, item(4151, 1, "Whip", false)));
-		assertTrue(new File(tmp.getRoot(), "bank-99-BETA.json").isFile());
+		assertTrue(TestFilepaths.at(tmp.getRoot(), "bank-99-BETA.json").isFile());
 		assertEquals(4_000L, store.loadBank(99L, "BETA").capturedAtMillis);
 	}
 
@@ -609,18 +651,19 @@ public class PriceStoreTest
 	public void theSweepRemovesTheTradeEraFilesAndNothingElse() throws IOException
 	{
 		final PriceStore store = store();
-		write(new File(tmp.getRoot(), PriceStore.LEGACY_LATEST_FILE), "{\"points\":{\"658\":[1848,999]}}");
-		write(new File(tmp.getRoot(), "baseline-H1.json"), "{\"bucketSeconds\":1788822000,\"points\":{}}");
-		write(new File(tmp.getRoot(), "baseline-H24.json"), "{\"bucketSeconds\":1788822000,\"points\":{}}");
+		write(TestFilepaths.at(tmp.getRoot(), PriceStore.LEGACY_LATEST_FILE), "{\"points\":{\"658\":[1848,999]}}");
+		write(TestFilepaths.at(tmp.getRoot(), "baseline-H1.json"), "{\"bucketSeconds\":1788822000,\"points\":{}}");
+		write(TestFilepaths.at(tmp.getRoot(), "baseline-H24.json"), "{\"bucketSeconds\":1788822000,\"points\":{}}");
 		store.saveBank(snapshot(42L, "STANDARD", 1L, item(4151, 1, "Whip", false)));
 		store.saveMapping(Collections.singletonMap(4151, "Abyssal whip"), 5L);
 		store.saveBucket(MovementWindow.D1, guideMap(658, 1124L));
 
 		assertEquals("prices-latest, baseline-H1 and baseline-H24", 3, store.deleteStaleFiles());
 
-		assertFalse(new File(tmp.getRoot(), PriceStore.LEGACY_LATEST_FILE).exists());
-		assertFalse("H1 is not the name of any window this build has", new File(tmp.getRoot(), "baseline-H1.json").exists());
-		assertFalse(new File(tmp.getRoot(), "baseline-H24.json").exists());
+		assertFalse(TestFilepaths.at(tmp.getRoot(), PriceStore.LEGACY_LATEST_FILE).exists());
+		assertFalse("H1 is not the name of any window this build has",
+			TestFilepaths.at(tmp.getRoot(), "baseline-H1.json").exists());
+		assertFalse(TestFilepaths.at(tmp.getRoot(), "baseline-H24.json").exists());
 		assertTrue("the remembered bank is untouched", store.bankFile(42L, "STANDARD").isFile());
 		assertTrue("so is the mapping", store.mappingFile().isFile());
 		assertEquals("and so is a guide baseline", Long.valueOf(1124L),
@@ -635,12 +678,12 @@ public class PriceStoreTest
 	public void theSweepMatchesWindowNamesExactlyRatherThanThroughTheLegacyParse() throws IOException
 	{
 		final PriceStore store = store();
-		write(new File(tmp.getRoot(), "baseline-H24.json"), "{\"points\":{\"658\":[11,-1]}}");
+		write(TestFilepaths.at(tmp.getRoot(), "baseline-H24.json"), "{\"points\":{\"658\":[11,-1]}}");
 
 		assertSame("parse() would answer D1 here - the sweep must not use it",
 			MovementWindow.D1, MovementWindow.parse("H24"));
 		assertEquals(1, store.deleteStaleFiles());
-		assertFalse(new File(tmp.getRoot(), "baseline-H24.json").exists());
+		assertFalse(TestFilepaths.at(tmp.getRoot(), "baseline-H24.json").exists());
 	}
 
 	/**
@@ -735,8 +778,9 @@ public class PriceStoreTest
 	public void anUnreadableBaselineIsKeptRatherThanMistakenForATradeEraOne() throws IOException
 	{
 		final PriceStore store = store();
-		final File baseline = store.bucketFile(MovementWindow.D30);
-		assertTrue(baseline.mkdirs());
+		final Filepath baseline = store.bucketFile(MovementWindow.D30);
+		baseline.createDirectories();
+		assertTrue(baseline.isDirectory());
 
 		assertEquals("nothing was deleted", 0, store.deleteStaleFiles());
 		assertTrue("an unreadable file says nothing about its content", baseline.isDirectory());
@@ -752,8 +796,8 @@ public class PriceStoreTest
 	public void theSweepLeavesQuarantinedBytesAndTemporariesAlone() throws IOException
 	{
 		final PriceStore store = store();
-		write(new File(tmp.getRoot(), "baseline-D7.json.corrupt-123"), "kept for a bug report");
-		write(new File(tmp.getRoot(), "baseline-D7.json.999.tmp"), "an interrupted write");
+		write(TestFilepaths.at(tmp.getRoot(), "baseline-D7.json.corrupt-123"), "kept for a bug report");
+		write(TestFilepaths.at(tmp.getRoot(), "baseline-D7.json.999.tmp"), "an interrupted write");
 
 		assertEquals(0, store.deleteStaleFiles());
 		assertEquals(2, names().size());
@@ -776,7 +820,7 @@ public class PriceStoreTest
 	public void aCorruptBankIsQuarantinedAndReadsAsEmpty() throws IOException
 	{
 		final PriceStore store = store();
-		final File file = store.bankFile(42L, "STANDARD");
+		final Filepath file = store.bankFile(42L, "STANDARD");
 		write(file, "{ this is not JSON");
 
 		assertSame(BankSnapshot.EMPTY, store.loadBank(42L, "STANDARD"));
@@ -785,7 +829,7 @@ public class PriceStoreTest
 		assertEquals("exactly one backup, named after the file it came from", 1, quarantined.size());
 		assertTrue(quarantined.get(0).startsWith("bank-42-STANDARD.json.corrupt-"));
 		assertEquals("the bytes are kept for a bug report", "{ this is not JSON",
-			new String(Files.readAllBytes(new File(tmp.getRoot(), quarantined.get(0)).toPath()), StandardCharsets.UTF_8));
+			read(TestFilepaths.at(tmp.getRoot(), quarantined.get(0))));
 	}
 
 	@Test
@@ -816,11 +860,12 @@ public class PriceStoreTest
 	 * over a permissions blip. A directory in the file's place is the portable way to make a read fail.
 	 */
 	@Test
-	public void anUnreadableBankReadsAsEmptyAndIsLeftAlone()
+	public void anUnreadableBankReadsAsEmptyAndIsLeftAlone() throws IOException
 	{
 		final PriceStore store = store();
-		final File file = store.bankFile(42L, "STANDARD");
-		assertTrue(file.mkdirs());
+		final Filepath file = store.bankFile(42L, "STANDARD");
+		file.createDirectories();
+		assertTrue(file.isDirectory());
 
 		assertSame(BankSnapshot.EMPTY, store.loadBank(42L, "STANDARD"));
 		assertTrue("nothing was moved aside", file.isDirectory());
@@ -846,20 +891,19 @@ public class PriceStoreTest
 		// Unicode escapes, not literal accents: the assertion is about the STORE's encoding, and a literal
 		// non-ASCII byte in this source file would drag the compiler's own encoding into the question.
 		final String text = "{\"n\":\"caf\u00e9 \u00fcber\"}";
-		final File target = new File(tmp.getRoot(), "doc.json");
+		final Filepath target = TestFilepaths.at(tmp.getRoot(), "doc.json");
 		PriceStore.writeAtomic(target, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
 		PriceStore.writeAtomic(target, text);
 
-		assertEquals("the shorter write replaces the longer one whole", text,
-			new String(Files.readAllBytes(target.toPath()), StandardCharsets.UTF_8));
+		assertEquals("the shorter write replaces the longer one whole", text, read(target));
 		assertArrayEquals("UTF-8, not the platform encoding (C19)",
-			text.getBytes(StandardCharsets.UTF_8), Files.readAllBytes(target.toPath()));
+			text.getBytes(StandardCharsets.UTF_8), bytes(target));
 	}
 
 	@Test
 	public void writeAtomicLeavesNoTempFileBehind() throws IOException
 	{
-		final File target = new File(tmp.getRoot(), "doc.json");
+		final Filepath target = TestFilepaths.at(tmp.getRoot(), "doc.json");
 		PriceStore.writeAtomic(target, "{}");
 
 		assertEquals(Arrays.asList("doc.json"), names());
@@ -879,31 +923,29 @@ public class PriceStoreTest
 	@Test
 	public void writeAtomicNeverFillsATempFileAnotherWriterIsHolding() throws IOException
 	{
-		final File target = new File(tmp.getRoot(), "doc.json");
-		final File taken = new File(tmp.getRoot(), "doc.json.taken.tmp");
+		final Filepath target = TestFilepaths.at(tmp.getRoot(), "doc.json");
+		final Filepath taken = TestFilepaths.at(tmp.getRoot(), "doc.json.taken.tmp");
 		final String theirs = "the other client's half-written document";
 		write(taken, theirs);
-		final Path free = new File(tmp.getRoot(), "doc.json.free.tmp").toPath();
+		final Filepath free = TestFilepaths.at(tmp.getRoot(), "doc.json.free.tmp");
 
 		// The first two attempts collide with the file that is already there; the third name is free.
-		final List<Path> names = new ArrayList<>(Arrays.asList(taken.toPath(), taken.toPath(), free));
+		final List<Filepath> names = new ArrayList<>(Arrays.asList(taken, taken, free));
 		PriceStore.writeAtomic(target, "{\"ours\":1}", () -> names.remove(0));
 
-		assertEquals("{\"ours\":1}", new String(Files.readAllBytes(target.toPath()), StandardCharsets.UTF_8));
-		assertEquals("their bytes are untouched - truncating them is the bug this guards",
-			theirs, new String(Files.readAllBytes(taken.toPath()), StandardCharsets.UTF_8));
-		assertFalse("our own temp moved onto the target", free.toFile().exists());
+		assertEquals("{\"ours\":1}", read(target));
+		assertEquals("their bytes are untouched - truncating them is the bug this guards", theirs, read(taken));
+		assertFalse("our own temp moved onto the target", free.exists());
 
 		// And a name that is taken every single time is reported rather than looped on forever.
 		try
 		{
-			PriceStore.writeAtomic(target, "{\"ours\":2}", taken::toPath);
+			PriceStore.writeAtomic(target, "{\"ours\":2}", () -> taken);
 			fail("a permanently taken temp name must be an IOException, not a silent success");
 		}
 		catch (FileAlreadyExistsException expected)
 		{
-			assertEquals("the target keeps the document it had", "{\"ours\":1}",
-				new String(Files.readAllBytes(target.toPath()), StandardCharsets.UTF_8));
+			assertEquals("the target keeps the document it had", "{\"ours\":1}", read(target));
 		}
 	}
 
@@ -923,9 +965,9 @@ public class PriceStoreTest
 	@Test
 	public void aFailedWriteAtomicThrowsAndCleansUpItsTempFile() throws IOException
 	{
-		final File blocked = new File(tmp.getRoot(), "blocked");
-		assertTrue(blocked.mkdirs());
-		write(new File(blocked, "child.txt"), "a non-empty directory cannot be replaced by a file");
+		final Filepath blocked = TestFilepaths.at(tmp.getRoot(), "blocked");
+		blocked.createDirectories();
+		write(blocked.join("child.txt"), "a non-empty directory cannot be replaced by a file");
 
 		try
 		{
@@ -941,17 +983,31 @@ public class PriceStoreTest
 	}
 
 	@Test
-	public void aFailedSaveIsSwallowedSoTheCallerNeverSeesAnException()
+	public void aFailedSaveIsSwallowedSoTheCallerNeverSeesAnException() throws IOException
 	{
-		final File blocked = new File(tmp.getRoot(), "blocked-dir");
-		assertTrue(blocked.mkdirs());
+		final Filepath blocked = TestFilepaths.at(tmp.getRoot(), "blocked-dir");
+		blocked.createDirectories();
 		final PriceStore store = new PriceStore(gson, blocked);
 		// A directory where the baseline file belongs: the write cannot land, and must not throw either - the
 		// caller is an executor task, and prices are a convenience.
-		assertTrue(new File(blocked, "baseline-D1.json").mkdirs());
+		blocked.join("baseline-D1.json").createDirectories();
 
 		store.saveBucket(MovementWindow.D1, guideMap(658, 1124L));
 		assertSame("the old (absent) map stands", PriceMap.EMPTY, store.loadBucket(MovementWindow.D1));
+
+		// The other half of the same promise, and the half whose INTERNALS moved with addendum AD: a file standing
+		// where the store's own DIRECTORY should be used to make mkdirs() answer false and take an early return,
+		// and now makes Filepath.createDirectories() throw inside the very try that logs. What the caller sees is
+		// what it always saw - no exception, and nothing written anywhere.
+		final Filepath notADirectory = TestFilepaths.at(tmp.getRoot(), "a-file-not-a-directory");
+		write(notADirectory, "somebody else's file");
+		final PriceStore homeless = new PriceStore(gson, notADirectory);
+
+		homeless.saveBucket(MovementWindow.D1, guideMap(658, 1124L));
+		homeless.saveMapping(Collections.singletonMap(4151, "Abyssal whip"), 1L);
+		assertSame(PriceMap.EMPTY, homeless.loadBucket(MovementWindow.D1));
+		assertTrue(homeless.loadMapping().value().isEmpty());
+		assertEquals("and the file in the way keeps its bytes", "somebody else's file", read(notADirectory));
 	}
 
 	@Test
@@ -1018,16 +1074,26 @@ public class PriceStoreTest
 	}
 
 	/** The bytes of one document, as text - for the assertions that are about what is ON DISK, not what loads. */
-	private static String read(final File file) throws IOException
+	private static String read(final Filepath file) throws IOException
 	{
-		return new String(Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8);
+		return TestFilepaths.read(file);
 	}
 
-	private static void write(final File file, final String text) throws IOException
+	/**
+	 * The raw bytes, for the one assertion that is about the ENCODING and so must not decode them first: reading
+	 * the document back as UTF-8 text would be asking the question with the answer in it.
+	 */
+	private static byte[] bytes(final Filepath file) throws IOException
 	{
-		final File parent = file.getParentFile();
-		assertTrue(parent.isDirectory() || parent.mkdirs());
-		Files.write(file.toPath(), text.getBytes(StandardCharsets.UTF_8));
+		try (InputStream in = file.openInputStream())
+		{
+			return in.readAllBytes();
+		}
+	}
+
+	private static void write(final Filepath file, final String text) throws IOException
+	{
+		TestFilepaths.write(file, text);
 	}
 
 	private List<String> names()
@@ -1084,14 +1150,14 @@ public class PriceStoreTest
 		final PriceStore store = store();
 
 		assertEquals("traded-latest.json", PriceStore.TRADED_LATEST_FILE);
-		assertEquals("traded-latest.json", store.tradedLatestFile().getName());
-		assertEquals("traded-D1.json", store.tradedFile(MovementWindow.D1).getName());
-		assertEquals("traded-D180.json", store.tradedFile(MovementWindow.D180).getName());
+		assertEquals("traded-latest.json", store.tradedLatestFile().getFileName());
+		assertEquals("traded-D1.json", store.tradedFile(MovementWindow.D1).getFileName());
+		assertEquals("traded-D180.json", store.tradedFile(MovementWindow.D180).getFileName());
 		assertEquals("one bucket file per window, beside its baseline", MovementWindow.values().length,
 			new java.util.HashSet<>(Arrays.asList(
-				store.tradedFile(MovementWindow.D1).getName(), store.tradedFile(MovementWindow.D7).getName(),
-				store.tradedFile(MovementWindow.D30).getName(), store.tradedFile(MovementWindow.D90).getName(),
-				store.tradedFile(MovementWindow.D180).getName())).size());
+				store.tradedFile(MovementWindow.D1).getFileName(), store.tradedFile(MovementWindow.D7).getFileName(),
+				store.tradedFile(MovementWindow.D30).getFileName(), store.tradedFile(MovementWindow.D90).getFileName(),
+				store.tradedFile(MovementWindow.D180).getFileName())).size());
 	}
 
 	@Test
@@ -1218,12 +1284,12 @@ public class PriceStoreTest
 	public void theSweepRemovesATradedBucketForAWindowThatIsGone() throws IOException
 	{
 		final PriceStore store = store();
-		write(new File(tmp.getRoot(), "traded-H24.json"), "{\"schema\":1,\"day\":\"2026-09-11\"}");
+		write(TestFilepaths.at(tmp.getRoot(), "traded-H24.json"), "{\"schema\":1,\"day\":\"2026-09-11\"}");
 		store.saveTradedDay(MovementWindow.D1, SEP_11, buckets(), 1L);
 
 		assertEquals(1, store.deleteStaleFiles());
 
-		assertFalse(new File(tmp.getRoot(), "traded-H24.json").exists());
+		assertFalse(TestFilepaths.at(tmp.getRoot(), "traded-H24.json").exists());
 		assertTrue("a current window's bucket survives", store.tradedFile(MovementWindow.D1).isFile());
 	}
 
@@ -1260,11 +1326,12 @@ public class PriceStoreTest
 
 	/** An unreadable traded file is KEPT, exactly as an unreadable baseline is: it says nothing about its content. */
 	@Test
-	public void anUnreadableTradedFileIsKeptRatherThanSwept()
+	public void anUnreadableTradedFileIsKeptRatherThanSwept() throws IOException
 	{
 		final PriceStore store = store();
-		final File bucket = store.tradedFile(MovementWindow.D90);
-		assertTrue(bucket.mkdirs());
+		final Filepath bucket = store.tradedFile(MovementWindow.D90);
+		bucket.createDirectories();
+		assertTrue(bucket.isDirectory());
 
 		assertEquals(0, store.deleteStaleFiles());
 		assertTrue(bucket.isDirectory());
@@ -1313,5 +1380,316 @@ public class PriceStoreTest
 
 		assertEquals(Collections.singleton(WHIP), store.loadTradedLatest().value().keySet());
 		assertEquals(Collections.singleton(WHIP), store.loadTradedDay(MovementWindow.D1).buckets().keySet());
+	}
+
+	// ---------------------------------------------------------------- AD: the Directory seam
+
+	/**
+	 * The seam PRODUCTION uses, which every other test in this class walks past: the store is built over a
+	 * {@link PriceStore.Directory} - {@code BankPriceMovementPlugin::getPluginDirectory} in the client - and the
+	 * {@link Filepath} convenience constructor the tests above take is only a lambda over that same seam.
+	 *
+	 * <p>{@code getPluginDirectory()} creates {@code ~/.runelite/plugin-data/}, performs the one-time move of the
+	 * legacy {@code ~/.runelite/bank-portfolio-tracker/} folder and throws {@link IOException} when the disk says
+	 * no, so "it refused" is a state a real client reaches - a full disk, a locked folder, a roaming profile that
+	 * has not come back yet. The store's standing failure policy (C18) says what must happen then, and this is the
+	 * test of it: every load reads its EMPTY value, every path is null, every save is dropped, the sweep counts
+	 * nothing, and NOTHING is thrown, because the caller is a task on {@code PriceService}'s
+	 * {@code ScheduledExecutorService} - an exception there is swallowed into a {@code Future} nobody reads, and a
+	 * scheduled task that throws is never run again.
+	 *
+	 * <p>Breaks if: the {@code catch (IOException | RuntimeException)} in {@link PriceStore#dir()} is deleted and
+	 * {@code directory.get()} is allowed to propagate - the first load below throws instead of reading EMPTY.
+	 */
+	@Test
+	public void aDirectoryThatThrowsLeavesEveryLoadEmptyEveryPathNullAndEverySaveDropped()
+	{
+		assertItBehavesAsIfItHadNoDirectory(new PriceStore(gson, CountingDirectory.refusing(Refusal.IO)));
+	}
+
+	/**
+	 * A seam that answers null rather than throwing - a plugin with no {@code internalName}, or a future
+	 * {@code getPluginDirectory()} that reports "none" instead of failing. {@link PriceStore#dir()} treats it as a
+	 * failure, because a null directory joined onto would be a {@link NullPointerException} in
+	 * {@code PriceStore.file} on the very next line rather than at the seam.
+	 *
+	 * <p>Breaks if: the {@code found == null} branch in {@code dir()} becomes an assertion
+	 * ({@code Objects.requireNonNull(directory.get())}) - the first load below then throws an NPE into the
+	 * executor instead of reading EMPTY.
+	 */
+	@Test
+	public void aDirectoryThatAnswersNullIsNoDirectoryAtAll()
+	{
+		assertItBehavesAsIfItHadNoDirectory(new PriceStore(gson, CountingDirectory.refusing(Refusal.NONE_AT_ALL)));
+	}
+
+	/**
+	 * And an UNCHECKED failure out of the same call - a {@code SecurityException} from the file system, an
+	 * {@code IllegalStateException} from a descriptor that has no {@code internalName}, anything RuneLite's own
+	 * code can raise inside it. The catch covers both kinds deliberately: the store's promise is "no load and no
+	 * save ever throws", and a promise that holds only for the checked half is not one.
+	 *
+	 * <p>Breaks if: the catch in {@code dir()} is narrowed to {@code IOException} alone.
+	 */
+	@Test
+	public void anUncheckedFailureOutOfTheDirectoryIsSurvivedExactlyLikeAnIoException()
+	{
+		assertItBehavesAsIfItHadNoDirectory(new PriceStore(gson, CountingDirectory.refusing(Refusal.RUNTIME)));
+	}
+
+	/**
+	 * The seam is not touched until the store is USED. Constructing one happens in {@code startUp}, on the client
+	 * thread, and {@code getPluginDirectory()} is disk work - it creates {@code plugin-data} and may move a whole
+	 * legacy folder - so asking it there would put a file-system stall in the middle of enabling the plugin, which
+	 * is the 3-5 s freeze the playbook (7.2) already records once.
+	 *
+	 * <p>A store per verb, because the answer is memoised: one asks on a load, one on a save, one on the sweep, and
+	 * each is asked exactly once and not before.
+	 *
+	 * <p>Breaks if: the constructor resolves ({@code this.resolved = directory.get()}), or {@code dir()} is called
+	 * anywhere in it.
+	 */
+	@Test
+	public void theDirectoryIsNotAskedForUntilTheFirstLoadSaveOrSweep()
+	{
+		final Filepath root = TestFilepaths.rooted(tmp.getRoot());
+		final CountingDirectory forALoad = CountingDirectory.answering(root);
+		final CountingDirectory forASave = CountingDirectory.answering(root);
+		final CountingDirectory forASweep = CountingDirectory.answering(root);
+
+		final PriceStore reader = new PriceStore(gson, forALoad);
+		final PriceStore writer = new PriceStore(gson, forASave);
+		final PriceStore sweeper = new PriceStore(gson, forASweep);
+
+		assertEquals("building the store must cost no disk at all", 0, forALoad.calls);
+		assertEquals(0, forASave.calls);
+		assertEquals(0, forASweep.calls);
+		assertEquals("and nothing on the file system either", 0, names().size());
+
+		reader.loadBank(42L, "STANDARD");
+		writer.saveMapping(Collections.singletonMap(4151, "Abyssal whip"), 5L);
+		sweeper.deleteStaleFiles();
+
+		assertEquals("the first load asks", 1, forALoad.calls);
+		assertEquals("so does the first save", 1, forASave.calls);
+		assertEquals("and so does the sweep", 1, forASweep.calls);
+		assertEquals("the one that saved is the only one that made a file",
+			Arrays.asList(PriceStore.MAPPING_FILE), names());
+	}
+
+	/**
+	 * The memo, both halves of it. A directory that ANSWERS is asked once and never again, however many paths are
+	 * built afterwards - the store builds one per file per refresh, and asking the seam each time would mean a
+	 * {@code plugin-data} round trip per path. A directory that REFUSES is not remembered at all, so a transient
+	 * blip costs the one save it happened during rather than the rest of the session.
+	 *
+	 * <p>Exact counts on both sides: "at most one" would pass with no memo and "at least one" with a permanent one.
+	 *
+	 * <p>Breaks if: {@code resolved = found} is dropped from {@code dir()} (the first count climbs), or the failure
+	 * path starts remembering itself - a {@code resolved = SOMETHING} or a "tried already" flag guarding the
+	 * lookup rather than only the warning (the second count stops at 1, and the recovery test below fails with it).
+	 */
+	@Test
+	public void aWorkingDirectoryIsAskedForOnceAndARefusingOneEveryTime()
+	{
+		final CountingDirectory working = CountingDirectory.answering(TestFilepaths.rooted(tmp.getRoot()));
+		final PriceStore store = new PriceStore(gson, working);
+
+		store.saveBucket(MovementWindow.D1, guideMap(658, 1124L));
+		assertEquals("the first save resolves it", 1, working.calls);
+
+		store.bankFile(1L, "STANDARD");
+		store.bucketFile(MovementWindow.D7);
+		store.mappingFile();
+		store.revisionIndexFile();
+		store.tradedLatestFile();
+		store.tradedFile(MovementWindow.D180);
+		store.loadBucket(MovementWindow.D1);
+		store.loadMapping();
+		store.saveBank(snapshot(7L, "STANDARD", 1L, item(4151, 1, "Whip", false)));
+		store.deleteStaleFiles();
+		assertEquals("and nothing asks again - every path after it is a join onto the remembered root",
+			1, working.calls);
+
+		final CountingDirectory refusing = CountingDirectory.refusing(Refusal.IO);
+		final PriceStore homeless = new PriceStore(gson, refusing);
+
+		homeless.saveBucket(MovementWindow.D1, guideMap(658, 1124L));
+		assertEquals(1, refusing.calls);
+		homeless.loadBucket(MovementWindow.D1);
+		assertEquals(2, refusing.calls);
+		homeless.deleteStaleFiles();
+		assertEquals("a refusal is never memoised: the next call asks the disk again", 3, refusing.calls);
+	}
+
+	/**
+	 * What that retry is FOR. The seam refuses once - the disk was busy, the folder was locked for a moment - and
+	 * the store carries on: the save made during the blip is dropped, exactly as a save with no directory is, and
+	 * the very next one resolves and lands in the real folder. Without the retry a single unlucky moment at
+	 * start-up would leave the plugin saving nothing for the whole session, with only one warning to say so.
+	 *
+	 * <p>Breaks if: the failure path in {@code dir()} memoises anything, or the recovered directory is not
+	 * memoised (the last count would climb past 2).
+	 */
+	@Test
+	public void aDirectoryThatRefusesOnceRecoversAndTheNextSaveLandsInIt()
+	{
+		final Filepath root = TestFilepaths.rooted(tmp.getRoot());
+		final CountingDirectory blip = CountingDirectory.refusingOnce(root);
+		final PriceStore store = new PriceStore(gson, blip);
+
+		store.saveBucket(MovementWindow.D1, guideMap(658, 1124L));
+		assertEquals("the save made during the blip went nowhere, and threw nothing", 0, names().size());
+		assertEquals(1, blip.calls);
+
+		store.saveBucket(MovementWindow.D1, guideMap(658, 1086L));
+		assertEquals("the next one asks again", 2, blip.calls);
+		assertEquals("and lands in the folder the seam finally named",
+			Arrays.asList("baseline-D1.json"), names());
+		assertEquals(Long.valueOf(1086L), store.loadBucket(MovementWindow.D1).get(658).mid());
+		assertEquals("a recovered directory is memoised like any other", 2, blip.calls);
+		assertEquals(root, store.dir());
+	}
+
+	/**
+	 * The two constructors are one store. Everything above this section is built through
+	 * {@code PriceStore(Gson, Filepath)}, which exists for the tests and for a caller that already holds a path;
+	 * production takes {@code PriceStore(Gson, Directory)}. This is the test that says the convenience overload is
+	 * a lambda over the seam and not a second code path - a folder handed over by a {@link PriceStore.Directory}
+	 * is written, read, named and swept identically, and the two stores see each other's files.
+	 *
+	 * <p>Breaks if: the {@code Filepath} constructor stops delegating to the {@code Directory} one, or the
+	 * {@code Directory} one resolves anywhere other than {@code dir()}.
+	 */
+	@Test
+	public void aStoreOverTheSeamAndOneOverTheSameFolderAreTheSameStore()
+	{
+		final Filepath root = TestFilepaths.rooted(tmp.getRoot());
+		final PriceStore.Directory seamDirectory = () -> root;
+		final PriceStore seam = new PriceStore(gson, seamDirectory);
+		final PriceStore direct = new PriceStore(gson, root);
+
+		seam.saveBank(snapshot(42L, "STANDARD", 1_700_000_000_000L, item(4151, 1, "Abyssal whip", false)));
+		direct.saveBucket(MovementWindow.D1, guideMap(658, 1124L));
+
+		assertEquals("what the seam wrote, a store over the same folder reads", 1_700_000_000_000L,
+			direct.loadBank(42L, "STANDARD").capturedAtMillis);
+		assertEquals("and the other way round", Long.valueOf(1124L),
+			seam.loadBucket(MovementWindow.D1).get(658).mid());
+		assertEquals(root, seam.dir());
+		assertEquals(seam.dir(), direct.dir());
+		assertEquals(seam.bankFile(42L, "STANDARD"), direct.bankFile(42L, "STANDARD"));
+		assertEquals(seam.tradedFile(MovementWindow.D90), direct.tradedFile(MovementWindow.D90));
+		assertEquals(Arrays.asList("bank-42-STANDARD.json", "baseline-D1.json"), names());
+		assertEquals("and one sweep of the shared folder takes nothing either way", 0, seam.deleteStaleFiles());
+	}
+
+	/**
+	 * Every promise a store with no directory makes, asserted the same way for each of the three shapes a refusal
+	 * takes. Kept in one place because the three tests differ only in HOW the seam says no, and a guarantee spelled
+	 * out three times drifts into three different guarantees.
+	 */
+	private void assertItBehavesAsIfItHadNoDirectory(final PriceStore store)
+	{
+		assertNull("dir() answers null rather than throwing", store.dir());
+
+		assertSame(BankSnapshot.EMPTY, store.loadBank(42L, "STANDARD"));
+		assertSame(PriceMap.EMPTY, store.loadBucket(MovementWindow.D1));
+		assertTrue(store.loadMapping().value().isEmpty());
+		assertEquals("an unstamped nothing, which is what makes a fetch due", 0L,
+			store.loadMapping().fetchedAtMillis());
+		assertTrue(store.loadRevisionIndex().value().isEmpty());
+		assertEquals(0L, store.loadRevisionIndex().fetchedAtMillis());
+		assertTrue(store.loadTradedLatest().value().isEmpty());
+		assertEquals(0L, store.loadTradedLatest().fetchedAtMillis());
+		assertSame(PriceStore.TradedDay.EMPTY, store.loadTradedDay(MovementWindow.D1));
+
+		assertNull(store.bankFile(42L, "STANDARD"));
+		assertNull(store.bucketFile(MovementWindow.D1));
+		assertNull(store.mappingFile());
+		assertNull(store.revisionIndexFile());
+		assertNull(store.tradedLatestFile());
+		assertNull(store.tradedFile(MovementWindow.D180));
+
+		store.saveBank(snapshot(42L, "STANDARD", 1_700_000_000_000L, item(4151, 1, "Abyssal whip", false)));
+		store.saveBucket(MovementWindow.D1, guideMap(658, 1124L));
+		store.saveMapping(Collections.singletonMap(4151, "Abyssal whip"), 5L);
+		store.saveRevisionIndex(history(), 7L);
+		store.saveTradedLatest(quotes(), 9L);
+		store.saveTradedDay(MovementWindow.D1, SEP_11, buckets(), 11L);
+
+		assertEquals("a sweep with nowhere to sweep counts nothing", 0, store.deleteStaleFiles());
+		assertTrue("and not one byte was written anywhere", names().isEmpty());
+	}
+
+	/** How a refusing {@link PriceStore.Directory} says no - the three shapes {@code dir()} has to survive. */
+	private enum Refusal
+	{
+		/** {@code Plugin.getPluginDirectory()}'s own checked failure: the disk, or the legacy move, said no. */
+		IO,
+		/** Anything unchecked out of the same call - a {@code SecurityException}, a broken descriptor. */
+		RUNTIME,
+		/** No exception and no directory either: the seam simply has none to give. */
+		NONE_AT_ALL
+	}
+
+	/**
+	 * A {@link PriceStore.Directory} that counts how often the store asks it, and that can refuse the first
+	 * {@code refusalsLeft} of those calls. It is the whole point of this section: production's seam is neither
+	 * free nor infallible, and the count is how "asked once on success, asked again after a refusal, never asked
+	 * by the constructor" is stated as a number rather than a hope.
+	 */
+	private static final class CountingDirectory implements PriceStore.Directory
+	{
+		private final Filepath root;
+		private final Refusal refusal;
+		private int refusalsLeft;
+		/** How often {@link #get()} has been called - read directly by the tests above. */
+		private int calls;
+
+		private CountingDirectory(final Filepath root, final Refusal refusal, final int refusalsLeft)
+		{
+			this.root = root;
+			this.refusal = refusal;
+			this.refusalsLeft = refusalsLeft;
+		}
+
+		/** Always answers {@code root}; the counter is the point. */
+		private static CountingDirectory answering(final Filepath root)
+		{
+			return new CountingDirectory(root, Refusal.IO, 0);
+		}
+
+		/** Never answers at all, in one of the three ways the seam can fail. */
+		private static CountingDirectory refusing(final Refusal refusal)
+		{
+			return new CountingDirectory(null, refusal, Integer.MAX_VALUE);
+		}
+
+		/** Refuses once and answers afterwards - the transient blip the retry in {@code dir()} exists for. */
+		private static CountingDirectory refusingOnce(final Filepath root)
+		{
+			return new CountingDirectory(root, Refusal.IO, 1);
+		}
+
+		@Override
+		public Filepath get() throws IOException
+		{
+			calls++;
+			if (refusalsLeft <= 0)
+			{
+				return root;
+			}
+			refusalsLeft--;
+			if (refusal == Refusal.IO)
+			{
+				throw new IOException("the disk said no");
+			}
+			if (refusal == Refusal.RUNTIME)
+			{
+				throw new IllegalStateException("no internalName on this plugin");
+			}
+			return null;
+		}
 	}
 }

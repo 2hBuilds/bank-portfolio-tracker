@@ -14,13 +14,17 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.EnumSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import javax.inject.Inject;
@@ -44,6 +48,7 @@ import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.ClientToolbar;
 import net.runelite.client.ui.NavigationButton;
+import net.runelite.client.util.Filepath;
 import okhttp3.OkHttpClient;
 import org.junit.After;
 import org.junit.Rule;
@@ -56,6 +61,7 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -73,10 +79,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * The plugin's wiring (contract C35-C38, C41): the descriptor, the Hub descriptor line, the lifecycle order,
- * the dev-bridge safety rule and every {@code @Subscribe} handler. No client boots and no Guice injector
- * builds the plugin: the private fields are filled by reflection and the handlers are called directly, which
- * is exactly how RuneLite calls them.
+ * The plugin's wiring (contract C35-C38, C41): the descriptor, the Hub descriptor line, the directory every
+ * saved file is rooted at (addendum AD), the lifecycle order, the dev-bridge safety rule and every
+ * {@code @Subscribe} handler. No client boots and no Guice injector builds the plugin: the private fields are
+ * filled by reflection and the handlers are called directly, which is exactly how RuneLite calls them.
  *
  * <p>Swing work happens on the EDT ({@code startUp} and {@code shutDown} run there in the client, because
  * {@code PluginManager} asserts it), so the two lifecycle tests hop.
@@ -119,7 +125,48 @@ public class BankPriceMovementWiringTest
 		"SessionManager",
 		".interrupt(");
 
-	/** Where the one test that runs a REAL {@link PriceStore} keeps its files; never {@code ~/.runelite}. */
+	/**
+	 * The one line that decides where every file this plugin saves lands (addendum AD). Whitespace and line
+	 * breaks are tolerated and nothing else is: a store rooted at any other expression is the defect this pins.
+	 */
+	private static final Pattern STORE_WIRING = Pattern.compile(
+		"store\\s*=\\s*new\\s+PriceStore\\s*\\(\\s*gson\\s*,\\s*this\\s*::\\s*getPluginDirectory\\s*\\)");
+
+	/** ANY construction of the store, so a second one rooted somewhere else cannot arrive unnoticed. */
+	private static final Pattern ANY_STORE = Pattern.compile("new\\s+PriceStore\\s*\\(");
+
+	/**
+	 * The dev bridge's shot directory, pinned as ONE statement: {@code [^;]*} cannot cross a semicolon, so the
+	 * supplier has to sit inside the {@code new BpmCommands(...)} argument list. Written any other way - a
+	 * correct supplier built and then handed to nobody, or a different one handed over - this does not match.
+	 */
+	private static final Pattern SHOT_DIR_WIRING = Pattern.compile(
+		"new\\s+BpmCommands\\s*\\([^;]*\\(\\s*\\)\\s*->\\s*getPluginDirectory\\s*\\(\\s*\\)\\s*\\.\\s*"
+			+ "joinSegment\\s*\\(\\s*BpmCommands\\s*\\.\\s*SHOT_DIR\\s*\\)");
+
+	/** Any name joined onto a {@code Filepath}, and any reach for the plugin's own directory. */
+	private static final Pattern ANY_JOIN = Pattern.compile("\\.\\s*joinSegment\\s*\\(");
+	private static final Pattern PLUGIN_DIRECTORY = Pattern.compile("getPluginDirectory\\b");
+
+	/**
+	 * The keys {@code runelite-plugin.properties} would name the Hub slug with, if it named it at all. It does
+	 * not: the Hub descriptor carries only displayName/author/description/tags/plugins/version/build, and the
+	 * slug is the FILE NAME of the two-line manifest in {@code runelite/plugin-hub}, which no file in this tree
+	 * holds. So {@link #theDescriptorNamesTheDataDirectory()} pins the literal instead - and fails here if that
+	 * premise ever stops being true, which is the moment to pin the key rather than the literal.
+	 */
+	private static final List<String> SLUG_KEYS = Arrays.asList("slug", "internalName", "id");
+
+	/**
+	 * A floor on the package walk. The package had 32 sources when this was written; a scan that finds a
+	 * handful has found the wrong tree, and a test that silently scans nothing is worse than no test at all.
+	 */
+	private static final int LEAST_SOURCES = 25;
+
+	/**
+	 * Where the tests that touch a real {@link PriceStore} or a real {@link Filepath} work; never
+	 * {@code ~/.runelite}, which is the developer's own client directory.
+	 */
 	@Rule
 	public final TemporaryFolder dir = new TemporaryFolder();
 
@@ -136,13 +183,214 @@ public class BankPriceMovementWiringTest
 	{
 		final PluginDescriptor d = BankPriceMovementPlugin.class.getAnnotation(PluginDescriptor.class);
 		assertNotNull(d);
-		assertEquals("Bank Portfolio Tracker", d.name());
-		assertEquals("Your bank's guide-price movements in the sidebar: gp filters, sort by % move, gp move or"
-			+ " unit price", d.description());
+		assertEquals("2h Bank Portfolio Tracker", d.name());
+		// Addendum W made the sort four columns and addendum T added live prices; this is the wording that
+		// says so, and it is the line the client prints under the plugin's name in its list.
+		assertEquals("Your bank's value and price movement over 1 to 180 days: live prices, your inventory and"
+			+ " worn gear, gp filters, and sorting by percent, gp, item or stack price", d.description());
 		assertTrue("the Hub search wants the obvious words", Arrays.asList(d.tags()).contains("bank"));
 		assertTrue(Arrays.asList(d.tags()).contains("grand exchange"));
 		// The loader checks the DIRECT superclass; an intermediate base class makes it skip the plugin silently.
 		assertEquals(Plugin.class, BankPriceMovementPlugin.class.getSuperclass());
+	}
+
+	/**
+	 * Addendum AD, the fact every saved file now stands on. {@code Plugin.getPluginDirectory()} names the data
+	 * directory after {@code internalName} and throws {@link IllegalArgumentException} outright when that name
+	 * is empty - which is the default - so this one word is what makes the plugin able to store anything at
+	 * all. Drop it and the plugin still loads, still draws and still fetches; only the remembered bank, the
+	 * baselines and the traded buckets quietly stop existing. {@link PriceStore#DIR_NAME} is the single
+	 * spelling of the Hub slug, and the descriptor, the store and the folder on disk all have to agree on it.
+	 *
+	 * <p>Read straight off the annotation: no plugin is constructed and {@code getPluginDirectory()} is never
+	 * called, because calling it would create and migrate folders inside the developer's own
+	 * {@code ~/.runelite}.
+	 */
+	@Test
+	public void theDescriptorNamesTheDataDirectory() throws Exception
+	{
+		final PluginDescriptor d = BankPriceMovementPlugin.class.getAnnotation(PluginDescriptor.class);
+		assertNotNull(d);
+		assertEquals(PriceStore.DIR_NAME, d.internalName());
+		assertFalse("an empty internalName makes getPluginDirectory() throw, and nothing is ever saved",
+			d.internalName().isEmpty());
+
+		// ...and the name is the SLUG the submission ships. A Hub slug is permanent - it is the file name of the
+		// two-line manifest merged into runelite/plugin-hub (plugins/bank-portfolio-tracker, PR #16536) and
+		// cannot be changed afterwards - while the folder a user's files sit in is named after internalName. Let
+		// the two drift and an update looks for those files under a name they were never saved under.
+		//
+		// runelite-plugin.properties cannot be read for the slug: the Hub descriptor carries only
+		// displayName/author/description/tags/plugins/version/build (the slug lives in the OTHER repository's
+		// file name), and this combined workspace's copy still describes OSRS LOS - correctly, the shipped
+		// export has its own. So the literal is pinned here, and the descriptor is asked whether that premise
+		// still holds rather than trusted to.
+		assertEquals("the submitted Hub slug is permanent: PR #16536 pinned plugins/bank-portfolio-tracker",
+			"bank-portfolio-tracker", PriceStore.DIR_NAME);
+		final Properties manifest = hubDescriptor();
+		for (String key : SLUG_KEYS)
+		{
+			assertFalse("runelite-plugin.properties now carries '" + key + "' - pin internalName against that"
+				+ " key rather than against the literal in this test",
+				manifest.stringPropertyNames().contains(key));
+		}
+	}
+
+	/**
+	 * Addendum AD, the other half: what happens to the files an existing user already has. Every build up to
+	 * the port wrote {@code ~/.runelite/bank-portfolio-tracker/} directly, while the port stores under
+	 * {@code ~/.runelite/plugin-data/bank-portfolio-tracker/}. {@code legacyDataDirectory} is the one thing
+	 * that makes RuneLite MOVE the old folder to the new place on the first call, so the update carries the
+	 * remembered bank, the baselines and the traded buckets across instead of orphaning them beside a new empty
+	 * directory. It names the same slug, so the two must match exactly - a near miss silently migrates nothing.
+	 */
+	@Test
+	public void theDescriptorCarriesTheOldDataDirectoryOver() throws Exception
+	{
+		final PluginDescriptor d = BankPriceMovementPlugin.class.getAnnotation(PluginDescriptor.class);
+		assertNotNull(d);
+		assertEquals(PriceStore.DIR_NAME, d.legacyDataDirectory());
+		assertFalse("an empty legacyDataDirectory moves nothing: the old folder is orphaned and the user starts"
+			+ " over with no bank, no baselines and no buckets", d.legacyDataDirectory().isEmpty());
+
+		// The name has to be a LEGAL directory name by RuneLite's own rules, and this is the very call the
+		// client makes with it: getPluginDirectory() hands legacyDataDirectory to
+		// Filepath.Unchecked.getLegacyPluginDirectory(RUNELITE_DIR, name) (clone Plugin, 1.12.39), which joins
+		// it as ONE path component - joinSegment.checkName: no separators, no trailing dot or space, no Windows
+		// device name - and then refuses the client's OWN folders: cache, logs, profiles, plugin-data,
+		// screenshots, sideloaded-plugins and the rest of DOT_RUNELITE_DIRS. It throws on every call, not only
+		// on the one that migrates, so a future rename onto one of those names would take the first save, the
+		// stale sweep and the dev bridge down together at start-up on a user's machine. One constant serves as
+		// both internalName and legacyDataDirectory, so the stricter of the two rules is applied to it once.
+		//
+		// Over a TemporaryFolder, because the call is pure path arithmetic: it reads nothing and creates
+		// nothing, and the real ~/.runelite is never named.
+		final Filepath legacy = Filepath.Unchecked.getLegacyPluginDirectory(dir.getRoot().toPath(),
+			PriceStore.DIR_NAME);
+		assertEquals("the name must survive as one path component", PriceStore.DIR_NAME, legacy.getFileName());
+		assertTrue(legacy.toString(), legacy.toString().startsWith(dir.getRoot().toString()));
+		assertEquals("path arithmetic only: this test creates nothing, here or anywhere else",
+			0, dir.getRoot().list().length);
+
+		// ...and the instrument really bites, so the line above is not a pass by inspection.
+		try
+		{
+			Filepath.Unchecked.getLegacyPluginDirectory(dir.getRoot().toPath(), "logs");
+			fail("a data directory named after one of the client's own folders must be refused");
+		}
+		catch (IllegalArgumentException expected)
+		{
+			// Exactly what a colliding rename would throw out of getPluginDirectory() at start-up.
+		}
+	}
+
+	// ------------------------------------------- addendum AD: the production wiring, read off the source
+
+	/**
+	 * Addendum AD put every byte this plugin saves behind ONE expression, and this is what holds it there:
+	 * {@code store = new PriceStore(gson, this::getPluginDirectory)} in {@code startUp}.
+	 *
+	 * <p><b>Why a source scan is the right instrument.</b> {@code Plugin.getPluginDirectory()} is
+	 * {@code protected final} on RuneLite's {@code Plugin}, so nothing can override it or stand in for it, and
+	 * CALLING it is not a read: it creates {@code ~/.runelite/plugin-data} on the developer's own machine and
+	 * then moves any {@code ~/.runelite/bank-portfolio-tracker} into it, once, for real (clone Plugin, 1.12.39
+	 * - the {@code Files.createDirectories} at the top and the {@code moveTo} at the bottom). A unit test must
+	 * never do that. Nor can the seam be identified from the running object, because a method reference has no
+	 * identity to compare and the {@link PriceStore.Directory} the store holds can only be told apart from a
+	 * wrong one by asking it - which is the forbidden call again. So the only evidence of where production
+	 * roots its files is the line that writes it down.
+	 *
+	 * <p>Before the port that line was {@code PriceStore.defaultDir()}, a constant a test could read. The
+	 * lambda that replaced it was pinned by nothing: a reviewer rooted the store at another folder and the
+	 * whole suite stayed green, while on a user's machine every file would have landed somewhere else.
+	 *
+	 * <p>Scanned with the COMMENTS BLANKED ({@link #withoutComments}), because the lines around this one
+	 * explain what {@code getPluginDirectory()} does and a raw substring scan would pass on the prose alone.
+	 */
+	@Test
+	public void theStoreIsRootedAtThePluginsOwnDirectory() throws Exception
+	{
+		final String code = shippedSource("BankPriceMovementPlugin.java");
+		assertEquals("startUp must build the store from the plugin's OWN directory -"
+			+ " store = new PriceStore(gson, this::getPluginDirectory) - or every bank, baseline and bucket"
+			+ " this plugin saves lands somewhere RuneLite did not give it",
+			1, occurrences(STORE_WIRING, code));
+		assertEquals("exactly one PriceStore is built, and the assertion above says which: a second one rooted"
+			+ " elsewhere would read and write files the first never sees",
+			1, occurrences(ANY_STORE, code));
+	}
+
+	/**
+	 * The same pin for the developer bridge's shots. {@code BpmCommands} writes a PNG wherever the supplier it
+	 * was handed points, so that supplier is what keeps a shot inside the plugin's own directory:
+	 * {@code () -> getPluginDirectory().joinSegment(BpmCommands.SHOT_DIR)} - the plugin's root, then the strict
+	 * single-component join, and nothing else. Joining a different name, or rooting the supplier anywhere else,
+	 * would leave the suite green and drop files outside the sandbox the Hub asked us to stay inside.
+	 *
+	 * <p>The bridge is developer-mode only and never reachable in a Hub client, so this is not a user-facing
+	 * bug waiting to happen - it is the rule the port was made to keep, held to in the one place that could
+	 * break it quietly.
+	 */
+	@Test
+	public void theDevBridgeCanOnlyShootInsideThePluginsOwnDirectory() throws Exception
+	{
+		final String code = shippedSource("BankPriceMovementPlugin.java");
+		assertEquals("the bridge's shot directory must be getPluginDirectory().joinSegment(BpmCommands.SHOT_DIR)"
+			+ " and must be handed to BpmCommands in that same statement",
+			1, occurrences(SHOT_DIR_WIRING, code));
+		assertEquals("one name is joined onto a Filepath in this class, and the assertion above says which:"
+			+ " a second join is a second folder with nothing watching it",
+			1, occurrences(ANY_JOIN, code));
+		assertEquals("the plugin's own directory is reached exactly twice - the store and the shots - so a"
+			+ " third use is added to this test on purpose rather than arriving by accident",
+			2, occurrences(PLUGIN_DIRECTORY, code));
+
+		// SHOT_DIR has to be a single path component or joinSegment - the strict overload, which is what makes
+		// the escape impossible - throws at the moment a shot is taken. Path arithmetic over the temporary
+		// folder: nothing is created.
+		assertEquals("the shots folder must be one path component", BpmCommands.SHOT_DIR,
+			Filepath.Unchecked.getRooted(dir.getRoot().toPath()).joinSegment(BpmCommands.SHOT_DIR).getFileName());
+	}
+
+	/**
+	 * ...and nowhere else in the shipped package builds a store or asks for the plugin's directory. The two
+	 * tests above pin the expressions inside {@code BankPriceMovementPlugin}; this one pins that the file is
+	 * the only place either can appear, so a second store - rooted at a folder of its own, with its own bank
+	 * file and its own baselines - cannot be added in a class no scan is pointed at.
+	 *
+	 * <p>Two guards against a vacuous pass, because the only way a scan can lie is by reading nothing: the
+	 * file count, and the two classes that own the plugin's files being among the names read.
+	 */
+	@Test
+	public void nothingElseInTheShippedPackageBuildsAStoreOrReachesForTheDirectory() throws Exception
+	{
+		final Map<String, String> sources = shippedSources();
+		assertTrue("only " + sources.size() + " sources were scanned - the walk found the wrong tree",
+			sources.size() >= LEAST_SOURCES);
+		assertTrue("PriceStore.java was not among the files scanned: the scan proves nothing",
+			sources.containsKey("PriceStore.java"));
+		assertTrue("BpmCommands.java was not among the files scanned: the scan proves nothing",
+			sources.containsKey("BpmCommands.java"));
+
+		final List<String> builders = new ArrayList<>();
+		final List<String> askers = new ArrayList<>();
+		for (Map.Entry<String, String> source : sources.entrySet())
+		{
+			if (occurrences(ANY_STORE, source.getValue()) > 0)
+			{
+				builders.add(source.getKey());
+			}
+			if (occurrences(PLUGIN_DIRECTORY, source.getValue()) > 0)
+			{
+				askers.add(source.getKey());
+			}
+		}
+
+		assertEquals("only the plugin class may build the store",
+			Collections.singletonList("BankPriceMovementPlugin.java"), builders);
+		assertEquals("only the plugin class may ask RuneLite for the directory - getPluginDirectory() is"
+			+ " protected on Plugin, and every other class is handed a Filepath or a seam instead",
+			Collections.singletonList("BankPriceMovementPlugin.java"), askers);
 	}
 
 	/**
@@ -187,19 +435,15 @@ public class BankPriceMovementWiringTest
 		}
 
 		assertTrue("Plugin Hub blockers in com.bankpricemovement (C46):\n" + String.join("\n", hits), hits.isEmpty());
-		assertTrue("only " + scanned + " source files were scanned - the walk found the wrong tree", scanned >= 25);
+		assertTrue("only " + scanned + " source files were scanned - the walk found the wrong tree",
+			scanned >= LEAST_SOURCES);
 		assertTrue("nothing recognisable was read: the scan proves nothing", sawMarker);
 	}
 
 	@Test
 	public void hubDescriptorListsThePlugin() throws Exception
 	{
-		final Properties p = new Properties();
-		try (InputStream in = BankPriceMovementWiringTest.class.getResourceAsStream("/runelite-plugin.properties"))
-		{
-			assertNotNull(in);
-			p.load(in);
-		}
+		final Properties p = hubDescriptor();
 		final List<String> names = Arrays.stream(p.getProperty("plugins").split(","))
 			.map(String::trim).collect(Collectors.toList());
 		assertTrue(names.toString(), names.contains(BankPriceMovementPlugin.class.getName()));
@@ -274,7 +518,7 @@ public class BankPriceMovementWiringTest
 
 		final ArgumentCaptor<NavigationButton> nav = ArgumentCaptor.forClass(NavigationButton.class);
 		verify(f.clientToolbar).addNavigation(nav.capture());
-		assertEquals("Bank Portfolio Tracker", nav.getValue().getTooltip());
+		assertEquals("2h Bank Portfolio Tracker", nav.getValue().getTooltip());
 		assertEquals(BankPriceMovementPlugin.NAV_PRIORITY, nav.getValue().getPriority());
 		assertNotNull("the button needs a drawn icon or RuneLite renders a blank square",
 			nav.getValue().getIcon());
@@ -837,16 +1081,29 @@ public class BankPriceMovementWiringTest
 		verify(panel).applyHeroVisibility(HeroVisibility.of(false, true, false));
 	}
 
-	// --------------------------------------- addendum Q's three view switches (Q3) and addendum T's fourth (T1)
+	// --------------- addendum Q's two surviving view switches (Q3), addendum T's (T1), Y's, AH's; AO1 took one
 
 	/**
-	 * Q3, T1 and Y1: the five stored keys as one value, in the order the gear menu lists them.
+	 * Q3, T1, Y1 and AH: the five stored keys as one value, in the order the gear menu lists them. The last was
+	 * deleted by addendum AI and restored by addendum AJ - the user asked where it had gone ("where is the show
+	 * hover text box and wording and default 'off' setting?", 2026-09-20) - so it is a live stored key again, read
+	 * here rather than swept.
 	 *
-	 * <p>Every expectation names all five fields. {@link ViewOptions} keeps shorter constructors that default
-	 * {@code livePrices} and {@code countInventory} to ON for callers written before addendum T or Y, and
-	 * {@code optionsFromConfig} must not be one of them: a short build would ignore the stored key entirely, so
-	 * a user who turned live prices - or the carried items - off in RuneLite's settings would get them back on
-	 * the next launch, and every {@code ConfigChanged} would hand the service the wrong answer.
+	 * <p>There were SIX until addendum AO. {@code holdingOnRows} rode here from addendum Q until the user saw the
+	 * three-line row in a client and found the switch reached nothing drawn (AO1); the key is deleted and swept at
+	 * start-up ({@link #aStoredHoldingOnRowsIsUnsetAtStartUp()}), so a build that still read it would be reading a
+	 * value no item writes.
+	 *
+	 * <p>Every expectation names all five fields, because {@link ViewOptions} now has exactly ONE constructor and
+	 * nothing may stand in for a read that never happened: a stored key left out of the build would mean a user
+	 * who turned live prices - or the carried items, or the hover text - away from the shipped default in
+	 * RuneLite's settings got it back on the next launch, and every {@code ConfigChanged} handed the service the
+	 * wrong answer.
+	 *
+	 * <p>Addendum AH's switch is the one that can hide here most easily, because the value the shipped default
+	 * supplies for it - false - is the very answer a mocked config gives when nothing has been stubbed. So it is
+	 * turned ON and read back on its own line, where neither a default nor an unstubbed proxy can stand in for a
+	 * read that never happened.
 	 */
 	@Test
 	public void theViewOptionsAreBuiltFromTheFiveStoredKeys() throws Exception
@@ -864,22 +1121,29 @@ public class BankPriceMovementWiringTest
 		assertEquals(ViewOptions.DEFAULT, plugin.optionsFromConfig());
 
 		when(config.countUntradeables()).thenReturn(true);
-		when(config.holdingOnRows()).thenReturn(true);
-		assertEquals(new ViewOptions(true, true, true, true, true), plugin.optionsFromConfig());
+		assertEquals(new ViewOptions(true, true, true, true, false), plugin.optionsFromConfig());
 
-		// ...and each of the two late arrivals is READ rather than assumed: turning only one off moves only it.
+		// ...and each of the three late arrivals is READ rather than assumed: moving only one moves only it.
 		when(config.livePrices()).thenReturn(false);
-		assertEquals(new ViewOptions(true, true, true, false, true), plugin.optionsFromConfig());
+		assertEquals(new ViewOptions(true, true, false, true, false), plugin.optionsFromConfig());
 		when(config.countInventory()).thenReturn(false);
-		assertEquals(new ViewOptions(true, true, true, false, false), plugin.optionsFromConfig());
+		assertEquals(new ViewOptions(true, true, false, false, false), plugin.optionsFromConfig());
+		// AH: a stored ON is the one answer for this switch that no default and no unstubbed proxy can give.
+		when(config.showHoverText()).thenReturn(true);
+		assertEquals(new ViewOptions(true, true, false, false, true), plugin.optionsFromConfig());
 	}
 
 	/**
-	 * Q3, T1 and Y1: RuneLite's own settings page reaches the gear's five switches, and they take a THIRD road -
-	 * neither the filter's nor the card's. Four of them change what the figures ARE (Q4, Q5, T1, Y3), so the
-	 * service recomputes; all five change what is drawn, so the panel re-renders. What must NOT happen is a
+	 * Q3, T1, Y1 and AH: RuneLite's own settings page reaches the gear's five switches, and they take a THIRD
+	 * road - neither the filter's nor the card's. Four of them change what the figures ARE (Q4, Q5, T1, Y3), so
+	 * the service recomputes; all five change what is drawn, so the panel re-renders. What must NOT happen is a
 	 * {@code setFilter}: the band, the ordering and the window are untouched, and a filter the service already
 	 * holds would make it rebuild the whole list for nothing.
+	 *
+	 * <p>The road carried SIX until addendum AO. {@code holdingOnRows} was the one passenger that changed only a
+	 * READING of figures already computed, and it is deleted (AO1) - so the last assertions below pin that its
+	 * key is no longer one of the gear's own: a build that still answered true for it would send a swept,
+	 * item-less key down the road on the very {@code ConfigChanged} the start-up unset posts.
 	 */
 	@Test
 	public void aGearSwitchRecomputesTheFiguresAndReRendersTheSidebar() throws Exception
@@ -892,16 +1156,25 @@ public class BankPriceMovementWiringTest
 		set(plugin, "panel", panel);
 		set(plugin, "config", config);
 		when(config.countUntradeables()).thenReturn(true);
+		// AH: switched ON, so the value that travels this road is one no unstubbed proxy could have produced.
+		when(config.showHoverText()).thenReturn(true);
 
 		for (String key : new String[]{BankPriceMovementPlugin.COUNT_CASH_KEY,
-			BankPriceMovementPlugin.COUNT_UNTRADEABLES_KEY, BankPriceMovementPlugin.HOLDING_ON_ROWS_KEY,
+			BankPriceMovementPlugin.COUNT_UNTRADEABLES_KEY,
 			// T1: the live-price switch is one of the gear's keys too, and takes the same road. It is the one
 			// whose ConfigChanged can start or stop a FETCH, which is exactly why it must not be mistaken for a
 			// hero key (a re-render that never reaches the service) or a filter key.
 			BankPriceMovementPlugin.LIVE_PRICES_KEY,
-			// Y1: the carried switch is the fifth passenger, and the one whose ConfigChanged can change a
-			// row's QUANTITY - so it must reach the service, not merely the card.
-			BankPriceMovementPlugin.COUNT_INVENTORY_KEY})
+			// Y1: the carried switch is the fourth passenger since addendum AO, and the one whose ConfigChanged
+			// can change a row's QUANTITY - so it must reach the service, not merely the card.
+			BankPriceMovementPlugin.COUNT_INVENTORY_KEY,
+			// AH, as addendum AJ leaves it: the hover switch is the last, and the only one that changes
+			// NOTHING the service computes - it decides whether the hero card's hover and every CONTROL's
+			// tooltip are set at all. It rides here anyway, because applyOptions is the only road that hands
+			// the panel a ViewOptions: down the card's road (applyHeroVisibility) the controls would never
+			// hear, and down the filter's the whole list would be recomputed because a reader asked for a
+			// quieter sidebar.
+			BankPriceMovementPlugin.SHOW_HOVER_TEXT_KEY})
 		{
 			assertTrue(key + " is one of the gear's own keys", BankPriceMovementPlugin.isOptionKey(key));
 			plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, key));
@@ -910,7 +1183,7 @@ public class BankPriceMovementWiringTest
 		onEdt(() ->
 		{
 		});
-		final ViewOptions expected = new ViewOptions(false, true, false, false, false);
+		final ViewOptions expected = new ViewOptions(false, true, false, false, true);
 		verify(service, times(5)).setOptions(expected);
 		verify(panel, times(5)).applyOptions(expected);
 		verify(service, never()).setFilter(any());
@@ -918,6 +1191,9 @@ public class BankPriceMovementWiringTest
 		// ...and the card's switches are a different road again (O2): a gear switch never re-renders the hero.
 		verify(panel, never()).applyHeroVisibility(any());
 
+		// AO1: the deleted switch's key is not one of the gear's own any more. It is swept at start-up, and that
+		// unset posts a ConfigChanged of its own - which must read as a stranger's key and not as a passenger.
+		assertFalse(BankPriceMovementPlugin.isOptionKey(BankPriceMovementPlugin.LEGACY_HOLDING_KEY));
 		assertFalse(BankPriceMovementPlugin.isOptionKey("sortMode"));
 		assertFalse(BankPriceMovementPlugin.isOptionKey(BankPriceMovementPlugin.SHOW_VALUE_KEY));
 		assertFalse(BankPriceMovementPlugin.isOptionKey(null));
@@ -931,11 +1207,20 @@ public class BankPriceMovementWiringTest
 	}
 
 	/**
-	 * Q3 and T1: the gear menu's check items write through the same {@code Prefs} seam the filter widgets and the
-	 * hero switches use, so RuneLite's settings page follows. All four keys go every time, for {@code saveHero}'s
-	 * reason - an item that wrote only its own would leave the others unstored on a fresh profile - and the
-	 * service is told as well, which is the one thing {@code saveHero} does not do: hiding a figure changes no
-	 * sum, and counting the cash - or reading a liquid item off the traded series - does.
+	 * Q3, T1, Y1 and AH: the gear menu's check items write through the same {@code Prefs} seam the filter widgets
+	 * and the hero switches use, so RuneLite's settings page follows. All five keys go every time, for
+	 * {@code saveHero}'s reason - an item that wrote only its own would leave the others unstored on a fresh
+	 * profile - and the service is told as well, which is the one thing {@code saveHero} does not do: hiding a
+	 * figure changes no sum, and counting the cash - or reading a liquid item off the traded series - does.
+	 *
+	 * <p>It was six writes until addendum AO deleted {@code holdingOnRows} (AO1), and the count is pinned below
+	 * as well as the keys: a sixth write would be a write to a key with no item behind it, which the start-up
+	 * sweep would then unset on the next launch and the reader would never see stored at all.
+	 *
+	 * <p>Addendum AH's {@code showHoverText} is written here with the rest even though the service does nothing
+	 * with it. It is a choice about the sidebar, and the whole point of storing it is that a reader who turned
+	 * the hover text on does not meet a silent sidebar again next launch - so the key that is easiest to forget
+	 * in the save is the one whose absence the user would feel.
 	 */
 	@Test
 	public void theOptionsPrefSeamReadsAndWritesTheFiveKeysAndTellsTheService() throws Exception
@@ -952,16 +1237,25 @@ public class BankPriceMovementWiringTest
 		when(config.countInventory()).thenReturn(true);
 
 		final BankPriceMovementPanel.Prefs prefs = plugin.configPrefs();
+		// The shipped defaults, hover text included: AH's switch defaults OFF, which is what the unstubbed proxy
+		// above answers, and DEFAULT says so too.
 		assertEquals(ViewOptions.DEFAULT, prefs.loadOptions());
 
-		final ViewOptions all = new ViewOptions(false, true, true, false, false);
+		// Every switch away from its default, the hover text ON - so each of the five writes below carries a
+		// value the config did not already hold, and a key written from the wrong field would show as the
+		// wrong one.
+		final ViewOptions all = new ViewOptions(false, true, false, false, true);
 		prefs.saveOptions(all);
 		final String g = BankPriceMovementConfig.GROUP;
 		verify(cm).setConfiguration(g, BankPriceMovementPlugin.COUNT_CASH_KEY, (Object) Boolean.FALSE);
 		verify(cm).setConfiguration(g, BankPriceMovementPlugin.COUNT_UNTRADEABLES_KEY, (Object) Boolean.TRUE);
-		verify(cm).setConfiguration(g, BankPriceMovementPlugin.HOLDING_ON_ROWS_KEY, (Object) Boolean.TRUE);
 		verify(cm).setConfiguration(g, BankPriceMovementPlugin.LIVE_PRICES_KEY, (Object) Boolean.FALSE);
 		verify(cm).setConfiguration(g, BankPriceMovementPlugin.COUNT_INVENTORY_KEY, (Object) Boolean.FALSE);
+		verify(cm).setConfiguration(g, BankPriceMovementPlugin.SHOW_HOVER_TEXT_KEY, (Object) Boolean.TRUE);
+		// AO1: and the deleted key is not written at all. The sweep unsets it at start-up, so a save that still
+		// wrote it would put back on every tick the very value the launch had just taken away.
+		verify(cm, never()).setConfiguration(eq(g), eq(BankPriceMovementPlugin.LEGACY_HOLDING_KEY),
+			any(Object.class));
 		verify(service).setOptions(all);
 
 		// Nothing to save is not a crash, and writes nothing more.
@@ -984,12 +1278,15 @@ public class BankPriceMovementWiringTest
 	}
 
 	/**
-	 * The four writes of one {@code saveOptions} are ONE change of mind, exactly as the filter's five and the
+	 * The five writes of one {@code saveOptions} are ONE change of mind, exactly as the filter's five and the
 	 * card's three are, and they are guarded the same way ({@code prefsWriter}). Unguarded, ticking one gear
-	 * item would recompute the bank value three times more from a config in which only some of the four keys had
+	 * item would recompute the bank value four times more from a config in which only some of the five keys had
 	 * been written - and the figure on screen would be wrong for as long as each of those recomputes took. The
 	 * service is still told exactly ONCE, from the tail of the save itself, because that is the half the guard
 	 * suppressed.
+	 *
+	 * <p>Five since addendum AO, six before it: the deleted {@code holdingOnRows} had a branch of its own in the
+	 * fake {@link ConfigManager} below, and it is gone with the key (AO1).
 	 */
 	@Test
 	public void theGearsOwnWritesDoNotRecomputeOncePerKey() throws Exception
@@ -1024,10 +1321,6 @@ public class BankPriceMovementWiringTest
 			{
 				when(config.countUntradeables()).thenReturn(value);
 			}
-			else if (BankPriceMovementPlugin.HOLDING_ON_ROWS_KEY.equals(key))
-			{
-				when(config.holdingOnRows()).thenReturn(value);
-			}
 			else if (BankPriceMovementPlugin.LIVE_PRICES_KEY.equals(key))
 			{
 				when(config.livePrices()).thenReturn(value);
@@ -1036,16 +1329,20 @@ public class BankPriceMovementWiringTest
 			{
 				when(config.countInventory()).thenReturn(value);
 			}
+			else if (BankPriceMovementPlugin.SHOW_HOVER_TEXT_KEY.equals(key))
+			{
+				when(config.showHoverText()).thenReturn(value);
+			}
 			plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, key));
 			return null;
 		}).when(cm).setConfiguration(anyString(), anyString(), any(Object.class));
 
-		// The tick turns the live switch OFF as well as the untradeables on, so the fourth write is one that
-		// really changes something and the guard has four events to swallow rather than three.
-		final ViewOptions ticked = new ViewOptions(true, true, false, false, true);
+		// The tick turns the untradeables ON, the live switch OFF and the hover text ON, so three of the five
+		// writes really move a stored value and the guard has five events to swallow.
+		final ViewOptions ticked = new ViewOptions(true, true, false, true, true);
 		plugin.configPrefs().saveOptions(ticked);
 
-		// Not "the right options three times": nothing at all from the round trip. The menu applied the switch
+		// Not "the right options five times": nothing at all from the round trip. The menu applied the switch
 		// before it wrote.
 		onEdt(() ->
 		{
@@ -1066,9 +1363,9 @@ public class BankPriceMovementWiringTest
 	}
 
 	/**
-	 * Q3: the sidebar opens on the stored switches. The panel is built with its own defaults and the service
-	 * with none at all, so a bank value that counted cash the user had switched off - or a list that flashed the
-	 * untradeables they had not asked for - would be the first thing they saw.
+	 * Q3, T1 and AH: the sidebar opens on the stored switches. The panel is built with its own defaults and the
+	 * service with none at all, so a bank value that counted cash the user had switched off - or a list that
+	 * flashed the untradeables they had not asked for - would be the first thing they saw.
 	 */
 	@Test
 	public void theSidebarOpensOnTheStoredViewOptions() throws Exception
@@ -1076,15 +1373,20 @@ public class BankPriceMovementWiringTest
 		final Fixture f = new Fixture(false);
 		when(f.config.countCash()).thenReturn(false);
 		when(f.config.countUntradeables()).thenReturn(true);
-		when(f.config.holdingOnRows()).thenReturn(true);
 		// T1: switched off, the setting that matters most at start-up - a service opened on the default would
 		// fetch the traded feeds this profile has said no to before the first ConfigChanged could stop it.
 		when(f.config.livePrices()).thenReturn(false);
+		// Y1: switched off as well, the other stored answer a build that skipped the read would turn back on.
+		when(f.config.countInventory()).thenReturn(false);
+		// AH: switched ON, which is the direction this one can be lost in. It ships OFF, so a panel opened on
+		// ViewOptions.DEFAULT looks exactly right to a build that never read the key, and a reader who asked for
+		// the hover text would silently get none until they went back to the gear menu and ticked it again.
+		when(f.config.showHoverText()).thenReturn(true);
 		onEdt(f.plugin::startUp);
 
 		final BankPriceMovementPanel panel = (BankPriceMovementPanel) field(f.plugin, "panel");
 		assertNotNull(panel);
-		final ViewOptions stored = new ViewOptions(false, true, true, false, false);
+		final ViewOptions stored = new ViewOptions(false, true, false, false, true);
 		assertEquals(stored, panel.options());
 		// The service was told too, or the figures behind the card would be the defaults until the first tick.
 		// Its own switches, not the Status's: that one answers what the figures ALREADY on screen were computed
@@ -1098,7 +1400,8 @@ public class BankPriceMovementWiringTest
 	// --------------------------------------- addendum Z's price presets (Z1): the fourth ConfigChanged road
 
 	/**
-	 * Z1: the fourteenth key as the value the chips are drawn from. It is the only stored key of this plugin that
+	 * Z1: the key that landed fourteenth, and is the thirteenth since addendum AO, as the value the chips are
+	 * drawn from. It is the only stored key of this plugin that
 	 * holds FREE TEXT, so the reader has to survive everything a hand-edited profile or a settings page can put
 	 * there - and every one of those answers is {@link BandPresets#DEFAULT} rather than null, an exception or a
 	 * fold with no chips in it.
@@ -1298,7 +1601,8 @@ public class BankPriceMovementWiringTest
 	// --------------------------------------- addendum AA's price fold (AA1): the fifth ConfigChanged road
 
 	/**
-	 * AA1: the fifteenth key as the shape the header opens in. A plain boolean read straight off the config - the
+	 * AA1: the key that landed fifteenth, and is the fourteenth since addendum AO, as the shape the header opens
+	 * in. A plain boolean read straight off the config - the
 	 * seam's {@code Boolean} exists so a {@code Prefs} with NOTHING stored can say so and be given the shipped
 	 * default, and this plugin always has an answer, {@code ConfigManager} having written the interface default
 	 * over a fresh profile before any of this runs.
@@ -1528,6 +1832,110 @@ public class BankPriceMovementWiringTest
 		// And no manager at all (a field never injected) is a no-op rather than an NPE.
 		set(plugin, "configManager", null);
 		plugin.unstickLook();
+	}
+
+	/**
+	 * AO1: the {@code holdingOnRows} key is swept at startUp, on {@link #aStoredLookIsUnsetAtStartUp()}'s model
+	 * and for its reason. Addendum Q stored there whether a row printed its per-ITEM reading or its per-STACK one
+	 * (Q6); addendum AN's three-line row prints BOTH, so by the time the user saw it in a client the switch
+	 * reached nothing drawn and he asked for it to go ("if it doesnt do anything anymore then remove it",
+	 * 2026-09-20). The item is deleted, so a profile that ever touched the gear menu holds a true or a false that
+	 * nothing reads and that RuneLite's config panel will never list for the user to clear by hand.
+	 *
+	 * <p>This sweep is the whole reason deleting a STORED key is safe, so it is pinned in both directions: the
+	 * stored value goes, and a profile that has none is left completely alone. The second half is the one that
+	 * would bite - an unset of a key holding nothing posts a {@code ConfigChanged} on every launch for ever, and
+	 * writes a line to the log with it.
+	 *
+	 * <p>Neither of the two values it can hold survives, because neither means anything any more: the reading it
+	 * used to pick is drawn on every row now, and the one thing it still decided - which figure
+	 * {@link SortMode#GP_MOVE} compares - is settled the other way for good (the gp column follows the STACK
+	 * whatever a profile says). So the test the sweep applies must refuse a stored "true" exactly as it refuses
+	 * a stored "false", and both are driven below.
+	 */
+	@Test
+	public void aStoredHoldingOnRowsIsUnsetAtStartUp() throws Exception
+	{
+		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
+		final ConfigManager cm = mock(ConfigManager.class);
+		set(plugin, "configManager", cm);
+		final String g = BankPriceMovementConfig.GROUP;
+		final String key = BankPriceMovementPlugin.LEGACY_HOLDING_KEY;
+		assertEquals("holdingOnRows", key);
+
+		when(cm.getConfiguration(g, key)).thenReturn("true");
+		plugin.unstickHolding();
+		verify(cm).unsetConfiguration(g, key);
+
+		// The other value the switch could hold is no more readable than the first: it named a reading of the
+		// row, and the row has no reading to choose any more.
+		when(cm.getConfiguration(g, key)).thenReturn("false");
+		plugin.unstickHolding();
+		verify(cm, times(2)).unsetConfiguration(g, key);
+
+		// A profile that never touched addendum Q's gear menu has nothing there, and nothing is written.
+		when(cm.getConfiguration(g, key)).thenReturn(null);
+		plugin.unstickHolding();
+		when(cm.getConfiguration(g, key)).thenReturn("");
+		plugin.unstickHolding();
+		verify(cm, times(2)).unsetConfiguration(anyString(), anyString());
+
+		// A manager that throws on either call is logged and swallowed; startUp goes on.
+		when(cm.getConfiguration(g, key)).thenThrow(new IllegalStateException());
+		plugin.unstickHolding();
+
+		// And no manager at all (a field never injected) is a no-op rather than an NPE.
+		set(plugin, "configManager", null);
+		plugin.unstickHolding();
+	}
+
+	/**
+	 * AJ, AO1: {@code startUp} really does run the sweeps it has, and runs them on the keys the deleted items
+	 * used. {@link #aStoredLookIsUnsetAtStartUp()} and {@link #aStoredHoldingOnRowsIsUnsetAtStartUp()} drive two
+	 * of them directly and so cannot see whether anything calls them; this is the assertion that catches a sweep
+	 * WRITTEN and never CALLED, which is the way a start-up repair usually fails.
+	 *
+	 * <p>There are THREE of them since addendum AO - the window's repair (K9), the {@code look} key (O1) and now
+	 * {@code holdingOnRows} (AO1) - and not four. Addendum AI added {@code unstickHoverText} when it deleted the
+	 * hover switch, and addendum AJ put the switch back at the user's word ("where is the show hover text box and
+	 * wording and default 'off' setting? it should be the row above OK", 2026-09-20) - so {@code showHoverText}
+	 * has a config item behind it again and must NOT be swept: a sweep of a live key would clear the reader's
+	 * own answer on every launch. {@code BankPriceMovementConfigTest} pins the item; this pins that start-up
+	 * leaves its stored value alone.
+	 */
+	@Test
+	public void startUpSweepsTheDeletedKeysAndOnlyThose() throws Exception
+	{
+		final Fixture f = new Fixture(false);
+		final String g = BankPriceMovementConfig.GROUP;
+		when(f.configManager.getConfiguration(g, BankPriceMovementPlugin.LEGACY_LOOK_KEY)).thenReturn("TICKER");
+		when(f.configManager.getConfiguration(g, "window")).thenReturn("H24");
+		// AO1: a profile that ticked addendum Q's row switch on. The item is gone, so the value goes with it.
+		when(f.configManager.getConfiguration(g, BankPriceMovementPlugin.LEGACY_HOLDING_KEY)).thenReturn("true");
+		// A profile that turned the hover text on. The value is the user's, and start-up must not touch it.
+		when(f.configManager.getConfiguration(g, BankPriceMovementPlugin.SHOW_HOVER_TEXT_KEY)).thenReturn("true");
+
+		onEdt(f.plugin::startUp);
+
+		verify(f.configManager).unsetConfiguration(g, BankPriceMovementPlugin.LEGACY_LOOK_KEY);
+		verify(f.configManager).unsetConfiguration(g, "window");
+		verify(f.configManager).unsetConfiguration(g, BankPriceMovementPlugin.LEGACY_HOLDING_KEY);
+		verify(f.configManager, never()).unsetConfiguration(g, BankPriceMovementPlugin.SHOW_HOVER_TEXT_KEY);
+		onEdt(f.plugin::shutDown);
+	}
+
+	/**
+	 * ...and the other direction, which matters more: a fresh profile has nothing stored under any of the swept
+	 * keys, and start-up must not write to the config at all. An unset of a key that holds nothing would post a
+	 * {@code ConfigChanged} on every launch for ever.
+	 */
+	@Test
+	public void aFreshProfileIsSweptWithoutAnyWrite() throws Exception
+	{
+		final Fixture f = new Fixture(false);
+		onEdt(f.plugin::startUp);
+		verify(f.configManager, never()).unsetConfiguration(anyString(), anyString());
+		onEdt(f.plugin::shutDown);
 	}
 
 	@Test
@@ -1991,9 +2399,12 @@ public class BankPriceMovementWiringTest
 
 	/**
 	 * K11. The stale-file sweep is disk work, so startUp hands it to the executor instead of running it on the
-	 * EDT the client calls startUp from. Driven here with a MOCKED store: running the task startUp itself
-	 * queued would point at {@code PriceStore.defaultDir()} and delete files out of the developer's own
-	 * {@code ~/.runelite/bank-portfolio-tracker/}.
+	 * EDT the client calls startUp from. Driven here with a MOCKED store: since addendum AD the real store gets
+	 * its directory from {@code Plugin.getPluginDirectory()}, which roots at
+	 * {@code ~/.runelite/plugin-data/<internalName>/}, so running the task startUp itself queued would delete
+	 * files out of the developer's own data folder. No test here ever calls that method - the one sweep test
+	 * that needs real files ({@link #theSweepTakesTheTradeEraFilesAndLeavesTheRevisionIndex()}) roots its own
+	 * {@code Filepath} at a temporary folder instead.
 	 */
 	@Test
 	public void theStaleFileSweepRunsOnTheExecutorAndNotOnTheEdt() throws Exception
@@ -2029,7 +2440,9 @@ public class BankPriceMovementWiringTest
 	 * file that lets a baseline be PICKED without a request, so deleting it would cost a needless fetch on every
 	 * launch and leave every window without a baseline until that fetch landed - while the trade-era files
 	 * beside it must still go (K11). Driven over a REAL {@link PriceStore} in a temporary directory, because the
-	 * rule being checked is which FILES survive, and a mocked store cannot show that.
+	 * rule being checked is which FILES survive, and a mocked store cannot show that. Since addendum AD the
+	 * store takes a {@code Filepath}, so the temporary folder is rooted as one ({@link TestFilepaths#rooted})
+	 * and the plain {@link File} probes below read the very same directory back.
 	 */
 	@Test
 	public void theSweepTakesTheTradeEraFilesAndLeavesTheRevisionIndex() throws Exception
@@ -2039,7 +2452,7 @@ public class BankPriceMovementWiringTest
 		write(new File(root, PriceStore.LEGACY_LATEST_FILE), "{\"points\":{}}");
 		write(new File(root, "baseline-H24.json"), "{\"points\":{}}");
 		write(new File(root, "bank-4242-STANDARD.json"), "{\"items\":[]}");
-		final PriceStore store = new PriceStore(new Gson(), root);
+		final PriceStore store = new PriceStore(new Gson(), TestFilepaths.rooted(root));
 
 		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
 		final ScheduledExecutorService executor = mock(ScheduledExecutorService.class);
@@ -2068,6 +2481,74 @@ public class BankPriceMovementWiringTest
 	 * String and character literals are left intact - a URL's {@code //} must not start a comment, and
 	 * {@code System.getProperty("user.home")} is a blocker precisely because of what is inside the quotes.
 	 */
+	/**
+	 * The Hub descriptor, off the test classpath. It speaks for what is SHIPPED, so it is read rather than
+	 * described: a test that assumed its contents would still pass after somebody changed them.
+	 */
+	private static Properties hubDescriptor() throws Exception
+	{
+		final Properties p = new Properties();
+		try (InputStream in = BankPriceMovementWiringTest.class.getResourceAsStream("/runelite-plugin.properties"))
+		{
+			assertNotNull("runelite-plugin.properties is not on the test classpath", in);
+			p.load(in);
+		}
+		return p;
+	}
+
+	/**
+	 * {@code src/main/java/com/bankpricemovement}, relative to the working directory Gradle runs tests from.
+	 * Fails loudly rather than answering nothing: a scan that reads no files passes every rule it has.
+	 */
+	private static Path shippedPackage()
+	{
+		final Path root = Paths.get("src", "main", "java", "com", "bankpricemovement");
+		assertTrue("wrong working directory - no package at " + root.toAbsolutePath(), Files.isDirectory(root));
+		return root;
+	}
+
+	/** One shipped source with its comments blanked, so a scan reads the code and not the prose beside it. */
+	private static String shippedSource(String fileName) throws Exception
+	{
+		final Path source = shippedPackage().resolve(fileName);
+		assertTrue(fileName + " is not where this test looks for it: " + source.toAbsolutePath(),
+			Files.isRegularFile(source));
+		return withoutComments(new String(Files.readAllBytes(source), StandardCharsets.UTF_8));
+	}
+
+	/** Every shipped source of the package, comments blanked, keyed by file name and in that order. */
+	private static Map<String, String> shippedSources() throws Exception
+	{
+		final List<Path> files;
+		try (Stream<Path> walk = Files.walk(shippedPackage()))
+		{
+			files = walk.filter(p -> p.toString().endsWith(".java")).sorted().collect(Collectors.toList());
+		}
+		final Map<String, String> out = new LinkedHashMap<>();
+		for (Path source : files)
+		{
+			// Keyed by the bare name, which is only sound while the package is flat: two sources sharing one
+			// name would leave the second scanned and the first silently gone from the evidence.
+			final String previous = out.put(source.getFileName().toString(),
+				withoutComments(new String(Files.readAllBytes(source), StandardCharsets.UTF_8)));
+			assertNull("two sources are named " + source.getFileName() + ": one of them would go unscanned",
+				previous);
+		}
+		return out;
+	}
+
+	/** How many times a pattern matches - every occurrence, because one fixed line does not fix its twin. */
+	private static int occurrences(Pattern pattern, String code)
+	{
+		final Matcher m = pattern.matcher(code);
+		int found = 0;
+		while (m.find())
+		{
+			found++;
+		}
+		return found;
+	}
+
 	private static String withoutComments(String code)
 	{
 		final StringBuilder out = new StringBuilder(code.length());

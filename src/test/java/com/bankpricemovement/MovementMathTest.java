@@ -444,7 +444,7 @@ public class MovementMathTest
 		assertEquals(Arrays.asList("Alpha", "Charlie", "Bravo", "Delta", "Echo"), names(rows));
 	}
 
-	// ---------------------------------------------------------------- addendum Q: alch rows and the holding sort
+	// ---------------------------------------------------------------- addendum Q: alch rows (Q5)
 
 	/**
 	 * Q5. An untradeable stack becomes a row priced at its High Alchemy value and marked as such, with no
@@ -498,56 +498,140 @@ public class MovementMathTest
 			new RowFilter(1_000L, 0L, SortMode.UNIT_PRICE, true, MovementWindow.D1))));
 	}
 
+	// ------------------------------------------- addendum AO: the gp column is the STACK's change, always (AO1)
+
 	/**
-	 * Q6. With the holding switch on, the gp column compares the change over the WHOLE stack, so the list
-	 * agrees with the figures those rows are printing. Here the bulk stack's tiny unit move is the bigger money:
-	 * 1,000 sharks up 20 gp each is +20,000, against one whip up 5,000.
+	 * <b>The whole argument for AO1, as one example.</b> A thousand items that each moved +5 gp gained the bank
+	 * 5,000 gp; one item that moved +1,000 gained it 1,000. With "gp change" lit and biggest first, the thousand
+	 * lead - this is a portfolio tracker, and the question that column answers is which HOLDING made the money,
+	 * not which item's sticker price travelled furthest. The flip turns that list over and nothing else.
+	 *
+	 * <p>The per-item readings are asserted beside the order on purpose: they are the figures the column used to
+	 * compare (the deleted {@code holdingOnRows} defaulted to OFF, and OFF was per item), so they say out loud
+	 * that this order is the REVERSE of the pre-AO one and cannot be restored by accident.
 	 */
 	@Test
-	public void theGpSortComparesTheStacksChangeWhileHoldingModeIsOn()
+	public void aThousandSmallGainsOutrankOneBigGainUnderTheGpColumn()
 	{
-		final List<MovementRow> rows = Arrays.asList(
-			MovementMath.row(new BankItem(4151, 1, "Whip", false), new PricePoint(1_005_000L, 1_005_000L),
-				new PricePoint(1_000_000L, 1_000_000L), 0),
-			MovementMath.row(new BankItem(385, 1_000, "Shark", true), new PricePoint(1_020L, 1_020L),
-				new PricePoint(1_000L, 1_000L), 0));
-		final RowFilter gain = new RowFilter(0L, 0L, SortMode.GP_MOVE, true, MovementWindow.D1);
+		final MovementRow bulk = MovementMath.row(new BankItem(314, 1_000, "Feather", true),
+			new PricePoint(55L, 55L), new PricePoint(50L, 50L), 0);
+		final MovementRow single = MovementMath.row(new BankItem(4151, 1, "Whip", false),
+			new PricePoint(2_000L, 2_000L), new PricePoint(1_000L, 1_000L), 0);
+		final List<MovementRow> rows = Arrays.asList(bulk, single);
 
-		assertEquals("per item, the whip moved more", Arrays.asList("Whip", "Shark"),
-			names(MovementMath.apply(rows, gain, ViewOptions.DEFAULT)));
-		assertEquals("per stack, the sharks did", Arrays.asList("Shark", "Whip"),
-			names(MovementMath.apply(rows, gain, ViewOptions.DEFAULT.withHoldingOnRows(true))));
-		assertEquals("and the other way round for the losers", Arrays.asList("Whip", "Shark"),
-			names(MovementMath.apply(rows, new RowFilter(0L, 0L, SortMode.GP_MOVE, false, MovementWindow.D1),
-				ViewOptions.DEFAULT.withHoldingOnRows(true))));
+		assertEquals("one feather moved +5", Long.valueOf(5L), bulk.deltaGp());
+		assertEquals("the whip moved +1,000", Long.valueOf(1_000L), single.deltaGp());
+		assertEquals("but the thousand feathers are +5,000 of bank", 5_000L, bulk.holdingDeltaGp());
+		assertEquals(1_000L, single.holdingDeltaGp());
+
+		assertEquals("biggest first: the stack that gained the most gp leads", Arrays.asList("Feather", "Whip"),
+			names(MovementMath.apply(rows,
+				new RowFilter(0L, 0L, SortMode.GP_MOVE, true, MovementWindow.D1))));
+		assertEquals("and the flip turns exactly that list over", Arrays.asList("Whip", "Feather"),
+			names(MovementMath.apply(rows,
+				new RowFilter(0L, 0L, SortMode.GP_MOVE, false, MovementWindow.D1))));
 	}
 
 	/**
-	 * The OTHER THREE columns are the same list either way (Q6, widened back by addendum W line W1): a percentage
-	 * is the same number whether one item or a thousand is held, and since W the price of one item and the worth
-	 * of the stack are two columns rather than one column read two ways. Addendum V's line V1 had
-	 * {@link SortMode#UNIT_PRICE} follow this switch for a day; this is the test that says it does not.
+	 * The successor to Q6's test. The gp column compared {@link MovementRow#holdingDeltaGp()} only while the
+	 * deleted {@code holdingOnRows} was on; since AO1 it does so under every switch, because addendum AN made the
+	 * row's headline line the STACK and the column now orders by the figure the eye lands on.
+	 *
+	 * <p>The fixture is Q6's own, kept so the change of verdict is visible: 1,000 sharks up 20 gp each is +20,000,
+	 * against one whip up 5,000. Q6 read "Whip, Shark" with the switch at its default; AO reads "Shark, Whip"
+	 * with no switch at all.
 	 */
 	@Test
-	public void theOtherColumnsAreUnmovedByTheHoldingSwitch()
+	public void theGpColumnComparesTheWholeStacksChange()
 	{
 		final List<MovementRow> rows = Arrays.asList(
 			MovementMath.row(new BankItem(4151, 1, "Whip", false), new PricePoint(1_005_000L, 1_005_000L),
 				new PricePoint(1_000_000L, 1_000_000L), 0),
 			MovementMath.row(new BankItem(385, 1_000, "Shark", true), new PricePoint(1_020L, 1_020L),
 				new PricePoint(1_000L, 1_000L), 0));
-		final ViewOptions holding = ViewOptions.DEFAULT.withHoldingOnRows(true);
 
-		for (final SortMode sort : new SortMode[]{SortMode.PERCENT_MOVE, SortMode.UNIT_PRICE, SortMode.STACK_VALUE})
-		{
-			for (final boolean descending : new boolean[]{true, false})
-			{
-				final RowFilter filter = new RowFilter(0L, 0L, sort, descending, MovementWindow.D1);
-				assertEquals(sort + " descending=" + descending,
-					names(MovementMath.apply(rows, filter, ViewOptions.DEFAULT)),
-					names(MovementMath.apply(rows, filter, holding)));
-			}
-		}
+		assertEquals("per stack the sharks moved more, and per stack is the only reading left",
+			Arrays.asList("Shark", "Whip"), names(MovementMath.apply(rows,
+				new RowFilter(0L, 0L, SortMode.GP_MOVE, true, MovementWindow.D1))));
+		assertEquals("and the other way round for the smallest movers", Arrays.asList("Whip", "Shark"),
+			names(MovementMath.apply(rows,
+				new RowFilter(0L, 0L, SortMode.GP_MOVE, false, MovementWindow.D1))));
+	}
+
+	/**
+	 * The successor to the "other columns are unmoved by the switch" test: with the switch gone there is nothing
+	 * for the other three to be unmoved BY, so what is worth pinning is that AO1 changed the gp column's key and
+	 * touched no other. Each column is named with the order its own key demands over one fixture where all four
+	 * disagree - one dear whip up 5,000 gp against a thousand sharks up 20 gp each.
+	 */
+	@Test
+	public void onlyTheGpColumnChangedItsKey()
+	{
+		final List<MovementRow> rows = Arrays.asList(
+			MovementMath.row(new BankItem(4151, 1, "Whip", false), new PricePoint(1_005_000L, 1_005_000L),
+				new PricePoint(1_000_000L, 1_000_000L), 0),
+			MovementMath.row(new BankItem(385, 1_000, "Shark", true), new PricePoint(1_020L, 1_020L),
+				new PricePoint(1_000L, 1_000L), 0));
+
+		assertEquals("percent: +2.0 % beats +0.5 %, and is the same number however many are held",
+			Arrays.asList("Shark", "Whip"), names(MovementMath.apply(rows,
+				new RowFilter(0L, 0L, SortMode.PERCENT_MOVE, true, MovementWindow.D1))));
+		assertEquals("item price: one whip is the dearer item", Arrays.asList("Whip", "Shark"),
+			names(MovementMath.apply(rows,
+				new RowFilter(0L, 0L, SortMode.UNIT_PRICE, true, MovementWindow.D1))));
+		assertEquals("stack price: 1,000 x 1,020 is the bigger holding", Arrays.asList("Shark", "Whip"),
+			names(MovementMath.apply(rows,
+				new RowFilter(0L, 0L, SortMode.STACK_VALUE, true, MovementWindow.D1))));
+		assertEquals("gp change: the one AO moved, now the stack's +20,000 against +5,000",
+			Arrays.asList("Shark", "Whip"), names(MovementMath.apply(rows,
+				new RowFilter(0L, 0L, SortMode.GP_MOVE, true, MovementWindow.D1))));
+	}
+
+	/**
+	 * AO1 put the gp column onto a stack-sized key, and this is the test that says it is still not the STACK
+	 * PRICE column: one asks what the holding GAINED, the other what it is WORTH, and a bank holds plenty of
+	 * rows where those two answers point opposite ways. Ten thousand feathers up a gp each gained more than a
+	 * whip up 1,000, and are worth a fraction of it.
+	 */
+	@Test
+	public void theGpColumnIsNotTheStackPriceColumn()
+	{
+		final List<MovementRow> rows = Arrays.asList(
+			MovementMath.row(new BankItem(314, 10_000, "Feather", true), new PricePoint(3L, 3L),
+				new PricePoint(2L, 2L), 0),
+			MovementMath.row(new BankItem(4151, 1, "Whip", false), new PricePoint(1_000_000L, 1_000_000L),
+				new PricePoint(999_000L, 999_000L), 0));
+
+		assertEquals("gained: +10,000 against +1,000", Arrays.asList("Feather", "Whip"),
+			names(MovementMath.apply(rows,
+				new RowFilter(0L, 0L, SortMode.GP_MOVE, true, MovementWindow.D1))));
+		assertEquals("worth: 30,000 against 1,000,000", Arrays.asList("Whip", "Feather"),
+			names(MovementMath.apply(rows,
+				new RowFilter(0L, 0L, SortMode.STACK_VALUE, true, MovementWindow.D1))));
+	}
+
+	/**
+	 * The null gate survived the change of key. A row with no baseline has no gp key - {@link
+	 * MovementRow#holdingDeltaGp()} answers a plain 0 for it, which would sort it among the unmoved instead of
+	 * behind them - so it is LAST whichever way the arrow points, and the flip never fills the top of the list
+	 * with dashes. The stacks are deliberately large, so the key really is the stack's change.
+	 */
+	@Test
+	public void theDashesAreStillLastUnderTheGpColumn()
+	{
+		final List<MovementRow> rows = Arrays.asList(
+			MovementMath.row(new BankItem(1, 1_000, "Riser", true), new PricePoint(120L, 120L),
+				new PricePoint(100L, 100L), 0),
+			MovementMath.row(new BankItem(2, 1_000, "Faller", true), new PricePoint(100L, 100L),
+				new PricePoint(150L, 150L), 0),
+			MovementMath.row(new BankItem(3, 5_000, "Nobaseline", true), new PricePoint(100L, 100L), null, 0));
+
+		assertEquals("the big priceless stack does not lead the gainers", 0L,
+			rows.get(2).holdingDeltaGp());
+		assertEquals(Arrays.asList("Riser", "Faller", "Nobaseline"), names(MovementMath.apply(rows,
+			new RowFilter(0L, 0L, SortMode.GP_MOVE, true, MovementWindow.D1))));
+		assertEquals(Arrays.asList("Faller", "Riser", "Nobaseline"), names(MovementMath.apply(rows,
+			new RowFilter(0L, 0L, SortMode.GP_MOVE, false, MovementWindow.D1))));
 	}
 
 	// ---------------------------------------------------------------- addendum W: the Stack price column
@@ -597,13 +681,15 @@ public class MovementMathTest
 	}
 
 	/**
-	 * W1, the other half of the same pair: Item price is the price of ONE item under EVERY switch. Addendum V's
-	 * line V1 moved it onto the stack while <i>Show stack value on rows</i> was on and addendum W reverted
-	 * that, because the stack now has its own column and a column that changed its meaning with a display switch
-	 * was a column you could not name.
+	 * W1, the other half of the same pair: Item price is the price of ONE item, always. Addendum V's line V1
+	 * moved it onto the stack while <i>Show stack value on rows</i> was on and addendum W reverted that, because
+	 * the stack now has its own column and a column that changed its meaning with a display switch was a column
+	 * you could not name; addendum AO then deleted that switch outright, so there is no longer anything this
+	 * column could follow. 300m of hats still do not make one hat dear - {@link SortMode#STACK_VALUE} is the
+	 * column that says they are 300m, and it reads this same fixture the other way round.
 	 */
 	@Test
-	public void theItemPriceSortIsTheUnitPriceUnderEverySwitch()
+	public void theItemPriceSortIsAlwaysTheUnitPrice()
 	{
 		final List<MovementRow> rows = Arrays.asList(
 			MovementMath.row(new BankItem(4151, 1, "Whip", false),
@@ -612,71 +698,46 @@ public class MovementMathTest
 				new PricePoint(3_000_000L, 3_000_000L), null, 0));
 		final RowFilter dearest = new RowFilter(0L, 0L, SortMode.UNIT_PRICE, true, MovementWindow.D1);
 		final RowFilter cheapest = new RowFilter(0L, 0L, SortMode.UNIT_PRICE, false, MovementWindow.D1);
-		final ViewOptions holding = ViewOptions.DEFAULT.withHoldingOnRows(true);
 
 		assertEquals("one whip is the dearer item", Arrays.asList("Whip", "Hat"),
-			names(MovementMath.apply(rows, dearest, ViewOptions.DEFAULT)));
-		assertEquals("and still is with holding on - 300m of hats do not make one hat dear",
-			Arrays.asList("Whip", "Hat"), names(MovementMath.apply(rows, dearest, holding)));
-		assertEquals(Arrays.asList("Hat", "Whip"), names(MovementMath.apply(rows, cheapest, ViewOptions.DEFAULT)));
-		assertEquals(Arrays.asList("Hat", "Whip"), names(MovementMath.apply(rows, cheapest, holding)));
+			names(MovementMath.apply(rows, dearest)));
+		assertEquals(Arrays.asList("Hat", "Whip"), names(MovementMath.apply(rows, cheapest)));
+		assertEquals("the same fixture the other way round under the stack column",
+			Arrays.asList("Hat", "Whip"), names(MovementMath.apply(rows,
+				new RowFilter(0L, 0L, SortMode.STACK_VALUE, true, MovementWindow.D1))));
 	}
 
 	/**
-	 * W1's null gate: the stack key is gated on {@link MovementRow#unitPrice()}, not on the holding value, so a
-	 * row with no price is LAST whichever way the arrow points. {@link MovementRow#holdingValue()} answers a
-	 * plain 0 for such a row, which would otherwise sort as the smallest stack in the bank rather than as a dash
-	 * - and would take the TOP of the list the moment the user pressed the column again.
+	 * W1's null gate, widened to the gp column by addendum AO. Three of the four keys are gated on a price or a
+	 * baseline the row may not have, and a row without one is LAST whichever way the arrow points: {@link
+	 * MovementRow#holdingValue()} and {@link MovementRow#holdingDeltaGp()} both answer a plain 0 for such a row,
+	 * which would otherwise sort it as the smallest stack in the bank rather than as a dash - and would take it
+	 * to the TOP of the list the moment the user pressed the column again.
+	 *
+	 * <p>The comparator is driven directly rather than through {@link MovementMath#apply}, because apply DROPS a
+	 * row with no unit price (it cannot be judged against the gp band) and so would never reach the gate.
 	 */
 	@Test
-	public void aPricelessRowHasNoStackKeyAndStaysLast()
+	public void aPricelessRowHasNoKeyAndStaysLast()
 	{
 		final MovementRow priced = MovementMath.row(new BankItem(2581, 100, "Hat", true),
-			new PricePoint(3_000_000L, 3_000_000L), null, 0);
+			new PricePoint(3_000_000L, 3_000_000L), new PricePoint(2_000_000L, 2_000_000L), 0);
 		final MovementRow priceless = MovementMath.row(new BankItem(1, 500, "Junk", true), null, null, 0);
-		assertNull("the fixture is the case: no price, and a holding of 0", priceless.unitPrice());
-		assertEquals(0L, priceless.holdingValue());
+		assertNull("the fixture is the case: no price at all", priceless.unitPrice());
+		assertNull("and therefore no move", priceless.deltaGp());
+		assertEquals("though a 500-deep stack, whose holding figures both read 0", 0L, priceless.holdingValue());
+		assertEquals(0L, priceless.holdingDeltaGp());
 
 		for (final boolean descending : new boolean[]{true, false})
 		{
-			for (final ViewOptions options : new ViewOptions[]{
-				ViewOptions.DEFAULT, ViewOptions.DEFAULT.withHoldingOnRows(true)})
+			for (final SortMode sort : new SortMode[]{
+				SortMode.STACK_VALUE, SortMode.UNIT_PRICE, SortMode.GP_MOVE, SortMode.PERCENT_MOVE})
 			{
-				final List<MovementRow> stacks = new ArrayList<>(Arrays.asList(priceless, priced));
-				stacks.sort(MovementMath.comparator(SortMode.STACK_VALUE, descending, options));
-				assertEquals("stack, descending=" + descending, Arrays.asList("Hat", "Junk"), names(stacks));
-
-				final List<MovementRow> units = new ArrayList<>(Arrays.asList(priceless, priced));
-				units.sort(MovementMath.comparator(SortMode.UNIT_PRICE, descending, options));
-				assertEquals("unit, descending=" + descending, Arrays.asList("Hat", "Junk"), names(units));
+				final List<MovementRow> sorted = new ArrayList<>(Arrays.asList(priceless, priced));
+				sorted.sort(MovementMath.comparator(sort, descending));
+				assertEquals(sort + ", descending=" + descending, Arrays.asList("Hat", "Junk"), names(sorted));
 			}
 		}
-	}
-
-	/** A row with no baseline has no gp key under either reading, so it still sorts last rather than as a 0. */
-	@Test
-	public void theDashesAreStillLastInHoldingMode()
-	{
-		assertEquals(Arrays.asList("Alpha", "Charlie", "Bravo", "Delta", "Echo"),
-			names(MovementMath.apply(fixture(), new RowFilter(0L, 0L, SortMode.GP_MOVE, true, MovementWindow.D1),
-				ViewOptions.DEFAULT.withHoldingOnRows(true))));
-	}
-
-	/** The pre-Q arities mean what they always did: the default switches, which are today's behaviour. */
-	@Test
-	public void theOldApplyAndComparatorReadAsTheDefaultOptions()
-	{
-		final List<MovementRow> rows = new ArrayList<>(fixture());
-		final RowFilter filter = new RowFilter(0L, 0L, SortMode.GP_MOVE, true, MovementWindow.D1);
-
-		assertEquals(names(MovementMath.apply(rows, filter, ViewOptions.DEFAULT)),
-			names(MovementMath.apply(rows, filter)));
-
-		final List<MovementRow> viaOld = new ArrayList<>(rows);
-		final List<MovementRow> viaNew = new ArrayList<>(rows);
-		viaOld.sort(MovementMath.comparator(SortMode.GP_MOVE, true));
-		viaNew.sort(MovementMath.comparator(SortMode.GP_MOVE, true, null));
-		assertEquals("a null options reads as the default too", names(viaOld), names(viaNew));
 	}
 
 	/**

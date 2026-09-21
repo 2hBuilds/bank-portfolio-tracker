@@ -4,7 +4,7 @@ import java.util.function.Function;
 
 /**
  * A test hook, and nothing else: the one static handle a developer-mode client hands the Effect Lab's HTTP
- * server so a script (or Claude) can drive the Bank Portfolio Tracker sidebar without a person at the keyboard.
+ * server so a script (or Claude) can drive the 2h Bank Portfolio Tracker sidebar without a person at the keyboard.
  * The same shape as {@code com.lootandbeam.DevBridge}, which the lab's {@code /lb} route reaches; this one is
  * reached by {@code /bpm}.
  *

@@ -4449,7 +4449,7 @@ public class PriceService
 		final PortfolioSummary summary = count == 0 && in.currencyGp <= 0L
 			? PortfolioSummary.EMPTY
 			: summarise(in, nowById, membersNames, bankNames, partsById, parts.names, windowNow, windowThen, live);
-		return new Computed(MovementMath.apply(all, in.filter, in.options), summary, priced, live, alch);
+		return new Computed(MovementMath.apply(all, in.filter), summary, priced, live, alch);
 	}
 
 	/**
