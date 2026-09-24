@@ -861,6 +861,41 @@ public class MovementMathTest
 	}
 
 	/**
+	 * Addendum AT: the FACE's percentage is the one-decimal figure below a hundred and shorter above it - whole
+	 * percents, then thousands, millions, billions - each truncated toward zero and signed by the gp change,
+	 * because the row's 54 px column holds "-100.0%" but not "+100.0%" (58 at the 15 px bold face), so every
+	 * rise of a hundred percent or more was cut to "+157...". The boundaries are pinned on both sides.
+	 */
+	@Test
+	public void theFacePercentIsCompactFromAHundredUp()
+	{
+		// Below a hundred: exactly formatPct.
+		assertEquals("+99.9%", MovementMath.formatPctCompact(99.99d, 5L));
+		assertEquals("-99.9%", MovementMath.formatPctCompact(-99.99d, -5L));
+		assertEquals("+0.8%", MovementMath.formatPctCompact(0.83d, 1L));
+		assertEquals("-0.0%", MovementMath.formatPctCompact(-0.01d, -1L));
+		assertEquals("0.0%", MovementMath.formatPctCompact(0.0d, 0L));
+		// From a hundred: whole percents, truncated toward zero.
+		assertEquals("+100%", MovementMath.formatPctCompact(100.0d, 5L));
+		assertEquals("+157%", MovementMath.formatPctCompact(157.8d, 1_560L));
+		assertEquals("-100%", MovementMath.formatPctCompact(-100.0d, -5L));
+		assertEquals("+9999%", MovementMath.formatPctCompact(9_999.9d, 5L));
+		// From ten thousand: thousands, then millions, then billions - all whole, all truncated.
+		assertEquals("+10k%", MovementMath.formatPctCompact(10_000d, 5L));
+		assertEquals("+12k%", MovementMath.formatPctCompact(12_999d, 5L));
+		assertEquals("+999k%", MovementMath.formatPctCompact(999_999d, 5L));
+		assertEquals("+1m%", MovementMath.formatPctCompact(1_000_000d, 5L));
+		assertEquals("-2m%", MovementMath.formatPctCompact(-2_500_000d, -5L));
+		assertEquals("+1b%", MovementMath.formatPctCompact(1_000_000_000d, 5L));
+		// The sign is the gp change's, as for the decimal form; and no figure means the one dash.
+		assertEquals("-157%", MovementMath.formatPctCompact(157.8d, -1L));
+		assertEquals("+157%", MovementMath.formatPctCompact(157.8d, null));
+		assertEquals("-", MovementMath.formatPctCompact(null, 5L));
+		assertEquals("-", MovementMath.formatPctCompact(Double.NaN, 5L));
+		assertEquals("-", MovementMath.formatPctCompact(Double.POSITIVE_INFINITY, 5L));
+	}
+
+	/**
 	 * L2/L-B: the Grand Exchange site TRUNCATES toward zero (26/26 of its printed figures reproduce with
 	 * truncation, 15/26 with rounding), so a move never prints larger than it is. The last two cases are the
 	 * binary trap: {@code (long) (0.7 * 10)} is 6, and a percentage of 0.7 that printed "0.6%" would be off by

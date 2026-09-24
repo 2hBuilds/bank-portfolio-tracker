@@ -72,7 +72,8 @@ The two gp figures sit in a column, the stack's directly over the item's, so you
 on either. The percentage is the biggest figure on the row and the gp figures are drawn a shade quieter - the
 same green or red, just turned down - because they say the same thing in two units and a list of two hundred rows
 should not ask you to choose between them on every line. A flat row prints no gp figures at all, just a grey
-`0.0%`.
+`0.0%`. A move of 100 % or more is written in whole percents (`+157%`), and from 10,000 % in thousands
+(`+12k%`), so it always fits its column; the block the row opens into keeps the exact figure.
 
 **The gp figures on the row are rounded** the way every other figure here is: a change of 3,432 gp reads `+3.4k`.
 Click the row for the exact number.
@@ -184,7 +185,8 @@ holds** - there is no per-item lookup, ever. Item names are joined to item ids t
 **Percentages truncate toward zero**, exactly as the GE site's do, and take their sign from the gp change: a
 fall too small to survive the truncation still reads `-0.0%` in red, as the site prints it. The site shows whole
 percents and this shows one decimal of the same truncation, so "-3%" there is anything from "-3.0%" to "-3.9%"
-here - never a bigger number, and never a different sign.
+here - never a bigger number, and never a different sign. (A row's face drops the decimal from 100 % up, as
+described under the row; the truncation and the sign rule are the same.)
 
 **What is left out of the LIST:** coins, platinum tokens, bank placeholders, bank fillers and anything the
 Grand Exchange does not list. Noted stacks fold onto the item they note, and duplicate stacks of one item are

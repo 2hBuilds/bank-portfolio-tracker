@@ -479,7 +479,60 @@ public final class MovementMath
 
 		final BigDecimal truncated = BigDecimal.valueOf(pct).setScale(PCT_DECIMALS, RoundingMode.DOWN);
 		// toPlainString, not toString: a percentage this large is nonsense data rather than "1.0E+2" on a row.
-		final String digits = truncated.abs().toPlainString();
+		return signedPct(truncated.abs().toPlainString(), pct, deltaGp);
+	}
+
+	/**
+	 * The percentage as a ROW'S FACE prints it (addendum AT): {@link #formatPct(Double, Long)} below a hundred,
+	 * and shorter above it, because the face's column is 54 px at a 15 px bold face and "+100.0%" measures 58 -
+	 * a minus is narrower than a plus, so "-100.0%" (54) held whole while every RISE of a hundred percent or
+	 * more was cut to "+157..." (the user's Elemental shield, 2026-09-24). Whole percents from 100 ("+157%",
+	 * "+9999%" is 54), thousands from 10,000 ("+12k%", "+999k%"), millions from a million ("+1m%") and
+	 * billions after that - every one truncated toward zero, as the one-decimal form is, and every one inside the
+	 * column. The sign is the gp change's, as in {@link #formatPct}. The exact one-decimal figure is still in
+	 * the block a row opens into, which uses {@link #formatPct} directly.
+	 *
+	 * @param pct     the move in percent, or null / non-finite for {@link #DASH}
+	 * @param deltaGp the gp change the percentage was computed from; null takes the sign from {@code pct}
+	 */
+	public static String formatPctCompact(@Nullable final Double pct, @Nullable final Long deltaGp)
+	{
+		if (pct == null || !Double.isFinite(pct))
+		{
+			return DASH;
+		}
+
+		final double size = Math.abs(pct);
+		if (size < 100d)
+		{
+			return formatPct(pct, deltaGp);
+		}
+
+		// Whole units of 1, 1,000, 1,000,000 or 1,000,000,000 percent, truncated toward zero like the decimal
+		// form: the face never prints a move larger than it is.
+		final String digits;
+		if (size < 10_000d)
+		{
+			digits = Long.toString((long) size);
+		}
+		else if (size < 1_000_000d)
+		{
+			digits = (long) (size / 1_000d) + "k";
+		}
+		else if (size < 1_000_000_000d)
+		{
+			digits = (long) (size / 1_000_000d) + "m";
+		}
+		else
+		{
+			digits = (long) (size / 1_000_000_000d) + "b";
+		}
+		return signedPct(digits, pct, deltaGp);
+	}
+
+	/** {@code digits} with a percent sign and the sign of {@code deltaGp} (or of {@code pct} without one), L2. */
+	private static String signedPct(final String digits, final double pct, @Nullable final Long deltaGp)
+	{
 		final int sign = deltaGp != null ? Long.signum(deltaGp) : signum(pct);
 		if (sign > 0)
 		{

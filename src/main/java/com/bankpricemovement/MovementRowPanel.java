@@ -361,8 +361,10 @@ public class MovementRowPanel extends JPanel
 	private static final int GP_COLUMN = 42;
 	/**
 	 * The pinned width of the percentage's box, the outermost column on line 2 and an empty spacer on line 3.
-	 * Wider than {@link #GP_COLUMN} because {@link #PCT_SIZE} is the biggest face on the row and "-100.0%" is
-	 * the worst case it has to hold whole.
+	 * Wider than {@link #GP_COLUMN} because {@link #PCT_SIZE} is the biggest face on the row. Its worst cases are
+	 * "-100.0%", "+1000%" and "+9999%", each exactly 54 at this face; a plus is 4 px wider than a minus, so
+	 * "+100.0%" is 58 and did NOT fit - every rise of a hundred percent or more was cut to "+157..." until
+	 * addendum AT made the face's percentage compact past a hundred ({@link MovementMath#formatPctCompact}).
 	 */
 	private static final int PCT_COLUMN = 54;
 	/**
@@ -1173,7 +1175,9 @@ public class MovementRowPanel extends JPanel
 	/**
 	 * The percentage ("+1.8%", "-0.0%"), or one dash when the row has no baseline - the outermost figure on
 	 * line 2 and the row's boldest. Signed by the gp figure and not by itself (L2), so a fall too small to
-	 * survive truncation still shows its minus.
+	 * survive truncation still shows its minus. Compact from a hundred percent up ("+157%", "+12k%" - addendum
+	 * AT), because "+100.0%" is 4 px wider than the column and was cut to "+100..."; the open block keeps the
+	 * exact figure.
 	 *
 	 * <p>Addendum N moved the gp half of the old "+12.3k +0.8%" out of here into its own label, so the two
 	 * figures are sized separately - {@link #PCT_SIZE} bold against {@link #GP_SIZE} plain, a gap the Q4 format
@@ -1186,7 +1190,7 @@ public class MovementRowPanel extends JPanel
 		{
 			return MovementMath.DASH;
 		}
-		return MovementMath.formatPct(row.deltaPct(), row.deltaGp());
+		return MovementMath.formatPctCompact(row.deltaPct(), row.deltaGp());
 	}
 
 	/**

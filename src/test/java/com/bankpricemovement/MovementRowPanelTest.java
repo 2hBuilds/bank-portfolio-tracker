@@ -5,6 +5,7 @@ import java.awt.Color;
 import java.awt.Component;
 import java.awt.Container;
 import java.awt.Dimension;
+import java.awt.FontMetrics;
 import java.awt.Font;
 import java.awt.Insets;
 import java.awt.event.MouseEvent;
@@ -446,6 +447,45 @@ public class MovementRowPanelTest
 			assertEquals("...and the item's line says nothing either", "", itemGpLabel(p).getText());
 			assertEquals("pct", MovementMath.DASH, p.changeText());
 			assertEquals("colour", ColorScheme.LIGHT_GRAY_COLOR, p.changeColor());
+		});
+	}
+
+	/**
+	 * Addendum AT: a rise of a hundred percent or more fits its column whole. The user's Elemental shield
+	 * (2026-09-24) read "+157..." because "+157.8%" measures 58 px at the row's bold 15 px face and the column
+	 * is 54 - "-100.0%" is 54 and held, a plus being 4 px wider than a minus, so only RISES were cut, and every
+	 * one of them. The face now prints "+157%" (46), and the block the row opens into keeps the exact "+157.4%".
+	 * The premise is asserted too, so the test cannot pass by accident of a wider column or a narrower face.
+	 */
+	@Test
+	public void aRiseOfAHundredPercentOrMoreFitsItsColumnWhole() throws Exception
+	{
+		onEdt(() ->
+		{
+			// Elemental shield: 1 at 2,551, up 1,560 from 991 = +157.4 %.
+			final MovementRow shield = stack("Elemental shield", 1, 2_551L, 1_560L, 1_560d * 100.0 / 991d);
+			final RecordingExpansion seam = new RecordingExpansion();
+			seam.setExpanded(shield.id(), true);
+			final MovementRowPanel p = new MovementRowPanel(shield, null, MovementWindow.D1, THEN_DAY,
+				ViewOptions.DEFAULT, seam);
+			layOut(p);
+
+			assertEquals("+157%", p.changeText());
+			final JLabel pct = label(p, "+157%");
+			assertNotNull("the percentage is on the row", pct);
+			final FontMetrics fm = pct.getFontMetrics(pct.getFont());
+			final int room = pct.getWidth() - pct.getInsets().left - pct.getInsets().right;
+			assertTrue("the box is real", room > 0);
+			assertTrue("'+157%' (" + fm.stringWidth("+157%") + " px) fits its " + room + " px box whole",
+				fm.stringWidth("+157%") <= room);
+			assertTrue("the premise: the old '+157.4%' (" + fm.stringWidth("+157.4%") + " px) overflowed it",
+				fm.stringWidth("+157.4%") > room);
+			assertTrue("...while '-100.0%' always held", fm.stringWidth("-100.0%") <= room);
+
+			// The exact figure is still in the block the row opens into, and the short form is not.
+			final String block = detail(p).getText();
+			assertTrue("the block keeps the decimal: " + block, block.contains("+157.4%"));
+			assertFalse("...and not the face's short form", block.contains("+157%"));
 		});
 	}
 
