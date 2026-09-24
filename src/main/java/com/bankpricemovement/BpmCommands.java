@@ -59,7 +59,8 @@ import org.slf4j.LoggerFactory;
  * hero=value|gp|pct|all|none which of the hero card's three figures are drawn (O5); a field word TOGGLES
  * opt=cash|untradeables|live|inventory|all|none  the gear's four view switches (Q7, T8, Y1, AO1); a field
  *                            word TOGGLES
- * refresh                    the Refresh button (30 s cooldown lives in the service)
+ * refresh                    the Refresh LINK: the price re-check behind its 30 s cooldown - or, with the bank
+ *                            OPEN (addendum AS), one local read of the bank, no download and no cooldown
  * more                       the "Show more" button: one more page of rows
  * bank=&lt;id&gt;:&lt;qty&gt;;...        DEV ONLY - a synthetic bank, so the panel can be driven with no bank open
  *                            (995 and 13204 are its CURRENCY worth, never a row - the same rule as the reader)
@@ -180,6 +181,24 @@ import org.slf4j.LoggerFactory;
  * lists and in whatever the operator has in their shell history, and a sentence naming the addendum is worth
  * more to its author than "opt= wants ...". {@code all} and {@code none} cover FOUR switches now, and
  * {@code state.options} loses its {@code holding} key with the field behind it.
+ *
+ * <p><b>Addendum AS adds no verb, and echoes an object this class does not build.</b> The plugin now HOLDS the
+ * bank while it is open: the first delivery that differs from its last read marks a change pending (and, with the
+ * sidebar showing, lights a glow on the Refresh link), every later bank event returns at once, and the bank is
+ * read ONCE - when it closes, when the Refresh link is clicked with it open, or at a login screen or a hop. The
+ * panel mirrors that hold in {@code describe()} as {@code bank}: {@code {open, pending, glow, heldEvents, reads}}.
+ * {@code state} has nested {@code describe()} whole since the first build, so the object arrives as
+ * {@code state.panel.bank} without a line here, and that is the design rather than an accident: this bridge can see
+ * the panel and the service and nothing of the plugin, so a second copy of the counters built on this side could
+ * only ever disagree with the one the plugin pushed. {@code refresh} needed no change either - it presses
+ * {@code refreshNow()}, the link's own method, which the panel hands to the plugin's local read while the bank is
+ * open - so a script's {@code refresh} and a click on the glowing link take the same road, while the gear's
+ * "Refresh prices now" keeps the price re-check in every state (plan AS, 7.1) and has no verb. Three of the four
+ * things the plan could not settle from source - whether every way of closing the bank sends the close, whether
+ * the bank container is still there when it arrives, and whether a logout or a hop sends it at all - read the same
+ * in every one of those counters, because the plugin makes sure a hold ends whichever way the bank goes; they are
+ * the client log's to answer rather than this object's. {@code docs/effect-lab.md} section 3.3 says which line,
+ * and gives the live run that proves the rest.
  */
 public class BpmCommands implements Function<String, String>
 {
@@ -851,7 +870,23 @@ public class BpmCommands implements Function<String, String>
 
 	// ---------------------------------------------------------------- the other verbs
 
-	/** The Refresh button. The 30 s cooldown lives in the service and comes back in the status line. */
+	/**
+	 * The Refresh LINK, pressed exactly as a click presses it - {@link BankPriceMovementPanel#refreshNow()} - and
+	 * never the service directly, because since addendum AS what the link DOES depends on the bank, and only the
+	 * panel knows whether it is open.
+	 *
+	 * <p>With the bank closed it is the price re-check: the 30 s cooldown lives in the service, and a refusal is
+	 * answered by the service's problem sentence ({@code status.problem}, "Refreshed n s ago - wait"), never by an
+	 * {@code ok:false}. With the bank OPEN the panel hands the click to the plugin instead, which reads the bank once
+	 * on the client thread, a change held or not - no download, no cooldown, and no stamp on the cooldown's clock, so
+	 * a closed-bank Refresh straight afterwards is still served.
+	 *
+	 * <p>That read is hopped onto the client thread, so the state this answers with was taken BEFORE it:
+	 * {@code panel.bank.reads} moves in the NEXT {@code state}, a moment later. Waiting for it here is not an option:
+	 * the plugin tells the panel through {@code invokeLater}, and this runs on the very EDT that notice needs, so a
+	 * wait would freeze the client's whole Swing side - every sidebar panel with this one - and the caller would be
+	 * answered "timed out" after {@link #EDT_TIMEOUT_MS} all the same.
+	 */
 	private Map<String, Object> refresh()
 	{
 		panel.refreshNow();
@@ -1073,7 +1108,10 @@ public class BpmCommands implements Function<String, String>
 		m.put("portfolio", portfolioJson(service.currentStatus()));
 		m.put("shownRows", panel.shownRows());
 		m.put("totalRows", panel.totalRows());
-		// The panel's own one-liner: which card is up, the two fields' validity, the status text it drew.
+		// The panel's own one-liner: which card is up, the two fields' validity, the status text it drew - and, since
+		// addendum AS, the bank hold it mirrors from the plugin ("bank": open, pending, glow, heldEvents, reads),
+		// which nests whole like every other object in it. No key is added here for it: the panel is the only
+		// side of this seam the plugin talks to.
 		m.put("panel", parse(panel.describe()));
 		if (syntheticBank)
 		{
@@ -1101,7 +1139,15 @@ public class BpmCommands implements Function<String, String>
 		return m;
 	}
 
-	/** The panel's JSON line as a tree, so it nests instead of being quoted; the raw text if it is not JSON. */
+	/**
+	 * The panel's JSON line as a tree, so it nests instead of being quoted; the raw text if it is not JSON.
+	 *
+	 * <p>A {@link JsonElement} and never a {@code Map}, and that is load-bearing since addendum AS: the objects
+	 * inside the line ({@code options}, {@code live}, {@code hero}, and now the bank hold's {@code bank}) come
+	 * through whole, and a number comes back exactly as the panel wrote it. Read through a {@code Map}, Gson would
+	 * turn every number into a double, and the counters the live run compares - {@code heldEvents},
+	 * {@code reads} - would print as {@code 3.0}.
+	 */
 	private Object parse(@Nullable String text)
 	{
 		if (text == null)

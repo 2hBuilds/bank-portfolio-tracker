@@ -134,6 +134,17 @@ import static org.junit.Assert.fail;
  * {@link MovementRowPanel#TEXT_WIDTH} (addendum N line N6), never with a number copied out of the spec. The
  * open HEIGHTS follow the same rule: a test asks the row's own detail block what it measures rather than
  * naming a number, which is what lets it tell a measured height from a guessed constant.
+ *
+ * <p><b>Addendum AS moved WHEN the open block is written</b>, and nothing about what it says or how tall it
+ * opens. A row used to write its block - an HTML table the label turns into a view tree on the spot - in its
+ * constructor, for every row of every page, whether anyone opened it or not; it now writes it on the row's
+ * first opening, before measuring it. So every test here that READS the block opens the row first, through the
+ * click a reader makes, and not through a test-only door that builds on demand: a second road to the text
+ * could drift from the real one, and the click is the road the reader takes. The proof of the change is
+ * {@link #aPageOfRowsBuiltAndThrownAwayWritesNoBlockAndNoDescription}, which counts every call to the builder
+ * while fifty rows are built and thrown away and asserts the count did not move; the tests beside it under
+ * "addendum AS" pin that nothing else moved - the height, the seam, the click on the block, the menu, the
+ * silence.
  */
 public class MovementRowPanelTest
 {
@@ -340,6 +351,11 @@ public class MovementRowPanelTest
 					}
 				}
 				assertFits(r.name() + " line 2 without the word", line2(p));
+				// The sweep above reached the open block's text too until addendum AS moved its writing to the
+				// first opening, so the row is opened and the block read here rather than the guard reading less.
+				leftClick(p);
+				assertTrue(r.name() + ": the block was written", detail(p).getText().startsWith("<html>"));
+				assertFalse(r.name() + ": the open block says it", detail(p).getText().contains("Total"));
 			}
 
 			// Line 2's shape: the fitted stack value, then the columns, and nothing in between where the word
@@ -611,10 +627,12 @@ public class MovementRowPanelTest
 			assertEquals("+20k", faceGp(20_000L));
 			assertEquals("+1.52m", faceGp(1_520_000L));
 
-			// ...and the exact gp the face gave up is still one click away, in the block the cell opens.
+			// ...and the exact gp the face gave up is still one click away, in the block the cell opens - and
+			// since addendum AS it is that click which writes the block, so the leg makes it before reading.
 			final MovementRow r = stack("Coins", 1, 2_000_000_000L, 3_432L, 0.1);
 			final MovementRowPanel p = new MovementRowPanel(r, null, MovementWindow.D1, THEN_DAY);
 			assertEquals("+3.4k", p.gpText());
+			leftClick(p);
 			assertTrue(detail(p).getText(), detail(p).getText().contains("+3,432"));
 		});
 	}
@@ -630,14 +648,14 @@ public class MovementRowPanelTest
 		onEdt(() ->
 		{
 			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY);
+			// AS: the click writes the block, so it comes first and the block is read after it.
+			leftClick(p);
+			assertTrue(p.expanded());
 			assertEquals("the block is the one AK writes, not re-written by Q4",
 				MovementRowPanel.detail(whip(), MovementWindow.D1, THEN_DAY, ViewOptions.DEFAULT, false),
 				detail(p).getText());
 			assertTrue("wrapped to the cell, which Q4 widened by the two px it took off the left padding",
 				detail(p).getText().startsWith("<html><div width=\"" + MovementRowPanel.INNER_WIDTH + "\">"));
-
-			leftClick(p);
-			assertTrue(p.expanded());
 			assertEquals("the open row is the 62 px face plus the block's own measurement",
 				MovementRowPanel.ROW_HEIGHT + detailHeight(p), p.getPreferredSize().height);
 			assertEquals("...which is 62 and not 48", 62 + detailHeight(p), p.getPreferredSize().height);
@@ -1865,10 +1883,17 @@ public class MovementRowPanelTest
 	// ---- addendum AI: the cell opens and shuts, and the description is inside it
 
 	/**
-	 * AI's resting state: a fresh row is the card the renders are pictures of, and the block under its face is
-	 * BUILT but not shown. Built rather than created on the first click because its measured height is what the
-	 * open row's height is computed from, and a height that only existed after the click would make the cell
-	 * snap twice.
+	 * AI's resting state, as addendum AS leaves it: a fresh row is the card the renders are pictures of, and the
+	 * block under its face is THERE - its label, a child of the row like any other - but EMPTY, and hidden.
+	 *
+	 * <p>This test used to pin the opposite: that the block was written with the row, "because its measured
+	 * height is what the open row's height is computed from, and a height that only existed after the click
+	 * would make the cell snap twice". The height is only ever measured AT an opening, and the opening now writes
+	 * the text before it measures
+	 * ({@link #theFirstOpeningWritesTheBlockAndOpensToTheHeightAWrittenBlockMeasures}), so nothing snaps - and the
+	 * early text was the lag of every bank change. Its old last line, "the hidden block is already measurable",
+	 * would still pass today on nothing but the air above an empty block, which is exactly why it is replaced
+	 * rather than kept: the empty text is what catches a constructor that writes the block again.
 	 */
 	@Test
 	public void aFreshRowIsRowHeightAndItsDetailIsHidden() throws Exception
@@ -1880,7 +1905,8 @@ public class MovementRowPanelTest
 			assertFalse("...and says nothing under its face", detail(p).isVisible());
 			assertEquals(new Dimension(MovementRowPanel.ROW_WIDTH, MovementRowPanel.ROW_HEIGHT),
 				p.getPreferredSize());
-			assertTrue("the hidden block is already measurable", detailHeight(p) > 0);
+			assertEquals("AS: the block is there but EMPTY - nothing is written until the row is opened", "",
+				detail(p).getText());
 		});
 	}
 
@@ -1899,11 +1925,13 @@ public class MovementRowPanelTest
 		{
 			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY);
 			final int shut = p.getPreferredSize().height;
-			final int block = detailHeight(p);
 
 			leftClick(p);
 			assertTrue("the row is open", p.expanded());
 			assertTrue("the detail is showing", detail(p).isVisible());
+			// Measured AFTER the click since addendum AS: the click is what writes the block, and before it the
+			// empty label asks only for the air above it.
+			final int block = detailHeight(p);
 			assertEquals("the cell grew by the block's own height",
 				MovementRowPanel.ROW_HEIGHT + block, p.getPreferredSize().height);
 			assertTrue("...which is taller than it was", p.getPreferredSize().height > shut);
@@ -1945,6 +1973,8 @@ public class MovementRowPanelTest
 				body("Crystal body", seeds()), row("Mystery box", null, null, null, null), longDescription()})
 			{
 				final MovementRowPanel p = new MovementRowPanel(r, null, MovementWindow.D1, THEN_DAY);
+				// AS: opened first, because the opening is what writes the block.
+				leftClick(p);
 				assertEquals(r.name() + ": the block, as the pure builder writes it and not re-written",
 					MovementRowPanel.detail(r, MovementWindow.D1, THEN_DAY, ViewOptions.DEFAULT,
 						!r.name().equals(p.nameText())),
@@ -1957,6 +1987,7 @@ public class MovementRowPanelTest
 			// The long hover's prose is what AK replaced, so none of its lines are in the cell any more - and the
 			// figures they carried are all still there, in the column that replaced them.
 			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY);
+			leftClick(p);
 			final String block = detail(p).getText();
 			assertNotEquals("the cell is no longer the long description", p.tooltipHtml(), block);
 			assertFalse(block, block.contains("Holding: 12 = 18,240,000 gp"));
@@ -1988,11 +2019,13 @@ public class MovementRowPanelTest
 			final MovementRowPanel big = new MovementRowPanel(longDescription(), null, MovementWindow.D1,
 				THEN_DAY);
 			assertEquals("both start as the same card", small.getPreferredSize(), big.getPreferredSize());
-			assertNotEquals("the two blocks have to say different things, or this proves nothing",
-				detail(small).getText(), detail(big).getText());
 
 			leftClick(small);
 			leftClick(big);
+			// Compared AFTER the clicks since addendum AS: the clicks write the two blocks, and two unwritten
+			// blocks are the same empty string, which would let this guard pass on nothing.
+			assertNotEquals("the two blocks have to say different things, or this proves nothing",
+				detail(small).getText(), detail(big).getText());
 			assertEquals(MovementRowPanel.ROW_HEIGHT + detailHeight(small), small.getPreferredSize().height);
 			assertEquals(MovementRowPanel.ROW_HEIGHT + detailHeight(big), big.getPreferredSize().height);
 			assertTrue("the long description is the taller block: " + detailHeight(small) + " vs "
@@ -2402,7 +2435,13 @@ public class MovementRowPanelTest
 			assertEquals(off.railColor(), on.railColor());
 			assertEquals(off.getPreferredSize(), on.getPreferredSize());
 			assertEquals("the description is built either way", off.tooltipHtml(), on.tooltipHtml());
+			// Both opened first since addendum AS: the opening writes the block, and two unwritten blocks are the
+			// same empty string whatever the switch says - so the text compared is asserted to be a written one.
+			leftClick(off);
+			leftClick(on);
+			assertTrue("the block was written", detail(off).getText().startsWith("<html>"));
 			assertEquals("...and reaches the cell either way", detail(off).getText(), detail(on).getText());
+			assertEquals("and opens both cells to the same height", off.getPreferredSize(), on.getPreferredSize());
 		});
 	}
 
@@ -2669,10 +2708,15 @@ public class MovementRowPanelTest
 			final MovementRowPanel cut = new MovementRowPanel(row(monster, 1_000L, 900L, 100L, 11.1), null,
 				MovementWindow.D1, THEN_DAY);
 			assertNotEquals("the fixture has to be cut, or this test has one leg", monster, cut.nameText());
+			// AS: each row is opened before its block is read - the opening writes it, and an unwritten block is
+			// "", which carries no bold name and would pass the second leg on nothing.
+			leftClick(cut);
 			assertTrue(detail(cut).getText(), detail(cut).getText().contains("<b>" + monster + "</b>"));
 
 			final MovementRowPanel whole = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY);
 			assertEquals("...and this one must not be", "Abyssal whip", whole.nameText());
+			leftClick(whole);
+			assertTrue("the block was written", detail(whole).getText().contains("<table"));
 			assertFalse(detail(whole).getText(), detail(whole).getText().contains("<b>"));
 		});
 	}
@@ -2805,6 +2849,329 @@ public class MovementRowPanelTest
 		}
 	}
 
+	// ---- addendum AS: the open block is written when the row is first opened, not when it is built
+
+	/**
+	 * THE proof of addendum AS: fifty rows built the way a page builds them - through the constructor
+	 * {@code addPage} calls, with a seam of the panel's kind - and thrown away, and not one open block or long
+	 * description written. Before AS every one of them wrote both in its constructor, and the block is the dear
+	 * one: a label turns its HTML into a view tree the moment it is handed it, about 1 MB and 1 ms a row by the
+	 * lag investigation's measure, so a 250-row page paid for 250 blocks nobody had opened on every bank change.
+	 *
+	 * <p>Counted at the BUILDERS ({@code MovementRowPanel.detailBuilds()} and {@code tooltipBuilds()}), not read
+	 * off the labels: a constructor that wrote a block and threw it away would leave every label empty and still
+	 * pay in full, and only a count sees that. The rows are of every kind the service publishes
+	 * ({@link #pageRow}), so no kind is the one that still writes early.
+	 *
+	 * <p>Two controls keep the zero honest. The page is built a second time with ONE of its items open in the
+	 * seam, as the panel's rebuild after a publish would be under a reader with a row open, and that writes
+	 * exactly one block: a page costs one block per row the reader has open, and none for the rest. And a
+	 * counter that could not count would pass all of this on nothing, so the last legs open a row and ask it for
+	 * its description and see each count move by exactly one.
+	 */
+	@Test
+	public void aPageOfRowsBuiltAndThrownAwayWritesNoBlockAndNoDescription() throws Exception
+	{
+		onEdt(() ->
+		{
+			final long details = MovementRowPanel.detailBuilds();
+			final long tips = MovementRowPanel.tooltipBuilds();
+			final RecordingExpansion shut = new RecordingExpansion();
+			for (int i = 0; i < 50; i++)
+			{
+				final MovementRowPanel p = new MovementRowPanel(pageRow(i), null, MovementWindow.D7, THEN_DAY,
+					ViewOptions.DEFAULT, shut);
+				assertFalse(p.row().name() + ": built shut", p.expanded());
+				assertEquals(p.row().name() + ": and its block is not written", "", detail(p).getText());
+			}
+			assertEquals("fifty rows built and thrown away, and not one block written", details,
+				MovementRowPanel.detailBuilds());
+			assertEquals("...nor one long description", tips, MovementRowPanel.tooltipBuilds());
+			assertEquals("building only reads the seam", 0, shut.writes);
+
+			// The same page rebuilt with ONE item open in the seam, as a publish rebuilds the page under a reader
+			// who has a row open: that row, and only that row, writes its block.
+			final RecordingExpansion oneOpen = new RecordingExpansion();
+			oneOpen.setExpanded(pageRow(17).id(), true);
+			for (int i = 0; i < 50; i++)
+			{
+				final MovementRowPanel p = new MovementRowPanel(pageRow(i), null, MovementWindow.D7, THEN_DAY,
+					ViewOptions.DEFAULT, oneOpen);
+				assertEquals(p.row().name() + ": open exactly when the seam says so", i == 17, p.expanded());
+			}
+			assertEquals("one row open, one block written", details + 1, MovementRowPanel.detailBuilds());
+			assertEquals("and still no description", tips, MovementRowPanel.tooltipBuilds());
+
+			// The counters can count, or the zeros above prove nothing.
+			final MovementRowPanel opened = new MovementRowPanel(pageRow(3), null, MovementWindow.D7, THEN_DAY,
+				ViewOptions.DEFAULT, new RecordingExpansion());
+			leftClick(opened);
+			assertEquals("an opening writes one block", details + 2, MovementRowPanel.detailBuilds());
+			opened.tooltipHtml();
+			assertEquals("an ask writes one description", tips + 1, MovementRowPanel.tooltipBuilds());
+		});
+	}
+
+	/**
+	 * The first opening writes the block and opens the cell to EXACTLY the height a block written in the
+	 * constructor opened it to - the promise that let addendum AS move the write at all. The reader sees the same
+	 * cell, in one beat, at the same size; only the moment the text is written has moved.
+	 *
+	 * <p>"The height a written block measures" is asked of a TWIN: a label given the properties the row's own
+	 * block carries - read off it, so no font size or gap is copied in here - and then the text, which is what
+	 * every build from AI to AR did in the constructor. The row is then opened, and must stand at the card's
+	 * height plus what the twin measures, with the twin's text on its block.
+	 *
+	 * <p>This is the assertion that catches the one ordering AS depends on. Measure the block before writing it
+	 * and the empty label asks only for the air above it, so the row opens a few px tall with the description
+	 * clipped away - short of the twin by the whole block.
+	 *
+	 * <p>Walked across the blocks that differ most in height, from an alch row's two lines and a note to the
+	 * tallest this plugin writes, and a name the face had to cut, whose block opens with that name in bold.
+	 */
+	@Test
+	public void theFirstOpeningWritesTheBlockAndOpensToTheHeightAWrittenBlockMeasures() throws Exception
+	{
+		onEdt(() ->
+		{
+			for (MovementRow r : new MovementRow[]{whip(), alch("Graceful hood", 4, 20_000L),
+				body("Crystal body", seeds()), row("Mystery box", null, null, null, null), longDescription(),
+				row("A very long item name that goes on and on and on for ever", 1_000L, 900L, 100L, 11.1)})
+			{
+				final MovementRowPanel p = new MovementRowPanel(r, null, MovementWindow.D1, THEN_DAY);
+				final JLabel block = detail(p);
+				assertEquals(r.name() + ": nothing written yet", "", block.getText());
+
+				final JLabel twin = new JLabel();
+				twin.setFont(block.getFont());
+				twin.setForeground(block.getForeground());
+				twin.setBorder(block.getBorder());
+				twin.setHorizontalAlignment(block.getHorizontalAlignment());
+				twin.setVerticalAlignment(block.getVerticalAlignment());
+				twin.setText(MovementRowPanel.detail(r, MovementWindow.D1, THEN_DAY, ViewOptions.DEFAULT,
+					!r.name().equals(p.nameText())));
+				final int written = twin.getPreferredSize().height;
+				assertTrue(r.name() + ": a written block is taller than the air above it (" + written + " vs "
+					+ block.getInsets().top + ")", written > block.getInsets().top);
+
+				final long atClick = MovementRowPanel.detailBuilds();
+				leftClick(p);
+				assertTrue(p.expanded());
+				assertEquals(r.name() + ": the opening wrote exactly one block", atClick + 1,
+					MovementRowPanel.detailBuilds());
+				assertEquals(r.name() + ": and it is the twin's", twin.getText(), block.getText());
+				assertEquals(r.name() + ": and the cell opened to the card plus what a written block measures",
+					MovementRowPanel.ROW_HEIGHT + written, p.getPreferredSize().height);
+			}
+		});
+	}
+
+	/**
+	 * A row rebuilt from a seam that says it is OPEN writes its block as it is built - the one case where the
+	 * constructor still writes one, because the reader is looking at that block and every publish rebuilds the
+	 * page from new rows. It has to come back open WITH its text: a block never written would stand open at the
+	 * air's height with nothing in it, while {@code expanded()} said the row was open.
+	 *
+	 * <p>{@link #aRowBuiltFromAnAlreadyOpenSeamIsDrawnOpen} pins the open height against the row's OWN block,
+	 * which an unwritten block would satisfy with its own few px - so the text and the count are the half of
+	 * the promise this test adds.
+	 */
+	@Test
+	public void aRowRebuiltFromAnOpenSeamWritesItsBlockAsItIsBuilt() throws Exception
+	{
+		onEdt(() ->
+		{
+			final RecordingExpansion seam = new RecordingExpansion();
+			seam.setExpanded(4151, true);
+			seam.writes = 0;
+
+			final long before = MovementRowPanel.detailBuilds();
+			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY,
+				ViewOptions.DEFAULT, seam);
+			assertEquals("the constructor wrote the one block its seam asked for", before + 1,
+				MovementRowPanel.detailBuilds());
+			assertEquals("...and it is this row's block",
+				MovementRowPanel.detail(whip(), MovementWindow.D1, THEN_DAY, ViewOptions.DEFAULT, false),
+				detail(p).getText());
+			assertTrue(detail(p).isVisible());
+			assertEquals(MovementRowPanel.ROW_HEIGHT + detailHeight(p), p.getPreferredSize().height);
+			assertTrue("...which is a written block's height, not the air's",
+				detailHeight(p) > detail(p).getInsets().top);
+			assertEquals("reading the seam wrote nothing to it", 0, seam.writes);
+
+			// ...and ONE click shuts it, writing nothing more.
+			final long written = MovementRowPanel.detailBuilds();
+			leftClick(p);
+			assertFalse(p.expanded());
+			assertEquals(written, MovementRowPanel.detailBuilds());
+		});
+	}
+
+	/**
+	 * Shutting a block keeps its text, and opening it again writes nothing: a block is written ONCE in the life
+	 * of a row. Asserted two ways, because each catches what the other cannot - the label holds the very same
+	 * String through a shut and two more openings (a second write would hand it a new one, even with the same
+	 * words), and the builder's count moves by exactly one across all of it.
+	 *
+	 * <p>A row that rewrote its block on every opening would still open to the right height with the right
+	 * words; what it would cost is the HTML parse on every click, which is the cost addendum AS exists to
+	 * remove. A row that emptied its block on shutting would look the same - a shut block is hidden - and pay
+	 * again on the next opening.
+	 */
+	@Test
+	public void shuttingKeepsTheBlockAndASecondOpeningWritesNothing() throws Exception
+	{
+		onEdt(() ->
+		{
+			final MovementRowPanel p = new MovementRowPanel(longDescription(), null, MovementWindow.D1, THEN_DAY);
+			final long before = MovementRowPanel.detailBuilds();
+
+			leftClick(p);
+			final String written = detail(p).getText();
+			final int open = p.getPreferredSize().height;
+			assertTrue("the opening wrote it", written.startsWith("<html>"));
+			assertEquals(before + 1, MovementRowPanel.detailBuilds());
+
+			leftClick(p);
+			assertFalse(p.expanded());
+			assertFalse("shut: hidden", detail(p).isVisible());
+			assertSame("...but still written - the very same text, not a copy", written, detail(p).getText());
+			assertEquals("and the card is the 62 px card again",
+				new Dimension(MovementRowPanel.ROW_WIDTH, MovementRowPanel.ROW_HEIGHT), p.getPreferredSize());
+
+			leftClick(p);
+			assertTrue(p.expanded());
+			assertSame("the second opening shows the text the first one wrote", written, detail(p).getText());
+			assertEquals("...and opens to the same height", open, p.getPreferredSize().height);
+
+			leftClick(p);
+			leftClick(p);
+			assertSame("and so does the third", written, detail(p).getText());
+			assertEquals("one write in the whole life of the row", before + 1, MovementRowPanel.detailBuilds());
+		});
+	}
+
+	/**
+	 * The block's LABEL is still built with the row, empty, and it is a CHILD like any other from the start -
+	 * which is why addendum AS writes only its text late. The row installs its click and its right-click menu
+	 * on every child as it is built, so a label added at the first opening would carry neither: a click on an
+	 * open block - most of an open cell, and the obvious place to click to shut it - would do nothing, and a
+	 * right-click there would open no menu.
+	 *
+	 * <p>So on a FRESH row the block is the card's CENTER child, in the walk every sweep here uses, carrying the
+	 * row's listener and resolving the row's own menu; once open, a click ON the block shuts the row, a
+	 * right-click on it toggles nothing, both menu entries still browse from it, and it has no hover, open or
+	 * shut.
+	 */
+	@Test
+	public void theEmptyBlockIsAChildFromTheStartSoTheClickAndTheMenuReachIt() throws Exception
+	{
+		onEdt(() ->
+		{
+			final AtomicReference<String> browsed = new AtomicReference<>();
+			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY,
+				ViewOptions.DEFAULT, browsed::set);
+			final JLabel block = detail(p);
+			assertEquals("fresh, and empty", "", block.getText());
+			final List<JComponent> children = new ArrayList<>();
+			collect(p, children);
+			assertTrue("the empty block is one of the row's children", children.contains(block));
+			assertTrue("it carries the row's click", block.getMouseListeners().length >= 1);
+			assertTrue("it takes the row's menu", block.getInheritsPopupMenu());
+			assertSame("...and the menu it finds is the row's own", p.getComponentPopupMenu(),
+				block.getComponentPopupMenu());
+			assertNull("no hover while shut", block.getToolTipText());
+
+			// Opened from the face; then the clicks land ON the block, where a reader shutting it would click.
+			leftClick(nameLabel(p));
+			assertTrue(p.expanded());
+			assertSame("the opening wrote into the label that was built", block, detail(p));
+			assertTrue(block.getText().startsWith("<html>"));
+			assertNull("no hover while open either", block.getToolTipText());
+
+			click(block, MouseEvent.BUTTON3, false);
+			assertTrue("a right-click on the block toggles nothing", p.expanded());
+			final JPopupMenu menu = block.getComponentPopupMenu();
+			((JMenuItem) menu.getComponent(0)).doClick(0);
+			assertEquals("https://secure.runescape.com/m=itemdb_oldschool/viewitem?obj=4151", browsed.get());
+			((JMenuItem) menu.getComponent(1)).doClick(0);
+			assertEquals("https://prices.runescape.wiki/osrs/item/4151", browsed.get());
+
+			leftClick(block);
+			assertFalse("a click on the open block shuts the row", p.expanded());
+			assertFalse(block.isVisible());
+			assertEquals(new Dimension(MovementRowPanel.ROW_WIDTH, MovementRowPanel.ROW_HEIGHT),
+				p.getPreferredSize());
+		});
+	}
+
+	/**
+	 * The two texts written late are written from what the row was BUILT with - its window, its baseline day and
+	 * its switches - and not from defaults. A late text has to say exactly what an early one would have said, or
+	 * moving the write would have moved the words.
+	 *
+	 * <p>The fixture is chosen so a default would show: a live row built for the 30 d window, on a day that is
+	 * not the file's usual one, with the live switch OFF - so a block written with any default (the 1 d window,
+	 * the usual day, the switch on) reads differently. Both texts are compared with the pure builders under the
+	 * row's own arguments, and the defaults' texts are asserted to differ, or the comparison proves nothing.
+	 */
+	@Test
+	public void theLateTextsAreWrittenFromWhatTheRowWasBuiltWith() throws Exception
+	{
+		onEdt(() ->
+		{
+			final LocalDate day = LocalDate.of(2026, 8, 12);
+			final MovementRow live = liveBow(MovementRow.PriceSource.LIVE);
+			final MovementRowPanel p = new MovementRowPanel(live, null, MovementWindow.D30, day, LIVE_OFF);
+			leftClick(p);
+			final String block = MovementRowPanel.detail(live, MovementWindow.D30, day, LIVE_OFF, false);
+			assertEquals("the block, as the row's own window, day and switches write it", block,
+				detail(p).getText());
+			assertTrue(block, block.contains(MovementRowPanel.L_CHANGE + MovementWindow.D30.label()));
+			assertTrue(block, block.contains("(12 Aug)"));
+			assertNotEquals("the defaults write another block, or this proves nothing", block,
+				MovementRowPanel.detail(live, MovementWindow.DEFAULT, THEN_DAY, ViewOptions.DEFAULT, false));
+
+			final String tip = MovementRowPanel.tooltip(live, MovementWindow.D30, day, LIVE_OFF);
+			assertEquals("the long description, likewise", tip, p.tooltipHtml());
+			assertNotEquals("...and likewise not the defaults'", tip,
+				MovementRowPanel.tooltip(live, MovementWindow.DEFAULT, THEN_DAY, ViewOptions.DEFAULT));
+		});
+	}
+
+	/**
+	 * The long description is written on the first ask and kept - and never by building a row. No sidebar has
+	 * drawn it since addendum AK, yet every build from AI to AR wrote it in the constructor for every row of
+	 * every page; only the tests read it, through {@code tooltipHtml()}.
+	 *
+	 * <p>Counted and compared by identity: building writes none, the first ask writes one, the second ask writes
+	 * nothing and answers the very same String - and that String is what the pure builder writes for the row's
+	 * own arguments, so every test in this file that reads it describes exactly what it always did.
+	 */
+	@Test
+	public void theLongDescriptionIsWrittenOnTheFirstAskAndKept() throws Exception
+	{
+		onEdt(() ->
+		{
+			final long before = MovementRowPanel.tooltipBuilds();
+			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY);
+			assertEquals("building a row writes no description", before, MovementRowPanel.tooltipBuilds());
+
+			final String first = p.tooltipHtml();
+			assertEquals("the first ask writes one", before + 1, MovementRowPanel.tooltipBuilds());
+			assertSame("the second answers the same String, kept rather than written again", first,
+				p.tooltipHtml());
+			assertEquals(before + 1, MovementRowPanel.tooltipBuilds());
+			assertEquals("and it is what the pure builder writes for this row",
+				MovementRowPanel.tooltip(whip(), MovementWindow.D1, THEN_DAY, ViewOptions.DEFAULT), first);
+
+			// Opening and shutting the cell has nothing to do with it.
+			leftClick(p);
+			leftClick(p);
+			assertSame(first, p.tooltipHtml());
+		});
+	}
+
 	// ---- helpers
 
 	/** The open cell's block for one row, under the default switches and the fixed baseline day. */
@@ -2915,6 +3282,49 @@ public class MovementRowPanelTest
 			new MovementRow.LiveFacts(16_800_000L, 16_600_000L, 517L, null), 3, 1, 1);
 	}
 
+	/**
+	 * Row {@code i} of a synthetic page, for addendum AS's counts: a distinct item id per row, so a seam can open
+	 * exactly one of them, cycling through every kind of row the service publishes - a riser, a faller, a flat
+	 * row, a row with no price, an alch row, a parts row, a live row carrying a carried split, and a riser whose
+	 * name the face has to cut, the one kind whose block reads something off the face.
+	 */
+	private static MovementRow pageRow(int i)
+	{
+		final int id = 30_000 + i;
+		switch (i % 8)
+		{
+			case 0:
+				return new MovementRow(id, "Riser " + i, 12, false, 1_520_000L, 1_500_000L, 20_000L,
+					20_000d * 100.0 / 1_500_000d, 18_240_000L, null);
+			case 1:
+				return new MovementRow(id, "Faller " + i, 5, false, 15_000L, 19_100L, -4_100L,
+					-4_100d * 100.0 / 19_100d, 75_000L, null);
+			case 2:
+				return new MovementRow(id, "Flat " + i, 5, false, 150L, 150L, 0L, 0.0, 750L, null);
+			case 3:
+				return new MovementRow(id, "Unpriced " + i, 5, false, null, null, null, null, 0L, null);
+			case 4:
+				return new MovementRow(id, "Alch " + i, 4, false, 20_000L, null, null, null, 80_000L,
+					MovementRow.PriceSource.ALCH);
+			case 5:
+				return new MovementRow(id, "Parts " + i, 1, false, 16_694_766L, 18_300_000L, -1_605_234L,
+					-1_605_234d * 100.0 / 18_300_000d, 16_694_766L, MovementRow.PriceSource.PARTS, seeds());
+			case 6:
+			{
+				final Map<MovementWindow, MovementRow.PriceSource> sources = new EnumMap<>(MovementWindow.class);
+				sources.put(MovementWindow.D7, MovementRow.PriceSource.LIVE);
+				final Map<MovementWindow, LocalDate> days = new EnumMap<>(MovementWindow.class);
+				days.put(MovementWindow.D7, TRADED_DAY);
+				return new MovementRow(id, "Live " + i, 5, false, 16_694_766L, 18_300_000L, -1_605_234L,
+					-1_605_234d * 100.0 / 18_300_000d, 83_473_830L, MovementRow.PriceSource.LIVE, null, sources,
+					days, new MovementRow.LiveFacts(16_800_000L, 16_600_000L, 517L, null), 3, 1, 1);
+			}
+			default:
+				return new MovementRow(id, "A very long item name that goes on and on and on for ever " + i, 1,
+					false, 1_000L, 900L, 100L, 11.1, 1_000L, null);
+		}
+	}
+
 	/** An untradeable stack as the service lists one (Q5): the alch price, no baseline, no move. */
 	private static MovementRow alch(String name, int quantity, long haPrice)
 	{
@@ -2955,8 +3365,9 @@ public class MovementRowPanelTest
 
 	/**
 	 * The detail block: the CENTER child of the card, hidden until the row is clicked (AI). Asked of the layout
-	 * and not of the visible children, because a test has to be able to read it while it is invisible - that is
-	 * where the row's open height comes from.
+	 * and not of the visible children, because a test has to be able to read it while it is invisible - EMPTY
+	 * until the row's first opening since addendum AS, and from then on the block whose measurement the open
+	 * height is.
 	 */
 	private static JLabel detail(MovementRowPanel p)
 	{
@@ -2968,7 +3379,10 @@ public class MovementRowPanelTest
 		return (JLabel) centre;
 	}
 
-	/** What the row is {@link MovementRowPanel#ROW_HEIGHT} taller by while it is open: the detail's own ask. */
+	/**
+	 * What the row is {@link MovementRowPanel#ROW_HEIGHT} taller by while it is open: the detail's own ask. Read
+	 * it after an opening (addendum AS): before one, the unwritten block asks only for the air above it.
+	 */
 	private static int detailHeight(MovementRowPanel p)
 	{
 		return detail(p).getPreferredSize().height;

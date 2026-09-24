@@ -2900,28 +2900,46 @@ public class PriceServiceTest
 		verify(traded, times(1)).fetchLatest(anyLong());
 	}
 
-	/** T2: and on the thirty-minute tick, which is the cadence the feed is read at. */
+	/**
+	 * T2: and on the thirty-minute tick, which is the cadence the feed is read at. Re-pointed by addendum AS: the
+	 * ticks here are {@link PriceService#TICK_MS} apart, as the real timer's are. The test used to answer the warm-up
+	 * tick's own request and fire the next tick at the same instant; since decision 3 the warm-up tick asks for
+	 * nothing (it runs moments after the start-up fetch), and a tick at the same instant finds the snapshot moments
+	 * old - that is the floor, which has tests of its own below, and not the cadence this one is about. The third
+	 * tick is new: every periodic run asks, not just the first after warm-up.
+	 */
 	@Test
 	public void theLatestSnapshotIsFetchedAgainOnEveryTick()
 	{
 		warmUpLive();
-		// The warm-up's own tick has one out already; one is in flight at a time, so answer it first.
-		answerLatest(latestQuotes());
+		assertNoLatestOut();
 		final int before = latestFutures.size();
 
+		clock.addAndGet(PriceService.TICK_MS);
 		fireTick();
 
 		assertEquals("one more request, and no more than one", before + 1, latestFutures.size());
 		fireTick();
 		assertEquals("and nothing while that one is still out", before + 1, latestFutures.size());
+
+		answerLatest(latestQuotes());
+		clock.addAndGet(PriceService.TICK_MS);
+		fireTick();
+
+		assertEquals("and the next run, half an hour on, asks again", before + 2, latestFutures.size());
 	}
 
-	/** T2: and on every accepted Refresh - the user's lever when a figure looks stale. */
+	/**
+	 * T2: and on every accepted Refresh - the user's lever when a figure looks stale. Re-pointed by addendum AS: the
+	 * line that answered the warm-up tick's request is gone, because that tick no longer makes one; nothing is out,
+	 * so only Refresh's own rules decide - and it now asks over a snapshot half a minute old, which is decision 3's
+	 * other half: the floor is the tick's, never the user's.
+	 */
 	@Test
 	public void anAcceptedRefreshFetchesTheLatestSnapshot()
 	{
 		warmUpLive();
-		answerLatest(latestQuotes());
+		assertNoLatestOut();
 		final int before = latestFutures.size();
 		clock.addAndGet(PriceService.MANUAL_COOLDOWN_MS + SECOND);
 
@@ -3026,6 +3044,499 @@ public class PriceServiceTest
 		service.refreshNow();
 		assertTrue("but Refresh asks again", dayRequests.size() > afterFailure);
 		assertEquals(SEP_7, dayRequests.get(dayRequests.size() - 1));
+	}
+
+	// ---------------------------------------------------------------- AS, decision 3: the tick's floor under /latest
+
+	/**
+	 * Addendum AS, decision 3: the floor is five minutes, and it sits well inside the thirty-minute tick - which is
+	 * what keeps "the 30-minute tick still fetches" true, since a snapshot the previous run fetched is always past it.
+	 */
+	@Test
+	public void theLatestFloorIsFiveMinutesAndInsideTheTick()
+	{
+		assertEquals(5L * MINUTE, PriceService.LATEST_MIN_AGE_MS);
+		assertTrue("a snapshot one tick old must always be due", PriceService.LATEST_MIN_AGE_MS < PriceService.TICK_MS);
+	}
+
+	/** Decision 3: a tick over a snapshot a minute old sends no {@code /latest} request. */
+	@Test
+	public void aTickLeavesASnapshotAMinuteOldAlone()
+	{
+		warmUpLive();
+		assertEquals("the start-up fetch alone: the warm-up tick ran moments after it and asked for nothing", 1,
+			latestFutures.size());
+		assertNoLatestOut();
+
+		clock.addAndGet(MINUTE);
+		fireTick();
+
+		assertEquals("a minute old: not asked for again", 1, latestFutures.size());
+		verify(traded, times(1)).fetchLatest(anyLong());
+	}
+
+	/** Decision 3: six minutes old is past the floor, and the tick asks. */
+	@Test
+	public void aTickAsksAgainForASnapshotSixMinutesOld()
+	{
+		warmUpLive();
+		assertNoLatestOut();
+		final int before = latestFutures.size();
+
+		clock.addAndGet(6L * MINUTE);
+		fireTick();
+
+		assertEquals(before + 1, latestFutures.size());
+	}
+
+	/**
+	 * Decision 3 at its edge, drawn the way {@code expired} draws every other stamp in the service: five minutes to
+	 * the millisecond is due, a millisecond younger is not. Pinned from both sides, so the constant cannot drift
+	 * either way and "at least five minutes" cannot quietly become "more than five".
+	 */
+	@Test
+	public void theFloorIsFiveMinutesToTheMillisecond()
+	{
+		warmUpLive();
+		assertNoLatestOut();
+		final int before = latestFutures.size();
+
+		clock.addAndGet(PriceService.LATEST_MIN_AGE_MS - 1L);
+		fireTick();
+		assertEquals("a millisecond short: left alone", before, latestFutures.size());
+
+		clock.addAndGet(1L);
+		fireTick();
+		assertEquals("five minutes exactly: asked for", before + 1, latestFutures.size());
+	}
+
+	/**
+	 * Decision 3's other edge: with NOTHING in hand the tick always asks, however recently the last attempt failed.
+	 * The stamp moves only when a fetch succeeds, so a failure can never pass for a fresh snapshot.
+	 */
+	@Test
+	public void aTickWithNoSnapshotInHandAlwaysAsks()
+	{
+		liveService();
+		service.start();
+		failLatest(); // start-up's own attempt: nothing on disk, and nothing from the wiki either
+		service.setBank(bank(T0));
+		service.setLoggedIn(true, ACCOUNT, PROFILE);
+		service.setVisible(true);
+		assertNoLatestOut();
+		final int before = latestFutures.size();
+
+		fireTick(); // the very millisecond that attempt failed
+
+		assertEquals(before + 1, latestFutures.size());
+	}
+
+	/**
+	 * The same rule with a snapshot IN hand: a Refresh whose fetch fails leaves the ten-minute-old snapshot exactly
+	 * as old as it was, so the tick a minute later still asks. A failure that stamped the attempt would read as a
+	 * snapshot one minute old, and the tick would wait four more minutes to replace one that is eleven.
+	 */
+	@Test
+	public void aFailedFetchDoesNotMakeAnOldSnapshotLookFresh()
+	{
+		warmUpLive();
+		clock.addAndGet(10L * MINUTE);
+		service.refreshNow();
+		failLatest();
+		assertNoLatestOut();
+		final int before = latestFutures.size();
+
+		clock.addAndGet(MINUTE);
+		fireTick();
+
+		assertEquals("the snapshot in hand is still the one from eleven minutes ago", before + 1, latestFutures.size());
+	}
+
+	/**
+	 * B013 reaches the floor too: a snapshot stamped in the FUTURE - the wall clock corrected backwards since the
+	 * fetch - reads as "fetched moments ago" to a plain age test, while T7 already refuses to price from it. Left
+	 * alone, it would keep every row on the guide until real time caught up with the stamp; the tick asks instead.
+	 */
+	@Test
+	public void aSnapshotStampedInTheFutureIsAskedForAgainOnTheTick()
+	{
+		warmUpLive();
+		assertNoLatestOut();
+		final int before = latestFutures.size();
+
+		clock.addAndGet(-HOUR);
+		fireTick();
+
+		assertEquals(before + 1, latestFutures.size());
+	}
+
+	/**
+	 * Decision 3 is the TICK's floor and nobody else's: Refresh is the user asking, and it asks over a snapshot a
+	 * minute old - the very one the tick, at that same moment, leaves alone.
+	 */
+	@Test
+	public void aManualRefreshAsksForASnapshotAMinuteOld()
+	{
+		warmUpLive();
+		assertNoLatestOut();
+		final int before = latestFutures.size();
+		clock.addAndGet(MINUTE);
+		fireTick();
+		assertEquals("the tick leaves it alone", before, latestFutures.size());
+
+		service.refreshNow();
+
+		assertEquals("Refresh does not", before + 1, latestFutures.size());
+	}
+
+	/**
+	 * The case decision 3 was made for: every opening of the sidebar tab runs the tick at once ({@code setVisible}'s
+	 * initial delay of 0), so flicking away and back downloaded the whole feed each time. Two openings two minutes
+	 * apart now cost ONE request - and the reopened tab's own periodic run, half an hour on, still asks, so the floor
+	 * spares the quick return and nothing else.
+	 */
+	@Test
+	public void openingTheTabTwiceWithinFiveMinutesCostsOneLatestRequest()
+	{
+		// Last session's snapshot, an hour old: inside T7's six hours, so start-up leaves it alone...
+		final Map<Integer, TradedPriceClient.Quote> stored = latestQuotes();
+		when(store.loadTradedLatest()).thenReturn(new PriceStore.Stamped<>(stored, T0 - HOUR));
+		liveService();
+		service.start();
+		service.setBank(bank(T0));
+		service.setLoggedIn(true, ACCOUNT, PROFILE);
+		assertTrue("start-up: an hour-old snapshot is inside T7's six hours", latestFutures.isEmpty());
+
+		// ...so the first opening is what finds it past five minutes, and asks.
+		service.setVisible(true);
+		fireTick();
+		assertEquals("the first opening asks", 1, latestFutures.size());
+		answerLatest(latestQuotes());
+		service.setVisible(false);
+		assertNoLatestOut();
+
+		clock.addAndGet(2L * MINUTE);
+		service.setVisible(true);
+		fireTick();
+
+		assertEquals("the second, two minutes later, reuses what the first fetched", 1, latestFutures.size());
+		verify(traded, times(1)).fetchLatest(anyLong());
+
+		clock.addAndGet(PriceService.TICK_MS);
+		fireTick();
+
+		assertEquals("and that tab's own next run asks again", 2, latestFutures.size());
+	}
+
+	/**
+	 * Decision 3 skips ONE request and nothing else. The tick that leaves a fresh snapshot alone still refetches an
+	 * index six hours old (L4) and a mapping a week old (K3), and still recomputes the rows (L1) - so a floor
+	 * written as an early return fails here wherever it sits: at the top it silences all three, just before the
+	 * recompute it silences the rows. The clock is staged so that all three fall due on one tick while the snapshot
+	 * is two minutes old.
+	 */
+	@Test
+	public void aTickThatLeavesTheSnapshotAloneStillDoesEverythingElse()
+	{
+		// The mapping turns a week old at exactly T0 + six hours, the moment of the tick under test.
+		when(store.loadMapping()).thenReturn(storedMapping(mappingTable(),
+			T0 + PriceService.HISTORY_MAX_AGE_MS - PriceService.MAPPING_MAX_AGE_MS));
+		warmUpLive();
+		// Two minutes before the index turns six hours old, a tick fetches a new snapshot and it lands...
+		clock.addAndGet(PriceService.HISTORY_MAX_AGE_MS - 2L * MINUTE);
+		fireTick();
+		answerLatest(latestQuotes());
+		assertNoLatestOut();
+		final int latestBefore = latestFutures.size();
+		final int indexBefore = indexFutures.size();
+		final int mappingBefore = mappingFutures.size();
+		runelite.put(GREEN_HAT, 1_200);
+
+		// ...so at six hours the index and the mapping are due and the snapshot is two minutes old.
+		clock.addAndGet(2L * MINUTE);
+		fireTick();
+
+		assertEquals("the snapshot is two minutes old: left alone", latestBefore, latestFutures.size());
+		assertEquals("the index is six hours old: asked for (L4)", indexBefore + 1, indexFutures.size());
+		assertEquals("the mapping is a week old: asked for (K3)", mappingBefore + 1, mappingFutures.size());
+		assertEquals("and the rows are recomputed - RuneLite's table moved under them (L1)", Long.valueOf(1_200L),
+			rowFor(lastRows(), GREEN_HAT).unitPrice());
+	}
+
+	/**
+	 * The one other thing a tick's {@code /latest} landing used to do, the tick still does when it leaves the
+	 * snapshot alone: offer every window's traded bucket. Here nothing else would. Start-up's snapshot lands while
+	 * the sidebar is hidden, where no bucket is asked for; the tab opens a minute later on a first run whose guide
+	 * index cannot be had, so the reconcile that also offers the buckets returns at once with no index - and before
+	 * addendum AS it was the tick's own {@code /latest} landing that asked for them.
+	 */
+	@Test
+	public void aTickThatLeavesTheSnapshotAloneStillOffersTheTradedBuckets()
+	{
+		liveService();
+		service.start();
+		answerLatest(latestQuotes());
+		service.setBank(bank(T0));
+		service.setLoggedIn(true, ACCOUNT, PROFILE);
+		assertTrue("the start-up snapshot landed while hidden: no bucket asked for yet", dayRequests.isEmpty());
+		assertNoLatestOut();
+
+		clock.addAndGet(MINUTE);
+		service.setVisible(true);
+		fireTick();
+		indexFutures.get(indexFutures.size() - 1).completeExceptionally(new WikiPriceException("down"));
+
+		assertEquals("no second /latest: the start-up one is a minute old", 1, latestFutures.size());
+		assertEquals("but every window's bucket is asked for, counted back from that snapshot's own day",
+			Arrays.asList(SEP_7, SEP_1, AUG_9, JUN_10, MAR_12), dayRequests);
+	}
+
+	/**
+	 * T2's "off = not one traded request" holds on the new path as well: with the switch off and a snapshot on disk
+	 * a minute old, the tick takes the leave-it-alone branch, and that branch's bucket offer sends nothing.
+	 */
+	@Test
+	public void theSwitchOffStillSendsNothingWhenTheSnapshotIsFresh()
+	{
+		final Map<Integer, TradedPriceClient.Quote> stored = latestQuotes();
+		when(store.loadTradedLatest()).thenReturn(new PriceStore.Stamped<>(stored, T0 - MINUTE));
+		liveService();
+		service.setOptions(ViewOptions.DEFAULT.withLivePrices(false));
+
+		warmUpBody();
+		fireTick();
+
+		verify(traded, never()).fetchLatest(anyLong());
+		verify(traded, never()).fetchDay(any(LocalDate.class), anyLong());
+	}
+
+	// ---------------------------------------------------------------- AS8: one click refreshes everything
+
+	/**
+	 * Addendum AS, line AS8 - the user: "manually clicking the refresh button should refresh everything for the user".
+	 * With the bank open the link re-reads the items and THEN asks for the prices with {@code refreshNow(true)}.
+	 * Inside the cooldown that price half is refused as it always was - nothing is sent - but in silence: the click
+	 * did refresh what the user can see, so no "Refreshed 12 s ago - wait" is published under it and no clear is
+	 * armed to take one down. What the player carries is still re-read.
+	 *
+	 * <p>Planted bugs caught: the flag ignored, so the quiet refusal speaks (a publish carrying the COOLDOWN line and
+	 * a clear armed - fails "said nothing" and "armed nothing"); the quiet refusal skipping the carried hook (fails
+	 * "has no cooldown"); the flag read as "no cooldown", so the quiet press fetches inside it (fails "nothing
+	 * sent").
+	 */
+	@Test
+	public void aQuietRefreshInsideTheCooldownSaysNothingButStillReadsWhatYouCarry()
+	{
+		final List<Integer> reads = new ArrayList<>();
+		service.setCarriedReader(() -> reads.add(1));
+		warmUp();
+		service.refreshNow();
+		answerIndex();
+		assertNull(lastStatus().problem());
+		clock.addAndGet(12 * SECOND);
+		final int publishes = publishedStatus.size();
+		final int timers = scheduler.timers.size();
+		final int indexRequests = indexFutures.size();
+		final int mappings = mappingFutures.size();
+		final int tables = tableRequests.size();
+
+		service.refreshNow(true);
+
+		assertEquals("what you carry has no cooldown: it was re-read on this press too", 2, reads.size());
+		assertEquals("said nothing: not one publish, so no \"Refreshed 12 s ago - wait\"", publishes,
+			publishedStatus.size());
+		assertNull(lastStatus().problem());
+		assertEquals("and armed nothing: there is no line for a cooldown clear to take down", timers,
+			scheduler.timers.size());
+		assertEquals("the cooldown still guards the prices: nothing sent", indexRequests, indexFutures.size());
+		assertEquals(mappings, mappingFutures.size());
+		assertEquals(tables, tableRequests.size());
+	}
+
+	/**
+	 * AS8: a quiet refusal leaves a line an EARLIER refusal put up exactly as it found it. With the bank closed a
+	 * second press inside the cooldown says "wait" and arms its clear; with the bank opened and pressed again, the
+	 * quiet press says nothing new - and the earlier line's own clear is still pending, and still takes that line
+	 * down when the cooldown ends.
+	 *
+	 * <p>Planted bugs caught: the quiet refusal cancelling or replacing the pending clear (fails "still pending", and
+	 * "nothing new armed" for a replacement), or publishing anything at all (fails "nothing new said").
+	 */
+	@Test
+	public void aQuietRefusalLeavesTheClearOfAnEarlierLineAlone()
+	{
+		warmUp();
+		service.refreshNow();
+		clock.addAndGet(12 * SECOND);
+		service.refreshNow(false);
+		assertEquals("Refreshed 12 s ago - wait", lastStatus().text());
+		final Timer clear = oneShotWithDelay(PriceService.MANUAL_COOLDOWN_MS - 12 * SECOND);
+		final int publishes = publishedStatus.size();
+		final int timers = scheduler.timers.size();
+		clock.addAndGet(3 * SECOND);
+
+		service.refreshNow(true);
+
+		assertEquals("nothing new said", publishes, publishedStatus.size());
+		assertEquals("nothing new armed", timers, scheduler.timers.size());
+		assertFalse("the earlier line's own clear is still pending", clear.future.isCancelled());
+
+		clock.addAndGet(PriceService.MANUAL_COOLDOWN_MS - 15 * SECOND);
+		clear.fire();
+
+		assertNull("and it still takes that line down when the cooldown ends", lastStatus().problem());
+	}
+
+	/**
+	 * AS8's other half, pinned so the quiet flag cannot leak into it: {@code refreshNow(false)} - the press where
+	 * nothing but the prices refreshes, the link with the bank closed - still answers a press inside the cooldown
+	 * with the red "Refreshed 12 s ago - wait", still arms the clear that takes it down when the cooldown ends, and
+	 * still re-reads what the player carries.
+	 *
+	 * <p>Planted bugs caught: the flag inverted, or the line dropped for every caller (fails the text); the clear no
+	 * longer armed on a loud refusal (fails {@code oneShotWithDelay}); the carried hook skipped on a refusal (fails
+	 * "both presses").
+	 */
+	@Test
+	public void aLoudRefreshInsideTheCooldownStillSaysWait()
+	{
+		final List<Integer> reads = new ArrayList<>();
+		service.setCarriedReader(() -> reads.add(1));
+		warmUp();
+		service.refreshNow(false);
+		answerIndex();
+		clock.addAndGet(12 * SECOND);
+		final int indexRequests = indexFutures.size();
+
+		service.refreshNow(false);
+
+		assertEquals("Refreshed 12 s ago - wait", lastStatus().text());
+		assertEquals("red, as a refusal always was", PriceService.ProblemKind.COOLDOWN, lastStatus().problemKind());
+		assertNotNull("and it takes itself down when the cooldown ends",
+			oneShotWithDelay(PriceService.MANUAL_COOLDOWN_MS - 12 * SECOND));
+		assertEquals("nothing sent", indexRequests, indexFutures.size());
+		assertEquals("what you carry was re-read on both presses", 2, reads.size());
+	}
+
+	/**
+	 * AS8: outside the cooldown the quiet press IS the price check, request for request - the index forced, a mapping
+	 * that has come of age refetched, {@code /latest} asked whatever its age, a window's failed bucket asked for
+	 * again, the rows recomputed against RuneLite's table, what the player carries re-read - and it spends the
+	 * cooldown exactly as a loud press does: a loud press 12 s after it is refused with "Refreshed 12 s ago - wait",
+	 * which only a stamp taken at the quiet press's own moment can produce. The same scenario runs under each flag
+	 * from the same start, and the quiet run must publish the loud run's rows and status and ask for the loud run's
+	 * buckets, field for field.
+	 *
+	 * <p>Planted bugs caught: the quiet path skipping the stamp (the loud press 12 s later is served: no line, and an
+	 * index request goes out - fails "took the stamp"); the quiet path skipping the whole fetch, or any one of the
+	 * index, the mapping, {@code /latest} and the buckets (fails that count); the quiet path skipping the recompute
+	 * (the hat keeps its old price - fails "recomputes"); the carried re-read skipped (fails "re-reads").
+	 */
+	@Test
+	public void aQuietRefreshOutsideTheCooldownIsTheWholePriceCheckAndSpendsTheCooldown()
+	{
+		List<MovementRow> loudRows = null;
+		PriceService.Status loudStatus = null;
+		List<LocalDate> loudDays = null;
+		for (final boolean quiet : new boolean[]{false, true})
+		{
+			final String press = quiet ? "the quiet press" : "the loud press";
+			resetFixture();
+			clock.set(T0);
+			runeliteOn(SEP_8);
+			// A week old just after the warm-up: the warm-up leaves it alone, and the press has it to fetch.
+			when(store.loadMapping()).thenReturn(storedMapping(mappingTable(),
+				T0 + PriceService.MANUAL_COOLDOWN_MS - PriceService.MAPPING_MAX_AGE_MS));
+			final List<Integer> reads = new ArrayList<>();
+			warmUpLive();
+			failDay(SEP_7);
+			service.setCarriedReader(() -> reads.add(1));
+			clock.addAndGet(PriceService.MANUAL_COOLDOWN_MS + SECOND);
+			runelite.put(GREEN_HAT, 1_200);
+			final int indexRequests = indexFutures.size();
+			final int mappings = mappingFutures.size();
+			final int latest = latestFutures.size();
+			final int days = dayRequests.size();
+
+			service.refreshNow(quiet);
+
+			assertEquals(press + " forces the index", indexRequests + 1, indexFutures.size());
+			assertEquals(press + " refetches a mapping a week old", mappings + 1, mappingFutures.size());
+			assertEquals(press + " asks for /latest whatever its age", latest + 1, latestFutures.size());
+			assertEquals(press + " asks for the failed bucket again", days + 1, dayRequests.size());
+			assertEquals(SEP_7, dayRequests.get(dayRequests.size() - 1));
+			assertEquals(press + " re-reads what the player carries", 1, reads.size());
+			assertEquals(press + " recomputes the rows against RuneLite's table", Long.valueOf(1_200L),
+				rowFor(lastRows(), GREEN_HAT).unitPrice());
+			if (quiet)
+			{
+				assertEquals("the loud press's rows, field for field", loudRows, service.currentRows());
+				assertEquals("the loud press's status", loudStatus, service.currentStatus());
+				assertEquals("and the loud press's buckets asked for", loudDays, dayRequests);
+			}
+			else
+			{
+				loudRows = new ArrayList<>(service.currentRows());
+				loudStatus = service.currentStatus();
+				loudDays = new ArrayList<>(dayRequests);
+			}
+
+			clock.addAndGet(12 * SECOND);
+			final int before = indexFutures.size();
+			service.refreshNow(false);
+
+			assertEquals(press + " took the stamp: a loud press 12 s later is refused", "Refreshed 12 s ago - wait",
+				lastStatus().text());
+			assertEquals(press + " spent the cooldown: nothing is sent 12 s later", before, indexFutures.size());
+			service.stop();
+		}
+	}
+
+	/**
+	 * AS8 leaves B011 alone: a press while an index request is already in flight sends nothing new, spends no
+	 * cooldown and hands its manual intent to the request that is out - under either flag, because a press that
+	 * rides refused nothing and so has no line to keep quiet. Run under each flag from the same start.
+	 *
+	 * <p>Planted bugs caught: the quiet flag sending the riding press down the served branch, which stamps the
+	 * cooldown (the next press is refused - fails "never spent"); the quiet flag sending it down the refusal branch
+	 * (no intent rides along, so no body is fetched while hidden - fails "rode along"); the carried hook skipped on a
+	 * riding press (fails "re-read").
+	 */
+	@Test
+	public void aRefreshThatRidesOnAnIndexInFlightIsTheSameUnderBothFlags()
+	{
+		for (final boolean quiet : new boolean[]{false, true})
+		{
+			final String press = quiet ? "the quiet press" : "the loud press";
+			resetFixture();
+			service = new PriceService(wiki, store, itemManager, clientThread, scheduler, clock::get, edt);
+			listen();
+			final List<Integer> reads = new ArrayList<>();
+			service.setCarriedReader(() -> reads.add(1));
+			service.start();
+			service.setBank(bank(T0));
+			service.setVisible(true);
+			fireTick();
+			assertEquals(1, indexFutures.size());
+			service.setVisible(false);
+
+			service.refreshNow(quiet);
+
+			assertEquals(press + ": nothing new could be sent", 1, indexFutures.size());
+			assertEquals(press + ": so nothing was refused - the line is the pending one, not a cooldown",
+				PriceService.problemHistoryPending(MovementWindow.D1), lastStatus().problem());
+			assertEquals(press + " re-read what the player carries", 1, reads.size());
+
+			answerIndex();
+
+			assertEquals(press + ": the manual intent rode along - a body is fetched though the sidebar is hidden", 1,
+				tableRequests.size());
+
+			service.refreshNow(quiet);
+
+			assertEquals(press + ": and the cooldown was never spent", 2, indexFutures.size());
+			service.stop();
+		}
 	}
 
 	// ---------------------------------------------------------------- T4: the figures, per row and per window
@@ -3458,12 +3969,14 @@ public class PriceServiceTest
 	public void theBucketsAreRefetchedWhenTheLiveDayMovesOn()
 	{
 		warmUpLive();
-		// Settle every window and the warm-up tick's own /latest request, so nothing below is merely "in flight".
+		// Settle every window, so nothing below is merely "in flight". (This used to settle the warm-up tick's own
+		// /latest request too; since addendum AS that tick makes none - it runs moments after the start-up fetch -
+		// so there is nothing to answer, and the line that answered it is gone.)
 		for (final LocalDate day : new ArrayList<>(dayRequests))
 		{
 			answerDay(day, tradedSep7());
 		}
-		answerLatest(latestQuotes());
+		assertNoLatestOut();
 		final int before = dayRequests.size();
 
 		// 2026-09-09T00:20Z: past UTC midnight, so the whole calendar steps on.
@@ -3855,16 +4368,45 @@ public class PriceServiceTest
 		scheduler.timers.clear();
 	}
 
+	/**
+	 * Answers the {@code /latest} request that is still OUT. Strict since addendum AS: a completed future ignores a
+	 * second answer without a word, so a helper that took "was ever asked" for "is out" let a test answer a request
+	 * that no longer existed - which is what decision 3 made of the warm-up tick's own request - and pass for the
+	 * wrong reason.
+	 */
 	private void answerLatest(final Map<Integer, TradedPriceClient.Quote> quotes)
 	{
-		assertFalse("no /latest request is out", latestFutures.isEmpty());
-		latestFutures.get(latestFutures.size() - 1).complete(quotes);
+		latestOut().complete(quotes);
 	}
 
+	/** {@link #answerLatest}'s failing twin, just as strict. */
 	private void failLatest()
 	{
-		assertFalse("no /latest request is out", latestFutures.isEmpty());
-		latestFutures.get(latestFutures.size() - 1).completeExceptionally(new WikiPriceException("traded feed down"));
+		latestOut().completeExceptionally(new WikiPriceException("traded feed down"));
+	}
+
+	/** The newest {@code /latest} request, which must still be out (see {@link #answerLatest}). */
+	private CompletableFuture<Map<Integer, TradedPriceClient.Quote>> latestOut()
+	{
+		assertFalse("no /latest request was ever made", latestFutures.isEmpty());
+		final CompletableFuture<Map<Integer, TradedPriceClient.Quote>> newest =
+			latestFutures.get(latestFutures.size() - 1);
+		assertFalse("no /latest request is out: the newest one is already answered", newest.isDone());
+		return newest;
+	}
+
+	/**
+	 * No {@code /latest} request is out. A tick that sends none while one IS out proves nothing about addendum AS's
+	 * floor - {@code startLatest}'s one-in-flight rule would have stopped it anyway - so every test of the floor
+	 * settles this before the tick it measures.
+	 */
+	private void assertNoLatestOut()
+	{
+		for (final CompletableFuture<Map<Integer, TradedPriceClient.Quote>> future : latestFutures)
+		{
+			assertTrue("a /latest request is still out, and would hide the floor behind the in-flight rule",
+				future.isDone());
+		}
 	}
 
 	/** Completes the request for one DAY, wherever it sits in the call order. */

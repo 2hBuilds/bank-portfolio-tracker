@@ -1,6 +1,7 @@
 package com.bankpricemovement;
 
 import com.bankpricemovement.PriceService.Status;
+import java.awt.BasicStroke;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.awt.Color;
@@ -8,13 +9,18 @@ import java.awt.Component;
 import java.awt.Container;
 import java.awt.Cursor;
 import java.awt.FlowLayout;
+import java.awt.Graphics;
+import java.awt.Graphics2D;
 import java.awt.GridLayout;
+import java.awt.Rectangle;
+import java.awt.RenderingHints;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.awt.geom.RoundRectangle2D;
 import java.text.ParseException;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -56,6 +62,7 @@ import javax.swing.event.PopupMenuEvent;
 import javax.swing.event.PopupMenuListener;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.ui.ColorScheme;
+import net.runelite.client.ui.DynamicGridLayout;
 import net.runelite.client.ui.PluginPanel;
 import net.runelite.client.ui.components.PluginErrorPanel;
 import net.runelite.client.util.AsyncBufferedImage;
@@ -184,6 +191,24 @@ import org.slf4j.LoggerFactory;
  * baseline day - keeps the pages the reader opened and the place they had scrolled to; only a list the reader
  * ASKED for - a new window, ordering, direction or gp band - starts again at the top of page one (B107, see
  * {@link #rebuildRows}).
+ *
+ * <p><b>The bank hold</b> (addendum AS; {@code docs/handoff/plan-AS-bank-hold-2026-09-21.md} sections 1, 2.3 and 7).
+ * The user's goal in one sentence: "when people just want to gear up quick and leave, the plugin should not add lag
+ * to them." So while the bank interface is open the list is not rebuilt. The plugin says what it knows through
+ * {@link #setBankHold} - whether the bank is open, whether the bank on screen is out of date, and two counters -
+ * and this panel treats "the bank is open" exactly as it has always treated "the sidebar is hidden": {@link #onRows}
+ * stores the publish and builds nothing, and the stored one is replayed when the hold ends. Two things lift it
+ * early, because a hold that ignored them would be a sidebar ignoring its reader: the reader's own act - the Refresh
+ * link, a window, a column, a band, a view switch ({@link #liftBankHold}) - and a publish carrying a bank the
+ * sidebar has not drawn, which is a read and not a re-statement ({@link #carriesNewBank}). While a change is owed
+ * and the reader can see the link, a thin green ring breathes round "Refresh" - 3 s in, 3 s out, painted by the card
+ * under the word ({@link HeroCard}, {@link #breath}). A click on the link refreshes EVERYTHING, whatever the bank is
+ * doing (AS8, the user on the AS7 build: "manually clicking the refresh button should refresh everything for the
+ * user"): with the bank open the plugin's local re-read ({@link #setBankRefresh}) redraws the items at once and the
+ * price re-check follows in the background, its 30 s cooldown kept to the prices; with the bank shut it is the price
+ * re-check, which re-reads what the player carries as well ({@link #refreshNow}). The gear's "Refresh prices now"
+ * stays the price re-check alone ({@link #refreshPricesNow}), and the link's hover is one sentence in every state
+ * ({@link #REFRESH_TIP}).
  *
  * <p><b>Type and colour.</b> Every label here sets its font through {@link Widgets#sans} /
  * {@link Widgets#sansBold} (RuneLiteLAF installs the 16 px bitmap face as the default, and the type scale is
@@ -341,6 +366,65 @@ public class BankPriceMovementPanel extends PluginPanel
 	 * that wording to fade away after 1min tho so it keeps everything looking minimal").
 	 */
 	static final int UP_TO_DATE_MILLIS = 60_000;
+	/**
+	 * How often the ring round the Refresh link is redrawn (addendum AS, section 7.3; a ring since AS7): 25 frames a
+	 * second is smooth to the eye, and each frame repaints the ring's own ~54 x 23 px of the hero card and nothing
+	 * else ({@link #fireGlow}). A frame only asks for the repaint - how bright the ring is comes from the clock
+	 * ({@link #glowLevel}) - so the rate sets how smooth the breath looks and never how long it takes.
+	 */
+	static final int GLOW_TICK_MILLIS = 40;
+	/**
+	 * One breath of the ring, in ms: 3 s from nothing to full brightness and 3 s from full back to nothing
+	 * ({@link #breath}), round and round for as long as the ring is lit.
+	 *
+	 * <p>The user's own numbers. The candidates were rendered breathing once every 1.2 s, and on the one they picked,
+	 * P1 "Breathing ring", they asked for it slower in so many words: "lets slow down the breathing to 3 seconds from
+	 * 0 to max and then 3 seconds from max to 0 again". So the breath runs from NOTHING - the rendered P1 never went
+	 * below a quarter - which also makes the ring fade in rather than appear: at the moment it lights it is dark.
+	 */
+	static final int GLOW_BREATH_MILLIS = 6_000;
+	/**
+	 * The floor of the breath: the ring never dims below this share of full. The user chose it after seeing the
+	 * 0-to-full build's numbers ("okay do that, 15%") on the argument that the ring carries a STATE - the list is
+	 * behind - as well as a call for attention, and a ring that goes fully dark looks, for a moment in every breath,
+	 * exactly like the ordinary up-to-date link. The breath does the attention; the floor keeps the state readable at
+	 * every instant. 15 % is the subtle end of the usual 15-25 %; it is one constant to tune by eye.
+	 */
+	static final double GLOW_FLOOR = 0.15d;
+	/** The ring's width, in px: thin enough to sit in the link's 2 px top and bottom insets. */
+	static final float GLOW_STROKE = 1.5f;
+	/**
+	 * The ring's rounding, in px: a {@link RoundRectangle2D}'s arc on the ring's centre line (the halo's two rings are
+	 * rounded to stay concentric with it, {@link #paintRing}).
+	 */
+	static final float GLOW_CORNER = 8f;
+	/**
+	 * How much wider than the Refresh link the ring's box is, on its right, in px - the number the rendered
+	 * candidates found (2026-09-23). The link's own box is lopsided: its inset puts {@link #ROW_GAP} px of air before
+	 * the word, the hit area that inset exists for, and the word's ink ends 1 px short of the box's right edge. A ring
+	 * round that box would stand 6 px from the "R" and brush the "h" - AS4's orbiting spark clipped the h's right stem
+	 * - so the ring's box runs on 5 px into the card's 10 px right padding and the word sits centred in the ring, about
+	 * 4.5 px of air each side. The link's own box, and so the layout, does not move by a pixel.
+	 */
+	static final int GLOW_RING_EXTRA_RIGHT = 5;
+	/**
+	 * The halo: two 1 px rings just outside the ring, the near one at this share of the ring's alpha and the far one
+	 * at {@link #GLOW_HALO_FAR_ALPHA}, so the light softens into the card instead of stopping at a hard edge.
+	 */
+	static final double GLOW_HALO_NEAR_ALPHA = 0.45d;
+	/** The halo's far ring, 1 px beyond the near one; see {@link #GLOW_HALO_NEAR_ALPHA}. */
+	static final double GLOW_HALO_FAR_ALPHA = 0.20d;
+	/**
+	 * How far the halo reaches outside the ring's box, in px: its two 1 px rings. With the box's own width and
+	 * height, the region a frame repaints ({@link #glowRegion}).
+	 */
+	static final int GLOW_HALO_REACH = 2;
+	/**
+	 * The ring's colour: the green a row prints a rise in ({@link Widgets#move}, {@link Widgets.Kind#FIGURE}), so
+	 * the sidebar's one "something new" colour is the one it already uses for good news - and {@link Widgets#move}
+	 * is where every such colour is chosen, so this one cannot drift from the rows'.
+	 */
+	static final Color GLOW_COLOUR = Widgets.move(1, Widgets.Kind.FIGURE);
 	/** The gear menu's first entry - the second home of Refresh (N 3.1, O4; the gear's since Q2). */
 	public static final String REFRESH_MENU_TEXT = "Refresh prices now";
 	/** The gear's tooltip (Q1): one word, because the menu under it says the rest. */
@@ -411,12 +495,14 @@ public class BankPriceMovementPanel extends PluginPanel
 	public static final String COUNT_UNTRADEABLES_TIP = "List untradeable stacks at their tradeable parts' value, or else their High Alchemy value,"
 		+ " and count them in the bank value";
 	/**
-	 * The new item's hover (Y1). It says WHEN, because the answer is not "always": the two containers are read on
-	 * the bank event and on Refresh and at no other moment (Y2), so a reader who drops something and watches the
-	 * list sit still is told why before they wonder.
+	 * The new item's hover (Y1). It says WHEN, because the answer is not "always": the two containers are read with
+	 * the bank and on Refresh and at no other moment (Y2), so a reader who drops something and watches the list sit
+	 * still is told why before they wonder. It names the CLOSE since addendum AS, which holds a change seen with the
+	 * bank open and reads it once, at the close or at a Refresh click - word for word the config item's description,
+	 * whose javadoc says what the one sentence leaves out.
 	 */
 	public static final String COUNT_INVENTORY_TIP = "Items in your inventory and worn gear count in the bank value "
-		+ "and are listed with the bank's stacks. They are read when you open the bank or press Refresh.";
+		+ "and are listed with the bank's stacks. They are read when you close the bank or press Refresh.";
 	/**
 	 * The caption of the gear menu's last row (addendum Z, line Z2;
 	 * {@code docs/bank-price-movement-addendum-Z-2026-09-13.md}): the three quick bands the price fold offers,
@@ -477,8 +563,17 @@ public class BankPriceMovementPanel extends PluginPanel
 	 * always brings the same figures back. The 30 s cooldown is no longer named here: the link is never disabled,
 	 * a refused tap is answered in the problem row (K5/L10), and the sentence a reader needs before tapping is
 	 * how often the DATA moves, not how often the button may be pressed.
+	 *
+	 * <p><b>Reworded by AS8</b>, when a click on the link became one act everywhere ({@link #refreshNow}): it re-reads
+	 * the items - the bank itself while it is open, what the player carries in every state - and re-checks the prices,
+	 * so the first sentence names both halves and the second keeps S2's once-a-day fact, which is still what decides
+	 * whether a second tap is worth making. And it is once more the link's ONLY hover: addendum AS's F5 gave the link a
+	 * second one, "Update the list with your bank as it is now.", while a click with the bank open was the local
+	 * update alone and this one described a price check that click was not making; with the click the same in every
+	 * state, one sentence is true in every state, and a hover that switched would describe a difference that is gone.
 	 */
-	public static final String REFRESH_TIP = "Re-check the guide prices. Jagex publishes them once a day.";
+	public static final String REFRESH_TIP = "Re-read your items and re-check the prices. Jagex publishes guide prices "
+		+ "once a day.";
 	/**
 	 * The three check items of the gear menu's first group (O4), named as the config items are (O2) - and in the
 	 * plainer words of Y4: the card's caption already says "Bank value" one line above the figures the second and
@@ -770,6 +865,50 @@ public class BankPriceMovementPanel extends PluginPanel
 	/** The one-shot timer that ends the beat: it is restarted at the phase's own delay, never two timers. */
 	@Nullable
 	private Timer refreshTimer;
+
+	// ---- the bank hold (addendum AS; EDT, mirrored from the plugin by setBankHold)
+	/**
+	 * Whether the plugin says the bank interface is open. Mirrored and never decided here: only the client thread can
+	 * see the widget, and the panel acting on a guess of its own would be a second, disagreeing answer.
+	 */
+	private boolean bankOpen;
+	/** Whether the plugin says the bank on screen is out of date and a read is owed - what the glow announces. */
+	private boolean bankPending;
+	/** The plugin's two counters, kept only so {@link #describe()} can hand a live run the numbers to prove it. */
+	private int bankHeldEvents;
+	private int bankReads;
+	/**
+	 * The plugin's open-bank Refresh: a local re-read of the bank with no download and no cooldown of its own (section
+	 * 2.3) - the first half of a click on the link while the bank is open, the price re-check being the second (AS8) -
+	 * or null while there is none. Volatile because the plugin hands it over from startUp and takes it back in
+	 * shutDown, and the only reader is the link's click on the EDT - a hook written on one thread must be the hook read
+	 * on the other.
+	 */
+	@Nullable
+	private volatile Runnable bankRefresh;
+	/**
+	 * Set by the reader's own act while the bank is open ({@link #liftBankHold}): publishes are built again until the
+	 * plugin reports a NEW change or the visit ends. The hold is for the bank's churn, not for the reader - a column
+	 * picked while banking must re-order the list, and the Refresh link's own answer must be drawn.
+	 */
+	private boolean bankHoldLifted;
+	/**
+	 * Set by a click on the link ({@link #refreshNow}), which answers the glow, and cleared by the plugin's next word
+	 * ({@link #setBankHold}): so the ring goes out on the click itself rather than when the read is reported.
+	 */
+	private boolean glowDismissed;
+	/** The ring's frames ({@link #fireGlow}); null until the glow first runs, and stopped whenever it is unwanted. */
+	@Nullable
+	private Timer glowTimer;
+	/** When the lit ring's breath began, by {@link #glowClock}: stamped as it lights, so every light starts dark. */
+	private long glowStartedAtMillis;
+	/**
+	 * What the breath is timed by ({@link #glowLevel}): milliseconds off {@link System#nanoTime}, a clock that only
+	 * moves forward, so a change of the computer's time cannot jump the ring mid-breath. A field so the tests drive a
+	 * whole breath without waiting six seconds for it ({@link #setGlowClock}).
+	 */
+	private LongSupplier glowClock = BankPriceMovementPanel::monotonicMillis;
+
 	/** What the rows on screen were built from; see {@link ListContext}. */
 	private ListContext list;
 	private int shown;
@@ -971,17 +1110,23 @@ public class BankPriceMovementPanel extends PluginPanel
 	 */
 	private JPanel buildHero()
 	{
-		final JPanel card = Widgets.column(0);
+		// A HeroCard and no longer a plain Widgets.column(0) since AS7: the same panel, which also paints the ring
+		// round the Refresh link while a change is owed - and nothing more while none is.
+		final JPanel card = new HeroCard();
 		card.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		card.setBorder(Widgets.card(null));
 
 		captionLabel = Widgets.label(VALUE_TITLE, Widgets.sans(11), ColorScheme.LIGHT_GRAY_COLOR);
 		refreshLabel = Widgets.linkLabel(REFRESH_TEXT, Widgets.sans(11), ColorScheme.LIGHT_GRAY_COLOR,
 			ColorScheme.BRAND_ORANGE, this::refreshNow);
+		// AS8: set once, here, and never changed - a click does the same thing whatever the bank is doing, so one
+		// sentence describes it in every state. Through setHover all the same, so "Show hover text" governs it (AH3).
 		setHover(refreshLabel, REFRESH_TIP);
 		// The only permanently visible action on the panel, at the smallest size on it: without padding its
 		// clickable area is exactly the 39 x 15 px of the word. The inset costs nothing (the caption row asks for
 		// 53 + 6 + 62 = 121 of the card's 191 px even while it says "Refreshing...") and buys ~50 x 19 px to hit.
+		// A plain inset again since AS7: the ring that breathes round the link while the bank has changed under it
+		// reaches outside the link's box, where no border of the link can draw, so the CARD paints it (HeroCard).
 		refreshLabel.setBorder(new EmptyBorder(2, ROW_GAP, 2, 0));
 		captionRow = transparentBar(ROW_GAP, captionLabel, null, refreshLabel);
 
@@ -1065,7 +1210,9 @@ public class BankPriceMovementPanel extends PluginPanel
 		menu.setBorder(new EmptyBorder(5, 5, 5, 5));
 		final JMenuItem refresh = new JMenuItem(REFRESH_MENU_TEXT);
 		refresh.setFont(Widgets.sans(12));
-		refresh.addActionListener(e -> refreshNow());
+		// AS 7.1 decision 2, kept by AS8: its name says PRICES, so it stays the price re-check ALONE with the bank open
+		// too - only the link also re-reads the items, because the link is what glows.
+		refresh.addActionListener(e -> refreshPricesNow());
 		menu.add(refresh);
 		menu.addSeparator();
 		showValueItem = checkItem(SHOW_VALUE_TEXT, SHOW_VALUE_TIP, on -> setHeroVisibility(heroVisibility.withValue(on)));
@@ -1688,6 +1835,10 @@ public class BankPriceMovementPanel extends PluginPanel
 	 * outgoing panel to {@code SwingUtil.deactivate} and the incoming one to {@code SwingUtil.activate}
 	 * ({@code ClientUI.java:407-441}, clone tag runelite-parent-1.12.37). Closing the sidebar deactivates the
 	 * selected panel the same way, which is what makes "nothing while hidden" (design D8) hold.
+	 *
+	 * <p>Coming back does not end addendum AS's hold: a reader who opens the sidebar in the middle of banking gets the
+	 * list as it stood and the glowing link, and the stored publish waits for the bank to close or for their click -
+	 * "nothing redraws while you bank unless you click" (section 7.1).
 	 */
 	@Override
 	public void onActivate()
@@ -1697,40 +1848,43 @@ public class BankPriceMovementPanel extends PluginPanel
 			return;
 		}
 		active = true;
-		if (pendingPublish)
-		{
-			final List<MovementRow> newRows = pendingRows;
-			final Status newStatus = pendingStatus;
-			pendingPublish = false;
-			pendingRows = null;
-			pendingStatus = null;
-			onRows(newRows, newStatus);
-		}
+		// The stored publish, replayed - unless the bank is open, which holds it exactly as hiding did (AS 7.2).
+		releaseHeld();
+		// ...and the ring, if a change is owed: the reader can see the link again.
+		syncGlow();
 		service.setVisible(true);
 	}
 
 	/**
 	 * The sidebar closed or moved on: nothing is fetched while nobody is looking (design D8), and nothing is
 	 * BUILT either - {@link #onRows} stores the next publish instead of laying out a page of rows nobody can see
-	 * ({@link #active}).
+	 * ({@link #active}). The ring round the Refresh link goes out too (AS 7.3): 25 repaints a second of a ring
+	 * nobody can see is the cost addendum AS exists to take away.
 	 */
 	@Override
 	public void onDeactivate()
 	{
 		closeMenus();
 		active = false;
+		syncGlow();
 		if (!stopped)
 		{
 			service.setVisible(false);
 		}
 	}
 
-	/** shutDown: stops listening, drops the rows. Idempotent; the panel is dead afterwards. */
+	/**
+	 * shutDown: stops listening, drops the rows, and leaves nothing ticking - the acknowledgement's timer and the
+	 * glow's (AGENTS.md: scheduled work is cancelled in shutDown). The plugin's open-bank hook is dropped as well, so
+	 * a dead panel pins no plugin. Idempotent; the panel is dead afterwards.
+	 */
 	public void stop()
 	{
 		stopped = true;
 		closeMenus();
 		clearRefreshAck();
+		stopGlow();
+		bankRefresh = null;
 		service.removeListener(listener);
 		rows = Collections.emptyList();
 		pendingPublish = false;
@@ -1975,6 +2129,12 @@ public class BankPriceMovementPanel extends PluginPanel
 		}
 		final ViewOptions want = next == null ? ViewOptions.DEFAULT : next;
 		final boolean hoverChange = want.showHoverText() != options.showHoverText();
+		if (!want.equals(options))
+		{
+			// AS: a switch that changes what the figures MEAN is answered by the service's recompute, and a reader
+			// who flips one while banking is shown that answer rather than a list computed under the old switch.
+			liftBankHold();
+		}
 		options = want;
 		syncHeroMenu();
 		if (hoverChange)
@@ -2214,7 +2374,15 @@ public class BankPriceMovementPanel extends PluginPanel
 		updating = true;
 		try
 		{
+			final RowFilter old = filter;
 			filter = next == null ? RowFilter.DEFAULT : next;
+			if (!filter.equals(old))
+			{
+				// AS: the settings page changed the list - the plugin hands the same filter to the service - so its
+				// publish is drawn even while the bank is open, or the list would sit under controls that say
+				// otherwise until the bank closed. The panel's own write echoing back is equal and lifts nothing.
+				liftBankHold();
+			}
 			renderChips();
 			renderBounds();
 			renderValue();
@@ -2317,7 +2485,60 @@ public class BankPriceMovementPanel extends PluginPanel
 	}
 
 	/**
-	 * The Refresh link / menu entry: the service decides about the 30 s cooldown and says so in the problem row.
+	 * The Refresh LINK - and the bridge's {@code refresh}, which presses it: ONE act wherever the player is standing,
+	 * since AS8 (2026-09-23). Addendum AS had made it one of two ({@code docs/handoff/plan-AS-bank-hold-2026-09-21.md}
+	 * sections 1 and 2.3) - the local update with the bank open, the price re-check with it shut - and the user, on the
+	 * AS7 build, clicked it with the bank open and saw nothing move, clicked it with the bank shut and saw the prices
+	 * move, and asked why: "manually clicking the refresh button should refresh everything for the user". So every
+	 * click refreshes both halves, the items and the prices.
+	 *
+	 * <p><b>With the bank open</b> and the plugin's hook registered ({@link #setBankRefresh}, read through
+	 * {@link #openBankRefresh}) the items come first, and at once: the hook re-reads the bank on the client thread and
+	 * republishes it - the local update the glow invites, no download. Three things happen here, on the click itself:
+	 * the ring goes out ({@link #glowDismissed} - the click is the answer to it, so it does not wait a frame and a disk
+	 * write for the plugin to report the read), the hold is lifted so the answer is DRAWN while the bank stays open
+	 * ({@link #liftBankHold} - without it the re-read's publish would be stored like any other and the click would
+	 * change nothing on screen), and the link acknowledges the tap with the same two beats a price check gets - once,
+	 * for the click, and not again for its second half. THEN the prices: {@code service.refreshNow(true)}, the price
+	 * re-check with the 30 s cooldown applying to the PRICE part alone, its fetches running in the background on the
+	 * service's own executor. Quiet, because the items did refresh: a click inside the cooldown has still re-read the
+	 * bank and redrawn the list, and the red "Refreshed n s ago - wait" line under it would say that nothing happened.
+	 * The service refuses the download without a word and arms no clear for a line it never showed.
+	 *
+	 * <p><b>Otherwise</b> - the bank shut, or no hook - it is {@link #refreshPricesNow()}, exactly as before AS8. With
+	 * the bank shut the stored bank is already the one on screen, and the price re-check's own re-read of what the
+	 * player carries (the service's carried reader, addendum Y) covers the rest of the items; inside the cooldown
+	 * NOTHING refreshed, so there the wait line is the true answer, and it stays.
+	 */
+	public void refreshNow()
+	{
+		if (stopped)
+		{
+			return;
+		}
+		glowDismissed = true;
+		stopGlow();
+		final Runnable hook = openBankRefresh();
+		if (hook != null)
+		{
+			// Lifted before the hook runs, so an answer that came back at once would still be drawn.
+			liftBankHold();
+			hook.run();
+			startRefreshAck();
+			// AS8: then the prices, in the background - quiet, because the items above did refresh, so a cooldown
+			// refusal must not put "wait" under a list this click has just redrawn.
+			service.refreshNow(true);
+			return;
+		}
+		refreshPricesNow();
+	}
+
+	/**
+	 * The price re-check ALONE: the gear menu's "Refresh prices now" always (addendum AS, section 7.1 decision 2 - its
+	 * name says PRICES, and AS8 kept it so), and the whole of the link's click whenever there is no open bank to
+	 * re-read - the bank shut, or no hook ({@link #refreshNow}). The service is told out loud
+	 * ({@code refreshNow(false)}): it decides about the 30 s cooldown and says so in the problem row, because here
+	 * nothing else was refreshed and a refusal is the whole answer to the tap.
 	 *
 	 * <p>The link answers the tap in two beats (P2): "Refreshing..." for {@link #REFRESH_ACK_MILLIS}, then
 	 * <b>"Up to date"</b> for {@link #UP_TO_DATE_MILLIS}, then "Refresh" again. Without the first beat the
@@ -2331,19 +2552,32 @@ public class BankPriceMovementPanel extends PluginPanel
 	 * so they cannot fight the cooldown line for that row.
 	 *
 	 * <p><b>A refused tap leaves the link alone</b> in the only sense this panel can honour: nothing different is
-	 * painted on it. {@link PriceService#refreshNow()} returns void and answers a refusal by publishing the red
+	 * painted on it. {@link PriceService#refreshNow(boolean)} returns void and answers a refusal by publishing the red
 	 * "Refreshed 12 s ago - wait" line into the problem row (K5/L10), so the panel is never told which tap was
 	 * served - the link answers the GESTURE and the problem row answers the OUTCOME. A refused tap is one made
 	 * inside 30 s of the last, so the prices really are up to date and the word is true either way.
+	 *
+	 * <p><b>With the bank open</b> (addendum AS) two more things hold. The reader asked, so the hold is lifted and
+	 * whatever the re-check publishes - the cooldown line, the new prices - is drawn ({@link #liftBankHold}). And while
+	 * the ring is lit the beats are NOT put on the link: a price check leaves the bank as out of date as it was,
+	 * so the glow stays, and "the link's text stays 'Refresh' while glowing" (section 7.3) - "Up to date" on a link
+	 * that is glowing because the list is not up to date would be the one sentence on the card that is false. A
+	 * refusal still answers in the problem row.
 	 */
-	public void refreshNow()
+	public void refreshPricesNow()
 	{
 		if (stopped)
 		{
 			return;
 		}
-		startRefreshAck();
-		service.refreshNow();
+		// Before the service is told, so an answer that came back at once would still be drawn.
+		liftBankHold();
+		if (!glowRunning())
+		{
+			startRefreshAck();
+		}
+		// Out loud (AS8's false): nothing else refreshed here, so a cooldown refusal is the answer, and says so.
+		service.refreshNow(false);
 	}
 
 	/**
@@ -2466,10 +2700,437 @@ public class BankPriceMovementPanel extends PluginPanel
 		return refreshPhase == RefreshPhase.UP_TO_DATE;
 	}
 
-	/** Whether a beat's timer is still running - the tests' proof that {@link #stop()} left nothing ticking. */
+	/**
+	 * Whether any of the link's timers is still running - a beat's, or the glow's since addendum AS - the tests' proof
+	 * that {@link #stop()} left nothing ticking.
+	 */
 	boolean refreshTimersRunning()
 	{
-		return refreshTimer != null && refreshTimer.isRunning();
+		return (refreshTimer != null && refreshTimer.isRunning()) || glowRunning();
+	}
+
+	// ---------------------------------------------------------------- the bank hold and the glow (EDT, addendum AS)
+
+	/**
+	 * The plugin's word about the bank (addendum AS, section 7.3), posted to the EDT whenever one of the four changes:
+	 * whether the bank interface is open, whether the bank on screen is out of date (a read is owed), how many bank
+	 * events it has held this visit, and how many reads it has made. The panel MIRRORS them - it cannot see the
+	 * widget, and a second opinion would be a second answer - and acts on them in three ways.
+	 *
+	 * <p><b>The hold.</b> While the bank is open {@link #onRows} stores a publish instead of building it, exactly as it
+	 * does while the sidebar is hidden (section 7.2: one rule, not two); when the bank closes the stored one is
+	 * replayed, once, through {@link #releaseHeld} - the road {@link #onActivate} takes too, so a replay has one
+	 * spelling and a panel still hidden when the bank closes keeps it for the next show. A new visit, and a change the
+	 * plugin reports mid-visit, put back a hold that had been lifted ({@link #liftBankHold}): the lift answered a click
+	 * or a read, and the bank has moved on since.
+	 *
+	 * <p><b>The glow.</b> Started and stopped by {@link #syncGlow} - running only while the sidebar shows the link,
+	 * the bank is open AND a change is owed.
+	 *
+	 * <p><b>The click.</b> Whatever the Refresh link's click dismissed ({@link #glowDismissed}), the plugin speaking
+	 * again decides afresh: its word is newer than the click.
+	 *
+	 * <p><b>Not the hover.</b> Whether the bank is open still decides whether a click on the link runs the plugin's
+	 * re-read before its price re-check ({@link #refreshNow}), but no longer what the link's hover says: since AS8 a
+	 * click refreshes everything in every state, so one sentence describes it in every state ({@link #REFRESH_TIP}).
+	 * Addendum AS's F5 put the hover back in step on every word here, while a click meant one of two things.
+	 *
+	 * <p>Posted back to the EDT when called from anywhere else - {@link #onRows}' rule - because the glow's timer, the
+	 * link and the stored publish are all the EDT's. A stopped panel ignores it: the plugin posts with
+	 * {@code invokeLater}, so the last word can land after {@code shutDown}, and a dead panel must not start a timer.
+	 */
+	public void setBankHold(boolean open, boolean pending, int heldEvents, int reads)
+	{
+		if (stopped)
+		{
+			return;
+		}
+		if (!SwingUtilities.isEventDispatchThread())
+		{
+			SwingUtilities.invokeLater(() -> setBankHold(open, pending, heldEvents, reads));
+			return;
+		}
+		final boolean newVisit = open && !bankOpen;
+		final boolean newChange = open && pending && !bankPending;
+		bankOpen = open;
+		bankPending = pending;
+		bankHeldEvents = heldEvents;
+		bankReads = reads;
+		glowDismissed = false;
+		if (!open || newVisit || newChange)
+		{
+			bankHoldLifted = false;
+		}
+		syncGlow();
+		if (!open)
+		{
+			// The replay section 7.2 asks for: "when open goes false". Only then - with the bank still open, a hold the
+			// reader lifted is answered by the publish their act causes, which supersedes whatever is stored; replaying
+			// the stored one here as well would draw a stale picture a frame before the right one.
+			releaseHeld();
+		}
+	}
+
+	/**
+	 * The plugin's open-bank Refresh (section 7.3): what the link's click runs FIRST while the bank is open - the
+	 * items, re-read at once - before the price re-check it runs in every state ({@link #refreshNow}, AS8). Null
+	 * takes it away - {@code shutDown} does - and the click is then the price re-check alone, whatever the bank is
+	 * doing. A stopped panel keeps no hook, so a late registration cannot pin the plugin that made it.
+	 *
+	 * <p>Callable from any thread: it writes one volatile field and touches nothing Swing, so the hook is taken at once
+	 * - a hook taken away is not run by the next click, whichever thread took it. Nothing else follows the hook any
+	 * more: addendum AS's F5 put the link's hover in step with it, on the EDT, because the hook decided which of two
+	 * things a click would be; since AS8 the click refreshes everything with or without it, and the hover is one
+	 * sentence in every state.
+	 */
+	public void setBankRefresh(@Nullable Runnable refresh)
+	{
+		bankRefresh = stopped ? null : refresh;
+	}
+
+	/**
+	 * What a click on the Refresh link runs BEFORE its price re-check: the plugin's hook while the bank is open, and
+	 * null otherwise - the bank shut, or no hook registered (the headless renderer, a test, the moment between
+	 * {@code shutDown}'s {@code setBankRefresh(null)} and {@link #stop()}). Read by the click alone
+	 * ({@link #refreshNow}); until AS8 the link's hover read it too, because it decided which of two things a click
+	 * would be. The volatile field is read once, so the answer is one hook and not two reads of it.
+	 */
+	@Nullable
+	private Runnable openBankRefresh()
+	{
+		final Runnable hook = bankRefresh;
+		return bankOpen ? hook : null;
+	}
+
+	/**
+	 * Whether a publish arriving now is STORED rather than built: while the sidebar is hidden (design D8), and while
+	 * the bank is open unless the hold has been lifted - by the reader ({@link #liftBankHold}) or by a bank the
+	 * sidebar has not drawn ({@link #carriesNewBank}).
+	 */
+	private boolean holding()
+	{
+		return !active || (bankOpen && !bankHoldLifted);
+	}
+
+	/**
+	 * Whether {@code candidate} carries a bank this sidebar has not drawn: another capture than the one on screen
+	 * ({@code Status.bankAtMillis()} is the snapshot's capture stamp, which {@code BankReader} sets to the clock at
+	 * every read and {@code BankSnapshot.withCarried} keeps), or any bank at all while nothing has been drawn yet.
+	 *
+	 * <p>Such a publish is a READ, and the hold is for re-statements - the half-hourly tick, a fetch landing - so
+	 * {@link #onRows} lifts the hold for it. By the plan the plugin reads with the bank open only when the reader
+	 * asks - the link's click (section 2.3) - or before it knows the bank is open: the bank's first event of a visit
+	 * beating the widget's own load event, an ORDER section 7.2 lists as unverified, or the plugin switched on at an
+	 * open bank. The reader must see every one of them. Held, such a read would leave the old bank on screen for the
+	 * whole visit with no glow to say so, since the plugin, having read, owes no change; and a player who turns the
+	 * plugin on, or installs it, at an open bank would read "Open your bank once to load your items" over the bank
+	 * they have open. Lifted rather than
+	 * let through once, for {@link #liftBankHold}'s reason: a status-only publish can land between a read and its
+	 * recompute, carrying the new stamp over the old rows, and the recompute must not then be stored.
+	 */
+	private boolean carriesNewBank(@Nullable Status candidate)
+	{
+		return candidate != null && (status == null || candidate.bankAtMillis() != status.bankAtMillis());
+	}
+
+	/**
+	 * Builds the stored publish when nothing holds it any more, and does nothing otherwise - the ONE replay road:
+	 * the sidebar coming back ({@link #onActivate}) and the bank closing ({@link #setBankHold}) both come here, so a
+	 * publish stored for either reason is built exactly once, by whichever of them ends the hold, and never while
+	 * the other still holds it.
+	 */
+	private void releaseHeld()
+	{
+		if (stopped || !pendingPublish || holding())
+		{
+			return;
+		}
+		final List<MovementRow> newRows = pendingRows;
+		final Status newStatus = pendingStatus;
+		pendingPublish = false;
+		pendingRows = null;
+		pendingStatus = null;
+		onRows(newRows, newStatus);
+	}
+
+	/**
+	 * The reader's own act while the bank is open - the Refresh link, a window, a column, a band, a view switch -
+	 * lifts the hold: every publish is built again until the plugin reports a new change or the bank closes
+	 * ({@link #setBankHold}).
+	 *
+	 * <p>Why the hold may not simply stand for the whole visit, as section 7.2 first drew it: each of those acts is
+	 * ANSWERED by a publish - the service re-sorts, re-counts or re-prices, or the plugin re-reads the bank - and that
+	 * answer necessarily arrives while the bank is still open. A hold that stored it would re-order nothing when a
+	 * column was picked and draw nothing when the glowing link was clicked, under controls that already say the new
+	 * thing. The lift cannot be spent on one publish either, because nothing ties a publish to the act that caused it:
+	 * a status-only publish (a fetch landing, the cooldown line clearing) can arrive between the act and its answer,
+	 * and spending the lift on that one would store the answer itself. So it lasts until the plugin says the bank
+	 * moved on - which is also the moment the glow comes back - or the visit ends. The cost is an unasked-for rebuild
+	 * for each re-statement that lands in between: the half-hourly tick, a fetch. While a change is already owed the
+	 * plugin reports no new one, so a lift made then lasts until the link is clicked or the bank closes.
+	 *
+	 * <p>Nothing is replayed here. Every act that lifts is followed by the publish that answers it, which supersedes
+	 * the stored one ({@link #onRows} drops it on building), and the stored one is still replayed when the bank closes
+	 * should no answer ever come.
+	 */
+	private void liftBankHold()
+	{
+		if (bankOpen)
+		{
+			bankHoldLifted = true;
+		}
+	}
+
+	/**
+	 * Whether the ring should be lit right now (section 7.3): the sidebar showing the link, the bank open and a change
+	 * owed - and no click on the link since the plugin last spoke.
+	 */
+	private boolean glowWanted()
+	{
+		return !stopped && active && bankOpen && bankPending && !glowDismissed;
+	}
+
+	/** Starts or stops the ring to match {@link #glowWanted()} - the one road every trigger takes. */
+	private void syncGlow()
+	{
+		if (glowWanted())
+		{
+			startGlow();
+		}
+		else
+		{
+			stopGlow();
+		}
+	}
+
+	/**
+	 * Lights the ring: its breath starts now, from dark - {@link #glowLevel} reads 0 at this instant - and the timer
+	 * runs at {@link #GLOW_TICK_MILLIS}. Nothing is repainted here: at 0 there is nothing to draw, and the frames draw
+	 * the breath as it comes up.
+	 *
+	 * <p>A beat still standing on the link from an earlier tap - "Up to date", "Refreshing..." - is ended first,
+	 * because "the link's text stays 'Refresh' while glowing" (section 7.3), and a new change makes "Up to date" the
+	 * one thing on the card that is no longer true.
+	 */
+	private void startGlow()
+	{
+		if (glowRunning())
+		{
+			return;
+		}
+		if (refreshPhase != RefreshPhase.IDLE)
+		{
+			clearRefreshAck();
+		}
+		if (glowTimer == null)
+		{
+			glowTimer = new Timer(GLOW_TICK_MILLIS, e -> fireGlow());
+			glowTimer.setRepeats(true);
+		}
+		glowStartedAtMillis = glowClock.getAsLong();
+		glowTimer.start();
+	}
+
+	/** Puts the ring out: the timer stops, and one last repaint of its region takes its last frame off the card. */
+	private void stopGlow()
+	{
+		if (!glowRunning())
+		{
+			return;
+		}
+		glowTimer.stop();
+		repaintGlow();
+	}
+
+	/**
+	 * The glow timer's action, one frame: the ring's region of the hero card is repainted ({@link #glowRegion}) - not
+	 * the rest of the card, not the header, and nothing is laid out, so a frame costs the ~54 x 23 px round the link
+	 * and no more (section 7.2's "repaint of the link's bounds only", as far as AS7's wider ring allows).
+	 *
+	 * <p>A frame moves nothing. How bright the ring is comes from the clock, read as the card paints it
+	 * ({@link #glowLevel}), so a frame that arrives late - the EDT busy with a page of rows, say - draws the breath
+	 * where the clock has got to, never where a count of frames would put it: a stalled second can delay a frame, but
+	 * it cannot stretch a six-second breath to seven.
+	 *
+	 * <p>Package-private so a test can run a frame without waiting on a real timer, as {@link #fireRefreshAck()} is. A
+	 * frame arriving when the ring is out - queued before {@link #stopGlow()}, or after {@link #stop()} - does nothing,
+	 * so nothing is ever repainted for a ring that is not lit.
+	 */
+	void fireGlow()
+	{
+		if (stopped || !glowRunning())
+		{
+			return;
+		}
+		repaintGlow();
+	}
+
+	/** Asks Swing to repaint the ring's region of the hero card ({@link #glowRegion}), and nothing else. */
+	private void repaintGlow()
+	{
+		hero.repaint(glowRegion());
+	}
+
+	/** Whether the ring round the link is lit right now: its timer is running (section 7.3). */
+	boolean glowRunning()
+	{
+		return glowTimer != null && glowTimer.isRunning();
+	}
+
+	/**
+	 * How bright the ring is right now, from 0 to 1 - its alpha: the {@link #breath} at the time since it lit, by
+	 * {@link #glowClock}; and 0 whenever it is out. Read by the card each time it paints, which is what makes the
+	 * breath the clock's and not the frames' ({@link #fireGlow}).
+	 */
+	double glowLevel()
+	{
+		return glowRunning() ? breath(glowClock.getAsLong() - glowStartedAtMillis) : 0d;
+	}
+
+	/**
+	 * The breath at {@code elapsedMillis} into it: {@code GLOW_FLOOR + (1 - GLOW_FLOOR) * (1 - cos(2 pi t /
+	 * GLOW_BREATH_MILLIS)) / 2} - the floor (0.15) at the start, 1 at 3 s, the floor again at 6 s, and round again. The curve is the one P1 was rendered and chosen with, stretched to the
+	 * user's six seconds: a cosine, which eases into full brightness and into nothing rather than turning there.
+	 *
+	 * <p>The time is taken round one breath before the cosine, so its argument stays inside one turn however long the
+	 * ring stays lit, and a time before the start - a clock put back - reads as a phase like any other.
+	 */
+	static double breath(long elapsedMillis)
+	{
+		final long t = Math.floorMod(elapsedMillis, (long) GLOW_BREATH_MILLIS);
+		return GLOW_FLOOR + (1d - GLOW_FLOOR) * (1d - Math.cos(2d * Math.PI * t / GLOW_BREATH_MILLIS)) / 2d;
+	}
+
+	/**
+	 * Pins the clock the breath is timed by, for the tests, which drive a whole breath without waiting for one; null
+	 * puts the monotonic clock back. Set it BEFORE the ring lights: the breath's start is stamped by the clock in force
+	 * at that moment ({@link #startGlow}).
+	 */
+	void setGlowClock(@Nullable LongSupplier now)
+	{
+		glowClock = now == null ? BankPriceMovementPanel::monotonicMillis : now;
+	}
+
+	/** Milliseconds off {@link System#nanoTime}: a clock that only moves forward, for {@link #glowClock}. */
+	private static long monotonicMillis()
+	{
+		return System.nanoTime() / 1_000_000L;
+	}
+
+	/** The ring's timer, or null before it first ran - for the tests that check its period and that it repeats. */
+	@Nullable
+	Timer glowTimer()
+	{
+		return glowTimer;
+	}
+
+	/**
+	 * The box the ring runs round, in the hero card's coordinates: the Refresh link's bounds,
+	 * {@link #GLOW_RING_EXTRA_RIGHT} px wider on the right. Read from where the link is NOW, so the ring follows it
+	 * wherever the card's layout puts it.
+	 */
+	private Rectangle glowBox()
+	{
+		final Rectangle box = SwingUtilities.convertRectangle(refreshLabel.getParent(), refreshLabel.getBounds(), hero);
+		box.width += GLOW_RING_EXTRA_RIGHT;
+		return box;
+	}
+
+	/**
+	 * What one frame repaints: the ring's box grown by the halo's reach on every side ({@link #GLOW_HALO_REACH}), in
+	 * the hero card's coordinates - the whole of what {@link #paintRing} can draw there, and nothing more.
+	 */
+	private Rectangle glowRegion()
+	{
+		final Rectangle region = glowBox();
+		region.grow(GLOW_HALO_REACH, GLOW_HALO_REACH);
+		return region;
+	}
+
+	/**
+	 * The hero card since AS7: the panel {@code Widgets.column(0)} built before it - the same layout manager with the
+	 * same numbers, given the same colour and border by {@link #buildHero} - with one thing added. While the glow runs
+	 * it paints the ring round the Refresh link, after its own ground and before its lines, so the ring lies UNDER the
+	 * word and can never be drawn over it.
+	 *
+	 * <p>The card paints it because nothing smaller can. The ring's box runs {@link #GLOW_RING_EXTRA_RIGHT} px past the
+	 * link and its halo {@link #GLOW_HALO_REACH} px past that all round, and a component's painting is clipped to its
+	 * own bounds - the link's border, where AS4's spark was drawn, cannot reach outside the link. With the ring out
+	 * {@link #paintComponent} is {@code JPanel}'s own and nothing else, so every picture of a sidebar with no change
+	 * owed - the four pinned renders among them - is byte for byte the picture a plain card makes.
+	 */
+	private final class HeroCard extends JPanel
+	{
+		HeroCard()
+		{
+			super(new DynamicGridLayout(0, 1, 0, 0));
+		}
+
+		@Override
+		protected void paintComponent(Graphics g)
+		{
+			super.paintComponent(g);
+			if (glowRunning())
+			{
+				paintRing(g, glowBox(), glowLevel());
+			}
+		}
+	}
+
+	/**
+	 * Draws the ring round {@code box} at {@code level} (0 to 1), AS7's P1 as it was rendered and chosen: a
+	 * {@link #GLOW_STROKE} px ring in {@link #GLOW_COLOUR} lying just inside the box's edge, rounded by
+	 * {@link #GLOW_CORNER}, and outside it the halo, two 1 px rings at {@link #GLOW_HALO_NEAR_ALPHA} and
+	 * {@link #GLOW_HALO_FAR_ALPHA} of the ring's alpha. Nothing is drawn further inside the box than the ring's own
+	 * width, so the word the box surrounds is never painted over, and nothing more than {@link #GLOW_HALO_REACH} px
+	 * outside it, which is the region a frame repaints ({@link #glowRegion}). At 0 it draws nothing at all.
+	 *
+	 * <p>Antialiased with pure stroke control, as rendered - Java2D's default normalisation nudges a stroke onto the
+	 * pixel grid and would move a 1.5 px ring off the columns it was chosen on - in a copy of the {@code Graphics}, so
+	 * the card's own painting state is untouched. Static and package-private: it depends on nothing but its arguments,
+	 * and a test can ask it for any level.
+	 */
+	static void paintRing(Graphics g, Rectangle box, double level)
+	{
+		if (level <= 0d)
+		{
+			return;
+		}
+		final Graphics2D g2 = (Graphics2D) g.create();
+		try
+		{
+			g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+			g2.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
+			// Outermost first, as rendered: the halo's two 1 px rings stacked outward from the box's edge (centre lines
+			// 1.5 and 0.5 px out), then the ring itself on the inside of the edge (centre line half its width in).
+			ring(g2, box, 1.5d, 1f, level * GLOW_HALO_FAR_ALPHA);
+			ring(g2, box, 0.5d, 1f, level * GLOW_HALO_NEAR_ALPHA);
+			ring(g2, box, -GLOW_STROKE / 2d, GLOW_STROKE, level);
+		}
+		finally
+		{
+			g2.dispose();
+		}
+	}
+
+	/**
+	 * One ring of {@link #paintRing}: a {@code width} px stroke whose centre line runs {@code offset} px outside
+	 * {@code box}'s edge (inside, when negative), in {@link #GLOW_COLOUR} at {@code alpha}. Its rounding grows with the
+	 * offset - {@link #GLOW_CORNER} on the main ring's centre line and 2 px more for every px further out - so the
+	 * three rings are concentric. An alpha that rounds to nothing draws nothing.
+	 */
+	private static void ring(Graphics2D g, Rectangle box, double offset, float width, double alpha)
+	{
+		final int a = (int) Math.round(255d * Math.max(0d, Math.min(1d, alpha)));
+		if (a <= 0)
+		{
+			return;
+		}
+		final double arc = GLOW_CORNER + GLOW_STROKE + 2d * offset;
+		g.setColor(new Color(GLOW_COLOUR.getRed(), GLOW_COLOUR.getGreen(), GLOW_COLOUR.getBlue(), a));
+		g.setStroke(new BasicStroke(width));
+		g.draw(new RoundRectangle2D.Double(box.x - offset, box.y - offset, box.width + 2d * offset,
+			box.height + 2d * offset, arc, arc));
 	}
 
 	/**
@@ -2521,6 +3182,9 @@ public class BankPriceMovementPanel extends PluginPanel
 		if (!updating && !filter.equals(old))
 		{
 			prefs.save(filter);
+			// AS: the reader asked for another list, so the list they asked for is built even while the bank is
+			// open. Lifted BEFORE the service is told, so an answer that came back at once would still be let through.
+			liftBankHold();
 			service.setFilter(filter);
 		}
 	}
@@ -3124,6 +3788,11 @@ public class BankPriceMovementPanel extends PluginPanel
 	 * whole page: ~2,700 Swing components on the EDT and up to {@link #ROWS_PER_PAGE} sprite renders queued onto
 	 * the game thread, for a panel nobody can see. The last publish is replayed whole by {@link #onActivate}, so
 	 * what the reader gets when they open the sidebar is the same picture they would have got had it been open.
+	 *
+	 * <p><b>And while the bank is open</b> (addendum AS, section 7.2): the same store, for the same reason - a player
+	 * gearing up at the bank is the moment a page rebuild costs most - replayed when the bank closes. Two things lift
+	 * it: the reader's own act ({@link #liftBankHold}), and a publish carrying a bank the sidebar has not drawn
+	 * ({@link #carriesNewBank}) - a read, where the hold is for re-statements.
 	 */
 	private void onRows(@Nullable List<MovementRow> newRows, @Nullable Status newStatus)
 	{
@@ -3136,13 +3805,24 @@ public class BankPriceMovementPanel extends PluginPanel
 			SwingUtilities.invokeLater(() -> onRows(newRows, newStatus));
 			return;
 		}
-		if (!active)
+		if (carriesNewBank(newStatus))
+		{
+			// A read, not a re-statement: the hold is lifted for it (AS; see carriesNewBank). A no-op with the bank
+			// closed, and still stored while the sidebar is hidden - to be built on the next show.
+			liftBankHold();
+		}
+		if (holding())
 		{
 			pendingPublish = true;
 			pendingRows = newRows;
 			pendingStatus = newStatus;
 			return;
 		}
+		// Anything still stored is OLDER than this publish - they arrive in order, and each is the service's whole
+		// state - so it is dropped here. Kept, the bank closing would replay it over the newer picture.
+		pendingPublish = false;
+		pendingRows = null;
+		pendingStatus = null;
 		final List<MovementRow> safe = newRows == null ? Collections.emptyList() : newRows;
 		final MovementWindow window = newStatus != null && newStatus.window() != null ? newStatus.window() : filter.window();
 		final ListContext next = new ListContext(window, newStatus == null ? null : newStatus.thenDay(), filter);
@@ -3812,7 +4492,9 @@ public class BankPriceMovementPanel extends PluginPanel
 
 	/**
 	 * One line of JSON describing the visible state, for the bridge's {@code state}: the card, the paging,
-	 * the filter, the two fields' validity, the status sentence and whether the panel is on screen - then the
+	 * the filter, the two fields' validity, the status sentence and whether the panel is on screen, with the bank
+	 * hold beside it ({@code bank}, addendum AS: {@code open}, {@code pending}, {@code glow}, {@code heldEvents},
+	 * {@code reads} - see {@link #bankJson}) - then the
 	 * five view switches ({@code options}, Q7, T1, Y1 and AH - {@code holding} is gone with addendum AO),
 	 * beside them what the TRADED feeds delivered for this
 	 * publish ({@code live}, T8: {@code fetchedAt}, {@code latestItems}, {@code liveRows}, {@code guideRows},
@@ -3849,6 +4531,7 @@ public class BankPriceMovementPanel extends PluginPanel
 			+ ",\"maxInvalid\":" + Widgets.isMarkedInvalid(maxField)
 			+ ",\"status\":" + json(statusText())
 			+ ",\"showing\":" + isShowing()
+			+ ",\"bank\":" + bankJson()
 			+ ",\"options\":" + flags(options.asMap())
 			+ ",\"live\":" + values(liveStatus().asMap())
 			+ ",\"hero\":" + flags(heroVisibility.asMap())
@@ -3869,6 +4552,23 @@ public class BankPriceMovementPanel extends PluginPanel
 			+ ",\"problemText\":" + json(problemText())
 			+ ",\"problemRed\":" + isErrorStatus()
 			+ ",\"showMoreText\":" + json(showMoreVisible() ? showMoreLabel.getText() : "")
+			+ "}";
+	}
+
+	/**
+	 * {@code describe()}'s {@code bank} object (addendum AS, section 7.3): the plugin's four values as this panel last
+	 * mirrored them - {@code open}, {@code pending}, {@code heldEvents}, {@code reads} - with {@code glow}, whether the
+	 * ring is actually lit, between them. It sits beside {@code showing} because the two are what decide whether
+	 * a publish is built, and it is how a live run proves the plan's claims without a picture: one read per visit,
+	 * events held while pending, the ring lit exactly while it should be.
+	 */
+	private String bankJson()
+	{
+		return "{\"open\":" + bankOpen
+			+ ",\"pending\":" + bankPending
+			+ ",\"glow\":" + glowRunning()
+			+ ",\"heldEvents\":" + bankHeldEvents
+			+ ",\"reads\":" + bankReads
 			+ "}";
 	}
 

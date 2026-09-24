@@ -12,10 +12,13 @@ import java.io.InputStream;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -40,6 +43,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
@@ -91,6 +95,12 @@ public class BpmCommandsTest
 	private static final long INDEX_AT = 1_788_811_111_000L;
 	/** The L7 header line with a baseline: a DAY, not a publication clock. */
 	private static final String STATUS_TEXT = "Guide prices - 1d vs 07 Sep - Bank as of 11:00";
+	/**
+	 * The five keys of {@code state.panel.bank} (plan AS, 7.3), sorted so a failure prints both sides in the same
+	 * order. They are binding names: the live run's {@code jq} lines in {@code docs/effect-lab.md} 3.3 read them.
+	 */
+	private static final Set<String> BANK_KEYS = Collections.unmodifiableSet(
+		new TreeSet<>(Arrays.asList("open", "pending", "glow", "heldEvents", "reads")));
 
 	@Rule
 	public final TemporaryFolder shots = new TemporaryFolder();
@@ -1422,8 +1432,11 @@ public class BpmCommandsTest
 			assertEquals("an empty value is no bound", 0L, last(saved).gpMin());
 			assertFalse(reply(bridge, "state").getAsJsonObject("panel").get("minInvalid").getAsBoolean());
 
+			// AS8: no bank is open here, so the link is the price re-check alone, pressed OUT LOUD - refreshNow(false),
+			// which on this mock is a different call from the no-argument form the service keeps as its delegate.
 			reply(bridge, "refresh");
-			verify(service).refreshNow();
+			verify(service).refreshNow(false);
+			verify(service, never()).refreshNow(true);
 			assertEquals("every save was also a setFilter", saved.size(), realSetFilterCalls());
 		}
 		finally
@@ -1502,6 +1515,13 @@ public class BpmCommandsTest
 	{
 		ok("refresh");
 		verify(panel).refreshNow();
+		// AS, AS8: the verb presses the LINK and nothing else, because the panel decides what a click is - with the
+		// bank open the plugin's read of the items and THEN the price re-check, quietly; with it closed the price
+		// re-check alone, out loud. A bridge that called the service itself would skip the items, and could put the
+		// wait line up in the middle of a bank visit. Both forms are checked: since AS8 the panel presses
+		// refreshNow(boolean), so a never() on the no-argument form alone would pass whatever the bridge pressed.
+		verify(service, never()).refreshNow();
+		verify(service, never()).refreshNow(anyBoolean());
 		ok("more");
 		verify(panel).showMore();
 	}
@@ -1667,6 +1687,181 @@ public class BpmCommandsTest
 		verify(panel).selectWindow(MovementWindow.D1);
 	}
 
+	// ---------------------------------------------------------------- addendum AS: the bank hold
+
+	/**
+	 * AS (plan 7.3, "BpmCommands"): {@code state.panel.bank} is the bank hold exactly as the panel's
+	 * {@code describe()} wrote it - {@code {open, pending, glow, heldEvents, reads}} - and it reaches the answer with
+	 * no key of this class's own, because {@code describe()} is nested whole. The live run reads nothing else to
+	 * prove the hold ({@code bpm state | jq -c .result.panel.bank}), so this pins what that line needs of the bridge:
+	 * the object is there, under that name, with those five keys, on every answer.
+	 *
+	 * <p>The raw answer is compared as TEXT as well as read as a tree, because the tree reading alone cannot see the
+	 * one way a pass-through can go wrong without losing a key: a {@code Map} in place of the {@code JsonElement} in
+	 * {@code parse} turns every number into a double, and {@code heldEvents} would print as {@code 3.0} - measured on
+	 * the client's own Gson 2.8.5 - while {@code getAsInt()} went on answering 3.
+	 */
+	@Test
+	public void stateEchoesThePanelsBankHoldWholeUnderPanelBank()
+	{
+		when(panel.describe()).thenReturn("{\"card\":\"LIST\",\"shown\":250,\"foldOpen\":true,"
+			+ "\"bank\":{\"open\":true,\"pending\":true,\"glow\":true,\"heldEvents\":3,\"reads\":1},"
+			+ "\"problemText\":\"\"}");
+
+		final String raw = dev.apply("state");
+		assertTrue("the hold passes through verbatim - same keys, same order, integers as integers: " + raw,
+			raw.contains("\"bank\":{\"open\":true,\"pending\":true,\"glow\":true,\"heldEvents\":3,\"reads\":1}"));
+		final JsonObject s = gson.fromJson(raw, JsonObject.class);
+		assertTrue(s.get("ok").getAsBoolean());
+		assertBankHold("state", s, true, true, true, 3, 1);
+		// ...and the keys beside it are untouched: the hold is one more key of describe(), not a new shape.
+		assertEquals("LIST", s.getAsJsonObject("panel").get("card").getAsString());
+		assertTrue(s.getAsJsonObject("panel").get("foldOpen").getAsBoolean());
+
+		// Every verb carries it, like the rest of the state (C40) - and so does a refusal that carries the state.
+		assertBankHold("window=7d", ok("window=7d"), true, true, true, 3, 1);
+		when(panel.applyMin("abc")).thenReturn(false);
+		final JsonObject refused = send("min=abc");
+		assertFalse(refused.get("ok").getAsBoolean());
+		assertBankHold("a refused min=", refused, true, true, true, 3, 1);
+	}
+
+	/**
+	 * AS on a REAL panel: the object the live run reads is the one the panel actually writes, not the stub above.
+	 * The plugin speaks to the panel through {@code setBankHold(open, pending, heldEvents, reads)} and through
+	 * nothing else (plan AS, 7.3), so this drives that seam and reads the answer back through the bridge: the four
+	 * mirrored values arrive unchanged, {@code glow} follows the gate the plan names
+	 * ({@code active && open && pending}), and describe()'s hand-written line is still valid JSON - a comma or a
+	 * quote lost there would leave {@code state.panel} a bare string, and {@code jq .result.panel.bank} answering
+	 * nothing on the live run.
+	 *
+	 * <p>The walk is one bank visit as the recipe in {@code docs/effect-lab.md} 3.3 reads it: a change held, the
+	 * sidebar moved away and back (the light stops while nobody is looking and comes back with the panel, because
+	 * the plan runs it "only while" all three hold), the Refresh link's read with the bank still open (the change is
+	 * no longer pending, so the light is out while {@code open} stays true), and the close.
+	 */
+	@Test
+	public void theRealPanelsBankHoldReachesStatePanelBank() throws Exception
+	{
+		final AtomicReference<BankPriceMovementPanel> real = new AtomicReference<>();
+		MovementRowPanelTest.onEdt(() -> real.set(new BankPriceMovementPanel(mock(ItemManager.class), service,
+			prefs())));
+		final BankPriceMovementPanel p = real.get();
+		final BpmCommands bridge = new BpmCommands(p, service, gson, account(), shotDir(), showing::get);
+		try
+		{
+			// Before the plugin has said anything: no bank known to be open, nothing held, nothing read.
+			assertBankHold("a fresh panel", ok(bridge, "state"), false, false, false, 0, 0);
+
+			// The first change of a visit, as the plugin reports it: open, pending, three events held, one read.
+			MovementRowPanelTest.onEdt(p::onActivate);
+			MovementRowPanelTest.onEdt(() -> p.setBankHold(true, true, 3, 1));
+			assertBankHold("open with a change held", ok(bridge, "state"), true, true, true, 3, 1);
+
+			// The sidebar moves to another panel: the light stops, and the change is still held...
+			MovementRowPanelTest.onEdt(p::onDeactivate);
+			assertBankHold("hidden", ok(bridge, "state"), true, true, false, 3, 1);
+			// ...and it comes back with the panel, because nothing about the hold has changed.
+			MovementRowPanelTest.onEdt(p::onActivate);
+			assertBankHold("shown again", ok(bridge, "state"), true, true, true, 3, 1);
+
+			// The Refresh link's read with the bank still open: one more read, nothing pending, the light out.
+			MovementRowPanelTest.onEdt(() -> p.setBankHold(true, false, 3, 2));
+			assertBankHold("read with the bank open", ok(bridge, "state"), true, false, false, 3, 2);
+
+			// The close, with nothing left to read.
+			MovementRowPanelTest.onEdt(() -> p.setBankHold(false, false, 3, 2));
+			assertBankHold("closed", ok(bridge, "state"), false, false, false, 3, 2);
+		}
+		finally
+		{
+			MovementRowPanelTest.onEdt(p::stop);
+		}
+	}
+
+	/**
+	 * AS8: {@code refresh} is the Refresh LINK, and one click on it refreshes everything wherever the player stands -
+	 * the user, on the AS7 build: "manually clicking the refresh button should refresh everything for the user". With
+	 * the bank open that is the plugin's local read of the bank FIRST and THEN the price re-check, pressed QUIETLY
+	 * ({@code service.refreshNow(true)}): the click has just redrawn the items, so a cooldown refusal of the download
+	 * must say nothing. That flag is what keeps the live run's "a second tap with the bank open draws no cooldown line"
+	 * true now that the tap does reach the price re-check; until AS8 it held because the tap never did, which is what
+	 * this test pinned as {@code refreshWithTheBankOpenIsTheLinksLocalReadAndNeverThePriceRecheck}. With the bank
+	 * closed the same verb is the price re-check alone, OUT LOUD ({@code refreshNow(false)}), and the hook is left
+	 * alone: nothing else refreshed, so there a refusal is the whole answer and says so.
+	 *
+	 * <p>The panel hands the first half to whatever the plugin registered through {@code setBankRefresh} (in the
+	 * client, a hop to the client thread that reads the bank once) and the second to the service, which is the mock
+	 * here - so the flag it is handed IS what the problem row would say. Both halves write into one log, so the ORDER
+	 * is pinned with the counts. The second tap is sent with the change no longer pending, which is what the plugin
+	 * reports after the first tap's read, because the routing is "the bank is open" and not "a change is held" (plan
+	 * AS, 7.3).
+	 *
+	 * <p>Planted bugs this catches: the price half left out with the bank open, AS4's split (the log stops at
+	 * "items"); a panel that ignores the hook (no "items"); the prices before the items (the log's order); the
+	 * open-bank price half pressed out loud, which puts the wait line under a list the tap has just redrawn ("prices,
+	 * out loud" in the log, and {@code never().refreshNow(false)}); a tap that reads the items only while a change is
+	 * pending (the second tap); the closed-bank tap pressed quietly, or running the hook as well (the last entry and
+	 * the counts); a bridge that presses the service beside the link (an entry too many).
+	 */
+	@Test
+	public void refreshWithTheBankOpenIsTheLocalReadAndThenTheQuietPriceRecheck() throws Exception
+	{
+		final AtomicReference<BankPriceMovementPanel> real = new AtomicReference<>();
+		MovementRowPanelTest.onEdt(() -> real.set(new BankPriceMovementPanel(mock(ItemManager.class), service,
+			prefs())));
+		final BankPriceMovementPanel p = real.get();
+		final BpmCommands bridge = new BpmCommands(p, service, gson, account(), shotDir(), showing::get);
+		// One log for both halves, in the order they ran: the hook writes "items", the mocked service writes how the
+		// price re-check was pressed.
+		final List<String> halves = Collections.synchronizedList(new ArrayList<>());
+		doAnswer(invocation ->
+		{
+			final boolean quiet = invocation.getArgument(0);
+			halves.add(quiet ? "prices, quietly" : "prices, out loud");
+			return null;
+		}).when(service).refreshNow(anyBoolean());
+		try
+		{
+			MovementRowPanelTest.onEdt(() ->
+			{
+				p.setBankRefresh(() -> halves.add("items"));
+				p.setBankHold(true, true, 1, 0);
+			});
+
+			ok(bridge, "refresh");
+			assertEquals("the glowing link's click is the plugin's local read and THEN the quiet price re-check",
+				Arrays.asList("items", "prices, quietly"), new ArrayList<>(halves));
+			verify(service, times(1)).refreshNow(true);
+			verify(service, never()).refreshNow(false);
+			assertFalse("the click puts the light out at once, before the plugin's notice arrives",
+				bankOf(ok(bridge, "state")).get("glow").getAsBoolean());
+
+			// The plugin's notice after that read - still open, nothing pending - and a second tap in the same visit,
+			// inside the 30 s the first one started: both halves again, and the price half still quiet, which is
+			// the live run's "no wait line on a second tap" now that the tap reaches the price re-check.
+			MovementRowPanelTest.onEdt(() -> p.setBankHold(true, false, 1, 1));
+			ok(bridge, "refresh");
+			assertEquals("a tap with the bank open is both halves whether or not a change is held",
+				Arrays.asList("items", "prices, quietly", "items", "prices, quietly"), new ArrayList<>(halves));
+			verify(service, times(2)).refreshNow(true);
+			verify(service, never()).refreshNow(false);
+
+			// The bank closes: the same verb is the price re-check alone, out loud, and the hook is left alone.
+			MovementRowPanelTest.onEdt(() -> p.setBankHold(false, false, 1, 1));
+			ok(bridge, "refresh");
+			assertEquals("with the bank shut a tap is the price re-check alone, out loud",
+				Arrays.asList("items", "prices, quietly", "items", "prices, quietly", "prices, out loud"),
+				new ArrayList<>(halves));
+			verify(service, times(1)).refreshNow(false);
+			verify(service, times(2)).refreshNow(true);
+		}
+		finally
+		{
+			MovementRowPanelTest.onEdt(p::stop);
+		}
+	}
+
 	// ---------------------------------------------------------------- the picture
 
 	@Test
@@ -1827,6 +2022,55 @@ public class BpmCommandsTest
 	{
 		final JsonElement e = o.get(key);
 		return e == null || e.isJsonNull() ? null : e.getAsString();
+	}
+
+	/**
+	 * {@code state.panel.bank} out of one answer - the path {@code jq .result.panel.bank} reads on the live run,
+	 * less the lab's {@code result} wrapper - failing with what WAS there when it is missing or is not an object,
+	 * because "panel is a quoted string" and "panel has no bank" are different faults in different files.
+	 */
+	private static JsonObject bankOf(JsonObject answer)
+	{
+		final JsonElement panelJson = answer.get("panel");
+		assertNotNull("no panel in " + answer, panelJson);
+		assertTrue("state.panel must be an object, not a quoted string: " + panelJson, panelJson.isJsonObject());
+		final JsonElement bank = panelJson.getAsJsonObject().get("bank");
+		assertNotNull("no bank in state.panel: " + panelJson, bank);
+		assertTrue("state.panel.bank must be an object: " + bank, bank.isJsonObject());
+		return bank.getAsJsonObject();
+	}
+
+	/**
+	 * One {@code state.panel.bank} against what the plugin said and the panel should draw. The NAMES first, so a
+	 * sixth key, a lost one or a misspelling fails on the names; then the TYPES, so a flag written as 1 / 0 or a
+	 * counter written as a string cannot pass as its value; then the values, each with the moment it was taken.
+	 */
+	private static void assertBankHold(String when, JsonObject answer, boolean open, boolean pending, boolean glow,
+		int heldEvents, int reads)
+	{
+		final JsonObject bank = bankOf(answer);
+		assertEquals(when + ": the five keys of plan AS 7.3 and no others", BANK_KEYS, new TreeSet<>(bank.keySet()));
+		assertFlag(when, bank, "open", open);
+		assertFlag(when, bank, "pending", pending);
+		assertFlag(when, bank, "glow", glow);
+		assertCount(when, bank, "heldEvents", heldEvents);
+		assertCount(when, bank, "reads", reads);
+	}
+
+	private static void assertFlag(String when, JsonObject bank, String key, boolean expected)
+	{
+		final JsonElement e = bank.get(key);
+		assertTrue(when + ": " + key + " must be a JSON boolean: " + bank,
+			e != null && e.isJsonPrimitive() && e.getAsJsonPrimitive().isBoolean());
+		assertEquals(when + ": " + key + " in " + bank, expected, e.getAsBoolean());
+	}
+
+	private static void assertCount(String when, JsonObject bank, String key, int expected)
+	{
+		final JsonElement e = bank.get(key);
+		assertTrue(when + ": " + key + " must be a JSON number: " + bank,
+			e != null && e.isJsonPrimitive() && e.getAsJsonPrimitive().isNumber());
+		assertEquals(when + ": " + key + " in " + bank, expected, e.getAsInt());
 	}
 
 	/**

@@ -326,6 +326,16 @@ public interface BankPriceMovementConfig extends Config
 	 * has always handled, and the Refresh link. An inventory change between the two is not tracked - deliberately,
 	 * the user's own choice - so a row's quantity follows the next bank visit or the next Refresh and nothing else.
 	 *
+	 * <p><b>Addendum AS moved a visit's read to the CLOSE, so the sentence names the close.</b> With the bank open, a
+	 * bank event that finds the bank, the inventory or the worn gear changed since the last read is held and read
+	 * once - when the bank closes (a logout or a hop counts as a close), or when the Refresh link is clicked with it
+	 * still open - so "when you open the bank" had become the moment a change is noticed, not the one it is read.
+	 * The one sentence leaves out reads that come EARLIER than it promises: a changed bank event is still read at
+	 * once when there is no earlier read of that account and profile since the plugin started to compare it with
+	 * (the first bank of a client run, or another account's first), or when the bank is not known to be open. And
+	 * it leaves out one gap: a close with nothing held reads nothing, so a gear swap made inside a visit that changed
+	 * nothing else waits for Refresh or the next visit - Y2's gap between two moments, not a new one.
+	 *
 	 * <p>An item held in two places is ONE row with the quantities summed, and its tooltip names the split
 	 * ("3 in bank, 1 in inventory, 1 worn"); the card's hover says the total includes them (Y3). Off, every figure
 	 * is the bank alone - byte for byte the addendum X sidebar.
@@ -335,7 +345,7 @@ public interface BankPriceMovementConfig extends Config
 		keyName = "countInventory",
 		name = "Include inventory and worn gear",
 		description = "Items in your inventory and worn gear count in the bank value and are listed with the bank's"
-			+ " stacks. They are read when you open the bank or press Refresh."
+			+ " stacks. They are read when you close the bank or press Refresh."
 	)
 	default boolean countInventory()
 	{

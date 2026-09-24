@@ -1,5 +1,8 @@
 package com.bankpricemovement;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.AppenderBase;
 import com.google.gson.Gson;
 import com.google.inject.Guice;
 import java.io.File;
@@ -14,10 +17,12 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Random;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
@@ -33,11 +38,18 @@ import javax.swing.SwingUtilities;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.Item;
+import net.runelite.api.ItemComposition;
 import net.runelite.api.ItemContainer;
 import net.runelite.api.WorldType;
 import net.runelite.api.events.GameStateChanged;
+import net.runelite.api.events.GameTick;
 import net.runelite.api.events.ItemContainerChanged;
+import net.runelite.api.events.WidgetClosed;
+import net.runelite.api.events.WidgetLoaded;
+import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.gameval.InventoryID;
+import net.runelite.api.widgets.Widget;
+import net.runelite.api.widgets.WidgetModalMode;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.config.RuneScapeProfileType;
@@ -55,8 +67,13 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
+import org.mockito.invocation.Invocation;
+import org.slf4j.LoggerFactory;
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
@@ -67,15 +84,19 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.AdditionalMatchers.aryEq;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockingDetails;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -669,7 +690,11 @@ public class BankPriceMovementWiringTest
 	public void theFieldsTheGameThreadsReadAreVolatile() throws Exception
 	{
 		for (String name : new String[]{"store", "guide", "traded", "bankReader", "service", "panel", "accountHash",
-			"profileType", "sentLoggedIn", "sentHash", "sentProfile", "prefsWriter", "lastBank"})
+			"profileType", "sentLoggedIn", "sentHash", "sentProfile", "prefsWriter", "lastBank",
+			// Addendum AS: the hold is written and read on the client thread and reset on the EDT by startUp and
+			// shutDown, on an instance RuneLite reuses across a disable/enable.
+			"bankOpen", "bankPending", "heldItems", "heldHash", "heldProfile", "heldInventory", "heldWorn",
+			"heldEvents", "bankReads", "lastFingerprint", "lastFingerprintHash", "lastFingerprintProfile"})
 		{
 			final Field f = BankPriceMovementPlugin.class.getDeclaredField(name);
 			assertTrue(name + " is written on the EDT and read on another thread: it must be volatile",
@@ -682,6 +707,14 @@ public class BankPriceMovementWiringTest
 	/**
 	 * C38: only container 95 is the bank. The id is {@code gameval InventoryID.BANK} (clone
 	 * InventoryID.java:102) and the inventory (93) shares its shape, so a gate on the id is the whole guard.
+	 *
+	 * <p>The inventory and worn events carry slots the bank read never saw, and since addendum AS they have to: an
+	 * event whose slots add up to the last read's is SKIPPED by the fingerprint whichever container sent it, so a
+	 * non-bank event carrying the bank's own slots - as this test's did until the AS proof wave - passes here with the
+	 * gate deleted. Planted bug this catches, traced by hand through the handler: {@code !BankReader.isBank(event)}
+	 * removed from the first guard. The inventory event then reaches the fingerprint as a bank of one 28-shark stack,
+	 * which is a one-slot change from the whip that was read, so it is read and published - a second {@code read} and
+	 * a second {@code setBank}, failing "must never reach the reader".
 	 */
 	@Test
 	public void onlyTheBankContainerReachesTheService() throws Exception
@@ -708,8 +741,16 @@ public class BankPriceMovementWiringTest
 		verify(reader).read(eq(items), eq(77L), eq(RuneScapeProfileType.STANDARD.name()), anyLong());
 		verify(service).setBank(snapshot);
 
-		// The inventory changes on every pickup: it must never reach the reader.
-		plugin.onItemContainerChanged(new ItemContainerChanged(93, container));
+		// The inventory changes on every pickup and the worn gear on every swap: neither may reach the reader. Their
+		// slots differ from the bank that was read, so only the id gate - never the fingerprint - can keep them out.
+		final ItemContainer inventory = mock(ItemContainer.class);
+		when(inventory.getItems()).thenReturn(new Item[]{new Item(385, 28)});
+		final ItemContainer worn = mock(ItemContainer.class);
+		when(worn.getItems()).thenReturn(new Item[]{new Item(1127, 1), new Item(1215, 1)});
+		plugin.onItemContainerChanged(new ItemContainerChanged(InventoryID.INV, inventory));
+		plugin.onItemContainerChanged(new ItemContainerChanged(InventoryID.WORN, worn));
+		assertEquals("the inventory and the worn gear must never reach the reader", 1,
+			calls(reader, "read").size());
 		verify(service).setBank(any());
 
 		// And a container with nothing behind it is not a crash.
@@ -2209,6 +2250,1949 @@ public class BankPriceMovementWiringTest
 		}
 		assertEquals("PriceService must hold exactly one Runnable field, the carried reader", 1, fields);
 		return found;
+	}
+
+	// ------------------------------------------- addendum AS: the bank hold (plan AS, section 7.3)
+
+	/** The account every hold test plays as, and a second one for the test that needs somebody else. */
+	private static final long ACCOUNT = 77L;
+	private static final long OTHER_ACCOUNT = 88L;
+	private static final String STANDARD = RuneScapeProfileType.STANDARD.name();
+
+	private static final Item WHIP = new Item(4151, 1);
+	private static final Item SHARKS = new Item(385, 200);
+	private static final Item COINS = new Item(995, 1_000_000);
+
+	/** The bank as a hold test opens it, and the same bank after 28 sharks were withdrawn. */
+	private static Item[] bank()
+	{
+		return new Item[]{WHIP, SHARKS, COINS};
+	}
+
+	private static Item[] withdrew28Sharks()
+	{
+		return new Item[]{WHIP, new Item(385, 172), COINS};
+	}
+
+	/**
+	 * Plan AS 7.3: an unchanged bank event costs a sum and never a read. The first bank of the run is read (there is
+	 * nothing to compare it with); the same slots again - in a NEW array, which is what the client hands every event,
+	 * and then REARRANGED, a stack dragged into another tab - are skipped, because BankReader reads both to the
+	 * identical snapshot; one quantity moving is a change, and with the bank not known to be open it is read at once,
+	 * exactly as every event was before the hold.
+	 *
+	 * <p>Planted bugs this catches: no fingerprint check (the second and third events read - fails "an unchanged
+	 * bank costs a sum"); a fingerprint that sees the ORDER (the rearranged event reads - same assertion); a
+	 * fingerprint blind to the quantity (the last event is skipped - fails at 2).
+	 */
+	@Test
+	public void anUnchangedBankIsNeverReadAgain() throws Exception
+	{
+		final BankRig r = new BankRig();
+		r.bankEvent(bank());
+		assertEquals("the first bank of the run has nothing to be compared with, so it is read", 1, r.reads());
+
+		r.bankEvent(new Item(4151, 1), new Item(385, 200), new Item(995, 1_000_000));
+		r.bankEvent(COINS, WHIP, SHARKS);
+		assertEquals("an unchanged bank costs a sum, never a read - in any order", 1, r.reads());
+		verify(r.service, times(1)).setBank(any(BankSnapshot.class));
+
+		r.bankEvent(WHIP, new Item(385, 199), COINS);
+		assertEquals("one shark withdrawn is a change, read at once while the bank is not known to be open",
+			2, r.reads());
+		verify(r.service, times(2)).setBank(any(BankSnapshot.class));
+	}
+
+	/**
+	 * Plan AS 7.4: the fingerprint covers the THREE containers a read folds in. The same bank beside a changed
+	 * inventory, or changed worn gear, is a change of what the sidebar shows ("Include inventory and worn gear" counts
+	 * both), so it is read exactly as the pre-AS handler read every bank event - with the carried half as the client
+	 * holds it; the same three containers again are skipped, the inventory's slots rearranged included (BankReader
+	 * folds them by id, so the read would be identical). Played with the bank not known to be open, so every change is
+	 * read at once.
+	 *
+	 * <p>Planted bugs this catches: a fingerprint of the bank alone, as before the proof wave (the eaten sharks are
+	 * skipped - fails at 2); one that leaves out the worn gear, or compares only some of the three sums (the fired
+	 * arrows are skipped - fails at 3); a read stamped with a different fingerprint from the one events are compared
+	 * with (the unchanged trio is read - fails "skipped"); an order-sensitive sum (the rearranged inventory is read -
+	 * the same).
+	 */
+	@Test
+	public void aChangedInventoryOrWornGearBesideAnUnchangedBankIsRead() throws Exception
+	{
+		final BankRig r = new BankRig();
+		final Item[] inventory = {new Item(385, 20), new Item(-1, 0), new Item(2434, 4)};
+		final Item[] worn = {new Item(1127, 1), new Item(892, 500)};
+		r.carrying(inventory, worn);
+		r.bankEvent(bank());
+		assertEquals(1, r.reads());
+
+		r.carrying(new Item[]{new Item(2434, 4), new Item(385, 20), new Item(-1, 0)}, worn.clone());
+		r.bankEvent(bank());
+		assertEquals("an unchanged trio - the inventory only rearranged - is skipped", 1, r.reads());
+
+		// Eight sharks eaten between two visits: the bank is the same, the inventory is not.
+		final Item[] ate = {new Item(385, 12), new Item(-1, 0), new Item(2434, 4)};
+		r.carrying(ate, worn);
+		r.bankEvent(bank());
+		assertEquals("the same bank beside a changed inventory is read", 2, r.reads());
+		assertArrayEquals("with the inventory as the client holds it", ate, r.carriedReads().get(1)[0]);
+
+		// Twenty rune arrows fired from the quiver slot: only the worn gear moved.
+		final Item[] fired = {new Item(1127, 1), new Item(892, 480)};
+		r.carrying(ate, fired);
+		r.bankEvent(bank());
+		assertEquals("the same bank and inventory beside changed worn gear are read", 3, r.reads());
+		assertArrayEquals("with the worn gear as the client holds it", fired, r.carriedReads().get(2)[1]);
+
+		// And the trio that was read is the one compared with from here on.
+		r.bankEvent(bank());
+		assertEquals(3, r.reads());
+		verify(r.service, times(3)).setBank(any(BankSnapshot.class));
+	}
+
+	/**
+	 * The case the proof wave found, played as a player plays it: a bank visit, then gear swapped away from the bank -
+	 * the dragon dagger wielded in the whip's place, which moves two items between the inventory and the worn gear and
+	 * changes nothing in the bank - then the next visit. Its first delivery brings back the same bank, and before the
+	 * fix it was skipped, leaving the carried figure stale until a Refresh. Now it is a change: with the bank open it
+	 * is held (the glow lights) and read once at the close, carried half and all.
+	 *
+	 * <p>Planted bugs this catches: a fingerprint of the bank alone (nothing is held and the close reads nothing -
+	 * fails "held"); ONE sum over the three containers' slots together (the swap moves the same two slots from one
+	 * container to the other, and such a sum does not move by a bit - fails "held" the same way).
+	 */
+	@Test
+	public void gearSwappedBetweenTwoVisitsIsHeldAndReadAtTheClose() throws Exception
+	{
+		final BankRig r = new BankRig();
+		r.carrying(new Item[]{new Item(1215, 1), new Item(-1, 0)}, new Item[]{new Item(1127, 1), new Item(4151, 1)});
+		r.openBank();
+		r.bankEvent(bank());
+		r.closeBank(true);
+		assertEquals("the first visit is read, and closed with nothing held", 1, r.reads());
+
+		final Item[] inventoryNow = {new Item(4151, 1), new Item(-1, 0)};
+		final Item[] wornNow = {new Item(1127, 1), new Item(1215, 1)};
+		r.carrying(inventoryNow, wornNow);
+
+		r.openBank();
+		r.bankEvent(bank());
+		assertTrue("the swapped gear is a change: held, and the glow lit", r.isPending());
+		assertEquals("...not read in front of the player", 1, r.reads());
+
+		r.liveBank(bank());
+		r.closeBank(true);
+		assertEquals("read once at the close", 2, r.reads());
+		assertArrayEquals(inventoryNow, r.carriedReads().get(1)[0]);
+		assertArrayEquals(wornNow, r.carriedReads().get(1)[1]);
+	}
+
+	/**
+	 * The one publish that is not a read - the carried re-read of a price Refresh (addendum Y) - moves the
+	 * fingerprint's carried half to what it published, and keeps its bank sum. Two directions, one rig each:
+	 * <ol>
+	 * <li>The miss: the whip wielded, "Refresh prices now" pressed (the sidebar now shows the whip worn), the whip
+	 * unwielded again before the next visit. That visit's containers are exactly what the READ saw - and not what the
+	 * sidebar shows - so the event must be read.</li>
+	 * <li>The exactness: a bank event that brings back exactly what the Refresh published is NOT read - the carried
+	 * half was re-stamped, not forgotten, and the bank sum was kept.</li>
+	 * </ol>
+	 *
+	 * <p>Planted bugs this catches: no re-stamp (1 is skipped - fails "the trio the sidebar does not show is read");
+	 * the fingerprint forgotten instead of re-stamped, or re-stamped without its bank sum (2 is read - fails "not read
+	 * again").
+	 */
+	@Test
+	public void aRefreshMovesTheFingerprintWithTheCarriedHalfItPublishes() throws Exception
+	{
+		final Item[] inventoryAtRead = {new Item(4151, 1), new Item(385, 20)};
+		final Item[] wornAtRead = {new Item(1127, 1), new Item(-1, 0)};
+		final Item[] inventoryWielding = {new Item(-1, 0), new Item(385, 20)};
+		final Item[] wornWielding = {new Item(1127, 1), new Item(4151, 1)};
+
+		final BankRig miss = new BankRig();
+		miss.answerCarriedReads();
+		miss.carrying(inventoryAtRead, wornAtRead);
+		miss.bankEvent(bank());
+		miss.carrying(inventoryWielding, wornWielding);
+		miss.plugin.readCarriedOnClientThread();
+		verify(miss.service, times(2)).setBank(any(BankSnapshot.class));
+		miss.carrying(inventoryAtRead.clone(), wornAtRead.clone());
+		miss.bankEvent(bank());
+		assertEquals("the trio the sidebar does not show is read", 2, miss.reads());
+
+		final BankRig exact = new BankRig();
+		exact.answerCarriedReads();
+		exact.carrying(inventoryAtRead, wornAtRead);
+		exact.bankEvent(bank());
+		exact.carrying(inventoryWielding, wornWielding);
+		exact.plugin.readCarriedOnClientThread();
+		exact.bankEvent(bank());
+		assertEquals("what the Refresh published is not read again", 1, exact.reads());
+		// ...and the bank sum it kept still sees the bank change.
+		exact.bankEvent(withdrew28Sharks());
+		assertEquals(2, exact.reads());
+	}
+
+	/**
+	 * The re-stamp's guard: a fingerprint belongs to one account, and a Refresh under ANOTHER account republishes that
+	 * account's bank - so it leaves the fingerprint alone. Played through the one sequence where it matters: the first
+	 * account reads, the second logs in and presses Refresh carrying something else, and the first comes back carrying
+	 * exactly what the second did at that Refresh. Its event must be compared with ITS OWN last read, which it differs
+	 * from, and so be read.
+	 *
+	 * <p>Planted bug this catches: a re-stamp that does not check the account (the first account's fingerprint takes
+	 * the second's carried half, and the first account's changed inventory is skipped - fails "compared with its own
+	 * read"). The profile half of the same guard is its twin's:
+	 * {@link #aRefreshUnderAnotherProfileLeavesTheFingerprintAlone()}.
+	 */
+	@Test
+	public void aRefreshUnderAnotherAccountLeavesTheFingerprintAlone() throws Exception
+	{
+		final BankRig r = new BankRig();
+		r.answerCarriedReads();
+		r.carrying(new Item[]{new Item(385, 20)}, new Item[]{new Item(1127, 1)});
+		r.bankEvent(bank());
+		assertEquals(1, r.reads());
+
+		r.endSessionAndLogIn(GameState.LOGIN_SCREEN, OTHER_ACCOUNT);
+		when(r.service.bank()).thenReturn(new BankSnapshot(Collections.emptyList(), 1_000L, OTHER_ACCOUNT, STANDARD,
+			0L));
+		final Item[] theirInventory = {new Item(2434, 4)};
+		final Item[] theirWorn = {new Item(4151, 1)};
+		r.carrying(theirInventory, theirWorn);
+		r.plugin.readCarriedOnClientThread();
+		verify(r.service, times(2)).setBank(any(BankSnapshot.class));
+
+		r.endSessionAndLogIn(GameState.LOGIN_SCREEN, ACCOUNT);
+		r.carrying(theirInventory.clone(), theirWorn.clone());
+		r.bankEvent(bank());
+		assertEquals("the first account's event is compared with its own read, which it differs from", 2, r.reads());
+		assertEquals(ACCOUNT, (long) r.readHashes().get(1));
+	}
+
+	/**
+	 * The other half of the re-stamp's guard, which its twin
+	 * ({@link #aRefreshUnderAnotherAccountLeavesTheFingerprintAlone()}) cannot see because it changes only the ACCOUNT:
+	 * a fingerprint belongs to one account AND one RuneScape profile, and the same account on a Deadman world has a
+	 * bank of its own - its own saved file, its own snapshot in the service. A Refresh there republishes THAT bank, so
+	 * it leaves the standard profile's fingerprint alone. Played through the one sequence where it matters: the
+	 * standard profile reads, the same account hops to a Deadman world and presses Refresh carrying something else,
+	 * then hops back carrying exactly what it did at that Refresh. The standard profile's event must be compared with
+	 * ITS OWN last read, which it differs from, and so be read.
+	 *
+	 * <p>The Refresh is proved to reach the guard: it publishes (the second {@code setBank}), and what it publishes is
+	 * the Deadman bank - so the guard, not an earlier refusal, is what keeps the fingerprint.
+	 *
+	 * <p>Planted bug this catches: a re-stamp that checks the account and not the profile (the standard profile's
+	 * fingerprint takes the Deadman carried half, and its changed inventory is skipped - fails "compared with its own
+	 * read").
+	 */
+	@Test
+	public void aRefreshUnderAnotherProfileLeavesTheFingerprintAlone() throws Exception
+	{
+		final BankRig r = new BankRig();
+		r.answerCarriedReads();
+		r.carrying(new Item[]{new Item(385, 20)}, new Item[]{new Item(1127, 1)});
+		r.bankEvent(bank());
+		assertEquals(1, r.reads());
+
+		// The same account hops to a Deadman world: another profile, with its own bank loaded from disk.
+		when(r.client.getWorldType()).thenReturn(EnumSet.of(WorldType.DEADMAN));
+		final String deadman = RuneScapeProfileType.getCurrent(r.client).name();
+		assertNotEquals("the test needs a profile other than the standard one", STANDARD, deadman);
+		r.endSessionAndLogIn(GameState.HOPPING, ACCOUNT);
+		when(r.service.bank()).thenReturn(new BankSnapshot(Collections.emptyList(), 1_000L, ACCOUNT, deadman, 0L));
+		final Item[] deadmanInventory = {new Item(2434, 4)};
+		final Item[] deadmanWorn = {new Item(4151, 1)};
+		r.carrying(deadmanInventory, deadmanWorn);
+		r.plugin.readCarriedOnClientThread();
+		final ArgumentCaptor<BankSnapshot> published = ArgumentCaptor.forClass(BankSnapshot.class);
+		verify(r.service, times(2)).setBank(published.capture());
+		assertEquals("the Refresh republished the Deadman bank", deadman, published.getValue().profileType);
+		assertEquals(ACCOUNT, published.getValue().accountHash);
+
+		// Back to a standard world, carrying exactly what the Deadman profile carried at that Refresh.
+		when(r.client.getWorldType()).thenReturn(EnumSet.noneOf(WorldType.class));
+		r.endSessionAndLogIn(GameState.HOPPING, ACCOUNT);
+		r.carrying(deadmanInventory.clone(), deadmanWorn.clone());
+		r.bankEvent(bank());
+		assertEquals("the standard profile's event is compared with its own read, which it differs from", 2,
+			r.reads());
+		verify(r.reader, times(2)).read(any(), eq(ACCOUNT), eq(STANDARD), anyLong());
+	}
+
+	/**
+	 * Plan AS 7.3, the hold itself. The bank opens ({@code WidgetLoaded} first - the order the plan could not settle,
+	 * and the one that tests the most); its first delivery of the run is READ, because there is no last read for it
+	 * to differ from; an unchanged delivery lights nothing; the first change sets pending ONCE and is held; the
+	 * second and third are held too - {@code heldEvents} counting 1, 2, 3 - and not one of them is read.
+	 *
+	 * <p>And the panel hears every step ON THE EDT, with the four values of one moment: {@code (open, pending,
+	 * heldEvents, reads)}. Planted bugs this catches: a hold that ignored {@code bankOpen} (the three changes are
+	 * read - fails "three changes, one read"); a pending set on every event (pending turns on more than once - fails
+	 * "pending turns on once"); {@code heldEvents} not counting (the notices differ); {@code setBankHold} called
+	 * straight from the client thread instead of through {@code invokeLater} (the notices' EDT flag is false).
+	 */
+	@Test
+	public void aChangeWithTheBankOpenIsHeldCountedAndNotRead() throws Exception
+	{
+		final BankRig r = new BankRig();
+		r.openBank();
+		r.bankEvent(bank());
+		assertEquals("the bank's first delivery of the run is read even with the bank open", 1, r.reads());
+		assertFalse(r.isPending());
+
+		r.bankEvent(COINS, SHARKS, WHIP);
+		assertFalse("an unchanged bank never lights the glow", r.isPending());
+
+		r.bankEvent(withdrew28Sharks());
+		assertTrue("a change with the bank open is pending", r.isPending());
+		r.bankEvent(WHIP, new Item(385, 144), COINS);
+		r.bankEvent(new Item(385, 144), COINS);
+		assertEquals("three changes, one read", 1, r.reads());
+		assertEquals(3, r.heldEvents());
+		verify(r.service, times(1)).setBank(any(BankSnapshot.class));
+
+		assertEquals(Arrays.asList(
+			notice(true, false, 0, 0),
+			notice(true, false, 0, 1),
+			notice(true, true, 1, 1),
+			notice(true, true, 2, 1),
+			notice(true, true, 3, 1)), r.notices());
+		assertEquals("pending turns on once", 1, r.pendingTurnedOn());
+	}
+
+	/**
+	 * Plan AS 7.3: the close reads the held change EXACTLY ONCE - from the client's own bank container, which is the
+	 * freshest there is - clears pending, and tells the panel (open false, pending false). The carried half is the
+	 * client's too, as it stands at the close, because the client can still say who is playing. A second close has
+	 * nothing to read.
+	 *
+	 * <p>Planted bugs this catches: a close that does not read (fails at 2); one that reads twice (fails at 2 on the
+	 * second close); one that reads the held slots although the client has the container (the read's slots are
+	 * wrong); pending left set (fails the notice); the carried half taken from the copies held at the last event
+	 * rather than the client (the carried read is wrong).
+	 */
+	@Test
+	public void theCloseReadsTheHeldChangeExactlyOnceFromTheClientsContainer() throws Exception
+	{
+		final BankRig r = new BankRig();
+		r.carrying(new Item[]{new Item(2434, 4)}, new Item[]{new Item(1127, 1)});
+		r.openBank();
+		r.bankEvent(bank());
+		r.bankEvent(withdrew28Sharks());
+		r.bankEvent(WHIP, new Item(385, 144), COINS);
+		assertTrue(r.isPending());
+
+		final Item[] closing = {WHIP, new Item(385, 116), COINS};
+		final Item[] inventoryAtClose = {new Item(385, 84)};
+		final Item[] wornAtClose = {new Item(1127, 1), new Item(4151, 1)};
+		r.liveBank(closing);
+		r.carrying(inventoryAtClose, wornAtClose);
+		r.closeBank(true);
+
+		assertEquals("the close is ONE read", 2, r.reads());
+		assertArrayEquals("read from the client's own container", closing, r.readSlots().get(1));
+		assertEquals(ACCOUNT, (long) r.readHashes().get(1));
+		assertArrayEquals("the carried half as the client holds it at the close", inventoryAtClose,
+			r.carriedReads().get(1)[0]);
+		assertArrayEquals(wornAtClose, r.carriedReads().get(1)[1]);
+		assertFalse(r.isOpen());
+		assertFalse(r.isPending());
+		assertNull("nothing is held after the read", field(r.plugin, "heldItems"));
+		final List<String> notices = r.notices();
+		assertEquals(notice(false, false, 2, 2), notices.get(notices.size() - 1));
+
+		r.closeBank(true);
+		assertEquals("a second close has nothing to read", 2, r.reads());
+	}
+
+	/**
+	 * Plan AS 7.2 (b), handled defensively: if the client has already let the bank container go when the close
+	 * arrives, the one read falls back to the slots HELD at the last bank event - under the account and profile they
+	 * arrived with. And the held slots are a COPY: the array a later event (or the client) scribbles on after the
+	 * event must not reach the read.
+	 *
+	 * <p>The carried half is the other half of the question, and the test is built so it can tell the two sources
+	 * apart: the player carries one thing at the last bank event (the copies the hold keeps) and another by the close
+	 * (what the client holds). The client still vouches for this player, so the carried half is asked of IT - the
+	 * held copies are the logout's fallback, where the client can vouch for nobody
+	 * ({@link #aLogoutOrAHopWithAChangeHeldReadsItUnderTheAccountItArrivedWith()} pins that side).
+	 *
+	 * <p>Planted bugs this catches: no fallback (nothing is read - fails at 2); a hold of the client's array by
+	 * reference (the read sees the scribbled slot - the slots differ); the fallback reading the first read's slots
+	 * instead of the last event's (the slots differ); the carried half taken from the held copies although the client
+	 * vouches for the player (the carried read is the event's - fails "as the client holds it at the close").
+	 */
+	@Test
+	public void aCloseWithTheContainerGoneReadsTheSlotsHeldAtTheLastEvent() throws Exception
+	{
+		final BankRig r = new BankRig();
+		final Item[] inventoryAtEvent = {new Item(385, 28), new Item(1215, 1)};
+		final Item[] wornAtEvent = {new Item(1127, 1), new Item(-1, 0)};
+		r.carrying(inventoryAtEvent, wornAtEvent);
+		r.openBank();
+		r.bankEvent(bank());
+		final Item[] lastEvent = withdrew28Sharks();
+		r.bankEvent(lastEvent);
+		final Item[] asHeld = lastEvent.clone();
+		// The client reuses or rewrites the array after the event: the hold must not see it.
+		lastEvent[1] = new Item(385, 1);
+
+		// By the close the player has eaten a shark and wielded the dragon dagger: the client's containers differ from
+		// the copies held at the last event.
+		final Item[] inventoryAtClose = {new Item(385, 27), new Item(-1, 0)};
+		final Item[] wornAtClose = {new Item(1127, 1), new Item(1215, 1)};
+		r.carrying(inventoryAtClose, wornAtClose);
+		r.liveBank(null);
+		r.closeBank(true);
+
+		assertEquals(2, r.reads());
+		assertArrayEquals("the close read the slots held at the last event, as they were", asHeld,
+			r.readSlots().get(1));
+		assertEquals(ACCOUNT, (long) r.readHashes().get(1));
+		verify(r.reader, times(2)).read(any(), eq(ACCOUNT), eq(STANDARD), anyLong());
+		assertArrayEquals("the inventory as the client holds it at the close, not as held at the event",
+			inventoryAtClose, r.carriedReads().get(1)[0]);
+		assertArrayEquals("and the worn gear likewise", wornAtClose, r.carriedReads().get(1)[1]);
+		assertFalse(r.isPending());
+	}
+
+	/**
+	 * The bank-open twins of {@link #onlyTheBankContainerReachesTheService()} and
+	 * {@link #aContainerIsNeverCapturedWhileTheClientCannotSayWhoIsPlaying()}: while a change is held, the inventory
+	 * and the worn gear (which change on every deposit) are neither held nor counted, a bank event with no container is
+	 * not a crash, and a bank event the client cannot put a player to - the login screen, an account of -1 - is
+	 * neither held nor read. A known player's next bank event is held as usual.
+	 *
+	 * <p>Planted bugs this catches: a hold that took any container (the inventory event counts - fails at 1); the two
+	 * guards moved after the hold (the unidentified events count - fails at 1).
+	 */
+	@Test
+	public void withTheBankOpenOnlyAKnownPlayersBankIsHeld() throws Exception
+	{
+		final BankRig r = new BankRig();
+		r.openBank();
+		r.bankEvent(bank());
+		r.bankEvent(withdrew28Sharks());
+		assertEquals(1, r.heldEvents());
+
+		r.plugin.onItemContainerChanged(new ItemContainerChanged(InventoryID.INV,
+			BankRig.container(new Item[]{new Item(385, 28)})));
+		r.plugin.onItemContainerChanged(new ItemContainerChanged(InventoryID.WORN,
+			BankRig.container(new Item[]{new Item(1127, 1)})));
+		r.plugin.onItemContainerChanged(new ItemContainerChanged(BankReader.BANK_CONTAINER_ID, null));
+		assertEquals("only a bank event with a container is held", 1, r.heldEvents());
+
+		when(r.client.getGameState()).thenReturn(GameState.LOGIN_SCREEN);
+		r.bankEvent(bank());
+		when(r.client.getGameState()).thenReturn(GameState.LOGGED_IN);
+		when(r.client.getAccountHash()).thenReturn(-1L);
+		r.bankEvent(bank());
+		assertEquals("nobody the client can name: neither held nor read", 1, r.heldEvents());
+		assertEquals(1, r.reads());
+
+		when(r.client.getAccountHash()).thenReturn(ACCOUNT);
+		r.bankEvent(bank());
+		assertEquals(2, r.heldEvents());
+		assertEquals(1, r.reads());
+	}
+
+	/**
+	 * Plan AS 7.3: {@code WidgetClosed} with {@code isUnload()} false is the interface being reloaded at once, not
+	 * closed - the check core's Bank Tags makes. The held change stays held and the bank stays open until the real
+	 * close.
+	 *
+	 * <p>Planted bug this catches: a close that ignores {@code isUnload()} (the unload=false event reads and drops the
+	 * hold - fails "not a close").
+	 */
+	@Test
+	public void aCloseToBeReloadedAtOnceIsNotAClose() throws Exception
+	{
+		final BankRig r = new BankRig();
+		r.openBank();
+		r.bankEvent(bank());
+		r.bankEvent(withdrew28Sharks());
+		r.liveBank(withdrew28Sharks());
+
+		r.closeBank(false);
+		assertEquals("not a close: nothing read", 1, r.reads());
+		assertTrue(r.isOpen());
+		assertTrue(r.isPending());
+
+		r.closeBank(true);
+		assertEquals(2, r.reads());
+		assertFalse(r.isPending());
+	}
+
+	/**
+	 * Plan AS 7.3: {@code LOGIN_SCREEN} and {@code HOPPING} end the session, and nothing promises a
+	 * {@code WidgetClosed} on the way out - so a held change is read THERE, from the slots held at the last bank event,
+	 * under the account they arrived with, BEFORE {@code lastBank} is dropped and before the service is told nobody is
+	 * logged in. At
+	 * that moment the client can no longer say who is playing (-1) and has let every container go, so the carried
+	 * half is the copies held beside the bank, not an empty read that would save the bank without the player's
+	 * outfit.
+	 *
+	 * <p>Planted bugs this catches, each for both states: no flush (fails at 2); a flush that asks the client for the
+	 * account or the bank (it answers -1 and null - nothing, or the wrong hash, is read); the flush after
+	 * {@code lastBank = null} (lastBank is left set - fails "dropped after"); after {@code setLoggedIn(false)} (fails
+	 * the order); the carried half read from the client (null) instead of the held copies (the carried read differs);
+	 * the hold not cleared (pending stays set); the fingerprint forgotten at the end of the session, or stamped over
+	 * anything but the three arrays the flush read (the same containers at the next login are read again - fails "not
+	 * read again after the login"). Because this client answers null for every container, a flush that merely ASKS for
+	 * the bank falls back to the held slots and passes here; the gate that keeps it from asking at all is pinned by
+	 * {@link #aLogoutOrAHopReadsTheHeldSlotsNotTheBankTheClientStillHolds()}, whose client still has one.
+	 */
+	@Test
+	public void aLogoutOrAHopWithAChangeHeldReadsItUnderTheAccountItArrivedWith() throws Exception
+	{
+		for (GameState end : new GameState[]{GameState.LOGIN_SCREEN, GameState.HOPPING})
+		{
+			final BankRig r = new BankRig();
+			r.carrying(new Item[]{new Item(385, 12)}, new Item[]{new Item(1127, 1)});
+			r.openBank();
+			r.bankEvent(bank());
+			// What the player carries as the change arrives - the copies the flush must use.
+			final Item[] inventoryAtEvent = {new Item(385, 40)};
+			final Item[] wornAtEvent = {new Item(1127, 1), new Item(4151, 1)};
+			r.carrying(inventoryAtEvent, wornAtEvent);
+			final Item[] lastEvent = withdrew28Sharks();
+			r.bankEvent(lastEvent);
+			assertTrue(end + ": pending", r.isPending());
+
+			// The session ends: the client can no longer say who is playing, and every container is gone.
+			when(r.client.getGameState()).thenReturn(end);
+			when(r.client.getAccountHash()).thenReturn(-1L);
+			when(r.client.getItemContainer(anyInt())).thenReturn(null);
+			r.plugin.onGameStateChanged(gameState(end));
+
+			assertEquals(end + ": the held change is read once", 2, r.reads());
+			assertArrayEquals(end + ": the slots held at the last event", lastEvent, r.readSlots().get(1));
+			assertEquals(end + ": under the account they arrived with", ACCOUNT, (long) r.readHashes().get(1));
+			verify(r.reader, times(2)).read(any(), eq(ACCOUNT), eq(STANDARD), anyLong());
+			assertArrayEquals(end + ": the inventory as it was at that event", inventoryAtEvent,
+				r.carriedReads().get(1)[0]);
+			assertArrayEquals(end + ": and the worn gear", wornAtEvent, r.carriedReads().get(1)[1]);
+
+			final InOrder order = inOrder(r.service);
+			order.verify(r.service, times(2)).setBank(any(BankSnapshot.class));
+			order.verify(r.service).setLoggedIn(false, 0L, "");
+			assertNull(end + ": lastBank is dropped AFTER the flush", field(r.plugin, "lastBank"));
+			assertEquals(0L, (long) field(r.plugin, "accountHash"));
+			assertFalse(r.isOpen());
+			assertFalse(r.isPending());
+			assertNull(field(r.plugin, "heldItems"));
+			final List<String> notices = r.notices();
+			assertEquals(notice(false, false, 1, 2), notices.get(notices.size() - 1));
+
+			// A second end with nothing held reads nothing.
+			r.plugin.onGameStateChanged(gameState(end));
+			assertEquals(2, r.reads());
+
+			// Plan AS 7.4: the flush is a read like any other, and its fingerprint outlives the session under the
+			// account it was stamped with - carried half from the held copies included - so the same three containers
+			// at the next login are compared, not read again.
+			when(r.client.getGameState()).thenReturn(GameState.LOGGED_IN);
+			when(r.client.getAccountHash()).thenReturn(ACCOUNT);
+			r.carrying(inventoryAtEvent, wornAtEvent);
+			r.plugin.onGameStateChanged(gameState(GameState.LOGGED_IN));
+			r.bankEvent(withdrew28Sharks());
+			assertEquals(end + ": the flushed bank, carried half and all, is not read again after the login", 2,
+				r.reads());
+		}
+	}
+
+	/**
+	 * The gate of the logout read, which its twin
+	 * ({@link #aLogoutOrAHopWithAChangeHeldReadsItUnderTheAccountItArrivedWith()}) cannot see: there the client answers
+	 * null for every container, so a flush that asked it for the bank would get nothing and fall back to the held slots
+	 * all the same. Here the client STILL answers for a bank at the end of the session - a different one - and for an
+	 * inventory and worn gear of its own, while it can no longer say who is playing (-1). Whatever it still holds has
+	 * no owner the plugin can name, so the flush asks it for nothing ({@code readBankOnce}: no account, no container):
+	 * the held change is read from the slots held at the last bank event, under the account and profile they arrived
+	 * with, with the carried half from the copies held beside them - and the client's bank is read under no account.
+	 *
+	 * <p>Planted bugs this catches, for both states: the gate relaxed to {@code liveHash >= 0L} (the logged-out hash of
+	 * 0 lets the flush ask the client for the bank, read the one it still answers for, and stamp that read with account
+	 * 0 - fails "the slots held at the last event", and "under the account they arrived with" after it); the account
+	 * asked of the client although it is no longer logged in ({@code rememberAccount()} without the {@code LOGGED_IN}
+	 * check: its -1 closes the gate, so the read is right and only the question shows - fails
+	 * {@code never().getAccountHash()}).
+	 */
+	@Test
+	public void aLogoutOrAHopReadsTheHeldSlotsNotTheBankTheClientStillHolds() throws Exception
+	{
+		for (GameState end : new GameState[]{GameState.LOGIN_SCREEN, GameState.HOPPING})
+		{
+			final BankRig r = new BankRig();
+			r.carrying(new Item[]{new Item(385, 12)}, new Item[]{new Item(1127, 1)});
+			r.openBank();
+			r.bankEvent(bank());
+			final Item[] inventoryAtEvent = {new Item(385, 40)};
+			final Item[] wornAtEvent = {new Item(1127, 1), new Item(4151, 1)};
+			r.carrying(inventoryAtEvent, wornAtEvent);
+			final Item[] lastEvent = withdrew28Sharks();
+			r.bankEvent(lastEvent);
+			assertTrue(end + ": pending", r.isPending());
+
+			// The session ends and the client can no longer say who is playing - yet it still answers for a bank, an
+			// inventory and worn gear, none of them what was held.
+			final Item[] clientsBank = {new Item(995, 25)};
+			when(r.client.getGameState()).thenReturn(end);
+			when(r.client.getAccountHash()).thenReturn(-1L);
+			r.liveBank(clientsBank);
+			r.carrying(new Item[]{new Item(2434, 4)}, new Item[]{new Item(1215, 1)});
+			clearInvocations(r.client);
+			r.plugin.onGameStateChanged(gameState(end));
+
+			assertEquals(end + ": the held change is read once", 2, r.reads());
+			assertArrayEquals(end + ": the slots held at the last event", lastEvent, r.readSlots().get(1));
+			assertEquals(end + ": under the account they arrived with", ACCOUNT, (long) r.readHashes().get(1));
+			verify(r.reader, times(2)).read(any(), eq(ACCOUNT), eq(STANDARD), anyLong());
+			verify(r.reader, never()).read(aryEq(clientsBank), anyLong(), anyString(), anyLong());
+			assertArrayEquals(end + ": the inventory as it was at that event", inventoryAtEvent,
+				r.carriedReads().get(1)[0]);
+			assertArrayEquals(end + ": and the worn gear", wornAtEvent, r.carriedReads().get(1)[1]);
+			verify(r.client, never()).getItemContainer(anyInt());
+			verify(r.client, never()).getAccountHash();
+			assertFalse(end + ": the hold is over", r.isPending());
+		}
+	}
+
+	/**
+	 * Plan AS 7.4: the fingerprint SURVIVES a hop and a logout, still stamped with the account it belongs to, so the
+	 * first bank open after one - the moment the bank arrives, with the player standing in front of it - is compared
+	 * rather than read and redrawn. That is safe because the service keeps its bank across both for the same account
+	 * ({@code PriceService.setLoggedIn} reloads nothing for the account its bank belongs to), so an unchanged trio
+	 * really is what the sidebar shows. Played for HOPPING and LOGIN_SCREEN, with the bank opened the way a player
+	 * opens it ({@code WidgetLoaded} first); a real change after the hop is still held and read once at the close. The
+	 * first bank of a RUN is still read once - there is no fingerprint yet - which the plan accepts.
+	 *
+	 * <p>This replaces a test that pinned the opposite (the first bank of every session read, the fingerprint
+	 * forgotten at its end). Planted bug this catches: that forgetting put back - the unchanged first delivery after
+	 * the hop is read, and redrawn mid-visit, failing "not read again".
+	 */
+	@Test
+	public void anUnchangedBankAfterAHopOrALogoutIsNotReadAgain() throws Exception
+	{
+		for (GameState end : new GameState[]{GameState.HOPPING, GameState.LOGIN_SCREEN})
+		{
+			final BankRig r = new BankRig();
+			r.carrying(new Item[]{new Item(385, 20)}, new Item[]{new Item(1127, 1)});
+			r.bankEvent(bank());
+			assertEquals(end + ": the first bank of the run is read", 1, r.reads());
+
+			r.endSessionAndLogIn(end, ACCOUNT);
+			assertEquals(end + ": nothing was held, so the end of the session read nothing", 1, r.reads());
+			r.openBank();
+			r.bankEvent(bank());
+			assertEquals(end + ": the same bank, inventory and gear are not read again", 1, r.reads());
+			assertFalse(end + ": and light nothing", r.isPending());
+
+			r.bankEvent(withdrew28Sharks());
+			assertTrue(end + ": a real change after it is held", r.isPending());
+			r.liveBank(withdrew28Sharks());
+			r.closeBank(true);
+			assertEquals(end + ": and read once at the close", 2, r.reads());
+		}
+	}
+
+	/**
+	 * F2's other half: what survives the end of a session is ONE account's fingerprint, and another account's first
+	 * bank event can never match it - not even with the two banks slot for slot the same - so it is read, with the bank
+	 * open as well (there is no read of that account to hold a change against, and the sidebar has never shown its
+	 * bank), and its read REPLACES the fingerprint: the plan's "forget it only when a bank event arrives under a
+	 * different account". Back on the first account, its first bank is therefore read again.
+	 *
+	 * <p>Planted bugs this catches: a comparison that ignores the account (the second account's identical bank is
+	 * skipped - fails at 2); another account's first delivery held because the bank is open (fails "read, not held");
+	 * a fingerprint that the other account's read does not replace, or one remembered per account (the first account's
+	 * return is skipped - fails at 3).
+	 */
+	@Test
+	public void anotherAccountsFirstBankAfterALogoutIsReadAndReplacesTheFingerprint() throws Exception
+	{
+		final BankRig r = new BankRig();
+		r.bankEvent(bank());
+		assertEquals(1, r.reads());
+
+		r.endSessionAndLogIn(GameState.LOGIN_SCREEN, OTHER_ACCOUNT);
+		r.openBank();
+		r.bankEvent(bank());
+		assertEquals("another account's identical bank is read", 2, r.reads());
+		assertEquals(OTHER_ACCOUNT, (long) r.readHashes().get(1));
+		assertFalse("read, not held", r.isPending());
+		r.closeBank(true);
+
+		r.endSessionAndLogIn(GameState.LOGIN_SCREEN, ACCOUNT);
+		r.bankEvent(bank());
+		assertEquals("the first account's bank is read again: the fingerprint is the other account's now", 3,
+			r.reads());
+		assertEquals(ACCOUNT, (long) r.readHashes().get(2));
+	}
+
+	/**
+	 * The fingerprint is a sum of SLOTS, so two players' identical banks (two empty ones, say) have the same one. The
+	 * comparison therefore names the account and the profile as well, and another account's - or another profile's -
+	 * identical bank is read, never taken for "unchanged". A defence that does not rest on every account change
+	 * passing a login screen.
+	 *
+	 * <p>Planted bug this catches: a comparison on the sum alone (the second and third events are skipped - fails at
+	 * 2 and 3).
+	 */
+	@Test
+	public void anotherAccountsIdenticalBankIsNeverTakenForUnchanged() throws Exception
+	{
+		final BankRig r = new BankRig();
+		r.bankEvent(bank());
+
+		when(r.client.getAccountHash()).thenReturn(OTHER_ACCOUNT);
+		r.bankEvent(bank());
+		assertEquals("another account's identical bank is read", 2, r.reads());
+		assertEquals(OTHER_ACCOUNT, (long) r.readHashes().get(1));
+
+		when(r.client.getWorldType()).thenReturn(EnumSet.of(WorldType.DEADMAN));
+		final String otherProfile = RuneScapeProfileType.getCurrent(r.client).name();
+		assertNotEquals("the test needs a profile other than the standard one", STANDARD, otherProfile);
+		r.bankEvent(bank());
+		assertEquals("and so is the same account's identical bank under another profile", 3, r.reads());
+	}
+
+	/**
+	 * While a change is held, EVERY bank event replaces the held slots - even one that puts the bank back exactly as it
+	 * was last read. The held slots are what a close with no container reads, so an older held bank must never
+	 * outlive a newer event.
+	 *
+	 * <p>Planted bug this catches: the "unchanged, skip" test run before the "already holding" one (the event that
+	 * restores the bank is dropped, the close reads the stale change - the slots differ).
+	 */
+	@Test
+	public void anEventThatPutsTheBankBackStillReplacesTheHeldSlots() throws Exception
+	{
+		final BankRig r = new BankRig();
+		r.openBank();
+		r.bankEvent(bank());
+		r.bankEvent(withdrew28Sharks());
+		r.bankEvent(bank());
+		assertEquals("both events were held", 2, r.heldEvents());
+		assertTrue(r.isPending());
+
+		r.liveBank(null);
+		r.closeBank(true);
+		assertArrayEquals("the close read the LATEST held slots", bank(), r.readSlots().get(1));
+	}
+
+	/**
+	 * Plan AS 7.2 (a), handled defensively: that a {@code WidgetClosed} arrives for every way a bank can close is not
+	 * something the RuneLite source shows, so each game tick while the hold thinks the bank is open checks the bank's
+	 * root component - and a bank that is gone without a close takes the close's own road: one read, open and pending
+	 * cleared. With the bank shut, a tick asks the client nothing at all.
+	 *
+	 * <p>Planted bugs this catches: no tick check (the hold sits on the change - fails at 2); a check that fires while
+	 * the interface is still there (the first tick reads); a tick that probes with the bank shut (fails "asks
+	 * nothing").
+	 */
+	@Test
+	public void theTickReadsAHeldChangeWhenTheBankIsGoneWithoutAClose() throws Exception
+	{
+		final BankRig r = new BankRig();
+		r.plugin.onGameTick(new GameTick());
+		verify(r.client, never()).getWidget(anyInt());
+
+		r.openBank();
+		r.bankEvent(bank());
+		r.bankEvent(withdrew28Sharks());
+		final Widget universe = mock(Widget.class);
+		when(r.client.getWidget(InterfaceID.Bankmain.UNIVERSE)).thenReturn(universe);
+		r.plugin.onGameTick(new GameTick());
+		assertTrue("the bank is still on screen: nothing happens", r.isPending());
+		assertEquals(1, r.reads());
+
+		when(r.client.getWidget(InterfaceID.Bankmain.UNIVERSE)).thenReturn(null);
+		r.liveBank(withdrew28Sharks());
+		r.plugin.onGameTick(new GameTick());
+		assertEquals("gone without a close: read once, as a close would", 2, r.reads());
+		assertFalse(r.isOpen());
+		assertFalse(r.isPending());
+
+		r.plugin.onGameTick(new GameTick());
+		verify(r.client, times(2)).getWidget(anyInt());
+	}
+
+	/**
+	 * Only {@code InterfaceID.BANKMAIN} - the gameval constant - opens or closes the hold: the bank's own side panel,
+	 * the deposit box and any other interface leave it exactly as it was. The two constants are pinned against the
+	 * 1.12.39 API jar's values (checked with javap: {@code BANKMAIN = 12}, {@code Bankmain.UNIVERSE = 786433}), and the
+	 * relation the start-up probe relies on is pinned with them: UNIVERSE is component 1 of the bank interface.
+	 *
+	 * <p>Planted bugs this catches: a handler that reacts to any group (the deposit box opens or closes the hold); a
+	 * probe on another component (the UNIVERSE relation).
+	 */
+	@Test
+	public void onlyTheMainBankInterfaceMovesTheHold() throws Exception
+	{
+		assertEquals(12, InterfaceID.BANKMAIN);
+		assertEquals(786433, InterfaceID.Bankmain.UNIVERSE);
+		assertEquals((InterfaceID.BANKMAIN << 16) | 1, InterfaceID.Bankmain.UNIVERSE);
+
+		final BankRig r = new BankRig();
+		final int[] strangers = {InterfaceID.BANKSIDE, InterfaceID.BANK_DEPOSITBOX, InterfaceID.BANK_DEPOSIT_IMP};
+		for (int group : strangers)
+		{
+			r.plugin.onWidgetLoaded(loaded(group));
+			assertFalse("interface " + group + " is not the bank", r.isOpen());
+		}
+
+		r.openBank();
+		r.bankEvent(bank());
+		r.bankEvent(withdrew28Sharks());
+		r.liveBank(withdrew28Sharks());
+		for (int group : strangers)
+		{
+			r.plugin.onWidgetClosed(closed(group, true));
+			assertTrue("closing interface " + group + " does not close the bank", r.isOpen());
+			assertTrue(r.isPending());
+		}
+		assertEquals(1, r.reads());
+
+		r.closeBank(true);
+		assertEquals(2, r.reads());
+	}
+
+	/**
+	 * Plan AS 7.3, the Refresh hook: pressed on the EDT it only HOPS to the client thread; there it reads the bank
+	 * ONCE (the client's container), clears pending so the glow goes out, leaves the bank open, and tells the panel.
+	 * It never calls the price re-check - {@code PriceService.refreshNow} in either form, the one method that stamps
+	 * the 30 s manual cooldown - so the hook itself starts no download and spends no cooldown. Since AS8 the click
+	 * that runs it re-checks the prices as well, but that half is the PANEL's, pressed quietly right after the hook
+	 * ({@link #theGlowingRefreshLinkReachesTheHoldThroughTheRealPanel}); a hook that pressed it too would re-check the
+	 * prices twice a click. It reads even with nothing held (an explicit click; the carried half may have moved), and
+	 * with neither a container nor a hold it reads nothing.
+	 *
+	 * <p>Planted bugs this catches: a hook that reads on the EDT (the read happens before the hop runs - fails
+	 * "nothing is read until"); one that calls the price re-check in either form (fails a {@code never()} - AS8's
+	 * {@code refreshNow(boolean)} is the form the panel presses, so the no-argument check alone would miss it);
+	 * pending left set (the notice); the bank marked closed (the notice).
+	 */
+	@Test
+	public void theOpenBankRefreshHookReadsOnceAndSpendsNoCooldown() throws Exception
+	{
+		final BankRig r = new BankRig();
+		r.openBank();
+		r.bankEvent(bank());
+		r.bankEvent(withdrew28Sharks());
+		final Item[] live = {WHIP, new Item(385, 150), COINS};
+		r.liveBank(live);
+
+		r.plugin.refreshHeldBank();
+		final ArgumentCaptor<Runnable> hop = ArgumentCaptor.forClass(Runnable.class);
+		verify(r.clientThread).invoke(hop.capture());
+		assertEquals("nothing is read until the client thread runs the hop", 1, r.reads());
+
+		hop.getValue().run();
+		assertEquals("one read", 2, r.reads());
+		assertArrayEquals(live, r.readSlots().get(1));
+		assertTrue("the bank is still open", r.isOpen());
+		assertFalse("and the change is no longer pending", r.isPending());
+		final List<String> notices = r.notices();
+		assertEquals(notice(true, false, 1, 2), notices.get(notices.size() - 1));
+		verify(r.service, never()).refreshNow();
+		verify(r.service, never()).refreshNow(anyBoolean());
+
+		// Nothing held: still one read, because the click asked for one.
+		r.plugin.captureHeldBank();
+		assertEquals(3, r.reads());
+		// Neither a container nor a hold: nothing to read, and not a crash.
+		r.liveBank(null);
+		r.plugin.captureHeldBank();
+		assertEquals(3, r.reads());
+		verify(r.service, never()).refreshNow();
+		verify(r.service, never()).refreshNow(anyBoolean());
+
+		// With no client thread (after shutDown) the press is a no-op.
+		set(r.plugin, "clientThread", null);
+		r.plugin.refreshHeldBank();
+	}
+
+	/**
+	 * The gear menu's "Refresh prices now" keeps the price re-check with the bank open (plan AS 7.1, decision 2), and
+	 * that re-check runs the carried re-read of addendum Y. While a change is HELD that re-read would publish the bank
+	 * as last READ beside the inventory as it is NOW - a deposited whip in neither half - so it waits for the held
+	 * change's own read, which takes the carried half with it. With nothing held it re-stamps as before - with the
+	 * bank still open (the twin of {@link #refreshRereadsWhatThePlayerIsCarryingAndRepublishesTheStoredBank()}) and
+	 * after it closes.
+	 *
+	 * <p>Planted bugs this catches: the re-read with no pending guard (a second, stale snapshot is published - fails
+	 * "left alone"); a guard on the bank being OPEN rather than on a change being held (the open, settled re-stamp
+	 * is refused - fails at 3).
+	 */
+	@Test
+	public void refreshPricesNowWithAChangeHeldLeavesTheStaleBankAlone() throws Exception
+	{
+		final BankRig r = new BankRig();
+		when(r.reader.readContainers(any(), any(), anyLong())).thenReturn(
+			new BankReader.Carried(Collections.emptyList(), Collections.emptyList(), 3L, 5L));
+		r.openBank();
+		r.bankEvent(bank());
+		r.bankEvent(withdrew28Sharks());
+
+		r.plugin.readCarriedOnClientThread();
+		verify(r.service, times(1)).setBank(any(BankSnapshot.class));
+		assertEquals("left alone: the carried half was not re-read either", 1, r.carriedReads().size());
+
+		// The held change read by the Refresh link with the bank open: the stored bank is the live one again, and
+		// the same re-read re-stamps it with the bank still open.
+		r.liveBank(withdrew28Sharks());
+		r.plugin.captureHeldBank();
+		verify(r.service, times(2)).setBank(any(BankSnapshot.class));
+		assertTrue(r.isOpen());
+		r.plugin.readCarriedOnClientThread();
+		verify(r.service, times(3)).setBank(any(BankSnapshot.class));
+
+		r.closeBank(true);
+		verify(r.service, times(3)).setBank(any(BankSnapshot.class));
+		r.plugin.readCarriedOnClientThread();
+		verify(r.service, times(4)).setBank(any(BankSnapshot.class));
+	}
+
+	/**
+	 * Plan AS 7.4, the client's exit: closing the window with a change held does NOT read it. The read would have to be
+	 * queued on the client thread and its future handed to the exit, which the client waits on for up to ten seconds
+	 * before it stops the game - so a game thread that never ran the task would hold the window open for all ten
+	 * (clone ClientUI.java:798-819). The handler is the pre-AS one: the writes already queued are handed over - one
+	 * future, the flush - nothing is asked of the client thread, and the held change goes with the process, with
+	 * exactly one debug line. (The next launch reads the bank at its first bank open: a new run has no fingerprint.)
+	 * With nothing held the handler says nothing at all, and hands over the same one future.
+	 *
+	 * <p>This replaces a test that pinned the opposite - an exit read queued on the client thread with its write
+	 * waited for - which the proof wave removed.
+	 *
+	 * <p>Planted bugs this catches: the exit read put back (the client thread is asked - fails "nothing is asked of the
+	 * client thread", and its future is handed over - fails "one future"); a read made on the EDT instead (fails "not
+	 * read"); the flush skipped while a change is held (fails "the writes already queued"); the debug line left out,
+	 * repeated, or said with nothing held (fails "exactly one debug line" or "says nothing").
+	 */
+	@Test
+	public void closingTheClientWithAChangeHeldReadsNothingAndStillHandsOverTheWrites() throws Exception
+	{
+		final BankRig r = new BankRig();
+		final Future<?> writes = mock(Future.class);
+		when(r.service.flush()).thenAnswer(invocation -> writes);
+		r.openBank();
+		r.bankEvent(bank());
+		r.bankEvent(withdrew28Sharks());
+		r.liveBank(withdrew28Sharks());
+		assertTrue(r.isPending());
+
+		final ClientShutdown event = new ClientShutdown();
+		final List<String> lines = debugLinesOf(() -> r.plugin.onClientShutdown(event));
+
+		verifyNoInteractions(r.clientThread);
+		assertEquals("the held change is not read", 1, r.reads());
+		verify(r.service, times(1)).setBank(any(BankSnapshot.class));
+		assertEquals("one future, the writes already queued", 1, event.getTasks().size());
+		assertSame(writes, event.getTasks().peek());
+		verify(r.service, times(1)).flush();
+		assertEquals("exactly one debug line: " + lines, 1, lines.size());
+		assertTrue(lines.get(0), lines.get(0).contains("client closing with a bank change held"));
+
+		// With nothing held: the same one future, and nothing to say.
+		final BankRig quiet = new BankRig();
+		when(quiet.service.flush()).thenAnswer(invocation -> writes);
+		quiet.bankEvent(bank());
+		final ClientShutdown calm = new ClientShutdown();
+		assertEquals("with nothing held the exit says nothing", Collections.emptyList(),
+			debugLinesOf(() -> quiet.plugin.onClientShutdown(calm)));
+		assertEquals(1, calm.getTasks().size());
+		assertSame(writes, calm.getTasks().peek());
+		verifyNoInteractions(quiet.clientThread);
+	}
+
+	/**
+	 * Plan AS 7.3, the start-up case: a plugin switched on with the bank ALREADY open gets no {@code WidgetLoaded}, so
+	 * the client-thread seed asks for the bank's root component ({@code InterfaceID.Bankmain.UNIVERSE}) - and
+	 * RuneLite's replay of the cached bank, which the seed runs ahead of, is still READ: there is no last read in this
+	 * run for a
+	 * hold to differ from, and the sidebar may never have seen this bank. From there the hold works as usual.
+	 *
+	 * <p>Planted bugs this catches: no probe (bankOpen stays false - fails "the probe"); a replay held because the
+	 * bank is open (fails the read of the replay); a probe on a guessed number rather than the gameval constant (the
+	 * stub on UNIVERSE never answers).
+	 */
+	@Test
+	public void aPluginStartedWithTheBankOpenReadsTheReplayAndHoldsWhatFollows() throws Exception
+	{
+		final Fixture f = new Fixture(false);
+		onEdt(f.plugin::startUp);
+		final ArgumentCaptor<Runnable> seed = ArgumentCaptor.forClass(Runnable.class);
+		verify(f.clientThread).invoke(seed.capture());
+
+		final PriceService service = mock(PriceService.class);
+		final BankReader reader = mock(BankReader.class);
+		set(f.plugin, "service", service);
+		set(f.plugin, "bankReader", reader);
+		when(reader.read(any(), anyLong(), anyString(), anyLong())).thenAnswer(invocation -> new BankSnapshot());
+		when(f.client.getGameState()).thenReturn(GameState.LOGGED_IN);
+		when(f.client.getAccountHash()).thenReturn(ACCOUNT);
+
+		// The bank shut: the seed leaves the hold closed.
+		seed.getValue().run();
+		assertFalse((boolean) field(f.plugin, "bankOpen"));
+
+		final Widget universe = mock(Widget.class);
+		when(f.client.getWidget(InterfaceID.Bankmain.UNIVERSE)).thenReturn(universe);
+		seed.getValue().run();
+		assertTrue("the probe found the bank on screen", (boolean) field(f.plugin, "bankOpen"));
+
+		// RuneLite's replay of the cached bank (clone GameEventManager.java:124): read, not held.
+		final Item[] cached = bank();
+		f.plugin.onItemContainerChanged(new ItemContainerChanged(BankReader.BANK_CONTAINER_ID,
+			BankRig.container(cached)));
+		verify(reader).read(aryEq(cached), eq(ACCOUNT), eq(STANDARD), anyLong());
+		verify(service).setBank(any(BankSnapshot.class));
+		assertFalse((boolean) field(f.plugin, "bankPending"));
+
+		// ...and what follows is held until the close.
+		f.plugin.onItemContainerChanged(new ItemContainerChanged(BankReader.BANK_CONTAINER_ID,
+			BankRig.container(withdrew28Sharks())));
+		assertTrue((boolean) field(f.plugin, "bankPending"));
+		verify(reader, times(1)).read(any(), anyLong(), anyString(), anyLong());
+		f.plugin.onWidgetClosed(closed(InterfaceID.BANKMAIN, true));
+		verify(reader, times(2)).read(any(), anyLong(), anyString(), anyLong());
+
+		onEdt(f.plugin::shutDown);
+	}
+
+	/**
+	 * Plan AS 7.3: {@code startUp} hands the panel the open-bank Refresh hook - it is this plugin's, and all it does is
+	 * hop to the client thread - and clears any hold the last run left, because RuneLite reuses the plugin INSTANCE and
+	 * {@code shutDown} is not guaranteed to have run to the end.
+	 *
+	 * <p>Planted bugs this catches: no hook installed (fails "must hand"); a hook that does its work on the EDT (no hop
+	 * is queued); startUp without the reset (a stale field survives - fails the cleared-hold check).
+	 */
+	@Test
+	public void startUpHandsThePanelTheRefreshHookAndClearsAnOldHold() throws Exception
+	{
+		final Fixture f = new Fixture(false);
+		set(f.plugin, "bankOpen", true);
+		set(f.plugin, "bankPending", true);
+		set(f.plugin, "heldItems", bank());
+		set(f.plugin, "heldHash", ACCOUNT);
+		set(f.plugin, "heldInventory", new Item[]{SHARKS});
+		set(f.plugin, "heldWorn", new Item[]{WHIP});
+		set(f.plugin, "heldProfile", STANDARD);
+		set(f.plugin, "heldEvents", 5);
+		set(f.plugin, "bankReads", 9);
+		set(f.plugin, "lastFingerprint", BankPriceMovementPlugin.fingerprint(bank(), new Item[]{SHARKS}, null));
+		set(f.plugin, "lastFingerprintHash", ACCOUNT);
+		set(f.plugin, "lastFingerprintProfile", STANDARD);
+		onEdt(f.plugin::startUp);
+		assertHoldCleared(f.plugin);
+
+		final BankPriceMovementPanel panel = (BankPriceMovementPanel) field(f.plugin, "panel");
+		final Runnable hook = bankRefreshOf(panel);
+		assertNotNull("startUp must hand the panel the open-bank Refresh hook", hook);
+		hook.run();
+		// The seed is the first hop; the hook's is the second.
+		final ArgumentCaptor<Runnable> hops = ArgumentCaptor.forClass(Runnable.class);
+		verify(f.clientThread, times(2)).invoke(hops.capture());
+
+		onEdt(f.plugin::shutDown);
+		assertNull("shutDown takes the hook back, because RuneLite reuses the plugin instance", bankRefreshOf(panel));
+	}
+
+	/**
+	 * Plan AS 7.3: {@code shutDown} takes the Refresh hook back BEFORE it stops the panel - the hook points at this
+	 * plugin, whose fields are about to be cleared - and clears every field of the hold, the copies, the fingerprint
+	 * and the counters. Driven with a MOCKED panel so the order of the two calls can be seen, whatever the real panel's
+	 * own
+	 * {@code stop()} does with the hook.
+	 *
+	 * <p>Planted bugs this catches: the hook not taken back (fails the in-order verify); taken back after stop (fails
+	 * the order); a field of the hold left set (fails the cleared-hold check).
+	 */
+	@Test
+	public void shutDownTakesTheHookBackBeforeStoppingThePanelAndClearsTheHold() throws Exception
+	{
+		final BankRig r = new BankRig();
+		r.carrying(new Item[]{new Item(385, 40)}, new Item[]{new Item(1127, 1)});
+		r.openBank();
+		r.bankEvent(bank());
+		r.bankEvent(withdrew28Sharks());
+		assertTrue(r.isPending());
+		assertNotNull(field(r.plugin, "heldInventory"));
+
+		onEdt(r.plugin::shutDown);
+		final InOrder order = inOrder(r.panel);
+		order.verify(r.panel).setBankRefresh(isNull());
+		order.verify(r.panel).stop();
+		assertHoldCleared(r.plugin);
+		assertEquals("a held change is not read on the EDT", 1, r.reads());
+	}
+
+	/**
+	 * The seam end to end, through the REAL panel and a real service (AS8, 2026-09-23): with the bank open and a change
+	 * pending, one click on the Refresh link is both halves of a refresh, in this order - the plugin's hook reads the
+	 * held bank on the client thread (the items, at once), and THEN the price re-check runs, whose own first step,
+	 * addendum Y2's carried reader, hops to the client thread in its turn and finds nothing held any more. The price
+	 * half is SERVED: the 30 s cooldown clock ({@code PriceService.lastManualRefreshMillis}, stamped only inside
+	 * {@code refreshNow(boolean)}) moves. It is pressed QUIETLY, so a second click in the same visit, inside the 30 s,
+	 * reads the items again and is refused the download without a word - no "Refreshed n s ago - wait" under a list the
+	 * click has just redrawn. Once the bank is shut the same link is the price re-check alone, pressed OUT LOUD, so
+	 * inside the 30 s the open-bank click started it is refused and says so: nothing else refreshed, and the wait line
+	 * is the whole answer. Until AS8 this test pinned the opposite - the open-bank click never near the price re-check,
+	 * the clock still at zero after it, and the closed-bank click after it served.
+	 *
+	 * <p>This is the one test that exercises the panel's side of the seam ({@code setBankHold} and {@code refreshNow})
+	 * against the plugin's hops and the service's cooldown at once, so a mismatch between them fails here - the quiet
+	 * flag's MEANING above all, which the panel's and the service's own tests each pin against a mock of the other.
+	 * The hops run the way the client thread runs its queue: in the order they were queued.
+	 *
+	 * <p>Planted bugs this catches, each at its own assertion: the price half left out of the open-bank click (AS4's
+	 * split), a hook never installed, a panel that ignores it, or a carried reader never registered (one hop where
+	 * there are two); the prices before the items (the first hop is the carried read, which finds the change still
+	 * held and reads nothing); a quiet press served without stamping the clock (the clock at zero after the first
+	 * click); a hook that presses the price re-check itself, out loud (a wait line after the first click); the
+	 * open-bank price half pressed out loud, or a service that ignores or inverts the flag (the second open-bank click
+	 * puts the wait line up); an items half that reads only while a change is held (no second read); the closed-bank
+	 * click running the hook as well (two hops) or pressed quietly (no wait line).
+	 */
+	@Test
+	public void theGlowingRefreshLinkReachesTheHoldThroughTheRealPanel() throws Exception
+	{
+		final Fixture f = new Fixture(false);
+		onEdt(f.plugin::startUp);
+		final BankPriceMovementPanel panel = (BankPriceMovementPanel) field(f.plugin, "panel");
+		final PriceService realService = (PriceService) field(f.plugin, "service");
+		final BankReader reader = mock(BankReader.class);
+		set(f.plugin, "bankReader", reader);
+		when(reader.read(any(), anyLong(), anyString(), anyLong())).thenAnswer(invocation -> new BankSnapshot());
+		when(f.client.getGameState()).thenReturn(GameState.LOGGED_IN);
+		when(f.client.getAccountHash()).thenReturn(ACCOUNT);
+
+		f.plugin.onWidgetLoaded(loaded(InterfaceID.BANKMAIN));
+		f.plugin.onItemContainerChanged(new ItemContainerChanged(BankReader.BANK_CONTAINER_ID,
+			BankRig.container(bank())));
+		f.plugin.onItemContainerChanged(new ItemContainerChanged(BankReader.BANK_CONTAINER_ID,
+			BankRig.container(withdrew28Sharks())));
+		assertTrue((boolean) field(f.plugin, "bankPending"));
+		assertEquals(0L, lastManualRefreshMillis(realService));
+		// Let the panel hear the hold (setBankHold is queued on the EDT).
+		onEdt(() ->
+		{
+		});
+
+		// The glowing link's click: the items, then the prices.
+		List<Runnable> hops = hopsQueuedBy(f.clientThread, panel::refreshNow);
+		assertEquals("an open-bank click hops twice: the hook's read, then the price re-check's carried read", 2,
+			hops.size());
+		hops.get(0).run();
+		assertEquals("the first hop is the hook's one read of the held bank", 2, calls(reader, "read").size());
+		assertFalse("...which ends the hold", (boolean) field(f.plugin, "bankPending"));
+		final int carriedReads = calls(reader, "readContainers").size();
+		hops.get(1).run();
+		assertEquals("the second is the carried re-read, which finds nothing held now and reads what is carried",
+			carriedReads + 1, calls(reader, "readContainers").size());
+		assertEquals("...and never the bank again", 2, calls(reader, "read").size());
+		final long stamped = lastManualRefreshMillis(realService);
+		assertTrue("the open-bank click's price half is served, and starts the 30 s cooldown", stamped > 0L);
+		assertNoWaitLine("the open-bank click", realService, panel);
+
+		// A second click in the same visit, inside the 30 s - the client's own bank container to read this time: the
+		// items again, and the price half refused, quietly.
+		final ItemContainer live = BankRig.container(withdrew28Sharks());
+		when(f.client.getItemContainer(BankReader.BANK_CONTAINER_ID)).thenReturn(live);
+		hops = hopsQueuedBy(f.clientThread, panel::refreshNow);
+		assertEquals("the items half has no cooldown: both hops again", 2, hops.size());
+		// Run as the client thread would, in order, before the bank closes below.
+		for (Runnable hop : hops)
+		{
+			hop.run();
+		}
+		assertEquals("...and the bank is read again inside the 30 s", 3, calls(reader, "read").size());
+		assertEquals("refused inside the 30 s: the clock stays where the first click put it", stamped,
+			lastManualRefreshMillis(realService));
+		assertNoWaitLine("a second open-bank click inside the 30 s", realService, panel);
+
+		// The bank closes, and the same link is the price re-check alone: its carried read and no read of the bank.
+		f.plugin.onWidgetClosed(closed(InterfaceID.BANKMAIN, true));
+		onEdt(() ->
+		{
+		});
+		hops = hopsQueuedBy(f.clientThread, panel::refreshNow);
+		assertEquals("with the bank shut the click leaves the hook alone: one hop, the carried read", 1, hops.size());
+		assertEquals("refused inside the 30 s the open-bank click started: the clock stays", stamped,
+			lastManualRefreshMillis(realService));
+		final PriceService.Status refused = realService.currentStatus();
+		assertEquals("...and refused OUT LOUD, because nothing else refreshed", PriceService.ProblemKind.COOLDOWN,
+			refused.problemKind());
+		assertTrue(refused.problem(), refused.problem().matches("Refreshed [0-9]+ s ago - wait"));
+		assertEquals("the sidebar draws it", refused.problem(), problemRowOf(panel));
+
+		onEdt(f.plugin::shutDown);
+	}
+
+	/**
+	 * The fingerprint's two promises, container by container, over a realistic 800-slot bank, a 28-slot inventory and
+	 * 14 slots of worn gear, through the three-way function the handler really calls: the same slots in ANY order are
+	 * the same containers (2,000 random rearrangements of all three at once), and a change to ONE slot of ANY of them
+	 * is never missed - 30,000 random single changes, 10,000 per container, of the kinds banking and gearing make: a
+	 * deposit onto a stack, a withdrawal, a stack left as its placeholder (or an empty slot filled), another item in a
+	 * slot, a slot removed, a slot added, each of them on the container as it was or after a rearrangement. The proof
+	 * is in {@code slotSum}'s javadoc (a one-slot change moves that container's sum by {@code f(new) - f(old)}, never
+	 * zero for a bijection f); this is the implementation held to it.
+	 *
+	 * <p>Planted bugs this catches: an order-sensitive combine (a rearrangement changes a sum); a pair that drops the
+	 * id or the quantity (a change of that half is missed); a lossy mix in place of the bijection (collisions appear
+	 * among the 30,000); a fingerprint - or a {@code Fingerprint.equals} - that leaves one of the three containers out
+	 * (every change to it is missed).
+	 */
+	@Test
+	public void theFingerprintIsBlindToOrderAndNeverMissesAOneSlotChange()
+	{
+		final Random random = new Random(20260922L);
+		final Item[][] trio = {slots(800, 1, 10, true, random), slots(28, 40_000, 4, false, random),
+			slots(14, 50_000, 3, false, random)};
+		final BankPriceMovementPlugin.Fingerprint base = fingerprintOf(trio);
+
+		for (int trial = 0; trial < 2_000; trial++)
+		{
+			assertEquals("the same slots in another order are the same containers", base, fingerprintOf(new Item[][]{
+				shuffled(trio[0], random), shuffled(trio[1], random), shuffled(trio[2], random)}));
+		}
+
+		final String[] names = {"bank", "inventory", "worn gear"};
+		for (int trial = 0; trial < 30_000; trial++)
+		{
+			final int which = trial % 3;
+			final int kind = (trial / 3) % 6;
+			final Item[][] changed = trio.clone();
+			final Item[] start = random.nextBoolean() ? trio[which].clone() : shuffled(trio[which], random);
+			changed[which] = oneSlotChanged(start, kind, random);
+			assertNotEquals("a one-slot change (" + names[which] + ", kind " + kind + ", trial " + trial
+				+ ") must be seen", base, fingerprintOf(changed));
+		}
+	}
+
+	/**
+	 * The fingerprint keeps the three containers APART, because BankReader reads the bank, the inventory and the worn
+	 * gear as three separate lists: the same slots in another container are another fingerprint, and so every move a
+	 * bank visit or a gear swap is made of is seen. Four moves are spelt out - a deposit into an empty slot, a
+	 * withdrawal that leaves a placeholder, a weapon swapped between the inventory and the worn gear, an unequip into
+	 * an empty inventory slot - because three of them are missed EXACTLY by one sum over all the slots (the moved
+	 * slots cancel to the bit), which is why the fingerprint is three sums; 20,000 random swaps of two different slots
+	 * between two different containers follow.
+	 *
+	 * <p>Planted bugs this catches: one sum over the three arrays together (the deposit, the weapon swap and the
+	 * unequip are missed, and every random swap); the inventory and the worn gear summed as one (the weapon swap and
+	 * the unequip are missed); the bank alone (the weapon swap and the unequip are missed).
+	 */
+	@Test
+	public void theFingerprintTellsTheThreeContainersApart()
+	{
+		final Item empty = new Item(-1, 0);
+		final Item dagger = new Item(1215, 1);
+		final Item platebody = new Item(1127, 1);
+		final Item[] one = {WHIP};
+		final Item[] none = {};
+		assertNotEquals(BankPriceMovementPlugin.fingerprint(one, none, none),
+			BankPriceMovementPlugin.fingerprint(none, one, none));
+		assertNotEquals(BankPriceMovementPlugin.fingerprint(none, one, none),
+			BankPriceMovementPlugin.fingerprint(none, none, one));
+		assertNotEquals(BankPriceMovementPlugin.fingerprint(one, none, none),
+			BankPriceMovementPlugin.fingerprint(none, none, one));
+
+		assertNotEquals("a whip deposited into an empty bank slot",
+			BankPriceMovementPlugin.fingerprint(new Item[]{SHARKS, empty}, new Item[]{WHIP, empty},
+				new Item[]{platebody}),
+			BankPriceMovementPlugin.fingerprint(new Item[]{SHARKS, WHIP}, new Item[]{empty, empty},
+				new Item[]{platebody}));
+		assertNotEquals("a whip withdrawn, its placeholder left behind",
+			BankPriceMovementPlugin.fingerprint(new Item[]{SHARKS, WHIP}, new Item[]{empty}, new Item[]{platebody}),
+			BankPriceMovementPlugin.fingerprint(new Item[]{SHARKS, new Item(4151, 0)}, new Item[]{WHIP},
+				new Item[]{platebody}));
+		assertNotEquals("the dagger wielded in the whip's place, the whip into the dagger's inventory slot",
+			BankPriceMovementPlugin.fingerprint(bank(), new Item[]{dagger, SHARKS}, new Item[]{platebody, WHIP}),
+			BankPriceMovementPlugin.fingerprint(bank(), new Item[]{WHIP, SHARKS}, new Item[]{platebody, dagger}));
+		assertNotEquals("the whip unequipped into an empty inventory slot",
+			BankPriceMovementPlugin.fingerprint(bank(), new Item[]{empty, SHARKS}, new Item[]{platebody, WHIP}),
+			BankPriceMovementPlugin.fingerprint(bank(), new Item[]{WHIP, SHARKS}, new Item[]{platebody, empty}));
+
+		final Random random = new Random(20260923L);
+		final Item[][] trio = {slots(800, 1, 10, true, random), slots(28, 40_000, 4, false, random),
+			slots(14, 50_000, 3, false, random)};
+		final BankPriceMovementPlugin.Fingerprint base = fingerprintOf(trio);
+		int swaps = 0;
+		for (int trial = 0; trial < 20_000; trial++)
+		{
+			final int from = random.nextInt(3);
+			final int to = (from + 1 + random.nextInt(2)) % 3;
+			final Item[][] moved = {trio[0].clone(), trio[1].clone(), trio[2].clone()};
+			final int i = random.nextInt(moved[from].length);
+			final int j = random.nextInt(moved[to].length);
+			if (moved[from][i].equals(moved[to][j]))
+			{
+				// Two empty slots traded places: nothing moved, so there is nothing to see.
+				continue;
+			}
+			final Item carried = moved[from][i];
+			moved[from][i] = moved[to][j];
+			moved[to][j] = carried;
+			swaps++;
+			assertNotEquals("a swap between containers " + from + " and " + to + " (trial " + trial + ") must be seen",
+				base, fingerprintOf(moved));
+		}
+		assertTrue("the random half must really swap: " + swaps, swaps > 15_000);
+	}
+
+	/**
+	 * What BankReader reads as the same containers, the fingerprint sums alike - so the reverse error (a read that was
+	 * not needed) does not come from the two ways a container can say "nothing here", in any of the three places: a
+	 * null array reads as an empty container (the client answers null for a container it has not cached), and a null
+	 * slot as the empty slot {@code (-1, 0)}. A slot that is really there always counts: a bank of one placeholder is
+	 * not an empty bank. Equal fingerprints hash alike, and the re-stamp a Refresh makes ({@code withCarried}) is
+	 * exactly the fingerprint of the same bank beside the new carried pair.
+	 *
+	 * <p>Planted bugs this catches: a null slot or array that throws (the handler would abandon the capture); one that
+	 * is skipped rather than counted as the empty slot (fails a null-slot equality); an equals without the hashCode to
+	 * match; a {@code withCarried} that loses the bank sum or swaps the pair (fails the last two equalities).
+	 */
+	@Test
+	public void theFingerprintReadsNothingTheWayTheBankReaderDoes()
+	{
+		final Item[] none = {};
+		assertEquals(BankPriceMovementPlugin.fingerprint(none, none, none),
+			BankPriceMovementPlugin.fingerprint(null, null, null));
+		assertEquals(BankPriceMovementPlugin.fingerprint(bank(), none, none),
+			BankPriceMovementPlugin.fingerprint(bank(), null, null));
+
+		final Item[] withEmpty = {WHIP, new Item(-1, 0)};
+		final Item[] withNull = {WHIP, null};
+		assertEquals(BankPriceMovementPlugin.fingerprint(withEmpty, none, none),
+			BankPriceMovementPlugin.fingerprint(withNull, none, none));
+		assertEquals(BankPriceMovementPlugin.fingerprint(none, withEmpty, none),
+			BankPriceMovementPlugin.fingerprint(none, withNull, none));
+		assertEquals(BankPriceMovementPlugin.fingerprint(none, none, withEmpty),
+			BankPriceMovementPlugin.fingerprint(none, none, withNull));
+		assertNotEquals(BankPriceMovementPlugin.fingerprint(none, none, none),
+			BankPriceMovementPlugin.fingerprint(new Item[]{new Item(4151, 0)}, none, none));
+
+		// Deterministic: the same slots give the same fingerprint every time (nothing hashed by identity).
+		final Item[] gear = {new Item(1127, 1)};
+		final BankPriceMovementPlugin.Fingerprint first = BankPriceMovementPlugin.fingerprint(bank(), withEmpty, gear);
+		final BankPriceMovementPlugin.Fingerprint again =
+			BankPriceMovementPlugin.fingerprint(bank(), withNull, gear.clone());
+		assertEquals(first, again);
+		assertEquals(first.hashCode(), again.hashCode());
+
+		final Item[] inventory = {SHARKS};
+		final Item[] worn = {WHIP};
+		assertEquals(BankPriceMovementPlugin.fingerprint(bank(), inventory, worn),
+			BankPriceMovementPlugin.fingerprint(bank(), null, null).withCarried(inventory, worn));
+		assertEquals(BankPriceMovementPlugin.fingerprint(bank(), null, null),
+			BankPriceMovementPlugin.fingerprint(bank(), inventory, worn).withCarried(null, null));
+	}
+
+	/**
+	 * The one property the fingerprint's collision story rests on: {@code scramble} is a BIJECTION of the 64-bit
+	 * values. Shown constructively - an explicit inverse, built from the two facts named in its javadoc (an xor with
+	 * the value's own right shift can be undone from the top bits down; an odd multiplier has an inverse modulo 2^64),
+	 * undoes it for the edge values and 100,000 random ones. A function with an inverse loses nothing, so no two
+	 * inputs share an output.
+	 *
+	 * <p>Planted bug this catches: a scramble that is not invertible (an even multiplier, a shift left, a truncation)
+	 * - the round trip fails.
+	 */
+	@Test
+	public void theScrambleIsABijectionOfTheLongs()
+	{
+		final long[] edges = {0L, 1L, -1L, Long.MIN_VALUE, Long.MAX_VALUE, 0xFFFF_FFFF_0000_0000L, 0xFFFF_FFFFL};
+		for (long x : edges)
+		{
+			assertEquals(x, unscramble(BankPriceMovementPlugin.scramble(x)));
+		}
+		final Random random = new Random(1L);
+		for (int i = 0; i < 100_000; i++)
+		{
+			final long x = random.nextLong();
+			assertEquals(x, unscramble(BankPriceMovementPlugin.scramble(x)));
+		}
+		// The inverses themselves, checked rather than trusted.
+		assertEquals(1L, 0xBF58476D1CE4E5B9L * inverseOf(0xBF58476D1CE4E5B9L));
+		assertEquals(1L, 0x94D049BB133111EBL * inverseOf(0x94D049BB133111EBL));
+	}
+
+	/**
+	 * The premise of an order-blind fingerprint, held to the real {@link BankReader}: the same slots in any order -
+	 * noted and un-noted stacks of one item, coins, an empty slot and a placeholder among them - read to the same
+	 * bank ({@code sameContentAs}), because the reader folds by canonical id and sorts by name. And it is not a vacuous
+	 * premise: one quantity moved reads to a different bank.
+	 *
+	 * <p>Planted bug this catches: a reader whose output depended on slot order (a rearranged bank would then need a
+	 * read the fingerprint skips - the equality fails, and the fingerprint would have to see order).
+	 */
+	@Test
+	public void bankReaderReadsTheSameSlotsInAnyOrderToTheSameBank()
+	{
+		final BankReader reader = premiseReader();
+
+		final Item[] slots = {WHIP, new Item(4152, 3), SHARKS, COINS, new Item(554, 5_000), new Item(1215, 1),
+			new Item(-1, 0), new Item(385, 0)};
+		final BankSnapshot first = reader.read(slots, ACCOUNT, STANDARD, 1L);
+		assertEquals("the fixture really reads: whip (noted folded in), shark, fire rune, dagger", 4,
+			first.items.size());
+		final Random random = new Random(3L);
+		for (int trial = 0; trial < 200; trial++)
+		{
+			assertTrue("the same slots in another order read to the same bank",
+				first.sameContentAs(reader.read(shuffled(slots, random), ACCOUNT, STANDARD, 1L)));
+		}
+
+		final Item[] moved = slots.clone();
+		moved[2] = new Item(385, 199);
+		assertFalse(first.sameContentAs(reader.read(moved, ACCOUNT, STANDARD, 1L)));
+	}
+
+	/**
+	 * The two premises of the fingerprint's carried sums, held to the real {@link BankReader} as the test above holds
+	 * the bank's: the inventory and the worn gear read to the same carried half in any order - two slots of one shark
+	 * folded into one stack, an empty slot dropped - so their sums may be blind to order; and they are read as two
+	 * SEPARATE lists, so the dagger wielded in the whip's place (the whip dropping into the dagger's inventory slot)
+	 * reads to a different carried half, which is why the fingerprint keeps a sum per container. Neither premise is
+	 * vacuous: the fixture really reads three inventory stacks and one worn one.
+	 *
+	 * <p>Planted bugs this catches: a carried read that depended on slot order (the fingerprint would then have to see
+	 * order - the equalities fail); a reader that pooled the two containers into one list (the premise of three sums
+	 * would be gone - the inequalities fail, which is the moment to revisit the fingerprint).
+	 */
+	@Test
+	public void bankReaderReadsTheCarriedContainersInAnyOrderButApart()
+	{
+		final BankReader reader = premiseReader();
+		final Item[] inventory = {new Item(1215, 1), new Item(385, 1), new Item(-1, 0), new Item(385, 1),
+			new Item(554, 5_000)};
+		final Item[] worn = {WHIP, new Item(-1, 0), new Item(-1, 0)};
+		final BankReader.Carried first = reader.readContainers(inventory, worn, 1L);
+		assertEquals("the fixture really reads: dagger, sharks (two slots folded), fire runes", 3,
+			first.inventory.size());
+		assertEquals("and the whip worn", 1, first.worn.size());
+
+		final Random random = new Random(4L);
+		for (int trial = 0; trial < 200; trial++)
+		{
+			final BankReader.Carried again = reader.readContainers(shuffled(inventory, random), shuffled(worn, random),
+				1L);
+			assertEquals("the same inventory in another order reads the same", first.inventory, again.inventory);
+			assertEquals("and so does the same worn gear", first.worn, again.worn);
+		}
+
+		final BankReader.Carried swapped = reader.readContainers(
+			new Item[]{WHIP, new Item(385, 1), new Item(-1, 0), new Item(385, 1), new Item(554, 5_000)},
+			new Item[]{new Item(1215, 1), new Item(-1, 0), new Item(-1, 0)}, 1L);
+		assertNotEquals("the whip and the dagger trading containers is another inventory", first.inventory,
+			swapped.inventory);
+		assertNotEquals("and other worn gear", first.worn, swapped.worn);
+	}
+
+	/**
+	 * The real {@link BankReader} over a mocked item table of five ids - the whip (with 4152, its noted form, folded
+	 * onto it), the shark, the fire rune and the dragon dagger, every one GE-tradeable - for the two premise tests
+	 * above.
+	 */
+	private static BankReader premiseReader()
+	{
+		final ItemManager items = mock(ItemManager.class);
+		when(items.canonicalize(anyInt())).thenAnswer(invocation ->
+		{
+			final int id = invocation.getArgument(0);
+			return id == 4152 ? 4151 : id;
+		});
+		final Map<Integer, ItemComposition> compositions = new HashMap<>();
+		compositions.put(4151, composition("Abyssal whip", false));
+		compositions.put(385, composition("Shark", false));
+		compositions.put(554, composition("Fire rune", true));
+		compositions.put(1215, composition("Dragon dagger", false));
+		when(items.getItemComposition(anyInt())).thenAnswer(invocation -> compositions.get(invocation.getArgument(0)));
+		return new BankReader(items);
+	}
+
+	// ---------------------------------------------------------------- the hold's fixtures
+
+	/**
+	 * A plugin wired for the hold with every collaborator mocked: the client logged in as {@link #ACCOUNT} on a
+	 * standard world, a reader that answers a new snapshot for every read, and a MOCKED panel whose
+	 * {@code setBankHold} notices are recorded - with whether each ran on the EDT - plus the verbs a bank visit is
+	 * made of.
+	 */
+	private static final class BankRig
+	{
+		private final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
+		private final PriceService service = mock(PriceService.class);
+		private final BankReader reader = mock(BankReader.class);
+		private final Client client = mock(Client.class);
+		private final ClientThread clientThread = mock(ClientThread.class);
+		private final BankPriceMovementPanel panel = mock(BankPriceMovementPanel.class);
+		private final List<String> notices = Collections.synchronizedList(new ArrayList<>());
+
+		private BankRig() throws Exception
+		{
+			set(plugin, "service", service);
+			set(plugin, "bankReader", reader);
+			set(plugin, "client", client);
+			set(plugin, "clientThread", clientThread);
+			set(plugin, "panel", panel);
+			when(client.getWorldType()).thenReturn(EnumSet.noneOf(WorldType.class));
+			when(client.getGameState()).thenReturn(GameState.LOGGED_IN);
+			when(client.getAccountHash()).thenReturn(ACCOUNT);
+			when(reader.read(any(), anyLong(), anyString(), anyLong())).thenAnswer(invocation -> new BankSnapshot());
+			doAnswer(invocation ->
+			{
+				final boolean open = invocation.getArgument(0);
+				final boolean pending = invocation.getArgument(1);
+				final int held = invocation.getArgument(2);
+				final int reads = invocation.getArgument(3);
+				notices.add(notice(open, pending, held, reads)
+					+ (SwingUtilities.isEventDispatchThread() ? "" : " OFF THE EDT"));
+				return null;
+			}).when(panel).setBankHold(anyBoolean(), anyBoolean(), anyInt(), anyInt());
+		}
+
+		/** A container answering these slots; built before any {@code when(...)} that returns it. */
+		private static ItemContainer container(Item[] slots)
+		{
+			final ItemContainer c = mock(ItemContainer.class);
+			when(c.getItems()).thenReturn(slots);
+			return c;
+		}
+
+		/** One bank {@code ItemContainerChanged} carrying these slots. */
+		private void bankEvent(Item... slots)
+		{
+			plugin.onItemContainerChanged(new ItemContainerChanged(BankReader.BANK_CONTAINER_ID, container(slots)));
+		}
+
+		private void openBank()
+		{
+			plugin.onWidgetLoaded(loaded(InterfaceID.BANKMAIN));
+		}
+
+		private void closeBank(boolean unload)
+		{
+			plugin.onWidgetClosed(closed(InterfaceID.BANKMAIN, unload));
+		}
+
+		/** What {@code client.getItemContainer(BANK)} answers from now on; null = the client has let it go. */
+		private void liveBank(Item[] slots)
+		{
+			final ItemContainer live = slots == null ? null : container(slots);
+			when(client.getItemContainer(InventoryID.BANK)).thenReturn(live);
+		}
+
+		/** What the client answers for the inventory and the worn gear from now on. */
+		private void carrying(Item[] inventory, Item[] worn)
+		{
+			final ItemContainer inv = container(inventory);
+			final ItemContainer gear = container(worn);
+			when(client.getItemContainer(InventoryID.INV)).thenReturn(inv);
+			when(client.getItemContainer(InventoryID.WORN)).thenReturn(gear);
+		}
+
+		/**
+		 * The reader answers a carried half for every read, as the real one does (it never answers null). Left to the
+		 * mock's default of null, a carried re-read would leave the snapshot exactly as it was and publish nothing.
+		 */
+		private void answerCarriedReads()
+		{
+			when(reader.readContainers(any(), any(), anyLong())).thenAnswer(invocation ->
+				new BankReader.Carried(Collections.emptyList(), Collections.emptyList(), 0L, 5L));
+		}
+
+		/**
+		 * The end of a session and the login after it, the way the client plays them: at {@code end} it can no longer
+		 * say who is playing (-1), and the login is a {@code LOGGED_IN} under {@code account}. What it answers for the
+		 * three containers is left as it was.
+		 */
+		private void endSessionAndLogIn(GameState end, long account)
+		{
+			when(client.getGameState()).thenReturn(end);
+			when(client.getAccountHash()).thenReturn(-1L);
+			plugin.onGameStateChanged(gameState(end));
+			when(client.getGameState()).thenReturn(GameState.LOGGED_IN);
+			when(client.getAccountHash()).thenReturn(account);
+			plugin.onGameStateChanged(gameState(GameState.LOGGED_IN));
+		}
+
+		private boolean isOpen() throws Exception
+		{
+			return (boolean) field(plugin, "bankOpen");
+		}
+
+		private boolean isPending() throws Exception
+		{
+			return (boolean) field(plugin, "bankPending");
+		}
+
+		private int heldEvents() throws Exception
+		{
+			return (int) field(plugin, "heldEvents");
+		}
+
+		private int reads()
+		{
+			return calls(reader, "read").size();
+		}
+
+		/** The bank slots of every read, in order. */
+		private List<Item[]> readSlots()
+		{
+			final List<Item[]> out = new ArrayList<>();
+			for (Object[] args : calls(reader, "read"))
+			{
+				out.add((Item[]) args[0]);
+			}
+			return out;
+		}
+
+		/** The account every read was stamped with, in order. */
+		private List<Long> readHashes()
+		{
+			final List<Long> out = new ArrayList<>();
+			for (Object[] args : calls(reader, "read"))
+			{
+				out.add((Long) args[1]);
+			}
+			return out;
+		}
+
+		/** The (inventory, worn) slots every carried read was handed, in order. */
+		private List<Item[][]> carriedReads()
+		{
+			final List<Item[][]> out = new ArrayList<>();
+			for (Object[] args : calls(reader, "readContainers"))
+			{
+				out.add(new Item[][]{(Item[]) args[0], (Item[]) args[1]});
+			}
+			return out;
+		}
+
+		/** Every notice the panel was given, after the EDT has run them all. */
+		private List<String> notices() throws Exception
+		{
+			onEdt(() ->
+			{
+			});
+			synchronized (notices)
+			{
+				return new ArrayList<>(notices);
+			}
+		}
+
+		/** How many times the notices turned pending from false to true. */
+		private int pendingTurnedOn() throws Exception
+		{
+			int turned = 0;
+			boolean was = false;
+			for (String n : notices())
+			{
+				final boolean now = n.contains("pending=true");
+				turned += now && !was ? 1 : 0;
+				was = now;
+			}
+			return turned;
+		}
+	}
+
+	/** One {@code setBankHold} notice as the rig records it (a notice made off the EDT gets a suffix). */
+	private static String notice(boolean open, boolean pending, int heldEvents, int reads)
+	{
+		return "open=" + open + " pending=" + pending + " heldEvents=" + heldEvents + " reads=" + reads;
+	}
+
+	/** The arguments of every call a mock received to one method, in order. */
+	private static List<Object[]> calls(Object mock, String method)
+	{
+		final List<Object[]> out = new ArrayList<>();
+		for (Invocation invocation : mockingDetails(mock).getInvocations())
+		{
+			if (method.equals(invocation.getMethod().getName()))
+			{
+				out.add(invocation.getArguments());
+			}
+		}
+		return out;
+	}
+
+	/**
+	 * Every DEBUG line the plugin's own logger writes on THIS thread while {@code action} runs, formatted, in order.
+	 * RuneLite's slf4j binding is logback (the client depends on it) and the plugin logs through
+	 * {@code LoggerFactory.getLogger(BankPriceMovementPlugin.class)}, so an appender on that logger sees each line; the
+	 * logger is lowered to DEBUG for the call and put back after, and is kept from handing the lines on to the root
+	 * logger's appenders meanwhile, which may be the developer's own {@code client.log}. The binding is ASSERTED rather
+	 * than assumed - a capture that could see nothing would make "no line" a vacuous pass - and the thread filter keeps
+	 * a line logged by some other thread meanwhile out of the count.
+	 */
+	private static List<String> debugLinesOf(Runnable action)
+	{
+		final org.slf4j.Logger slf4j = LoggerFactory.getLogger(BankPriceMovementPlugin.class);
+		assertTrue("logback must be the slf4j binding here, or the plugin's log lines cannot be counted: "
+			+ slf4j.getClass(), slf4j instanceof ch.qos.logback.classic.Logger);
+		final ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger) slf4j;
+		final String thread = Thread.currentThread().getName();
+		final List<String> lines = Collections.synchronizedList(new ArrayList<>());
+		final AppenderBase<ILoggingEvent> capture = new AppenderBase<ILoggingEvent>()
+		{
+			@Override
+			protected void append(ILoggingEvent event)
+			{
+				if (Level.DEBUG.equals(event.getLevel()) && thread.equals(event.getThreadName()))
+				{
+					lines.add(event.getFormattedMessage());
+				}
+			}
+		};
+		capture.setName("bank-hold-wiring-test");
+		capture.start();
+		final Level before = logger.getLevel();
+		final boolean additive = logger.isAdditive();
+		logger.setLevel(Level.DEBUG);
+		logger.setAdditive(false);
+		logger.addAppender(capture);
+		try
+		{
+			action.run();
+		}
+		finally
+		{
+			logger.detachAppender(capture);
+			capture.stop();
+			logger.setAdditive(additive);
+			logger.setLevel(before);
+		}
+		synchronized (lines)
+		{
+			return new ArrayList<>(lines);
+		}
+	}
+
+	private static WidgetLoaded loaded(int group)
+	{
+		final WidgetLoaded e = new WidgetLoaded();
+		e.setGroupId(group);
+		return e;
+	}
+
+	private static WidgetClosed closed(int group, boolean unload)
+	{
+		return new WidgetClosed(group, WidgetModalMode.MODAL_NOCLICKTHROUGH, unload);
+	}
+
+	/** Every field of the hold as a plugin that has seen no bank has it. */
+	private static void assertHoldCleared(BankPriceMovementPlugin plugin) throws Exception
+	{
+		assertFalse((boolean) field(plugin, "bankOpen"));
+		assertFalse((boolean) field(plugin, "bankPending"));
+		assertNull(field(plugin, "heldItems"));
+		assertNull(field(plugin, "heldInventory"));
+		assertNull(field(plugin, "heldWorn"));
+		assertEquals(0L, (long) field(plugin, "heldHash"));
+		assertEquals("", field(plugin, "heldProfile"));
+		assertEquals(0, (int) field(plugin, "heldEvents"));
+		assertEquals(0, (int) field(plugin, "bankReads"));
+		assertNull(field(plugin, "lastFingerprint"));
+		assertEquals(0L, (long) field(plugin, "lastFingerprintHash"));
+		assertEquals("", field(plugin, "lastFingerprintProfile"));
+	}
+
+	/**
+	 * The panel's open-bank Refresh hook, read by TYPE for the reason {@link #carriedReaderOf} reads the service's:
+	 * what is pinned is that something was installed and then taken back, not what the panel calls its field.
+	 */
+	private static Runnable bankRefreshOf(BankPriceMovementPanel panel) throws Exception
+	{
+		Runnable found = null;
+		int fields = 0;
+		for (Field f : BankPriceMovementPanel.class.getDeclaredFields())
+		{
+			if (!Runnable.class.equals(f.getType()))
+			{
+				continue;
+			}
+			fields++;
+			f.setAccessible(true);
+			found = (Runnable) f.get(panel);
+		}
+		assertEquals("BankPriceMovementPanel must hold exactly one Runnable field, the open-bank Refresh hook", 1,
+			fields);
+		return found;
+	}
+
+	/**
+	 * The service's manual-refresh clock (L10), which only {@code PriceService.refreshNow(boolean)} ever stamps -
+	 * {@code refreshNow()} being that with {@code false} (AS8).
+	 */
+	private static long lastManualRefreshMillis(PriceService service) throws Exception
+	{
+		final Field f = PriceService.class.getDeclaredField("lastManualRefreshMillis");
+		f.setAccessible(true);
+		return (long) f.get(service);
+	}
+
+	/**
+	 * The hops {@code click} queued on the mocked client thread, in the order it queued them - which is the order the
+	 * client thread runs its queue in. The click runs on the EDT, as a press on the sidebar does, and every hop is
+	 * handed back unrun.
+	 */
+	private static List<Runnable> hopsQueuedBy(ClientThread clientThread, Runnable click) throws Exception
+	{
+		final int before = calls(clientThread, "invoke").size();
+		onEdt(click);
+		final List<Object[]> all = calls(clientThread, "invoke");
+		final List<Runnable> hops = new ArrayList<>();
+		for (Object[] args : all.subList(before, all.size()))
+		{
+			hops.add((Runnable) args[0]);
+		}
+		return hops;
+	}
+
+	/**
+	 * The sentence the sidebar's problem row carries, read on the EDT once it has drawn every publish queued before
+	 * this call - where a cooldown refusal's "Refreshed n s ago - wait" would stand.
+	 */
+	private static String problemRowOf(BankPriceMovementPanel panel) throws Exception
+	{
+		final AtomicReference<String> row = new AtomicReference<>();
+		onEdt(() -> row.set(panel.problemText()));
+		return row.get();
+	}
+
+	/**
+	 * AS8's promise for a click that re-read the items: no cooldown refusal was published, and none stands in the
+	 * sidebar's problem row either.
+	 */
+	private static void assertNoWaitLine(String click, PriceService service, BankPriceMovementPanel panel)
+		throws Exception
+	{
+		assertNotEquals(click + " published a cooldown refusal", PriceService.ProblemKind.COOLDOWN,
+			service.currentStatus().problemKind());
+		final String row = problemRowOf(panel);
+		assertFalse(click + " left the wait line in the problem row: " + row, row.endsWith(" s ago - wait"));
+	}
+
+	/**
+	 * One container for the fingerprint tests: {@code size} slots with distinct ids from {@code firstId} up (37 apart)
+	 * and random quantities, every {@code gapEvery}-th slot a gap - in the bank a placeholder (the item at quantity 0,
+	 * which a withdrawal leaves), in the inventory and the worn gear the empty slot (-1, 0), those two being fixed-size
+	 * containers whose empty slots the client still hands over.
+	 */
+	private static Item[] slots(int size, int firstId, int gapEvery, boolean bank, Random random)
+	{
+		final Item[] out = new Item[size];
+		for (int i = 0; i < size; i++)
+		{
+			final boolean gap = i % gapEvery == 0;
+			out[i] = gap && !bank ? new Item(-1, 0)
+				: new Item(firstId + i * 37, gap ? 0 : 1 + random.nextInt(100_000));
+		}
+		return out;
+	}
+
+	/** {@link BankPriceMovementPlugin#fingerprint} of a {bank, inventory, worn} trio. */
+	private static BankPriceMovementPlugin.Fingerprint fingerprintOf(Item[][] trio)
+	{
+		return BankPriceMovementPlugin.fingerprint(trio[0], trio[1], trio[2]);
+	}
+
+	private static Item[] shuffled(Item[] slots, Random random)
+	{
+		final List<Item> list = new ArrayList<>(Arrays.asList(slots));
+		Collections.shuffle(list, random);
+		return list.toArray(new Item[0]);
+	}
+
+	/**
+	 * One of six single-slot changes of {@code start}, never a no-op: 0 a deposit onto a stack, 1 a withdrawal, 2 a
+	 * stack left as its placeholder (or a placeholder filled), 3 another item in the slot, 4 the slot removed, 5 a
+	 * new stack added.
+	 */
+	private static Item[] oneSlotChanged(Item[] start, int kind, Random random)
+	{
+		final int slot = random.nextInt(start.length);
+		final Item was = start[slot];
+		final Item[] out = start.clone();
+		switch (kind)
+		{
+			case 0:
+				out[slot] = new Item(was.getId(), was.getQuantity() + 1 + random.nextInt(1_000));
+				return out;
+			case 1:
+				out[slot] = new Item(was.getId(), was.getQuantity() > 1 ? was.getQuantity() - 1 : 7);
+				return out;
+			case 2:
+				out[slot] = new Item(was.getId(), was.getQuantity() == 0 ? 1 : 0);
+				return out;
+			case 3:
+				out[slot] = new Item(was.getId() + 1 + random.nextInt(30), was.getQuantity());
+				return out;
+			case 4:
+			{
+				final List<Item> fewer = new ArrayList<>(Arrays.asList(start));
+				fewer.remove(slot);
+				return fewer.toArray(new Item[0]);
+			}
+			default:
+			{
+				final Item[] more = Arrays.copyOf(start, start.length + 1);
+				more[start.length] = new Item(40_000 + random.nextInt(1_000), 1 + random.nextInt(100));
+				return more;
+			}
+		}
+	}
+
+	private static ItemComposition composition(String name, boolean stackable)
+	{
+		final ItemComposition c = mock(ItemComposition.class);
+		when(c.getMembersName()).thenReturn(name);
+		when(c.isGeTradeable()).thenReturn(true);
+		when(c.isStackable()).thenReturn(stackable);
+		return c;
+	}
+
+	/** SplitMix64's finaliser undone step by step: the constructive proof that {@code scramble} loses nothing. */
+	private static long unscramble(long value)
+	{
+		long z = unshiftXor(value, 31);
+		z = unshiftXor(z * inverseOf(0x94D049BB133111EBL), 27);
+		return unshiftXor(z * inverseOf(0xBF58476D1CE4E5B9L), 30);
+	}
+
+	/**
+	 * Undoes {@code x ^ (x >>> shift)}: the top {@code shift} bits come through untouched, and each pass recovers
+	 * {@code shift} more below them.
+	 */
+	private static long unshiftXor(long value, int shift)
+	{
+		long x = value;
+		for (int bits = shift; bits < 64 + shift; bits += shift)
+		{
+			x = value ^ (x >>> shift);
+		}
+		return x;
+	}
+
+	/** The inverse of an odd number modulo 2^64, by Newton's iteration (each pass doubles the correct low bits). */
+	private static long inverseOf(long odd)
+	{
+		long inverse = odd;
+		for (int i = 0; i < 6; i++)
+		{
+			inverse *= 2L - odd * inverse;
+		}
+		return inverse;
 	}
 
 	// ---------------------------------------------------------------- config <-> filter

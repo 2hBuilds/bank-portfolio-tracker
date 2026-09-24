@@ -47,7 +47,7 @@ dependencies {
 }
 
 group = 'com.bankpricemovement'
-version = '1.0.1'
+version = '1.0.2'
 
 // The Hub packager reads runelite-plugin.properties from the REPO ROOT; BankPriceMovementWiringTest reads
 // it back off the CLASSPATH (`/runelite-plugin.properties`) to prove the plugin class is listed. One file,

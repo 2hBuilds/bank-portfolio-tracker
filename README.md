@@ -24,13 +24,18 @@ for the rest, and your inventory and worn gear counted in.
 - a last line reading **"Item prices update every 24hrs"**, because Jagex publishes the guide price once a day
   and that is how often any of these figures can move - with *Show hover text* on, hover it for why, and for
   when the plugin last checked;
-- a **Refresh** link, with a 30 second cooldown (a refusal, or any other problem, prints in a line under the
-  controls rather than interrupting anything). It answers a tap in two words: *Refreshing...*, then **Up to
-  date**, which fades back to *Refresh* on its own a minute later. Guide prices only move once a day, so a
-  refresh usually brings the same figures back - with *Show hover text* on, hovering the line above tells you
-  when the prices on screen were last read, so you can tell "nothing changed" from "nothing happened";
+- a **Refresh** link, and one click refreshes everything: **your items at once** - your bank as it is now if it
+  is open (see *While you bank*, below), and what you are carrying and wearing - and **the prices in the
+  background**. The prices are re-checked at most once every 30 seconds, so a click sooner than that updates only
+  your items: with the bank open it does so quietly, and with the bank closed a line under the controls says
+  *"Refreshed n s ago - wait"* - that line, like any other problem, prints there rather than interrupting
+  anything. Guide prices only move once a day, so a refresh usually brings the same figures back - with *Show
+  hover text* on, hovering the line above tells you when the prices on screen were last read, so you can tell
+  "nothing changed" from "nothing happened". A click is answered in two words: *Refreshing...*, then **Up to
+  date**, which fades back to *Refresh* on its own a minute later;
 - a small **gear**, just under the Refresh link, which opens the panel's **Options** menu: *Refresh prices
-  now*, the three switches for the card's own figures, the four that decide what the panel counts and which
+  now* (the prices alone, whether your bank is open or not), the three switches for the card's own figures,
+  the four that decide what the panel counts and which
   stacks get a row (see *Settings* - they are the same switches as RuneLite's settings page, so either place
   works),
   then the three **Preset price ranges** boxes, and last in the list **Show hover text**, with a small box
@@ -124,13 +129,37 @@ Click the row for the exact number.
 Rows come in pages of 250 with a "Show *n* more" button under them, so an 800-item bank does not freeze the
 sidebar. If a band matches nothing, the panel says so and offers *Clear price range* in one click.
 
+## While you bank
+
+A quick gear swap should cost you nothing, so the panel keeps still while your bank is open:
+
+- **The list does not redraw while your bank is open.** Deposit and withdraw as much as you like - nothing is
+  re-read and nothing is rebuilt until you are done. Anything you click in the panel itself - a window chip, the
+  sort button, a price band - still answers at once.
+- **A thin green ring breathes round the Refresh link** when your bank, or what you are carrying or wearing, has
+  changed since the list last read it - a sign the list is behind. It breathes from faint to full over three seconds and
+  back out over three, again and again until the list catches up, and it only shows while the panel is on screen.
+- **The list catches up once**: when you close the bank, or straight away if you click the glowing *Refresh*
+  with the bank still open - which re-checks the prices as well, as every click on it does. The ring goes out
+  either way.
+- **The first time you open your bank after starting the client** - or on another account - it is read as it
+  opens, because there is nothing earlier to compare it with.
+
+The time at the end of the card's footnote (*bank 09:00*) is when your bank was last read, not when you last
+opened it.
+
+Clicking a row puts its detail together at that moment, rather than for every row in advance. Nothing you see is
+different - it is simply part of why the list redraws quickly.
+
 ## Hover text
 
 **Hover text is off until you ask for it.** Turn on **Show hover text** - last in the Options menu, under the
 gear, in the row above *OK* - and the panel starts explaining itself when you rest the pointer on something: the
 bank value gives you the exact total to the last gp, and the sort button, the band button, the Refresh link, the
-*"Item prices update every 24hrs"* line and every item in the Options menu say what they do. Leave it off and
-nothing opens anywhere. It is off when you install the plugin, and it remembers whichever way you set it.
+*"Item prices update every 24hrs"* line and every item in the Options menu say what they do. The Refresh link's
+hover reads *"Re-read your items and re-check the prices. Jagex publishes guide prices once a day."* - the same
+wherever you are, because a click does the same thing everywhere. Leave the switch off and nothing opens
+anywhere. It is off when you install the plugin, and it remembers whichever way you set it.
 
 **An item row never opens a hover, at either setting.** Its detail is not a tooltip - you **click the row** and it
 opens on the page, under the row's own line, and stays there until you close it. That is also where you read an
@@ -179,8 +208,9 @@ inventory and the gear you are wearing are valued and listed exactly like the ba
 rules - noted stacks fold onto the item they note, coins and platinum tokens in hand are worth face value and
 1,000 gp each, and an untradeable you are wearing follows the untradeables switch like any other.
 
-They are read at **two moments, and only two: when you open your bank, and when you press Refresh.** Nothing is
-watched in between - eat a shark with the bank closed and the row sits still until one of those two happens.
+They are read together with your bank - **when you open it or close it, and when you press Refresh** - and at no
+other time. Nothing is watched in between - eat a shark with the bank closed and the row sits still until one of
+those happens.
 That is deliberate: reading two containers on every inventory change would be work on the game's own thread for
 a number that moves back a second later.
 
@@ -265,7 +295,7 @@ follows.
 | Show change in % | The bank's percentage change for the chosen window. |
 | Include coins and platinum tokens | Coins and platinum tokens (1,000 gp each) count in the bank value. On by default. |
 | Include untradeable items | List untradeable stacks at their tradeable parts' value, or else their High Alchemy value, and count them in the bank value. |
-| Include inventory and worn gear | Items in your inventory and worn gear count in the bank value and are listed with the bank's stacks. They are read when you open the bank or press Refresh. On by default. |
+| Include inventory and worn gear | Items in your inventory and worn gear count in the bank value and are listed with the bank's stacks. They are read when you open or close the bank, or press Refresh. On by default. |
 | Show hover text | The bank value and the panel's controls explain themselves when you rest the pointer on them. Off by default. Item rows never use hover text either way - click a row to open its detail. |
 | Use live prices | Actively traded items use the wiki's live traded prices for every figure; thin items keep the daily guide price. On by default. |
 

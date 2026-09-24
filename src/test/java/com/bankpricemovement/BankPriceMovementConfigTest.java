@@ -329,7 +329,7 @@ public class BankPriceMovementConfigTest
 		final ConfigItem carried = item("countInventory");
 		assertEquals("Include inventory and worn gear", carried.name());
 		assertEquals("Items in your inventory and worn gear count in the bank value and are listed with the bank's"
-			+ " stacks. They are read when you open the bank or press Refresh.", carried.description());
+			+ " stacks. They are read when you close the bank or press Refresh.", carried.description());
 		assertEquals(12, carried.position());
 	}
 

@@ -14,6 +14,7 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import javax.annotation.Nullable;
 import javax.swing.JComponent;
@@ -125,11 +126,28 @@ import net.runelite.client.util.LinkBrowser;
  * was already compact - the prices, the stack total - so the loss is one step further in the same direction,
  * but it IS a loss of precision on the face and the block is where the reader gets it back.
  *
+ * <p><b>That block is written the first time the row opens, not when the row is built</b> (addendum AS,
+ * {@code docs/handoff/plan-AS-bank-hold-2026-09-21.md} section 2.1). Every build from AI to AR wrote it in the
+ * constructor and hid it, on the belief that a label costs nothing while it is invisible. It does not: a label
+ * turns HTML into a view tree the moment it is handed the text, shown or not - {@code BasicLabelUI} answers
+ * every "text" change with {@code BasicHTML.updateRenderer} (JDK 17), and the {@code FlatLabelUI} under
+ * RuneLite's look and feel does the same - and the lag investigation measured that at about 1 MB and 1 ms a row,
+ * some 181 ms and 275 MB of garbage for the 250-row page a bank change rebuilds, nearly all of it for blocks
+ * nobody had opened. So the row still builds the LABEL, empty and hidden, because it has to be a child from the
+ * start - the click that shuts an open block and the right-click menu are installed on every child as the row
+ * is built - and what waits is the TEXT. {@link #applyExpansion()} writes it on the first opening, before it
+ * measures the block, so the cell still grows in one beat and to the height it always grew to. A row rebuilt
+ * from a seam that says it is open writes it as it is built; shutting the block keeps it; a second opening
+ * reuses it. The long description no sidebar draws ({@link #tooltipHtml()}) was written for every row too,
+ * and now waits for a caller that asks.
+ *
  * <p>The change is signed by the gp figure, not by the percentage (L2): a fall too small to survive
  * truncation still reads "-0.0%" and still paints red, exactly as the GE site's own row does.
  *
  * <p><b>Three switches are handed to the row</b> ({@link ViewOptions}, at build time - a row is built once and
- * never re-read, so a switch that moves rebuilds the page). There were four until addendum AO: the fourth was
+ * never re-read, so a switch that moves rebuilds the page). The two texts written later since addendum AS, the
+ * open block and the long description, are written from the switches the row was handed and kept, so a late
+ * text says exactly what an early one would have. There were four until addendum AO: the fourth was
  * {@code holdingOnRows}, which chose between the per-stack reading and the per-item one because only one of
  * them fitted on a 48 px row, and the three-line face prints BOTH. It reached nothing here after the Q4
  * format and the key is now deleted (AO1), so its bullet, the {@code priceText}, {@code gpText} and
@@ -393,6 +411,18 @@ public class MovementRowPanel extends JPanel
 	private static final Font GP_FONT = Widgets.sans(GP_SIZE);
 	private static final Font MENU_FONT = Widgets.sans(MENU_SIZE);
 
+	/**
+	 * How many times {@link #detail} and the four-argument {@link #tooltip} have run in this JVM - the evidence
+	 * addendum AS is judged on. Only the tests read them: a page of rows built and thrown away must leave both
+	 * where they were, and opening one row must move the first by exactly one. A count rather than a look at the
+	 * label, because a text that was built and then thrown away costs just as much and leaves no label behind.
+	 *
+	 * <p>Atomic because the two builders are public statics a test may call from any thread. The cost is one
+	 * increment per text written, and a row writes at most one of each.
+	 */
+	private static final AtomicLong DETAIL_BUILDS = new AtomicLong();
+	private static final AtomicLong TOOLTIP_BUILDS = new AtomicLong();
+
 	private final MovementRow row;
 	/** Kept so the sprite stays referenced while the row is on screen (see the class comment). */
 	@Nullable
@@ -406,13 +436,39 @@ public class MovementRowPanel extends JPanel
 	/** Line 2's gp figure: what the whole STACK moved. Line 3's is built in {@link #itemLine} and not kept. */
 	private final JLabel gpLabel;
 	private final Color rail;
-	/** The long description, built once at construction; what an OPEN cell shows under its face (AI). */
-	private final String tooltip;
+	/**
+	 * The window, the baseline day and the switches this row was built under. Kept since addendum AS because two
+	 * texts are now written AFTER the constructor - the open block and the long description - and each has to say
+	 * exactly what it would have said had it been written in the constructor. All three are immutable values, so
+	 * a late text and an early one are the same text.
+	 */
+	@Nullable
+	private final MovementWindow window;
+	@Nullable
+	private final LocalDate thenDay;
+	private final ViewOptions view;
+	/**
+	 * The long description of addendum K8, which no sidebar has drawn since addendum AK moved the open cell to
+	 * {@link #detail}: written on the first call to {@link #tooltipHtml()} and kept, null until then. Every build
+	 * from AI to AR wrote it in the constructor, for every row of every page, and it was garbage the moment the
+	 * constructor returned (addendum AS).
+	 */
+	@Nullable
+	private String tooltip;
 	/** The {@link #ROW_HEIGHT} px cell every build before AI called the row: the picture, the name, the figures. */
 	private final JPanel face;
 
-	/** The block under the face, shown only while the row is open (AI). */
+	/**
+	 * The block under the face, shown only while the row is open (AI). EMPTY until the row is first opened
+	 * (addendum AS): {@link #applyExpansion()} writes its text then, and never again.
+	 */
 	private final JLabel detailLabel;
+	/**
+	 * Whether {@link #detailLabel} carries its text yet (addendum AS). Set on the first opening and never cleared,
+	 * because shutting the block only hides it: a second opening shows the same text rather than parsing the same
+	 * HTML a second time.
+	 */
+	private boolean detailBuilt;
 
 	/** Where this row's clicked/unclicked state lives, so it survives the next publish rebuilding the page. */
 	private final Expansion expansion;
@@ -490,12 +546,14 @@ public class MovementRowPanel extends JPanel
 		@Nullable LocalDate thenDay, @Nullable ViewOptions options, Consumer<String> browser,
 		@Nullable Expansion expansion)
 	{
-		final ViewOptions view = options == null ? ViewOptions.DEFAULT : options;
 		this.row = Objects.requireNonNull(row, "row");
 		this.icon = icon;
 		this.browser = Objects.requireNonNull(browser, "browser");
 		this.expansion = expansion == null ? new OwnExpansion() : expansion;
-		this.tooltip = tooltip(row, window, thenDay, view);
+		// AS: kept rather than spent here - the open block and the long description are both written later.
+		this.window = window;
+		this.thenDay = thenDay;
+		this.view = options == null ? ViewOptions.DEFAULT : options;
 		this.rail = railColor(row);
 
 		// AI: the cell is a FACE over a DETAIL block, both inside the one card border, so an opened row grows
@@ -510,10 +568,14 @@ public class MovementRowPanel extends JPanel
 		Widgets.fixed(face, INNER_WIDTH, FACE_HEIGHT);
 		add(face, BorderLayout.NORTH);
 
-		// AI: the detail, under the face and inside the same border. Built with the row and kept HIDDEN, not
-		// built on the first click: a JLabel costs nothing while invisible, and measuring its height is what
-		// the row's own height is computed from - a measurement that must be available before the click, so
-		// the cell can grow in one beat rather than snapping twice.
+		// AI: the detail, under the face and inside the same border - created here, EMPTY and hidden, and given
+		// its text on the row's first opening (addendum AS, applyExpansion). The LABEL cannot wait: the click
+		// listener and the right-click menu are installed on every child below, and a block added later would
+		// carry neither, so a click on an open block would no longer shut it. The TEXT can: this comment used to
+		// say a hidden label costs nothing and that its height had to be measurable before the click, and
+		// neither was true - a label parses its HTML the moment it is handed it, shown or not, which was the lag
+		// of every bank change, and the height is only ever measured AT an opening, where the text is now
+		// written first, so the cell still grows in one beat.
 		detailLabel = Widgets.label("", SMALL_FONT, ColorScheme.LIGHT_GRAY_COLOR);
 		detailLabel.setVerticalAlignment(SwingConstants.TOP);
 		detailLabel.setBorder(new EmptyBorder(DETAIL_GAP, 0, 0, 0));
@@ -538,9 +600,6 @@ public class MovementRowPanel extends JPanel
 		// are wider than the block, and the plain cut made one string of them).
 		nameLabel = Widgets.label("", NAME_FONT, Color.WHITE);
 		Widgets.setFittedName(nameLabel, row.name(), TEXT_WIDTH);
-		// AK: set HERE and not with the label above, because whether the block repeats the item's name
-		// depends on whether the face had to CUT it - not known until setFittedName has run.
-		detailLabel.setText(detail(row, window, thenDay, view, !row.name().equals(nameLabel.getText())));
 
 		// Line 2 is the STACK. The right-hand columns are built first because the left is fitted into what they
 		// leave: the percentage, the gp figure beside it - or, on an untradeable row, the grey "alch" tag
@@ -644,7 +703,9 @@ public class MovementRowPanel extends JPanel
 		// AI: draw whatever the seam already says. A page is rebuilt from new instances on every publish - a
 		// refresh, a bank opening, the half-hourly recheck - so a row whose item the reader had opened must
 		// come back OPEN. Without this the cell stood 48 px tall while expanded() answered true, and the next
-		// click would have closed a row that looked shut: two clicks to reopen it.
+		// click would have closed a row that looked shut: two clicks to reopen it. Since addendum AS this is
+		// also where such a row writes its block, so a page costs one block per row the reader has OPEN and
+		// none for the rest.
 		applyExpansion();
 	}
 
@@ -709,6 +770,11 @@ public class MovementRowPanel extends JPanel
 	 * <p>A table rather than padded spaces, because these faces are proportional: "You have" and "Was" are
 	 * different widths in pixels however many spaces follow them, and only a column lines the figures up.
 	 *
+	 * <p><b>A row writes this once, on its first opening</b> (addendum AS; {@link #applyExpansion()}), and not as
+	 * it is built: a label turns the HTML into a view tree the moment it is handed it, and a page of 250 rows was
+	 * paying for 250 blocks nobody had opened. Every call is counted ({@link #detailBuilds()}), which is how the
+	 * tests prove that a page writes none.
+	 *
 	 * @param showName whether to bold the item's name above the table - true only when the row's face had to cut
 	 *                 it, which is the one case a reader cannot read it from the cell they are looking at
 	 */
@@ -716,6 +782,7 @@ public class MovementRowPanel extends JPanel
 		@Nullable ViewOptions options, boolean showName)
 	{
 		Objects.requireNonNull(row, "row");
+		DETAIL_BUILDS.incrementAndGet();
 		final ViewOptions view = options == null ? ViewOptions.DEFAULT : options;
 		final boolean live = view.livePrices();
 		final boolean alch = isAlch(row);
@@ -826,10 +893,23 @@ public class MovementRowPanel extends JPanel
 	 * clip the long ones and leave a gap under the short ones. {@code DynamicGridLayout}, which
 	 * {@code Widgets.column} gives the rows column, hands every child its preferred height, so re-pinning this
 	 * row and revalidating the column is all that moving the rows below it takes.
+	 *
+	 * <p><b>The first opening also WRITES the block</b> (addendum AS), and it has to happen here and in this
+	 * order: the text first, then the measurement. Measured first, an unwritten block asks only for the air above
+	 * it, so the cell would open a few px tall with the whole description clipped away. Written here rather than
+	 * in the click handler because the constructor calls this too: a row rebuilt from a seam that says it is open
+	 * must come back open WITH its text.
 	 */
 	private void applyExpansion()
 	{
 		final boolean open = expanded();
+		if (open && !detailBuilt)
+		{
+			// AK's rule, which is why this cannot run before the face is built: the name is repeated above the
+			// table only when the face had to CUT it, and that is read off the label the face drew.
+			detailLabel.setText(detail(row, window, thenDay, view, !row.name().equals(nameLabel.getText())));
+			detailBuilt = true;
+		}
 		detailLabel.setVisible(open);
 		Widgets.fixed(this, ROW_WIDTH, open ? ROW_HEIGHT + detailHeight() : ROW_HEIGHT);
 		revalidate();
@@ -842,13 +922,16 @@ public class MovementRowPanel extends JPanel
 		}
 	}
 
-	/** What the detail block asks for at the cell's width, in px, including the air above it. */
+	/**
+	 * What the detail block asks for at the cell's width, in px, including the air above it. Only worth asking
+	 * once the block is written (addendum AS): an unwritten one answers the air alone.
+	 */
 	private int detailHeight()
 	{
 		return detailLabel.getPreferredSize().height;
 	}
 
-	/** True while this row is showing the long hover. */
+	/** True while this row is open, its detail block showing under the face (AI); the seam's answer, read afresh. */
 	public boolean expanded()
 	{
 		return expansion.isExpanded(row.id());
@@ -860,7 +943,8 @@ public class MovementRowPanel extends JPanel
 	 * <p>Until AI this swapped one tooltip for another and had to hand {@link javax.swing.ToolTipManager} a
 	 * synthetic move to make Swing reconsider what was under the pointer. There is no tooltip to reconsider
 	 * now - the description is a block inside the cell - so the click simply records the new state and lets
-	 * {@link #applyExpansion()} resize the row.
+	 * {@link #applyExpansion()} resize the row, writing the block's text first if this is its first opening
+	 * (addendum AS).
 	 *
 	 * @param source where the click landed; kept because every child of the row reports the click, and a
 	 *               future affordance would want to know which part of the cell was pressed
@@ -1450,6 +1534,10 @@ public class MovementRowPanel extends JPanel
 	 * for "1d" because the two had drifted apart, so the day a line prints is now taken from the same place its
 	 * number is.
 	 *
+	 * <p>Since addendum AS a row writes this only when {@link #tooltipHtml()} is first asked for it - which only
+	 * the tests do - and every call is counted ({@link #tooltipBuilds()}), which is how they prove that a page of
+	 * rows writes none.
+	 *
 	 * @param options the view switches the page was built under; null reads as {@link ViewOptions#DEFAULT}. With
 	 *                {@code livePrices} off no live line is printed whatever the row carries - so the page built
 	 *                after a switch is thrown never explains a series the panel is no longer on, and a row list
@@ -1462,6 +1550,7 @@ public class MovementRowPanel extends JPanel
 	public static String tooltip(MovementRow row, @Nullable MovementWindow window, @Nullable LocalDate thenDay,
 		@Nullable ViewOptions options)
 	{
+		TOOLTIP_BUILDS.incrementAndGet();
 		final ViewOptions view = options == null ? ViewOptions.DEFAULT : options;
 		final boolean live = view.livePrices();
 		// Y3: where the quantity is, said under the Holding line it qualifies - on every kind of row, because a
@@ -1634,9 +1723,31 @@ public class MovementRowPanel extends JPanel
 		return icon;
 	}
 
+	/**
+	 * The long description ({@link #tooltip(MovementRow, MovementWindow, LocalDate, ViewOptions)}) of this row,
+	 * written on the first call and kept (addendum AS). Nothing in the sidebar draws it - the open cell has shown
+	 * {@link #detail} since addendum AK - so only the tests ask, and a row nobody asks writes none. EDT only, like
+	 * the rest of the row; a call from another thread could at worst write it twice, and a String is safe to share.
+	 */
 	String tooltipHtml()
 	{
+		if (tooltip == null)
+		{
+			tooltip = tooltip(row, window, thenDay, view);
+		}
 		return tooltip;
+	}
+
+	/** {@link #DETAIL_BUILDS}: how many open blocks {@link #detail} has written in this JVM, for the tests. */
+	static long detailBuilds()
+	{
+		return DETAIL_BUILDS.get();
+	}
+
+	/** {@link #TOOLTIP_BUILDS}: how many long descriptions the four-argument {@link #tooltip} has written. */
+	static long tooltipBuilds()
+	{
+		return TOOLTIP_BUILDS.get();
 	}
 
 	String nameText()

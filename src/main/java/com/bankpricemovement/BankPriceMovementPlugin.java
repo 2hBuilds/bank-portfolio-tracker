@@ -6,6 +6,7 @@ import javax.annotation.Nullable;
 import javax.inject.Inject;
 import javax.inject.Named;
 import javax.swing.SwingUtilities;
+import java.util.Objects;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.function.Predicate;
 import net.runelite.api.Client;
@@ -13,7 +14,11 @@ import net.runelite.api.GameState;
 import net.runelite.api.Item;
 import net.runelite.api.ItemContainer;
 import net.runelite.api.events.GameStateChanged;
+import net.runelite.api.events.GameTick;
 import net.runelite.api.events.ItemContainerChanged;
+import net.runelite.api.events.WidgetClosed;
+import net.runelite.api.events.WidgetLoaded;
+import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
@@ -53,6 +58,19 @@ import org.slf4j.LoggerFactory;
  * wiki's {@code /latest} and {@code /24h} traded endpoints, built here from the same two injected collaborators
  * and handed to {@link PriceService} at construction (seam S2). It is asked for nothing while the switch is off,
  * so that setting is the guide-only plugin of addenda K to S down to the last request.
+ *
+ * <p>Addendum AS ({@code docs/handoff/plan-AS-bank-hold-2026-09-21.md}) puts a HOLD in front of
+ * {@link PriceService#setBank}: every deposit and withdrawal posts a bank {@code ItemContainerChanged}, and reading
+ * each one priced the whole bank and redrew the sidebar in the middle of a player's gear swap. So an event whose
+ * three containers - the bank's slots, and the inventory and the worn gear as the client holds them at that moment -
+ * add up to the last read's ({@link #fingerprint(Item[], Item[], Item[])}) costs nothing; a changed one is read at
+ * once only while the bank is not known to be open, or when there is no last read of this account to hold it
+ * against (the first bank of a run, or another account's first); and otherwise, while the bank is open
+ * ({@code WidgetLoaded} / {@code WidgetClosed} on {@link InterfaceID#BANKMAIN}), the change is held and read ONCE -
+ * when the bank closes, when the Refresh link is clicked with it open, or when the session ends. A change still held
+ * when the client itself exits is not read at all (see {@link #onClientShutdown}). The panel is told the hold's
+ * state through {@code BankPriceMovementPanel.setBankHold} and lights the Refresh link's glow from it; the service,
+ * the stored bank and the account guards are untouched.
  *
  * <p>Plugin Hub rule: no client is built here and no Gson is built here - both are injected, because the Hub
  * forbids a plugin making its own (it would escape RuneLite's interceptors and its shared connection pool).
@@ -282,6 +300,86 @@ public class BankPriceMovementPlugin extends Plugin
 	 */
 	private volatile Thread prefsWriter;
 
+	// ---------------------------------------------------------------- addendum AS: the bank hold
+
+	/*
+	 * Every field of the hold is written and read on the CLIENT thread - the game handlers, the start-up seed and
+	 * the Refresh hook's hop all run there - and reset on the EDT by startUp and shutDown. They are volatile for
+	 * that second writer, exactly as the fields above are, and because RuneLite reuses the plugin instance: a
+	 * stale value from the last run must never be what a handler of the next one reads.
+	 */
+
+	/**
+	 * AS: whether the bank interface is on screen - set by {@code WidgetLoaded} and cleared by {@code WidgetClosed}
+	 * for {@link InterfaceID#BANKMAIN} (the gameval constant, never its value), by the end of a session, and by
+	 * {@link #onGameTick}'s check that the interface is really still there. While it is set, a bank that has
+	 * changed is HELD rather than read.
+	 */
+	private volatile boolean bankOpen;
+
+	/**
+	 * AS: the bank has changed since the last read and that read is waiting - for the close, a Refresh click with
+	 * the bank open, or the end of the session (never for the client's exit, which drops it: see
+	 * {@link #onClientShutdown}). Once set, every bank event only replaces the held slots (no fingerprint, no read),
+	 * so a gear swap of thirty deposits costs thirty rounds of three array copies ({@link #hold}) and one read.
+	 */
+	private volatile boolean bankPending;
+
+	/**
+	 * AS: the last bank event's slots while {@link #bankPending}, with the account and profile they arrived under -
+	 * the fallback of the one read when the client no longer has the container, and the whole of it at a logout.
+	 * A COPY: {@code ItemContainer.getItems()} promises a non-null array, not a fresh one, and a hold that shared
+	 * the client's array could change under this plugin after the event. Never the {@code ItemContainer} itself,
+	 * which is a node in the client's own table and means nothing once the client unlinks it.
+	 */
+	private volatile Item[] heldItems;
+	private volatile long heldHash;
+	private volatile String heldProfile = "";
+
+	/**
+	 * AS: the inventory and the worn gear as they stood at that same bank event, copied the same way, and read by
+	 * the one read ONLY when the client cannot vouch for the account any more - which is the logout flush. Whether
+	 * the client still holds either container at {@code LOGIN_SCREEN} or {@code HOPPING} is not something this
+	 * plugin can know, and a flush that read them as empty would save a bank with the player's whole outfit
+	 * missing from it (addendum Y counts both). While the client can say who is playing it is asked instead: the
+	 * containers are settled by the close, and this copy may be a packet old.
+	 */
+	private volatile Item[] heldInventory;
+	private volatile Item[] heldWorn;
+
+	/**
+	 * AS: bank events held rather than read, and reads made, since startUp - the two counters the dev bridge echoes
+	 * ({@code bpm state}: {@code panel.bank.heldEvents} / {@code reads}) so a live run can COUNT what a gear swap
+	 * cost. Plugin-run totals, never reset by a close or a logout, so two readings of them can be subtracted.
+	 */
+	private volatile int heldEvents;
+	private volatile int bankReads;
+
+	/**
+	 * AS: {@link #fingerprint(Item[], Item[], Item[])} of the three containers the last read was made from - the
+	 * bank, and the inventory and the worn gear it folded in - and the account and profile that read was stamped
+	 * with. Null means there is nothing to compare with - no read since startUp - and the next bank event is then
+	 * read whatever else is true: it is what puts a bank in front of the fingerprint at all, including the one
+	 * RuneLite replays into a plugin switched on with the bank already open. The account and profile are part of
+	 * the comparison so that an identical bank under another account (two empty banks are identical) can never pass
+	 * for "unchanged".
+	 *
+	 * <p><b>It describes what the SERVICE holds for that account, which is why it may outlive a session</b> (plan AS
+	 * 7.4). Every read stamps it, and so does the one other publish this plugin makes, the carried re-read of a
+	 * Refresh ({@link #readCarriedOnClientThread}, which moves only its carried pair). A logout and a hop KEEP it:
+	 * when the same account comes back the service still holds the bank it was given
+	 * ({@code PriceService.setLoggedIn} reloads nothing for the account its bank belongs to), so the first bank open
+	 * after a hop is compared rather than read and redrawn in front of the player; and when another account has been
+	 * played in between, the service reloads THIS account's saved file, which is its last publish, carried half and
+	 * all - unless that write failed, which the account's next change, or a Refresh click with the bank open, then
+	 * puts right. It is replaced - the only way it is forgotten while the plugin runs - by the read of another
+	 * account's (or profile's) first bank event, which can never match it and so is always read; startUp and
+	 * shutDown clear it.
+	 */
+	private volatile Fingerprint lastFingerprint;
+	private volatile long lastFingerprintHash;
+	private volatile String lastFingerprintProfile = "";
+
 	@Provides
 	BankPriceMovementConfig provideConfig(ConfigManager configManager)
 	{
@@ -298,7 +396,8 @@ public class BankPriceMovementPlugin extends Plugin
 	 * only AFTER {@code startUp} returns, so a plugin switched on mid-session would otherwise wait for the next
 	 * login to learn who is playing. The BANK is not read there - RuneLite replays every cached container into
 	 * the freshly started plugin by itself (see {@link #onItemContainerChanged}) - so the seed carries the login
-	 * state and nothing else.
+	 * state and, since addendum AS, one yes-or-no about the bank INTERFACE: whether it is already on screen, which
+	 * no {@code WidgetLoaded} will ever say to a plugin started in front of it.
 	 */
 	@Override
 	protected void startUp()
@@ -308,6 +407,9 @@ public class BankPriceMovementPlugin extends Plugin
 		sentLoggedIn = false;
 		sentHash = 0L;
 		sentProfile = "";
+		// AS, for the same reason: a hold, a fingerprint or a counter left by the last run would describe a bank
+		// this run's service has never been given. shutDown clears them too; this does not depend on it having run.
+		resetBankHold();
 		// First, before anything reads the config: a profile written by the pre-addendum-K build still says
 		// window=H24, which no longer names a constant (K9), one written by the addendum-N build still
 		// holds a look= this build has no item for (O1), and one written by any build up to addendum AN holds a
@@ -367,6 +469,11 @@ public class BankPriceMovementPlugin extends Plugin
 		// cannot do is read an item container, so it runs this hook first and the two containers are read
 		// here, on the client thread, exactly as the bank event reads them.
 		service.setCarriedReader(this::rereadCarried);
+		// AS: the Refresh link's THIRD job, and the only one it has while the bank is open - the one read of the
+		// held bank, with no download and no cooldown. The panel decides which road a click takes (it knows whether
+		// the bank is open from setBankHold); this hook only ever reads the bank, so it can never spend the price
+		// re-check's cooldown on a local redraw.
+		panel.setBankRefresh(this::refreshHeldBank);
 		// Developer mode only (see BpmDevBridge): the Effect Lab's /bpm route drives this panel through it. A
 		// Hub client binds developerMode false, so the handler stays null and nothing can reach the sidebar.
 		if (developerMode)
@@ -401,6 +508,21 @@ public class BankPriceMovementPlugin extends Plugin
 			// LOGGED_IN). Reading the container here as well captured, priced and SAVED the same bank twice on
 			// every plugin start.
 			sendLoggedIn(s, rememberAccount(), profileType);
+			// AS: a bank that is ALREADY open sends no WidgetLoaded to a plugin switched on in front of it, so the
+			// hold would never start for it. The client is asked the way core's own InventoryViewerOverlay asks
+			// (clone InventoryViewerOverlay.java:79): the bank interface's root component exists exactly while the
+			// interface is loaded. This seed runs before the replay described above (both are queued on the client
+			// thread, this one first), and that replay is still READ, not held - nothing has been read in this run,
+			// so there is no last read for a hold to differ from (see lastFingerprint). Only a YES is taken from
+			// the probe: a no while the hold thinks the bank is open is onGameTick's to settle, down the close's own
+			// road, so that a held change can never be dropped by a seed.
+			final boolean open = c.getWidget(InterfaceID.Bankmain.UNIVERSE) != null;
+			log.debug("bank-portfolio-tracker: bank hold - plugin started with the bank open={}", open);
+			if (open)
+			{
+				bankOpen = true;
+				notifyBankHold();
+			}
 		});
 	}
 
@@ -421,6 +543,9 @@ public class BankPriceMovementPlugin extends Plugin
 		}
 		if (panel != null)
 		{
+			// AS: the Refresh hook points back at this plugin, whose fields are about to be cleared - dropped
+			// before stop(), for the reason the carried reader below is dropped before the service's.
+			panel.setBankRefresh(null);
 			panel.stop();
 			panel = null;
 		}
@@ -442,6 +567,11 @@ public class BankPriceMovementPlugin extends Plugin
 		bankReader = null;
 		lastBank = null;
 		store = null;
+		// AS: the hold, its copies, its fingerprint and its counters. A held change is NOT read here: the read needs
+		// the client thread, this is the EDT, and the service that would take it is already stopped. The change is
+		// still in the client's bank - the replay reads it if the plugin is switched on again this session (nothing
+		// has been read in that run, so the replay is never held), and the first bank event of a later one does.
+		resetBankHold();
 	}
 
 	// ---------------------------------------------------------------- startUp housekeeping (K9, K11)
@@ -687,6 +817,13 @@ public class BankPriceMovementPlugin extends Plugin
 				// The rows stay on screen: the panel is useful at the Grand Exchange with the last bank in it.
 				// LOADING is deliberately not here - it fires on every scene change, including one inside a
 				// bank, and nothing this plugin holds is scene-bound.
+				//
+				// AS, and FIRST: the session is ending, and nothing promises a WidgetClosed on the way out, so it
+				// is treated as the close. A change held with the bank open is read now, from the slots held at the
+				// last bank event and under the account they arrived with - before the cached account and lastBank
+				// are dropped below and before the service is told nobody is logged in, so the capture is stamped,
+				// published and saved as that player's.
+				endSession(event.getGameState());
 				accountHash = 0;
 				// Y2: the held snapshot belongs to the account that has just left. The ROWS stay on screen
 				// (the panel keeps what the service published), but a Refresh from here must not re-stamp
@@ -745,6 +882,27 @@ public class BankPriceMovementPlugin extends Plugin
 	 * is a real account - otherwise the previous player's stacks could be written over
 	 * {@code bank-<this account>-<profile>.json}, or a capture filed as {@code bank--1-STANDARD.json} that no
 	 * login will ever load.
+	 *
+	 * <p><b>Addendum AS: most bank events are not read at all.</b> Behind the two guards the inventory and the worn
+	 * gear are taken from the client ONCE - the two containers a read folds in, at the same moment - and then, in
+	 * this order:
+	 * <ol>
+	 * <li>A change is already HELD ({@link #bankPending}): the slots, with the carried pair beside them, replace
+	 * the held ones and nothing else happens - the latest slots are what the one read falls back to, so even an
+	 * event that happens to put the bank back as it was must replace an older held one.</li>
+	 * <li>The bank, the inventory and the worn gear add up to the last read's
+	 * ({@link #fingerprint(Item[], Item[], Item[])}, for this same account and profile): nothing to do. This runs
+	 * whether the bank is open or not, so it is safe whichever of {@code WidgetLoaded} and the bank's first delivery
+	 * arrives first - an unchanged trio costs three sums either way. The carried pair is compared because the read
+	 * folds it in: while only the bank was, an unchanged bank skipped the inventory and worn re-read that every
+	 * event made before addendum AS, and gear swapped between two visits stood in "Include inventory and worn
+	 * gear" until a Refresh.</li>
+	 * <li>The bank is open and there IS a last read to differ from: the change is held, the panel is told (it
+	 * lights the Refresh link's glow), and the read waits for the close.</li>
+	 * <li>Otherwise it is read now, as every event was before addendum AS - a change while the bank is not (yet)
+	 * known to be open, or the first bank of the run or of another account, which has nothing to be compared with
+	 * and which the sidebar may never have seen.</li>
+	 * </ol>
 	 */
 	@Subscribe
 	public void onItemContainerChanged(ItemContainerChanged event)
@@ -766,46 +924,136 @@ public class BankPriceMovementPlugin extends Plugin
 		{
 			return;
 		}
+		final String profile = profileType;
+		final Item[] items = container.getItems();
+		// Y2 (a). The bank, and in the SAME pass the two containers the player is carrying: the client has them
+		// cached on the very thread this handler runs on, so one event produces ONE snapshot with all three parts in
+		// it rather than three publishes and three recomputes. They are taken whatever the "Include inventory and
+		// worn gear" switch says, for the reason BankSnapshot.currencyGp is recorded whatever the cash switch says
+		// (P1, Q4): a capture that held only what the switch of the day wanted would need a bank visit every time it
+		// was flipped. Taken ONCE, here (addendum AS): the fingerprint compares them, the hold copies them and the
+		// read folds them in, and all three have to describe the same moment.
+		final Item[] inventory = inventoryOf(c);
+		final Item[] worn = wornOf(c);
+		if (bankPending)
+		{
+			hold(items, inventory, worn, hash, profile);
+			log.debug("bank-portfolio-tracker: bank hold - bank event held (held events {})", heldEvents);
+			notifyBankHold();
+			return;
+		}
+		// The account and profile are compared as well as the sums: hash is a real account here, so a cleared
+		// fingerprint (null, stamped 0) never matches, and neither does another player's identical bank.
+		final Fingerprint last = lastFingerprint;
+		final boolean readBefore = last != null && lastFingerprintHash == hash
+			&& Objects.equals(lastFingerprintProfile, profile);
+		if (readBefore && last.equals(fingerprint(items, inventory, worn)))
+		{
+			// Worded exactly as before the fingerprint took in the carried pair: docs/effect-lab.md (3.3, fact (c))
+			// tells the live run to look for this line, and "unchanged" now means all three containers.
+			log.debug("bank-portfolio-tracker: bank hold - bank event unchanged since the last read (open={}),"
+				+ " skipped", bankOpen);
+			return;
+		}
+		if (bankOpen && readBefore)
+		{
+			bankPending = true;
+			hold(items, inventory, worn, hash, profile);
+			log.debug("bank-portfolio-tracker: bank hold - a change while the bank is open, holding it (held events"
+				+ " {})", heldEvents);
+			notifyBankHold();
+			return;
+		}
+		log.debug("bank-portfolio-tracker: bank hold - bank event read (open={}, first read for this account={})",
+			bankOpen, !readBefore);
+		captureBank(items, inventory, worn, hash, profile);
+		notifyBankHold();
+	}
+
+	/**
+	 * CLIENT THREAD. The one read of a bank (addendum AS, extracted from {@link #onItemContainerChanged}): the bank
+	 * half through {@link BankReader#read}, the carried half folded in ({@link #carriedInto}), the snapshot kept as
+	 * {@link #lastBank} and published through {@link PriceService#setBank(BankSnapshot)} - exactly what every bank
+	 * event did before the hold - and then the two stamps the hold needs: the fingerprint of the three containers
+	 * this read was made from (with the account and profile it is filed under) for the next event to be compared
+	 * with, and one more on the reads counter.
+	 *
+	 * <p>It asks the client for nothing: every slot arrives as an argument, because its callers take them from
+	 * different places - the event, the client's containers at the close, the slots held at the last event. So it
+	 * never checks who is playing either; each caller has, before it got here. The fingerprint is stamped only after
+	 * the publish, so a read that failed part way is never mistaken for one that landed, and it is taken over the
+	 * very arrays the read was handed, so it describes exactly what was published.
+	 *
+	 * @param items     the bank's slots, as the container gave them (or a copy)
+	 * @param inventory the inventory's slots to fold in; null reads as an empty inventory
+	 * @param worn      the worn gear's slots; null reads as nothing worn
+	 * @param hash      the account the capture is stamped and saved under - a real one, checked by the caller
+	 * @param profile   the RuneScape profile that goes with it
+	 */
+	private void captureBank(@Nullable final Item[] items, @Nullable final Item[] inventory,
+		@Nullable final Item[] worn, final long hash, final String profile)
+	{
+		final PriceService s = service;
+		final BankReader reader = bankReader;
+		if (s == null || reader == null)
+		{
+			return;
+		}
 		final long now = System.currentTimeMillis();
-		// Y2 (a). The bank, and in the SAME pass the two containers the player is carrying: the client has
-		// them cached on the very thread this handler runs on, so one event produces ONE snapshot with all
-		// three parts in it rather than three publishes and three recomputes. They are read whatever the
-		// "Include inventory and worn gear" switch says, for the reason BankSnapshot.currencyGp is recorded
-		// whatever the cash switch says (P1, Q4): a capture that held only what the switch of the day wanted
-		// would need a bank visit every time it was flipped.
-		final BankSnapshot snapshot = carriedInto(reader, c,
-			reader.read(container.getItems(), hash, profileType, now), now);
+		final BankSnapshot snapshot = carriedInto(reader, inventory, worn, reader.read(items, hash, profile, now), now);
+		bankReads++;
 		lastBank = snapshot;
 		s.setBank(snapshot);
+		lastFingerprint = fingerprint(items, inventory, worn);
+		lastFingerprintHash = hash;
+		lastFingerprintProfile = profile;
 	}
 
 	/**
 	 * CLIENT THREAD. Folds what the player is CARRYING into a snapshot that already holds their bank (Y2):
-	 * the inventory ({@code InventoryID.INV} = 93) and the worn gear ({@code InventoryID.WORN} = 94), read
-	 * through {@code Client.getItemContainer(int)} - which answers null for a container the client has not
-	 * cached, and a null container is an empty list rather than a failure ({@link BankReader#readContainers}).
+	 * the inventory and the worn gear, handed over as the slots the caller took them from - the client
+	 * ({@link #inventoryOf} / {@link #wornOf}, which answer null for a container the client has not cached) or,
+	 * at a logout, the copies held beside the bank (addendum AS). A null is an empty list rather than a failure
+	 * ({@link BankReader#readContainers}).
 	 *
-	 * <p>The one place the two ids are named and the one caller of {@code readContainers}, so the bank event
-	 * and the Refresh hook cannot drift apart. A reader that answers nothing leaves the snapshot exactly as
-	 * it came in, which is what keeps the carried half additive: everything this wave adds can be absent.
+	 * <p>The one caller of {@code readContainers}, so the bank event, the Refresh hook and the hold's one read
+	 * cannot drift apart. A reader that answers nothing leaves the snapshot exactly as it came in, which is what
+	 * keeps the carried half additive: everything this wave adds can be absent.
 	 *
-	 * @param reader the live reader (never null - the caller has copied the field)
-	 * @param c      the live client (likewise)
-	 * @param bank   the bank half of the snapshot about to be published
-	 * @param now    wall clock, stamped on the carried half
+	 * @param reader    the live reader (never null - the caller has copied the field)
+	 * @param inventory the inventory's slots, or null
+	 * @param worn      the worn gear's slots, or null
+	 * @param bank      the bank half of the snapshot about to be published
+	 * @param now       wall clock, stamped on the carried half
 	 * @return {@code bank} with its carried half replaced, or {@code bank} itself when there is none to add
 	 */
 	@Nullable
-	private static BankSnapshot carriedInto(final BankReader reader, final Client c,
-		@Nullable final BankSnapshot bank, final long now)
+	private static BankSnapshot carriedInto(final BankReader reader, @Nullable final Item[] inventory,
+		@Nullable final Item[] worn, @Nullable final BankSnapshot bank, final long now)
 	{
 		if (bank == null)
 		{
 			return null;
 		}
-		final BankReader.Carried carried = reader.readContainers(itemsOf(c, InventoryID.INV),
-			itemsOf(c, InventoryID.WORN), now);
+		final BankReader.Carried carried = reader.readContainers(inventory, worn, now);
 		return carried == null ? bank : bank.withCarried(carried);
+	}
+
+	/**
+	 * CLIENT THREAD. The inventory's slots ({@code InventoryID.INV} = 93, Y2), or null when the client has not
+	 * cached it. With {@link #wornOf}, the one place the two carried ids are named.
+	 */
+	@Nullable
+	private static Item[] inventoryOf(final Client c)
+	{
+		return itemsOf(c, InventoryID.INV);
+	}
+
+	/** CLIENT THREAD. The worn gear's slots ({@code InventoryID.WORN} = 94, Y2), or null likewise. */
+	@Nullable
+	private static Item[] wornOf(final Client c)
+	{
+		return itemsOf(c, InventoryID.WORN);
 	}
 
 	/** CLIENT THREAD. One container's items, or null when the client has never cached that container. */
@@ -854,6 +1102,22 @@ public class BankPriceMovementPlugin extends Plugin
 	 * <p>The publish is a no-op inside the service when the content has not moved
 	 * ({@code BankSnapshot.sameContentAs}), so a Refresh pressed twice with nothing eaten in between costs
 	 * one recompute and no write.
+	 *
+	 * <p><b>Not while a bank change is held (addendum AS).</b> The bank half this would re-stamp is then known
+	 * to be out of date, while the inventory it would read is not: a player who has just deposited their whip
+	 * holds it in neither half of such a snapshot, and it would be published and saved without it. The price
+	 * re-check that runs this hook with the bank open is the gear menu's "Refresh prices now" (the Refresh LINK
+	 * takes the hold's own road instead); the carried half it skips is read, with the bank, by the held change's
+	 * one read at the close.
+	 *
+	 * <p><b>The hold's fingerprint follows what this publishes (addendum AS).</b> The fingerprint says which three
+	 * containers the service's snapshot was made from, so that a bank event bringing the same three back is skipped
+	 * ({@link #lastFingerprint}). This publish replaces the snapshot's carried pair, so it replaces the fingerprint's
+	 * carried pair as well and keeps its bank sum - the bank half republished here is the one that read took. Left
+	 * as it was, the fingerprint would still describe what the player carried at that read, and a player who went
+	 * back to carrying exactly that before the next bank event would have the event skipped while the sidebar
+	 * showed what they held at the Refresh. A fingerprint of another account or profile is left alone: it describes
+	 * nothing this publish touched, and the comparison can never match it for this player anyway.
 	 */
 	void readCarriedOnClientThread()
 	{
@@ -862,6 +1126,11 @@ public class BankPriceMovementPlugin extends Plugin
 		final Client c = client;
 		if (s == null || reader == null || c == null)
 		{
+			return;
+		}
+		if (bankPending)
+		{
+			log.debug("bank-portfolio-tracker: bank hold - carried re-read skipped, a bank change is held");
 			return;
 		}
 		if (c.getGameState() != GameState.LOGGED_IN)
@@ -873,19 +1142,28 @@ public class BankPriceMovementPlugin extends Plugin
 		{
 			return;
 		}
+		final String profile = profileType;
 		final BankSnapshot cached = lastBank;
-		final BankSnapshot held = cached != null ? cached : ownBank(s.bank(), hash);
-		if (held == null)
+		final BankSnapshot stored = cached != null ? cached : ownBank(s.bank(), hash);
+		if (stored == null)
 		{
 			return;
 		}
-		final BankSnapshot next = carriedInto(reader, c, held, System.currentTimeMillis());
-		if (next == null || next == held)
+		// Taken once, like the bank event's pair: the same two arrays are folded in and re-stamped below.
+		final Item[] inventory = inventoryOf(c);
+		final Item[] worn = wornOf(c);
+		final BankSnapshot next = carriedInto(reader, inventory, worn, stored, System.currentTimeMillis());
+		if (next == null || next == stored)
 		{
 			return;
 		}
 		lastBank = next;
 		s.setBank(next);
+		final Fingerprint last = lastFingerprint;
+		if (last != null && lastFingerprintHash == hash && Objects.equals(lastFingerprintProfile, profile))
+		{
+			lastFingerprint = last.withCarried(inventory, worn);
+		}
 	}
 
 	/**
@@ -910,6 +1188,463 @@ public class BankPriceMovementPlugin extends Plugin
 			return null;
 		}
 		return profileType.equals(loaded.profileType == null ? "" : loaded.profileType) ? loaded : null;
+	}
+
+	// ---------------------------------------------------------------- addendum AS: the bank hold (client thread)
+
+	/**
+	 * CLIENT THREAD. The bank interface has loaded, so from here a bank that changes is held rather than read (see
+	 * {@link #onItemContainerChanged}). Group {@link InterfaceID#BANKMAIN} - the gameval constant, the same test
+	 * core's own Bank plugin makes to track its {@code bankOpen} (clone BankPlugin.java:307-328) - and nothing else:
+	 * the deposit box, group storage and the bank imp have interfaces of their own and never send the bank
+	 * container, so a visit to one of them is seen at the next real bank visit, exactly as before addendum AS.
+	 *
+	 * <p>The debug line is half of the instrument for a fact the plan could not settle from source: whether this
+	 * arrives before or after the bank's first {@code ItemContainerChanged}. Beside the bank-event lines of
+	 * {@link #onItemContainerChanged}, the client log shows which came first. The design does not depend on the
+	 * answer: an unchanged bank costs a sum either way, and a changed one costs one read only while the bank is
+	 * not yet known to be open.
+	 */
+	@Subscribe
+	public void onWidgetLoaded(WidgetLoaded event)
+	{
+		if (event.getGroupId() != InterfaceID.BANKMAIN)
+		{
+			return;
+		}
+		log.debug("bank-portfolio-tracker: bank hold - bank interface loaded (was open={}, pending={}, reads={})",
+			bankOpen, bankPending, bankReads);
+		if (!bankOpen)
+		{
+			bankOpen = true;
+			notifyBankHold();
+		}
+	}
+
+	/**
+	 * CLIENT THREAD. The bank interface is closing, which is where the one read of a held change happens
+	 * ({@link #closeBank}). {@link WidgetClosed#isUnload()} false is not a close: RuneLite's own javadoc gives it as
+	 * "if the interface will be unloaded or if it will be immediately reloaded", and core's Bank Tags makes the same
+	 * check before it tears its own bank state down (clone TabInterface.java:302, PotionStorage.java:141).
+	 *
+	 * <p>Instrumented at debug for the other two facts the source could not settle: that this arrives for every
+	 * way a bank closes - the X, Esc, walking away, a teleport ({@link #onGameTick} catches any that it does not) -
+	 * and whether the client still has the bank container at this moment (the one read logs which it used).
+	 */
+	@Subscribe
+	public void onWidgetClosed(WidgetClosed event)
+	{
+		if (event.getGroupId() != InterfaceID.BANKMAIN)
+		{
+			return;
+		}
+		if (!event.isUnload())
+		{
+			log.debug("bank-portfolio-tracker: bank hold - bank interface closed to be reloaded at once"
+				+ " (unload=false), still open");
+			return;
+		}
+		log.debug("bank-portfolio-tracker: bank hold - bank interface closed (pending={})", bankPending);
+		closeBank("bank closed");
+	}
+
+	/**
+	 * CLIENT THREAD. The belt to {@link #onWidgetClosed}'s braces: while the hold thinks the bank is open, one look
+	 * per game tick at whether the bank interface is really still loaded - the component the start-up probe asks
+	 * for. That a {@code WidgetClosed} arrives for EVERY way a bank closes is not something the RuneLite source can
+	 * show (the client posts it), and a hold that missed its close would sit on a held change - and the panel on
+	 * every publish - until the session ended. A close found this way takes the close's own road, and its debug line
+	 * is the evidence that the event did not come.
+	 *
+	 * <p>Costs one field read per tick while the bank is shut, and one component lookup while it is open.
+	 */
+	@Subscribe
+	public void onGameTick(GameTick tick)
+	{
+		if (!bankOpen)
+		{
+			return;
+		}
+		final Client c = client;
+		if (c == null || c.getWidget(InterfaceID.Bankmain.UNIVERSE) != null)
+		{
+			return;
+		}
+		log.debug("bank-portfolio-tracker: bank hold - the bank interface is gone and no close arrived for it,"
+			+ " treating it as closed");
+		closeBank("bank interface gone");
+	}
+
+	/**
+	 * CLIENT THREAD. The bank has closed, or is gone: it is no longer open, a held change is read ONCE
+	 * ({@link #readBankOnce}), the hold is dropped, and the panel is told in every case - the close is what puts its
+	 * glow out and lets it draw what it kept back while the bank was open.
+	 *
+	 * @param why what closed it, for the client log
+	 */
+	private void closeBank(final String why)
+	{
+		final boolean pending = bankPending;
+		bankOpen = false;
+		if (pending)
+		{
+			readBankOnce(why);
+		}
+		endHold();
+		notifyBankHold();
+	}
+
+	/**
+	 * CLIENT THREAD, from {@link #onGameStateChanged} at {@code LOGIN_SCREEN} and {@code HOPPING}: the session is
+	 * over, which ends the hold whether or not a {@code WidgetClosed} said so first (the debug line's
+	 * {@code open=true} is the evidence that it had not). A held change is read now, from the held slots - the
+	 * client is no longer logged in, so {@link #readBankOnce} asks it for nothing.
+	 *
+	 * <p>The fingerprint is KEPT (plan AS 7.4), still stamped with the account it belongs to. Forgetting it here
+	 * made the first bank open after every hop a read and a redraw in front of the player, for a bank that had not
+	 * changed; why keeping it is safe is on {@link #lastFingerprint}. A login as anybody else cannot inherit it: the
+	 * comparison names the account and the profile, so their first bank event is read.
+	 *
+	 * @param state the game state that ended the session, for the client log
+	 */
+	private void endSession(final GameState state)
+	{
+		log.debug("bank-portfolio-tracker: bank hold - {} with the bank open={}, pending={}", state, bankOpen,
+			bankPending);
+		if (bankPending)
+		{
+			readBankOnce(state + " with a bank change held");
+		}
+		bankOpen = false;
+		endHold();
+		notifyBankHold();
+	}
+
+	/**
+	 * CLIENT THREAD. The one read of a held bank - at the close, a Refresh click with the bank open, and the end of a
+	 * session (never the client's exit: see {@link #onClientShutdown}). Where the slots come from, in order:
+	 * <ol>
+	 * <li>the client's own bank container, while the client can say who is playing: the freshest there is, read
+	 * under the account the client answers for;</li>
+	 * <li>otherwise the slots held at the last bank event, under the account they arrived with - the case at a
+	 * logout, and at a close if the client has already let the container go (the source cannot show which, so both
+	 * are handled and the debug line says which was used).</li>
+	 * </ol>
+	 * The carried half follows the same rule: the client's two containers when the client vouches for that same
+	 * account and profile, the copies held beside the bank otherwise.
+	 *
+	 * @param why what asked for the read, for the client log
+	 */
+	private void readBankOnce(final String why)
+	{
+		final Client c = client;
+		if (c == null)
+		{
+			return;
+		}
+		final boolean loggedIn = c.getGameState() == GameState.LOGGED_IN;
+		final long liveHash = loggedIn ? rememberAccount() : 0L;
+		final String liveProfile = profileType;
+		if (liveHash > 0L)
+		{
+			final ItemContainer live = c.getItemContainer(BankReader.BANK_CONTAINER_ID);
+			if (live != null)
+			{
+				log.debug("bank-portfolio-tracker: bank hold - {}: read from the client's bank container", why);
+				captureBank(live.getItems(), inventoryOf(c), wornOf(c), liveHash, liveProfile);
+				return;
+			}
+		}
+		final Item[] items = heldItems;
+		if (items == null)
+		{
+			log.debug("bank-portfolio-tracker: bank hold - {}: no bank container and nothing held, nothing read", why);
+			return;
+		}
+		final long hash = heldHash;
+		final String profile = heldProfile;
+		final boolean vouched = liveHash > 0L && liveHash == hash && Objects.equals(liveProfile, profile);
+		log.debug("bank-portfolio-tracker: bank hold - {}: no bank container (logged in={}), read the {} slots"
+			+ " held at the last bank event", why, loggedIn, items.length);
+		captureBank(items, vouched ? inventoryOf(c) : heldInventory, vouched ? wornOf(c) : heldWorn, hash, profile);
+	}
+
+	/**
+	 * The Refresh link's hook while the bank is open (addendum AS), handed to the panel by {@link #startUp()} and
+	 * taken back by {@link #shutDown()}. It is pressed on the EDT, and a bank may be read on the client thread
+	 * only, so all this does is hop - the read is {@link #captureHeldBank()}.
+	 *
+	 * <p>Package-private so {@code BankPriceMovementWiringTest} can press it without a panel.
+	 */
+	void refreshHeldBank()
+	{
+		final ClientThread ct = clientThread;
+		if (ct == null)
+		{
+			return;
+		}
+		ct.invoke(this::captureHeldBank);
+	}
+
+	/**
+	 * CLIENT THREAD. A Refresh click with the bank open: the bank read ONCE, now ({@link #readBankOnce} - the
+	 * client's container, or the held slots when it has none), the hold dropped so the glow goes out until the next
+	 * change, and the panel told. It reads even with nothing held: the click is an explicit ask, and the carried
+	 * half can have moved on since the last read without the bank itself changing.
+	 *
+	 * <p>What it deliberately does NOT do is anything the price Refresh does. It never calls
+	 * {@link PriceService#refreshNow()} - so nothing is downloaded, and the 30 s manual cooldown, which is stamped
+	 * inside that method and nowhere else, is never spent on a local redraw: a price Refresh straight after the bank
+	 * closes is still served.
+	 *
+	 * <p>Package-private so {@code BankPriceMovementWiringTest} can run the hop's work directly.
+	 */
+	void captureHeldBank()
+	{
+		readBankOnce("Refresh with the bank open");
+		endHold();
+		notifyBankHold();
+	}
+
+	/**
+	 * CLIENT THREAD. Keeps one bank event's slots as the held bank - COPIES of them, and of the inventory and the
+	 * worn gear the handler took from the client at this same event ({@link #heldInventory}) - under the account and
+	 * profile they arrived with, and counts the event. Three array copies of a few hundred references: the whole
+	 * cost of an event while a change is held.
+	 */
+	private void hold(@Nullable final Item[] items, @Nullable final Item[] inventory, @Nullable final Item[] worn,
+		final long hash, final String profile)
+	{
+		heldItems = copyOf(items);
+		heldInventory = copyOf(inventory);
+		heldWorn = copyOf(worn);
+		heldHash = hash;
+		heldProfile = profile;
+		heldEvents++;
+	}
+
+	/** A shallow copy: {@link Item} is immutable, so the slots' own objects can be shared. Null stays null. */
+	@Nullable
+	private static Item[] copyOf(@Nullable final Item[] items)
+	{
+		return items == null ? null : items.clone();
+	}
+
+	/** Nothing pending and nothing held. The fingerprint and the counters are left as they are. */
+	private void endHold()
+	{
+		bankPending = false;
+		heldItems = null;
+		heldInventory = null;
+		heldWorn = null;
+		heldHash = 0L;
+		heldProfile = "";
+	}
+
+	/**
+	 * EDT, from {@link #startUp()} and {@link #shutDown()}: the hold as a plugin that has seen no bank has it. The
+	 * one place the fingerprint is forgotten outright, so the next bank event is read whatever it holds - the end of
+	 * a session keeps it ({@link #endSession}), and another account's first read replaces it.
+	 */
+	private void resetBankHold()
+	{
+		bankOpen = false;
+		endHold();
+		lastFingerprint = null;
+		lastFingerprintHash = 0L;
+		lastFingerprintProfile = "";
+		heldEvents = 0;
+		bankReads = 0;
+	}
+
+	/**
+	 * CLIENT THREAD. Tells the panel where the hold stands - open, pending and the two counters - through
+	 * {@code SwingUtilities.invokeLater}, with the four values taken HERE, so they always describe one moment.
+	 * Called after every change of any of them, so neither the panel (which lights the glow and keeps its
+	 * publishes back from the first two) nor the dev bridge (which echoes all four) is ever behind - and so the panel
+	 * is told the same open/pending pair many times over and acts on changes of it only.
+	 *
+	 * <p>The panel is taken now, too: a notice queued before a shutDown lands on the stopped panel it was meant
+	 * for, never on the one the next run builds.
+	 */
+	private void notifyBankHold()
+	{
+		final BankPriceMovementPanel p = panel;
+		if (p == null)
+		{
+			return;
+		}
+		final boolean open = bankOpen;
+		final boolean pending = bankPending;
+		final int held = heldEvents;
+		final int reads = bankReads;
+		SwingUtilities.invokeLater(() -> p.setBankHold(open, pending, held, reads));
+	}
+
+	/**
+	 * AS: what one bank event's three containers add up to - the bank's slots, and the inventory and the worn gear as
+	 * the client holds them at that event, each summed by {@link #slotSum} - so that an event bringing back exactly
+	 * what this plugin last read can be dropped before anything is looked up. Pure and static: no
+	 * {@code ItemManager}, no client, one small object, and the answer depends on nothing but each slot's (id,
+	 * quantity) and which container it is in. About 840 slots for a full bank, a full inventory and a full set of
+	 * gear: microseconds.
+	 *
+	 * <p><b>Why all three.</b> A read folds the inventory and the worn gear into the bank's snapshot (addendum Y), so
+	 * an event that brings the same bank back beside a different inventory is a CHANGE of what the sidebar shows. A
+	 * fingerprint of the bank alone skipped it, and gear swapped between two bank visits stood in "Include inventory
+	 * and worn gear" until a Refresh.
+	 *
+	 * <p><b>Why three sums kept apart, and not one over all 840 slots.</b> {@code BankReader.readContainers} reads the
+	 * inventory and the worn gear as two separate lists, so an item that moves from one container to another is a
+	 * change even when nothing is gained or lost - and one sum cannot see it: equipping a whip in place of a dragon
+	 * dagger puts the dagger into the inventory slot the whip left, so {@code f(whip)} moves from one container to the
+	 * other and {@code f(dagger)} the opposite way, and the total does not move by a single bit. Kept apart, every
+	 * such move is PROVEN to be seen rather than merely unlikely to be missed: a deposit, a withdrawal, an equip or an
+	 * unequip changes, empties or removes one slot of the container the item leaves, and that always moves that
+	 * container's sum (points 1 and 2 of {@link #slotSum}'s collision story). What can still be missed is a change of
+	 * SEVERAL slots of every container it touches - a whole inventory deposited - and only if each of those sums
+	 * cancels to the last bit at once.
+	 *
+	 * @param bank      a bank event's slots, as {@code ItemContainer.getItems()} gives them; may be null or hold nulls
+	 * @param inventory the inventory's slots at that event ({@code InventoryID.INV}); null when the client has none
+	 * @param worn      the worn gear's slots at that event ({@code InventoryID.WORN}); null likewise
+	 * @return the three sums - equal for any two events whose containers hold the same slots, each in any order
+	 */
+	static Fingerprint fingerprint(@Nullable final Item[] bank, @Nullable final Item[] inventory,
+		@Nullable final Item[] worn)
+	{
+		return new Fingerprint(slotSum(bank), slotSum(inventory), slotSum(worn));
+	}
+
+	/**
+	 * AS: the three sums {@link #fingerprint(Item[], Item[], Item[])} answers, one per container, compared as one
+	 * value. Immutable, so the single volatile reference that holds the last read's ({@link #lastFingerprint})
+	 * publishes all three at once.
+	 */
+	static final class Fingerprint
+	{
+		/** {@link BankPriceMovementPlugin#slotSum} of the bank's slots. */
+		final long bank;
+		/** {@link BankPriceMovementPlugin#slotSum} of the inventory's slots. */
+		final long inventory;
+		/** {@link BankPriceMovementPlugin#slotSum} of the worn gear's slots. */
+		final long worn;
+
+		Fingerprint(final long bank, final long inventory, final long worn)
+		{
+			this.bank = bank;
+			this.inventory = inventory;
+			this.worn = worn;
+		}
+
+		/**
+		 * The same bank beside another carried pair: what {@link BankPriceMovementPlugin#readCarriedOnClientThread}
+		 * publishes, a fresh inventory and worn gear beside the bank half the last read took.
+		 */
+		Fingerprint withCarried(@Nullable final Item[] inventorySlots, @Nullable final Item[] wornSlots)
+		{
+			return new Fingerprint(bank, slotSum(inventorySlots), slotSum(wornSlots));
+		}
+
+		@Override
+		public boolean equals(final Object other)
+		{
+			if (this == other)
+			{
+				return true;
+			}
+			if (!(other instanceof Fingerprint))
+			{
+				return false;
+			}
+			final Fingerprint that = (Fingerprint) other;
+			return bank == that.bank && inventory == that.inventory && worn == that.worn;
+		}
+
+		@Override
+		public int hashCode()
+		{
+			return 31 * (31 * Long.hashCode(bank) + Long.hashCode(inventory)) + Long.hashCode(worn);
+		}
+
+		/** The three sums in hex, for the client log and a failing test's message. */
+		@Override
+		public String toString()
+		{
+			return "Fingerprint{bank=" + Long.toHexString(bank) + ", inventory=" + Long.toHexString(inventory)
+				+ ", worn=" + Long.toHexString(worn) + '}';
+		}
+	}
+
+	/**
+	 * AS: what one container's slots add up to - one of the three sums of {@link #fingerprint(Item[], Item[], Item[])}
+	 * (it was the whole fingerprint while that covered the bank alone). Pure and static, no allocation beyond the
+	 * loop, and the answer depends on nothing but each slot's (id, quantity).
+	 *
+	 * <p><b>How.</b> Each slot's id and quantity are packed into one long - the id in the high half, the quantity's
+	 * 32 bits in the low half, so a pair maps to one long and back - the long's complement goes through
+	 * {@link #scramble}, a bijection of the 64-bit values, and the results are ADDED, wrapping. A null slot counts
+	 * as an empty one (id -1, quantity 0) and a null array as an empty container, both of which {@link BankReader}
+	 * reads to the same stacks anyway.
+	 *
+	 * <p><b>Why a sum, which cannot see where a slot is.</b> {@link BankReader} folds every container's slots into a
+	 * map by canonical id and then sorts the stacks by name - the bank in {@code read}, the inventory and the worn gear
+	 * in {@code readContainers} - so what it reads depends on WHICH slots a container holds and never on where they
+	 * sit. A sum that saw the order would call the bank changed every time a stack was dragged into another tab, or
+	 * the inventory every time two slots were swapped - and cost a read, or light the glow, for containers that read
+	 * to the identical snapshot.
+	 *
+	 * <p><b>The collision story.</b> A collision is a CHANGED container taken for an unchanged one - the only failure
+	 * that matters - and it is bounded three ways:
+	 * <ol>
+	 * <li>A change to ONE slot - a stack's quantity after a deposit or a withdrawal, a stack left as its placeholder,
+	 * one item in a slot where another was, an empty slot filled or emptied - can never collide: the sum moves by
+	 * {@code f(new) - f(old)} modulo 2^64, and f is a bijection, so that is zero only when the new slot is the old
+	 * one.</li>
+	 * <li>One slot ADDED or REMOVED - a new stack deposited, a stack withdrawn with no placeholder left - moves the
+	 * sum by {@code f(that slot)}, which is zero for exactly one packed value; the complement taken before the
+	 * scramble puts it at id -1 with quantity -1, a negative quantity no stack can have.</li>
+	 * <li>Several slots at once - a whole inventory deposited - are missed only if their changes cancel to the last
+	 * bit of a 64-bit sum: about one chance in 2^64 for the event. There is no birthday effect, because each event
+	 * is compared with ONE fingerprint, the last read's, never with a pool of them.</li>
+	 * </ol>
+	 * The price of a miss is one event's update, never a wrong bank: the next event that differs, the close of a held
+	 * change, a Refresh click with the bank open and the first bank of every run read the whole bank again. The
+	 * opposite error - two containers that read the same but sum differently (an empty slot more or less, a
+	 * placeholder moved) - costs one read that was not needed, which is what every event cost before addendum AS.
+	 *
+	 * @param items one container's slots, as {@code ItemContainer.getItems()} gives them; may be null or hold nulls
+	 * @return the sum - equal for any two arrays that hold the same slots, in any order
+	 */
+	static long slotSum(@Nullable final Item[] items)
+	{
+		long sum = 0L;
+		if (items == null)
+		{
+			return sum;
+		}
+		for (final Item item : items)
+		{
+			final long id = item == null ? -1L : item.getId();
+			final long quantity = item == null ? 0L : item.getQuantity();
+			sum += scramble(~((id << 32) | (quantity & 0xFFFF_FFFFL)));
+		}
+		return sum;
+	}
+
+	/**
+	 * The finaliser of SplitMix64 (Steele, Lea and Flood, "Fast splittable pseudorandom number generators", 2014;
+	 * the constants are Stafford's "Mix13"): two xor-shift-multiply rounds and a last xor-shift. It is a BIJECTION
+	 * of the 64-bit values - an xor with the value's own right shift can be undone from the top bits down, and a
+	 * multiplication by an odd constant has an inverse modulo 2^64 - which is the property the collision story of
+	 * {@link #slotSum(Item[])} rests on; that it also spreads every input bit across the whole output is what makes
+	 * a multi-slot miss as unlikely as a 64-bit coincidence. Package-private so the test can undo it.
+	 */
+	static long scramble(final long value)
+	{
+		long z = (value ^ (value >>> 30)) * 0xBF58476D1CE4E5B9L;
+		z = (z ^ (z >>> 27)) * 0x94D049BB133111EBL;
+		return z ^ (z >>> 31);
 	}
 
 	// ---------------------------------------------------------------- config and shutdown
@@ -1053,15 +1788,32 @@ public class BankPriceMovementPlugin extends Plugin
 	 * would be lost with the writes still queued on the executor. {@code ClientShutdown.waitFor(Future)} adds
 	 * a future the client drains before it goes (clone ClientShutdown.java:41-45); {@code service.flush()} is
 	 * the pending store writes.
+	 *
+	 * <p><b>Addendum AS: a bank change still HELD is NOT read here</b> (plan AS 7.4), and but for one debug line
+	 * this is the handler it was before the hold. Reading it would mean queuing the read on the client thread and
+	 * handing the client its future to wait for - and the client waits up to ten seconds in all for the futures it
+	 * is handed before it stops the game (clone ClientUI.java:798-819 and ClientShutdown.java:46-71, tag
+	 * runelite-parent-1.12.37), so a game thread that never ran the task would hold the exit up for all ten, at the
+	 * one moment the user is waiting for the window to go. The Hub's author rules ask that a plugin never block its
+	 * way out ({@code templateplugin/AGENTS.md}: never block in {@code startUp()} or {@code shutDown()}), and that
+	 * is this fault in its worst form. So the change is dropped with the process, with one debug line saying so: the
+	 * saved file keeps the bank as it was last read, and the next launch reads the bank again at its first bank
+	 * open - a new run has no fingerprint to skip that event against.
 	 */
 	@Subscribe
 	public void onClientShutdown(ClientShutdown event)
 	{
 		final PriceService s = service;
-		if (s != null)
+		if (s == null)
 		{
-			event.waitFor(s.flush());
+			return;
 		}
+		if (bankPending)
+		{
+			log.debug("bank-portfolio-tracker: bank hold - client closing with a bank change held ({} held events):"
+				+ " not read, the next launch reads the bank at its first bank open", heldEvents);
+		}
+		event.waitFor(s.flush());
 	}
 
 	// ---------------------------------------------------------------- config <-> filter

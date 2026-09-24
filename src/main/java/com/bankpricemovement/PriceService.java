@@ -153,10 +153,13 @@ import org.slf4j.LoggerFactory;
  * every 30 minutes), refetches the index when it is older than {@value #HISTORY_MAX_AGE_MS} ms (L4), fetches R0
  * when the index names a newer revision than the one in memory, and picks every window's baseline locally,
  * fetching only the bodies whose revision id differs from the stored one - all of them in one batched call.
- * The mapping is refetched weekly on the same tick (K3). A manual refresh forces the index (the rest follows from
- * it) behind {@value #MANUAL_COOLDOWN_MS} ms; nothing at all is fetched while the sidebar is hidden. A revision
- * is immutable, so a body is never fetched twice for the same revision id in one session, and the newest table
- * R0 is refetched only when the index's newest revision changes.
+ * The mapping is refetched weekly on the same tick (K3). The traded {@code /latest} snapshot of addendum T rides
+ * the same tick too, but only once the one in hand is at least {@value #LATEST_MIN_AGE_MS} ms old (addendum AS,
+ * decision 3): the first run on every activation would otherwise download it again however recently it landed. A
+ * manual refresh forces the index (the rest follows from it) - and, with live prices on, the {@code /latest}
+ * snapshot whatever its age - behind {@value #MANUAL_COOLDOWN_MS} ms; nothing at all is fetched while the sidebar
+ * is hidden. A revision is immutable, so a body is never fetched twice for the same revision id in one session,
+ * and the newest table R0 is refetched only when the index's newest revision changes.
  *
  * <p><b>Failure (L11).</b> A window whose target predates the whole index is not an error - it shows
  * "No 180d history" and nothing is requested for it. A stored baseline is kept until a newer body parses and
@@ -187,9 +190,11 @@ public class PriceService
 
 	/**
 	 * The one timer while the sidebar is visible (L1, L10): rows recomputed, the index's age checked, the baselines
-	 * re-picked. Thirty minutes because the guide series is a daily step and RuneLite itself refreshes its price
-	 * table every thirty minutes ({@code ItemManager.java:218}); the anchor day is re-derived on every run, so the
-	 * panel follows the Jagex rollover within one tick (L3).
+	 * re-picked, and - with live prices on (addendum T) - the traded {@code /latest} snapshot asked for again once it
+	 * is {@link #LATEST_MIN_AGE_MS} old, which a snapshot the previous run fetched always is by the next one (addendum
+	 * AS). Thirty minutes because the guide series is a daily step and RuneLite itself refreshes its price table every
+	 * thirty minutes ({@code ItemManager.java:218}); the anchor day is re-derived on every run, so the panel follows
+	 * the Jagex rollover within one tick (L3).
 	 */
 	public static final long TICK_MS = 30L * 60L * 1000L;
 
@@ -206,7 +211,11 @@ public class PriceService
 	 */
 	public static final long MAPPING_MAX_AGE_MS = 7L * 24L * 60L * 60L * 1000L;
 
-	/** Two manual refreshes closer than this: the second is refused with a status line, nothing is sent (L10). */
+	/**
+	 * Two manual refreshes closer than this: the second sends nothing (L10) and says so in a status line - unless the
+	 * same click had just re-read the items, a refresh the user can see, and then it says nothing (addendum AS, line
+	 * AS8, {@link #refreshNow(boolean)}).
+	 */
 	public static final long MANUAL_COOLDOWN_MS = 30L * 1000L;
 
 	/**
@@ -318,6 +327,26 @@ public class PriceService
 	 */
 	public static final long LIVE_LATEST_MAX_AGE_MS = 6L * 60L * 60L * 1000L;
 
+	/**
+	 * <b>Addendum AS, decision 3.</b> How old the {@code /latest} snapshot in hand must be before {@link #onTick} asks
+	 * for another: {@value} ms, five minutes. Younger than that, the tick leaves it alone - and offers each window's
+	 * traded bucket against it, the one other thing that fetch's landing did. A manual {@link #refreshNow()} asks
+	 * whatever the age, and start-up and the switch turning on keep T7's own six-hour test
+	 * ({@link #requestLatestIfLive}).
+	 *
+	 * <p>Why the tick needs a floor at all: {@link #setVisible} runs it at once on EVERY activation, so each return to
+	 * this sidebar tab downloaded the whole feed again - 4,535 items, about 335 KiB raw and 71 KiB gzipped as measured
+	 * on 2026-09-08 ({@code docs/research/bank-price-movement-research-2026-09-08.md}, claim C2) - then wrote it to
+	 * disk and recomputed and republished the rows ({@link #finishLatest}), to replace a snapshot fetched moments
+	 * earlier. Five minutes because the wiki's own answer carries {@code max-age=60} and the same research reads that
+	 * as "poll in minutes, not 60 s", while {@link #TICK_MS} is six times longer: a snapshot the previous run fetched
+	 * is always due at the next one, so the periodic cadence is untouched and only a quick return to the tab is
+	 * spared. The cost is a bound, not a cadence: a tab reopened inside the five minutes restarts the timer without a
+	 * fetch, so while the sidebar is showing the snapshot can grow to just under {@code TICK_MS + LATEST_MIN_AGE_MS}
+	 * old rather than {@code TICK_MS}.
+	 */
+	public static final long LATEST_MIN_AGE_MS = 5L * 60L * 1000L;
+
 	/** T7: what {@link Status#degradedReason()} says once the traded feed is unusable and every row is on the guide. */
 	public static final String LIVE_UNAVAILABLE = "live prices unavailable - showing guide prices";
 
@@ -398,7 +427,11 @@ public class PriceService
 
 	/** The newest {@code /latest} snapshot, item id to quote; empty until loaded or fetched, never null. */
 	private Map<Integer, TradedPriceClient.Quote> latest = Collections.emptyMap();
-	/** When {@link #latest} was fetched, epoch millis; 0 = none. What T7's six-hour rule compares. */
+	/**
+	 * When {@link #latest} was fetched, epoch millis; 0 = none. What T7's six-hour rule compares, and the tick's
+	 * five-minute floor of addendum AS ({@link #latestDueLocked}). Stamped only by a fetch that SUCCEEDED (or read off
+	 * disk with the file), never by an attempt, so a failure can never make the tick think it holds a fresh snapshot.
+	 */
 	private long latestAtMillis;
 	/** One traded daily bucket per window, {@link PriceStore.TradedDay#EMPTY} until loaded or fetched. */
 	private final Map<MovementWindow, PriceStore.TradedDay> tradedDays = new EnumMap<>(MovementWindow.class);
@@ -2646,6 +2679,11 @@ public class PriceService
 	 * {@link #onTick} - first at once, on the executor, so it lands AFTER the disk read of {@link #start()}.
 	 * Hidden: the timer is cancelled; a request already in flight completes normally. Idempotent.
 	 *
+	 * <p>That first run is paid on EVERY activation - each return to this sidebar tab - which is why it no longer
+	 * downloads the traded {@code /latest} snapshot when the one in hand is under {@link #LATEST_MIN_AGE_MS} old
+	 * (addendum AS, decision 3): opening the tab twice inside five minutes costs one download, not two. Everything
+	 * else the tick does is the same on the first run as on every later one.
+	 *
 	 * <p>{@code scheduleWithFixedDelay} rather than {@code scheduleAtFixedRate}: the executor is the client's
 	 * single shared thread, and a fixed-rate timer would fire a burst to catch up after any long task on it.
 	 * The tick body swallows its own exceptions because an exception out of a periodic task cancels it for
@@ -2689,6 +2727,17 @@ public class PriceService
 	}
 
 	/**
+	 * The price re-check alone, as every caller before addendum AS8 pressed it: {@link #refreshNow(boolean)} with
+	 * {@code false}, so a press inside the cooldown still says "Refreshed n s ago - wait". It is the press where
+	 * nothing but the prices refreshes - the gear menu's "Refresh prices now", and the Refresh link while the bank
+	 * is closed.
+	 */
+	public void refreshNow()
+	{
+		refreshNow(false);
+	}
+
+	/**
 	 * The Refresh button and the bridge's {@code refresh} verb (L10: "index + R0 + current window, 30 s
 	 * cooldown"): refetches the revision index regardless of its age - its completion fetches R0 when the newest
 	 * revision changed and every window's missing body in one call - refetches the mapping when it is older than
@@ -2706,8 +2755,28 @@ public class PriceService
 	 * in-flight request completes into - which is what lets a manual refresh fetch bodies while the sidebar is
 	 * hidden. And it treats a backwards jump of the wall clock (an NTP correction) as an expired cooldown rather
 	 * than as "refreshed a moment ago", which would otherwise refuse every refresh until real time caught up.
+	 *
+	 * <p><b>{@code quietCooldown}</b> (addendum AS, line AS8). The user, on the live AS7 build: "manually clicking the
+	 * refresh button should refresh everything for the user". Until then a click with the bank open only re-read the
+	 * items and a click with it closed only re-checked the prices, so the first changed nothing the user could see
+	 * while the second moved prices. Now one click does both: with the bank open the plugin re-reads the bank, the
+	 * inventory and the worn gear and the sidebar redraws, and then the link presses this with {@code true} for the
+	 * prices. Inside the cooldown that price half is refused as it always was - nothing is sent, the stamp stays
+	 * where it was - but SILENTLY: no "Refreshed n s ago - wait", and so no timer to take it down. The click did
+	 * refresh what the user can see, and a red line under the fresh items telling them to wait would call a served
+	 * click a refused one; the line is kept for the press where nothing at all refreshed - the bank closed and the
+	 * cooldown running - which is {@code false}. A line an earlier refusal left standing is not this press's to
+	 * touch: its own clear still takes it down.
+	 *
+	 * <p>Nothing else depends on the flag, because the price half of the click IS the whole price check: the carried
+	 * hook runs on every press; a served press fetches, recomputes, stamps {@code lastManualRefreshMillis} and so
+	 * spends the cooldown; and a press that rides on an index already in flight hands its intent on and spends
+	 * nothing - the same under both.
+	 *
+	 * @param quietCooldown true when the caller has just refreshed the items itself, so a cooldown refusal of the
+	 *                      prices says nothing; false for a press that refreshes the prices alone, which says it
 	 */
-	public void refreshNow()
+	public void refreshNow(final boolean quietCooldown)
 	{
 		final long now = clockMillis.getAsLong();
 		final long secondsAgo;
@@ -2775,6 +2844,14 @@ public class PriceService
 		}
 		if (!refresh)
 		{
+			if (quietCooldown)
+			{
+				// AS8: this same click has just re-read the items, so something DID refresh - no "wait" line, and
+				// with no line there is nothing for a cooldown clear to take down.
+				log.debug("bank-portfolio-tracker: manual refresh refused quietly (the items were re-read), the last "
+					+ "one was {} s ago", secondsAgo);
+				return;
+			}
 			log.debug("bank-portfolio-tracker: manual refresh refused, the last one was {} s ago", secondsAgo);
 			scheduleCooldownClear(remainingMs);
 			publishStatusOnly(Problem.of(problemCooldown(secondsAgo), ProblemKind.COOLDOWN));
@@ -2864,14 +2941,18 @@ public class PriceService
 	 * Executor: the one periodic task while visible (L10). The index is refetched when older than
 	 * {@link #HISTORY_MAX_AGE_MS} (its completion picks the baselines); otherwise the baselines are picked
 	 * locally against the index in hand and only missing bodies are fetched; the mapping is refetched weekly;
-	 * the rows are recomputed unconditionally - that IS the 30-minute cadence of L1, and it re-derives the
-	 * anchor day.
+	 * the traded {@code /latest} snapshot is asked for only when the one in hand is missing or at least
+	 * {@link #LATEST_MIN_AGE_MS} old (addendum AS, decision 3 - this also runs at once on every activation, see
+	 * {@link #setVisible}); the rows are recomputed unconditionally - that IS the 30-minute cadence of L1, and it
+	 * re-derives the anchor day.
 	 */
 	private void onTick()
 	{
 		final long now = clockMillis.getAsLong();
 		final boolean fetchIndex;
 		final boolean fetchMapping;
+		final boolean fetchLatest;
+		final long latestAt;
 		synchronized (lock)
 		{
 			if (stopped || !visible)
@@ -2880,6 +2961,8 @@ public class PriceService
 			}
 			fetchIndex = !indexInFlight && indexStaleLocked(now);
 			fetchMapping = !mappingInFlight && mappingStaleLocked(now);
+			fetchLatest = latestDueLocked(now);
+			latestAt = latestAtMillis;
 		}
 		if (fetchIndex)
 		{
@@ -2893,9 +2976,26 @@ public class PriceService
 		{
 			startMapping(now, "tick");
 		}
-		// T2: "/latest is fetched ... on the 30-minute tick" - unconditionally while the switch is on, because it
-		// is the only figure in the plugin that moves inside a day and the whole point of the switch is to follow it.
-		startLatest(now, "tick");
+		// T2 fetched /latest "on the 30-minute tick" unconditionally while the switch is on, because it is the only
+		// figure in the plugin that moves inside a day and the whole point of the switch is to follow it. The periodic
+		// run still does - a snapshot the previous run fetched is TICK_MS old by now - but this also runs at once on
+		// every activation, and there a snapshot younger than LATEST_MIN_AGE_MS is left alone (addendum AS, decision
+		// 3). startLatest keeps its own rules either way: the switch, the client, one request in flight.
+		if (fetchLatest)
+		{
+			startLatest(now, "tick");
+		}
+		else
+		{
+			log.debug("bank-portfolio-tracker: traded /latest left alone (tick): the snapshot in hand is {} s old,"
+				+ " under the {} s floor", (now - latestAt) / 1000L, LATEST_MIN_AGE_MS / 1000L);
+			// The one other thing that fetch's landing did (finishLatest): offer every window's traded bucket, here
+			// against the snapshot already in hand. reconcile offers them as well - on this tick, or when the index
+			// this tick asked for lands - but not when it returns early (no index at all, or a body batch in flight),
+			// and a snapshot that landed while the sidebar was hidden (start-up's own) offered none, because no
+			// bucket is asked for while hidden. Idempotent: a day asked for, in flight or in hand is skipped.
+			reconcileTraded(now, "tick", false);
+		}
 		scheduleRecompute();
 	}
 
@@ -5153,6 +5253,21 @@ public class PriceService
 	private boolean latestStaleLocked(final long now)
 	{
 		return latest.isEmpty() || expired(latestAtMillis, now, LIVE_LATEST_MAX_AGE_MS);
+	}
+
+	/**
+	 * Under the lock. Whether the TICK should ask for a new {@code /latest} snapshot (addendum AS, decision 3): none
+	 * in memory, unstamped, at least {@link #LATEST_MIN_AGE_MS} old, or stamped in the future. {@link #onTick} is
+	 * the only reader - a manual refresh asks whatever the age, and start-up keeps {@link #latestStaleLocked}.
+	 *
+	 * <p>The same {@link #expired} as every other stamp here, and the future case matters for the same reason: a
+	 * snapshot stamped ahead of a clock corrected backwards is one {@link #latestStaleLocked} already refuses to
+	 * price from, so trusting it as "fetched moments ago" would keep every row on the guide until real time caught
+	 * up with the stamp.
+	 */
+	private boolean latestDueLocked(final long now)
+	{
+		return latest.isEmpty() || expired(latestAtMillis, now, LATEST_MIN_AGE_MS);
 	}
 
 	/**

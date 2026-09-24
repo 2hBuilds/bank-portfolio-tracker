@@ -10,6 +10,9 @@ import java.awt.FontMetrics;
 import java.awt.Graphics2D;
 import java.awt.Insets;
 import java.awt.Rectangle;
+import java.awt.RenderingHints;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
 import java.awt.event.FocusEvent;
 import java.awt.event.FocusListener;
 import java.awt.event.MouseEvent;
@@ -26,6 +29,8 @@ import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
@@ -44,9 +49,13 @@ import javax.swing.JScrollBar;
 import javax.swing.JSeparator;
 import javax.swing.JTextField;
 import javax.swing.MenuElement;
+import javax.swing.RepaintManager;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
+import javax.swing.Timer;
+import javax.swing.border.Border;
 import javax.swing.border.CompoundBorder;
+import javax.swing.border.EmptyBorder;
 import javax.swing.border.MatteBorder;
 import javax.swing.event.PopupMenuEvent;
 import javax.swing.event.PopupMenuListener;
@@ -70,6 +79,7 @@ import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -151,6 +161,19 @@ public class BankPriceMovementPanelTest
 	 * ({@link #aRowIsSilentUnderEitherSettingAndStillOpensOnAClick}).
 	 */
 	private static final ViewOptions HOVERS_ON = ViewOptions.DEFAULT.withShowHoverText(true);
+	/**
+	 * Where the ring's clock stands as the ring lights, in every AS7 test that pins it
+	 * ({@code BankPriceMovementPanel.setGlowClock}): the breath is timed from the moment it lights, so any instant will
+	 * do, and a round one reads well in a failure.
+	 */
+	private static final long GLOW_T0 = 5_000_000L;
+	/**
+	 * AS7's ring as the user approved it on the rendered candidates, written out here rather than read off the panel
+	 * so the tests measure the panel against it: the ring's box runs this many px past the Refresh link on the right...
+	 */
+	private static final int RING_EXTRA_RIGHT = 5;
+	/** ...and its halo reaches this many px outside that box all round - two 1 px rings. */
+	private static final int HALO_REACH = 2;
 
 	private ItemManager itemManager;
 	private PriceService service;
@@ -1413,9 +1436,12 @@ public class BankPriceMovementPanelTest
 		assertFalse(panel.updateLabel().getToolTipText(), panel.updateLabel().getToolTipText().contains("Last checked"));
 
 		// S2: the Refresh link says how often Jagex publishes, which is what decides whether a second tap is worth
-		// making - the 30 s cooldown it used to name is answered in the problem row instead.
-		assertEquals("the wording addendum S asks for, pinned",
-			"Re-check the guide prices. Jagex publishes them once a day.", BankPriceMovementPanel.REFRESH_TIP);
+		// making - the 30 s cooldown it used to name is answered in the problem row instead. Re-pointed by AS8, which
+		// reworded the FIRST half when a click came to re-read the items as well as re-check the prices ("Re-check the
+		// guide prices." before it); the once-a-day half is S2's, and is pinned with the rest.
+		assertEquals("the wording addendum S asks for, as AS8 reworded it, pinned",
+			"Re-read your items and re-check the prices. Jagex publishes guide prices once a day.",
+			BankPriceMovementPanel.REFRESH_TIP);
 		assertEquals(BankPriceMovementPanel.REFRESH_TIP, panel.refreshLabel().getToolTipText());
 	}
 
@@ -1743,7 +1769,10 @@ public class BankPriceMovementPanelTest
 		assertEquals(BankPriceMovementPanel.SHOW_PCT_TIP, panel.showPctItem().getToolTipText());
 
 		onEdt(() -> item(menu, BankPriceMovementPanel.REFRESH_MENU_TEXT).doClick(0));
-		verify(service).refreshNow();
+		// Re-pointed by AS8: the price re-check is the boolean overload now, and the gear's item presses it out loud -
+		// the price check ALONE, whose cooldown refusal is the whole answer and says so.
+		verify(service).refreshNow(false);
+		verify(service, never()).refreshNow(true);
 
 		final int rebuilds = panel.rebuilds();
 		onEdt(() -> panel.showValueItem().doClick(0));
@@ -1877,7 +1906,7 @@ public class BankPriceMovementPanelTest
 			panel.openGearMenu();
 			assertFalse("nothing was shown from an off-screen gear", panel.heroMenu().isVisible());
 		});
-		verify(service, never()).refreshNow();
+		verifyNoPriceCheck();
 	}
 
 	/** Q3: the initial view switches come from the config, through the prefs seam; the menu ticks agree. */
@@ -2032,9 +2061,9 @@ public class BankPriceMovementPanelTest
 			menu.getComponent(10) instanceof JSeparator);
 		assertEquals("the name addendum Y asks for, pinned", "Include inventory and worn gear",
 			BankPriceMovementPanel.COUNT_INVENTORY_TEXT);
-		assertEquals("the description addendum Y asks for, pinned",
+		assertEquals("the description addendum Y asks for, its moment the close since addendum AS, pinned",
 			"Items in your inventory and worn gear count in the bank value and are listed with the bank's stacks."
-				+ " They are read when you open the bank or press Refresh.",
+				+ " They are read when you close the bank or press Refresh.",
 			BankPriceMovementPanel.COUNT_INVENTORY_TIP);
 		assertEquals(BankPriceMovementPanel.COUNT_INVENTORY_TIP, panel.countInventoryItem().getToolTipText());
 		assertTrue("on by default (Y1)", panel.countInventoryItem().isSelected());
@@ -2162,7 +2191,11 @@ public class BankPriceMovementPanelTest
 		});
 	}
 
-	/** The Refresh link asks the service; it goes orange under the mouse. */
+	/**
+	 * The Refresh link asks the service; it goes orange under the mouse. Re-pointed by AS8: nothing has said the bank
+	 * is open here, so the click is the price re-check alone, pressed out loud through the boolean overload - never
+	 * the quiet form, which is for a click that has just re-read the bank.
+	 */
 	@Test
 	public void refreshLinkAsksTheService() throws Exception
 	{
@@ -2181,7 +2214,8 @@ public class BankPriceMovementPanelTest
 			assertTrue("the link lives in the caption row", SwingUtilities.isDescendingFrom(panel.refreshLabel(), panel.captionRow()));
 			press(panel.refreshLabel());
 		});
-		verify(service, times(1)).refreshNow();
+		verify(service, times(1)).refreshNow(false);
+		verify(service, never()).refreshNow(true);
 	}
 
 	/**
@@ -2205,7 +2239,7 @@ public class BankPriceMovementPanelTest
 			assertFalse("the fold did not open", panel.foldOpen());
 		});
 		assertTrue(prefs.saves.isEmpty());
-		verify(service, never()).refreshNow();
+		verifyNoPriceCheck();
 		verify(service, never()).setFilter(any());
 	}
 
@@ -5018,8 +5052,11 @@ public class BankPriceMovementPanelTest
 		assertTrue("a late publish is dropped", panel.rowPanels().isEmpty());
 		onEdt(() -> panel.onActivate());
 		onEdt(() -> panel.refreshNow());
+		// AS: and the gear's price check, which is its own road since the link split in two - and which AS8 kept as the
+		// price check alone when the link became both halves again.
+		onEdt(() -> panel.refreshPricesNow());
 		verify(service, never()).setVisible(anyBoolean());
-		verify(service, never()).refreshNow();
+		verifyNoPriceCheck();
 
 		// AA1: and so is a late fold call, by either road - the settings page's and the band button's alike. A
 		// write without a change is a stored choice nobody made.
@@ -5705,7 +5742,8 @@ public class BankPriceMovementPanelTest
 			assertFalse(panel.upToDateShowing());
 			assertFalse(panel.refreshTimersRunning());
 		});
-		verify(service, times(1)).refreshNow();
+		// Re-pointed by AS8: the bank is shut here, so each tap is the price re-check alone, out loud.
+		verify(service, times(1)).refreshNow(false);
 
 		// A tap during "Up to date" restarts the whole sequence rather than shortening it.
 		onEdt(() ->
@@ -5718,7 +5756,8 @@ public class BankPriceMovementPanelTest
 			panel.fireRefreshAck();
 			assertTrue(panel.upToDateShowing());
 		});
-		verify(service, times(3)).refreshNow();
+		verify(service, times(3)).refreshNow(false);
+		verify(service, never()).refreshNow(true);
 
 		// The menu entry is the same control and answers the same way; stop() takes the word off AND stops both
 		// timers, so a panel the client has removed leaves nothing ticking (P2).
@@ -6164,6 +6203,2197 @@ public class BankPriceMovementPanelTest
 		assertEquals("...and so is a late hero repaint", HeroVisibility.ALL, panel.heroVisibility());
 		assertTrue(prefs.saves.isEmpty());
 		assertTrue(prefs.heroSaves.isEmpty());
+	}
+
+	// ---- addendum AS: the bank hold, the split Refresh and the glow
+	// (docs/handoff/plan-AS-bank-hold-2026-09-21.md sections 1, 2.3 and 7)
+
+	/**
+	 * AS 7.2: while the bank is open a publish is STORED, exactly as it is while the sidebar is hidden - no row is
+	 * built, no sprite is asked for, and the header goes on drawing the status it had. The planted bug this catches is
+	 * the hold condition left at {@code !active}: the second publish would rebuild the page.
+	 */
+	@Test
+	public void aPublishWhileTheBankIsOpenIsStoredAndBuildsNothing() throws Exception
+	{
+		build();
+		final PriceService.Status first = listed(3, 3);
+		publish(rows(3), first);
+		assertEquals(1, panel.rebuilds());
+
+		bank(true, false, 0, 1);
+		assertEquals("the bank opening builds nothing either", 1, panel.rebuilds());
+
+		final PriceService.Status restated = listed(6, 6);
+		publish(rows(6), restated);
+		assertEquals("nothing was built while the bank is open", 1, panel.rebuilds());
+		assertEquals(3, panel.rowPanels().size());
+		assertEquals(3, panel.totalRows());
+		assertSame("the header still draws the status it had", first, panel.status());
+		verify(itemManager, never()).getImage(6, 6, true);
+		verify(restated, never()).thenDay();
+	}
+
+	/**
+	 * AS 7.2: the bank closing replays the LAST stored publish, whole, exactly once. {@code Status.thenDay()} is read
+	 * once per publish {@code onRows} builds and never for one it stores, so it counts the replays: none while stored,
+	 * one after the close, and still one after another word from the plugin and the sidebar coming back.
+	 *
+	 * <p>Planted bugs caught: no replay on the close (the rebuild count stays 1) and a second replay of the same
+	 * publish (thenDay is read twice).
+	 */
+	@Test
+	public void closingTheBankReplaysTheStoredPublishExactlyOnce() throws Exception
+	{
+		build();
+		publish(rows(3), listed(3, 3));
+		bank(true, true, 1, 1);
+		publish(rows(6), listed(6, 6));
+		final PriceService.Status last = listed(9, 9);
+		publish(rows(9), last);
+		assertEquals(1, panel.rebuilds());
+		verify(last, never()).thenDay();
+
+		bank(false, false, 4, 2);
+		assertEquals("the close replays the LAST publish, whole", 2, panel.rebuilds());
+		assertEquals(9, panel.rowPanels().size());
+		assertSame(last, panel.status());
+		verify(last, times(1)).thenDay();
+
+		bank(false, false, 4, 2);
+		onEdt(() -> panel.onActivate());
+		verify(last, times(1)).thenDay();
+		assertEquals("once", 2, panel.rebuilds());
+	}
+
+	/**
+	 * AS: a publish BUILT while something is stored - the answer to the reader's own act, here a column picked with
+	 * the bank open - is newer than the stored one, which is therefore dropped; the close has nothing older to replay
+	 * over it.
+	 *
+	 * <p>Planted bugs caught: no lift on a column (the answer is stored and the rebuild count stays 1) and a build that
+	 * leaves the stored publish in place (the close replays the six-row list over the nine-row one).
+	 */
+	@Test
+	public void aPublishBuiltThroughALiftDropsTheStoredOne() throws Exception
+	{
+		build();
+		publish(rows(3), listed(3, 3));
+		bank(true, true, 1, 1);
+		final PriceService.Status stale = listed(6, 6);
+		publish(rows(6), stale);
+		onEdt(() -> panel.clickSort(SortMode.GP_MOVE));
+		verify(service).setFilter(RowFilter.DEFAULT.withSort(SortMode.GP_MOVE).withDescending(true));
+		final PriceService.Status answer = listed(9, 9);
+		publish(rows(9), answer);
+		assertEquals("the answer to the reader's own act is drawn with the bank open", 2, panel.rebuilds());
+		assertEquals(9, panel.rowPanels().size());
+
+		bank(false, false, 1, 2);
+		assertEquals("and the close has nothing older to replay over it", 9, panel.rowPanels().size());
+		assertEquals(2, panel.rebuilds());
+		assertSame(answer, panel.status());
+		verify(stale, never()).thenDay();
+		onEdt(() -> panel.stop());
+	}
+
+	/**
+	 * AS, and the reason the hold may be LIFTED: every act of the reader's while the bank is open is answered by a
+	 * publish that arrives while it is still open, and each answer is drawn - a window chip, a column, a price band, a
+	 * view switch in the gear, the settings page's filter and switch, and the gear's "Refresh prices now". Before each
+	 * act the plugin reports a new change, which puts the hold back, so every road starts from a standing hold: a
+	 * re-statement is stored, then the act, then its answer is built. Removing the lift from any one road stores that
+	 * road's answer and fails the assertion naming it.
+	 */
+	@Test
+	public void everyActOfTheReadersWhileTheBankIsOpenIsDrawn() throws Exception
+	{
+		build();
+		try
+		{
+			publish(rows(3), listed(3, 3));
+			final Map<String, Runnable> acts = new LinkedHashMap<>();
+			acts.put("a window chip", () -> press(panel.windowChip(MovementWindow.D7)));
+			acts.put("a column", () -> panel.clickSort(SortMode.UNIT_PRICE));
+			acts.put("a price band", () -> panel.applyBand(1_000L, 0L));
+			acts.put("a view switch in the gear", () -> panel.countCashItem().doClick(0));
+			acts.put("the settings page's filter",
+				() -> panel.applyFilter(panel.filter().withWindow(MovementWindow.D30)));
+			acts.put("the settings page's switch",
+				() -> panel.applyOptions(panel.options().withCountUntradeables(!panel.options().countUntradeables())));
+			acts.put("the gear's Refresh prices now",
+				() -> item(panel.heroMenu(), BankPriceMovementPanel.REFRESH_MENU_TEXT).doClick(0));
+			int n = 10;
+			for (Map.Entry<String, Runnable> act : acts.entrySet())
+			{
+				// A standing hold: the plugin has just reported a change owed.
+				bank(true, false, 0, 1);
+				bank(true, true, 1, 1);
+				final int before = panel.rebuilds();
+				publish(rows(n), listed(n, n));
+				assertEquals(act.getKey() + ": a re-statement is stored while the hold stands", before,
+					panel.rebuilds());
+				onEdt(act.getValue());
+				publish(rows(n + 1), listed(n + 1, n + 1));
+				assertEquals(act.getKey() + ": its answer is drawn with the bank open", before + 1, panel.rebuilds());
+				assertEquals(act.getKey(), n + 1, panel.totalRows());
+				n += 2;
+			}
+		}
+		finally
+		{
+			onEdt(() -> panel.stop());
+		}
+	}
+
+	/**
+	 * AS, the second thing that lifts the hold ({@code carriesNewBank}): a publish carrying a bank the sidebar has not
+	 * drawn is a READ, and is drawn with the bank open - the first bank of all, and the read the plugin makes when the
+	 * bank's first event beats the widget's load (an order section 7.2 lists as unverified). The lift outlives the one
+	 * publish because a status-only publish can land between a read and its recompute, carrying the new stamp over the
+	 * rows already on screen: the recompute behind it, stamped the same, must be drawn too. A re-statement is held,
+	 * before the read and again once the plugin reports a change; and a read that lands while the sidebar is hidden is
+	 * drawn on the next show.
+	 *
+	 * <p>Planted bugs caught: no capture rule (the first bank at an open bank is stored and the card stays LOGIN), a
+	 * rule that lets one publish through instead of lifting (the recompute is stored), and a rule that never re-arms
+	 * (the re-statement after the change is drawn).
+	 */
+	@Test
+	public void aBankTheSidebarHasNotDrawnIsDrawnEvenWithTheBankOpen() throws Exception
+	{
+		build();
+		try
+		{
+			// The first bank of all, at an open bank: nothing is on screen, so nothing on screen can be out of date.
+			bank(true, false, 0, 1);
+			final List<MovementRow> shown = rows(3);
+			publish(shown, listed(3, 3));
+			assertEquals("the first bank is drawn", BankPriceMovementPanel.CARD_LIST, panel.card());
+			assertEquals(1, panel.rebuilds());
+
+			// A new visit holds a re-statement of it...
+			bank(false, false, 0, 1);
+			bank(true, false, 0, 1);
+			publish(rows(4), listed(4, 4));
+			assertEquals("a re-statement is held", 1, panel.rebuilds());
+
+			// ...and not a read: first its status alone, over the rows already on screen, then its recompute.
+			final long read = PRICES_AT - 30_000L;
+			final PriceService.Status statusOnly = listedRead(3, read);
+			publish(shown, statusOnly);
+			assertSame("the read's status is drawn", statusOnly, panel.status());
+			publish(rows(5), listedRead(5, read));
+			assertEquals("and so is its recompute, stamped the same", 2, panel.rebuilds());
+			assertEquals(5, panel.totalRows());
+
+			// The plugin reports a change: re-statements are held again.
+			bank(true, true, 1, 1);
+			publish(rows(6), listedRead(6, read));
+			assertEquals("held again once the bank has moved on", 2, panel.rebuilds());
+
+			// A read that lands while the sidebar is hidden is kept - and drawn on the next show, bank still open.
+			onEdt(() -> panel.onDeactivate());
+			publish(rows(7), listedRead(7, PRICES_AT - 20_000L));
+			assertEquals(2, panel.rebuilds());
+			onEdt(() -> panel.onActivate());
+			assertEquals("drawn on the next show", 3, panel.rebuilds());
+			assertEquals(7, panel.totalRows());
+		}
+		finally
+		{
+			onEdt(() -> panel.stop());
+		}
+	}
+
+	/**
+	 * AS 7.2: the replay on the bank closing is the SAME road as {@code onActivate}'s, so it obeys the sidebar too - a
+	 * panel still hidden when the bank closes keeps the publish, and builds it on the next show, once. The planted bug
+	 * is a close that replays whatever the sidebar is doing: it would build a page nobody can see.
+	 */
+	@Test
+	public void aSidebarHiddenWhenTheBankClosesKeepsThePublishForTheNextShow() throws Exception
+	{
+		build();
+		publish(rows(3), listed(3, 3));
+		onEdt(() -> panel.onDeactivate());
+		bank(true, true, 1, 1);
+		final PriceService.Status stored = listed(6, 6);
+		publish(rows(6), stored);
+		bank(false, false, 1, 2);
+		assertEquals("the bank closed, but nobody can see the sidebar", 1, panel.rebuilds());
+		verify(stored, never()).thenDay();
+		onEdt(() -> panel.onActivate());
+		assertEquals("built on the next show", 2, panel.rebuilds());
+		assertEquals(6, panel.totalRows());
+		verify(stored, times(1)).thenDay();
+	}
+
+	/**
+	 * AS 7.1: "nothing redraws while you bank unless you click" holds for a reader who opens the sidebar mid-bank - the
+	 * stored publish waits for the close, and the link lights instead. The planted bug is an {@code onActivate} that
+	 * replays regardless of the bank.
+	 */
+	@Test
+	public void showingTheSidebarMidBankKeepsTheHoldAndLightsTheLink() throws Exception
+	{
+		build();
+		try
+		{
+			publish(rows(3), listed(3, 3));
+			onEdt(() -> panel.onDeactivate());
+			bank(true, true, 1, 1);
+			assertFalse("hidden: no light", panel.glowRunning());
+			publish(rows(6), listed(6, 6));
+			onEdt(() -> panel.onActivate());
+			assertEquals("still held: the bank is open", 1, panel.rebuilds());
+			assertTrue("and the link is lit - a change is owed and the reader can see it", panel.glowRunning());
+			assertEquals(BankPriceMovementPanel.REFRESH_TEXT, panel.refreshLabel().getText());
+			bank(false, false, 1, 2);
+			assertEquals("the close builds it, once", 2, panel.rebuilds());
+			assertEquals(6, panel.totalRows());
+			assertFalse(panel.glowRunning());
+		}
+		finally
+		{
+			onEdt(() -> panel.stop());
+		}
+	}
+
+	/**
+	 * AS: a lift answers the reader's act in ONE visit - the bank closing and a new visit put the hold back. The
+	 * planted bug is a lift that is never cleared: the second visit's re-statement would be drawn.
+	 */
+	@Test
+	public void aNewVisitHoldsAgainAfterALift() throws Exception
+	{
+		build();
+		publish(rows(3), listed(3, 3));
+		bank(true, false, 0, 1);
+		onEdt(() -> panel.clickSort(SortMode.GP_MOVE));
+		publish(rows(6), listed(6, 6));
+		assertEquals("the column's answer is drawn", 2, panel.rebuilds());
+		bank(false, false, 0, 1);
+		bank(true, false, 0, 1);
+		publish(rows(9), listed(9, 9));
+		assertEquals("a new visit holds again", 2, panel.rebuilds());
+		bank(false, false, 0, 2);
+		assertEquals("and replays it when that visit ends", 3, panel.rebuilds());
+	}
+
+	/**
+	 * AS 2.3 / 7.3, re-pointed by AS8: the Refresh LINK with the bank open runs the plugin's local re-read AND THEN the
+	 * price check - quietly, {@code refreshNow(true)}, because the items did refresh - acknowledges the tap as ever,
+	 * puts the light out on the click itself, and has its answer drawn with the bank still open - in either order of
+	 * the plugin's report and the answer. The answers here carry the capture already on screen, so it is the CLICK's
+	 * lift that lets them through and not the capture rule. Until AS8 this test pinned the opposite of its second half
+	 * - "and NOT the price check" - which is the click the user saw change nothing on the AS7 build.
+	 *
+	 * <p>Planted bugs caught: the price half left out, AS4's click (the quiet count fails), the price half out loud
+	 * (the never() on {@code refreshNow(false)} fails), not running the hook (the read count fails), no
+	 * acknowledgement, the light left on, and - the hole in the literal {@code !active || bankOpen} hold - the answer
+	 * stored until the bank closes (the rebuild count stays 1).
+	 */
+	@Test
+	public void refreshWithTheBankOpenReadsTheBankThenThePricesAndItsAnswerIsDrawn() throws Exception
+	{
+		build();
+		try
+		{
+			publish(rows(3), listed(3, 3));
+			final AtomicInteger reads = new AtomicInteger();
+			onEdt(() -> panel.setBankRefresh(reads::incrementAndGet));
+			bank(true, true, 2, 1);
+			assertTrue(panel.glowRunning());
+
+			onEdt(() -> press(panel.refreshLabel()));
+			assertEquals("the plugin's local re-read ran, once", 1, reads.get());
+			verify(service, times(1)).refreshNow(true);
+			verify(service, never()).refreshNow(false);
+			assertTrue("the tap is acknowledged as ever", panel.refreshAcknowledging());
+			assertEquals(BankPriceMovementPanel.REFRESHING_TEXT, panel.refreshLabel().getText());
+			assertFalse("the light goes out on the click itself", panel.glowRunning());
+
+			// The plugin reports the read, then its answer lands: drawn, with the bank still open.
+			bank(true, false, 2, 2);
+			assertFalse(panel.glowRunning());
+			publish(rows(6), listed(6, 6));
+			assertEquals("the click's answer is drawn", 2, panel.rebuilds());
+
+			// The bank moves on: the light and the hold are back.
+			bank(true, true, 3, 2);
+			assertTrue(panel.glowRunning());
+			publish(rows(7), listed(7, 7));
+			assertEquals("held again", 2, panel.rebuilds());
+
+			// The other order: the answer lands BEFORE the plugin's report - drawn all the same.
+			onEdt(() -> press(panel.refreshLabel()));
+			assertEquals(2, reads.get());
+			publish(rows(8), listed(8, 8));
+			assertEquals("drawn before the report arrived", 3, panel.rebuilds());
+			bank(true, false, 3, 3);
+			assertEquals("and the report replays nothing over it", 3, panel.rebuilds());
+			assertEquals(8, panel.totalRows());
+			verify(service, times(2)).refreshNow(true);
+			verify(service, never()).refreshNow(false);
+		}
+		finally
+		{
+			onEdt(() -> panel.stop());
+		}
+	}
+
+	/**
+	 * AS 7.1 decision 2, kept by AS8: the gear's "Refresh prices now" is the PRICE check ALONE whatever the bank is
+	 * doing - it calls {@code service.refreshNow(false)}, out loud, and never the plugin's re-read - and it leaves a
+	 * glowing link alone (a price check leaves the bank as out of date as it was, and "the link's text stays 'Refresh'
+	 * while glowing"). Its answer is drawn with the bank open, because the reader asked. With the bank closed the item
+	 * acknowledges on the link exactly as before AS.
+	 *
+	 * <p>Planted bugs caught: the item wired to {@code refreshNow} (with the bank open and the hook set, since AS8 the
+	 * hook would run and the price check would go out quietly - the read count and the loud count fail),
+	 * {@code refreshPricesNow} delegating to {@code refreshNow} (the same), the price check pressed quietly (the
+	 * never() on {@code refreshNow(true)} fails), a price check that puts the light out, and its answer stored.
+	 */
+	@Test
+	public void refreshPricesNowIsAlwaysThePriceCheckAndTheGearsItemIsWiredToIt() throws Exception
+	{
+		build();
+		try
+		{
+			publish(rows(3), listed(3, 3));
+			final AtomicInteger reads = new AtomicInteger();
+			onEdt(() -> panel.setBankRefresh(reads::incrementAndGet));
+			bank(true, true, 1, 1);
+			assertTrue(panel.glowRunning());
+
+			onEdt(() -> item(panel.heroMenu(), BankPriceMovementPanel.REFRESH_MENU_TEXT).doClick(0));
+			verify(service, times(1)).refreshNow(false);
+			assertEquals("the gear's item never reads the bank", 0, reads.get());
+			assertTrue("and the light stays: the bank is as out of date as it was", panel.glowRunning());
+			assertEquals("the link's text stays Refresh while it glows", BankPriceMovementPanel.REFRESH_TEXT,
+				panel.refreshLabel().getText());
+			assertFalse(panel.refreshAcknowledging());
+			publish(rows(6), listed(6, 6));
+			assertEquals("its answer is drawn with the bank open - the reader asked", 2, panel.rebuilds());
+
+			onEdt(() -> panel.refreshPricesNow());
+			verify(service, times(2)).refreshNow(false);
+			assertEquals(0, reads.get());
+
+			// The bank closed: the same item, the same check, and the link acknowledges it as it did before AS.
+			bank(false, false, 1, 2);
+			onEdt(() -> item(panel.heroMenu(), BankPriceMovementPanel.REFRESH_MENU_TEXT).doClick(0));
+			verify(service, times(3)).refreshNow(false);
+			assertTrue(panel.refreshAcknowledging());
+			assertEquals(0, reads.get());
+			verify(service, never()).refreshNow(true);
+		}
+		finally
+		{
+			onEdt(() -> panel.stop());
+		}
+	}
+
+	/**
+	 * AS 7.3: without the plugin's hook the link is the price check whatever the bank is doing -
+	 * {@code setBankRefresh(null)} is what {@code shutDown} does, and a hook taken away is not run. The light still
+	 * goes out on the click, as the contract has it.
+	 *
+	 * <p>Re-pointed by AS8: that price check is the price check ALONE, pressed out loud ({@code refreshNow(false)}) -
+	 * with no hook nothing else was refreshed, so a cooldown refusal is the whole answer and must say so. The planted
+	 * bug caught is the quiet flag chosen by the bank rather than by the re-read that earns it: with the bank open and
+	 * no hook, the refusal would go silent over a list nothing redrew (the never() on {@code refreshNow(true)} fails).
+	 */
+	@Test
+	public void withNoHookTheLinkIsThePriceCheckEvenWithTheBankOpen() throws Exception
+	{
+		build();
+		try
+		{
+			publish(rows(3), listed(3, 3));
+			bank(true, true, 1, 1);
+			onEdt(() -> press(panel.refreshLabel()));
+			verify(service, times(1)).refreshNow(false);
+			assertTrue(panel.refreshAcknowledging());
+			assertFalse(panel.glowRunning());
+
+			final AtomicInteger reads = new AtomicInteger();
+			onEdt(() ->
+			{
+				panel.setBankRefresh(reads::incrementAndGet);
+				panel.setBankRefresh(null);
+				press(panel.refreshLabel());
+			});
+			verify(service, times(2)).refreshNow(false);
+			assertEquals("a hook taken away is not run", 0, reads.get());
+			verify(service, never()).refreshNow(true);
+		}
+		finally
+		{
+			onEdt(() -> panel.stop());
+		}
+	}
+
+	/**
+	 * AS 7.3: the light runs ONLY while the sidebar shows the link, the bank is open AND a change is owed - each state
+	 * short of all three is tried and refused - and it goes out on each of the four exits: the sidebar hiding, the
+	 * bank closing, a click on the link and {@code stop()}. {@code refreshTimersRunning()} reports it, so "stop()
+	 * leaves nothing ticking" covers it. After the click it stays out until the plugin next speaks, whose word is
+	 * newer than the click.
+	 *
+	 * <p>Planted bugs caught, one assertion each: any one condition dropped from the rule (its refused state glows),
+	 * an exit that does not stop it, a click that the next show undoes, and {@code refreshTimersRunning()} blind to
+	 * it.
+	 */
+	@Test
+	public void theGlowRunsOnlyUnderAllThreeConditionsAndStopsOnEveryExit() throws Exception
+	{
+		build();
+		try
+		{
+			publish(rows(3), listed(3, 3));
+			assertFalse("nothing yet", panel.glowRunning());
+			bank(true, false, 0, 1);
+			assertFalse("the bank open, nothing owed: no light", panel.glowRunning());
+			bank(false, true, 1, 1);
+			assertFalse("a change owed, the bank closed: no light", panel.glowRunning());
+			onEdt(() -> panel.onDeactivate());
+			bank(true, true, 1, 1);
+			assertFalse("open and owed, the sidebar hidden: no light", panel.glowRunning());
+			onEdt(() -> panel.onActivate());
+			assertTrue("all three: the light runs", panel.glowRunning());
+			assertTrue("and refreshTimersRunning() says so", panel.refreshTimersRunning());
+			assertFalse("with no acknowledgement standing", panel.refreshAcknowledging() || panel.upToDateShowing());
+
+			onEdt(() -> panel.onDeactivate());
+			assertFalse("exit 1: the sidebar hides", panel.glowRunning());
+			onEdt(() -> panel.onActivate());
+			assertTrue(panel.glowRunning());
+
+			bank(false, false, 1, 2);
+			assertFalse("exit 2: the bank closes", panel.glowRunning());
+			bank(true, true, 2, 2);
+			assertTrue(panel.glowRunning());
+
+			onEdt(() -> panel.refreshNow());
+			assertFalse("exit 3: a click on the link", panel.glowRunning());
+			onEdt(() -> panel.onDeactivate());
+			onEdt(() -> panel.onActivate());
+			assertFalse("and it stays out until the plugin speaks again", panel.glowRunning());
+			bank(true, true, 3, 2);
+			assertTrue("which decides afresh", panel.glowRunning());
+
+			onEdt(() -> panel.stop());
+			assertFalse("exit 4: stop()", panel.glowRunning());
+			assertFalse("nothing is left ticking", panel.refreshTimersRunning());
+		}
+		finally
+		{
+			onEdt(() -> panel.stop());
+		}
+	}
+
+	/**
+	 * AS 7.2 / 7.3, re-pointed by AS7 (the breathing ring): one frame repaints the ring's REGION of the hero card - the
+	 * link's box run 5 px wider on the right and grown 2 px all round for the halo, 54 x 23 px round the 45 x 19 link -
+	 * and nothing else: not the rest of the card, not the header, no layout. Proven with a recording
+	 * {@link RepaintManager}, which every {@code JComponent.repaint} reports to
+	 * ({@code JComponent.repaint(long, int, int, int, int)} in JDK 17). And the region is ENOUGH: every pixel the ring
+	 * changes on the card, at its peak, lies inside it, so no frame leaves a stale piece of the last one behind. The
+	 * timer is the contract's: 40 ms, repeating.
+	 *
+	 * <p>Planted bugs caught: a frame that repaints the link as AS4's did (another component recorded - and the ring's
+	 * halo and its right-hand run, outside the link, would never be redrawn), the whole card or the panel (another
+	 * region or component recorded), a region without the halo or without the 5 px (the ring's pixels fall outside
+	 * it), a frame that sets text or revalidates (an invalid component recorded), and a timer that fires once or at
+	 * another period.
+	 */
+	@Test
+	public void aGlowFrameRepaintsTheRingsRegionOfTheCardAndNothingElse() throws Exception
+	{
+		final AtomicLong now = new AtomicLong(GLOW_T0);
+		buildLitRing(now);
+		try
+		{
+			onEdt(() ->
+			{
+				final Timer timer = panel.glowTimer();
+				assertNotNull(timer);
+				assertEquals("the contract's 40 ms", 40, BankPriceMovementPanel.GLOW_TICK_MILLIS);
+				assertEquals(BankPriceMovementPanel.GLOW_TICK_MILLIS, timer.getDelay());
+				assertTrue("a repeating timer", timer.isRepeats());
+				assertEquals("the rendered ring: 5 px more on the right", RING_EXTRA_RIGHT,
+					BankPriceMovementPanel.GLOW_RING_EXTRA_RIGHT);
+				assertEquals("and a halo of two 1 px rings", HALO_REACH, BankPriceMovementPanel.GLOW_HALO_REACH);
+				final Rectangle link = linkInCard();
+				assertTrue("the link is laid out, so the region is a real one: " + link,
+					link.width > 0 && link.height > 0);
+				final Rectangle region = ringRegion(link);
+				assertEquals("54 x 23 px round the 45 x 19 link", new Dimension(link.width + 9, link.height + 4),
+					region.getSize());
+
+				final int rebuilds = panel.rebuilds();
+				final RecordingRepaintManager recorder = new RecordingRepaintManager();
+				final RepaintManager previous = RepaintManager.currentManager(panel);
+				RepaintManager.setCurrentManager(recorder);
+				try
+				{
+					panel.fireGlow();
+				}
+				finally
+				{
+					RepaintManager.setCurrentManager(previous);
+				}
+				assertEquals("one frame repaints the card and nothing else", Collections.singletonList(panel.hero()),
+					recorder.dirty);
+				assertEquals("and of the card, the ring's region alone", Collections.singletonList(region),
+					recorder.regions);
+				assertTrue("and lays nothing out: " + recorder.invalid, recorder.invalid.isEmpty());
+				assertEquals("and builds nothing", rebuilds, panel.rebuilds());
+
+				final BufferedImage dark = cardPicture(panel.hero());
+				now.set(GLOW_T0 + 3_000L);
+				final Rectangle ring = changedBounds(dark, cardPicture(panel.hero()));
+				assertNotNull("the ring is drawn at its peak", ring);
+				assertTrue("the region holds every pixel the ring changes: " + ring + " in " + region,
+					region.contains(ring));
+			});
+		}
+		finally
+		{
+			onEdt(() -> panel.stop());
+		}
+	}
+
+	/**
+	 * AS 7.3: "the link's TEXT stays 'Refresh' while glowing". A beat left from an earlier tap is ended when the light
+	 * starts - "Up to date" over a list the glow says is out of date would be false - and the gear's price check puts
+	 * no beat on a glowing link. The link's own click, which puts the light out, acknowledges as ever.
+	 *
+	 * <p>Planted bugs caught: the light starting under "Up to date" (at the start, and again after a click), and
+	 * "Refreshing..." put on a glowing link by the price check.
+	 */
+	@Test
+	public void theLinkReadsRefreshWhileItGlows() throws Exception
+	{
+		build();
+		try
+		{
+			publish(rows(3), listed(3, 3));
+			onEdt(() ->
+			{
+				press(panel.refreshLabel());
+				panel.fireRefreshAck();
+				assertEquals(BankPriceMovementPanel.UP_TO_DATE_TEXT, panel.refreshLabel().getText());
+			});
+			bank(true, true, 1, 1);
+			assertTrue(panel.glowRunning());
+			assertEquals("a change owed ends the beat", BankPriceMovementPanel.REFRESH_TEXT,
+				panel.refreshLabel().getText());
+			assertFalse(panel.upToDateShowing());
+			onEdt(() -> panel.refreshPricesNow());
+			assertEquals("a price check puts no beat on a glowing link", BankPriceMovementPanel.REFRESH_TEXT,
+				panel.refreshLabel().getText());
+			assertTrue(panel.glowRunning());
+
+			final AtomicInteger reads = new AtomicInteger();
+			onEdt(() ->
+			{
+				panel.setBankRefresh(reads::incrementAndGet);
+				press(panel.refreshLabel());
+			});
+			assertEquals("the link's own click acknowledges, the light out", BankPriceMovementPanel.REFRESHING_TEXT,
+				panel.refreshLabel().getText());
+			assertFalse(panel.glowRunning());
+			bank(true, false, 1, 2);
+			onEdt(() -> panel.fireRefreshAck());
+			assertEquals(BankPriceMovementPanel.UP_TO_DATE_TEXT, panel.refreshLabel().getText());
+			bank(true, true, 2, 2);
+			assertTrue(panel.glowRunning());
+			assertEquals("and the next change takes \"Up to date\" off it again", BankPriceMovementPanel.REFRESH_TEXT,
+				panel.refreshLabel().getText());
+		}
+		finally
+		{
+			onEdt(() -> panel.stop());
+		}
+	}
+
+	/**
+	 * AS 7.3's "the SAME insets", re-pointed by AS7: since the ring moved onto the card the Refresh link's border is a
+	 * plain {@code EmptyBorder(2, ROW_GAP, 2, 0)} again - the pre-AS class with the same four numbers, not opaque - so
+	 * the link measures and lays out exactly as it always has. And the ring is the CARD's, never the link's: lit at its
+	 * peak, the link's border alone still paints not one pixel and the link printed alone is pixel-identical to the
+	 * link under a fresh pre-AS border, while the card's own picture carries the ring in the rise green.
+	 *
+	 * <p>Planted bugs caught: insets other than the old ones (the inset and size assertions - the layout would move),
+	 * the ring left on the link's border as AS4's spark was (the border is no longer the plain class, and a border that
+	 * paints fails the lit sentinel), and a ring nobody paints (the card's picture does not change round the link).
+	 */
+	@Test
+	public void theLinksBorderIsThePlainOldInsetAndTheRingIsTheCardsNotTheLinks() throws Exception
+	{
+		final AtomicLong now = new AtomicLong(GLOW_T0);
+		build();
+		try
+		{
+			publish(rows(3), listedWith(summary()));
+			final AtomicReference<BufferedImage> oldPrint = new AtomicReference<>();
+			onEdt(() ->
+			{
+				layout(SIDEBAR_WIDTH, 400);
+				panel.setGlowClock(now::get);
+				final JLabel link = panel.refreshLabel();
+				final Border border = link.getBorder();
+				assertEquals("the plain pre-AS class again - the ring is the card's", EmptyBorder.class,
+					border.getClass());
+				assertEquals(new Insets(2, BankPriceMovementPanel.ROW_GAP, 2, 0), link.getInsets());
+				assertEquals(new Insets(2, BankPriceMovementPanel.ROW_GAP, 2, 0), border.getBorderInsets(link));
+				assertFalse(border.isBorderOpaque());
+				assertFalse(panel.glowRunning());
+
+				final Dimension size = link.getPreferredSize();
+				assertFalse("the border alone: not one pixel",
+					differ(filled(size, Color.MAGENTA), borderOnly(border, link, size, Color.MAGENTA)));
+				final BufferedImage asShipped = printed(link, size);
+				link.setBorder(new EmptyBorder(2, BankPriceMovementPanel.ROW_GAP, 2, 0));
+				try
+				{
+					assertEquals("the same size under a fresh pre-AS border", size, link.getPreferredSize());
+					oldPrint.set(printed(link, size));
+				}
+				finally
+				{
+					link.setBorder(border);
+				}
+				assertFalse("the whole link: pixel-identical to the pre-AS link", differ(oldPrint.get(), asShipped));
+			});
+
+			bank(true, true, 1, 1);
+			onEdt(() ->
+			{
+				assertTrue(panel.glowRunning());
+				// The card at the breath's first instant, when the ring is dark - the picture the peak is read against,
+				// because a green count alone would count the card's own rising move line.
+				final BufferedImage dark = cardPicture(panel.hero());
+				now.set(GLOW_T0 + 3_000L);
+				assertEquals("at its peak", 1d, panel.glowLevel(), 1e-12);
+				final JLabel link = panel.refreshLabel();
+				final Dimension size = link.getPreferredSize();
+				assertFalse("lit, the link's border alone still paints not one pixel",
+					differ(filled(size, Color.MAGENTA), borderOnly(link.getBorder(), link, size, Color.MAGENTA)));
+				assertFalse("and the link printed alone is still the pre-AS link",
+					differ(oldPrint.get(), printed(link, size)));
+				final BufferedImage peak = cardPicture(panel.hero());
+				assertEquals("while the card's own picture carries the ring, round the link",
+					ringRegion(linkInCard()), changedBounds(dark, peak));
+				assertTrue("in the rise green", onlyGreenChanged(dark, peak));
+			});
+		}
+		finally
+		{
+			onEdt(() -> panel.stop());
+		}
+	}
+
+	/**
+	 * AS 7.3's hard rule at the scale it is judged, re-pointed by AS7: the four pinned pictures (the renderer's ticker,
+	 * hidden, options and live sidebars) are painted twice - as shipped, and with the hero card swapped for the card as
+	 * it was before AS7, a plain {@code Widgets.column(0)} holding the same lines with the same colour and border
+	 * ({@link #paintedWithPlainCard}) - and not one pixel differs. The same comparison with the ring lit at its peak
+	 * does differ, so it can see the ring at all. The lead's byte comparison against the PNGs on disk is the other
+	 * half; this one needs no fonts but the JVM's own.
+	 *
+	 * <p>Planted bugs caught: a card that paints anything with the ring out, and a card whose layout, ground or border
+	 * is not the plain card's (every one of the four differs).
+	 */
+	@Test
+	public void theRingLeavesTheFourPinnedPicturesUntouched() throws Exception
+	{
+		final Map<String, HeroVisibility> shown = new LinkedHashMap<>();
+		final Map<String, ViewOptions> views = new LinkedHashMap<>();
+		shown.put(LookRenderer.TICKER_FILE, HeroVisibility.ALL);
+		views.put(LookRenderer.TICKER_FILE, LookRenderer.GUIDE_ONLY);
+		shown.put(LookRenderer.HIDDEN_FILE, HeroVisibility.NONE);
+		views.put(LookRenderer.HIDDEN_FILE, LookRenderer.GUIDE_ONLY);
+		shown.put(LookRenderer.OPTIONS_FILE, HeroVisibility.ALL);
+		views.put(LookRenderer.OPTIONS_FILE, LookRenderer.OPTIONS);
+		shown.put(LookRenderer.LIVE_FILE, HeroVisibility.ALL);
+		views.put(LookRenderer.LIVE_FILE, LookRenderer.LIVE);
+		onEdt(() ->
+		{
+			BufferedImage tickerPlain = null;
+			for (Map.Entry<String, HeroVisibility> e : shown.entrySet())
+			{
+				final ViewOptions view = views.get(e.getKey());
+				final int height = LookRenderer.height(view);
+				final BankPriceMovementPanel shipped = LookRenderer.build(e.getValue(), view);
+				final BankPriceMovementPanel plain = LookRenderer.build(e.getValue(), view);
+				try
+				{
+					final BufferedImage asShipped = LookRenderer.paint(shipped, height);
+					final BufferedImage asPlain = paintedWithPlainCard(plain, height);
+					assertFalse(e.getKey() + ": not one pixel differs from the plain card", differ(asPlain, asShipped));
+					if (tickerPlain == null)
+					{
+						tickerPlain = asPlain;
+					}
+				}
+				finally
+				{
+					shipped.stop();
+					plain.stop();
+				}
+			}
+			final AtomicLong now = new AtomicLong(GLOW_T0);
+			final BankPriceMovementPanel lit = LookRenderer.build(HeroVisibility.ALL, LookRenderer.GUIDE_ONLY);
+			try
+			{
+				lit.setGlowClock(now::get);
+				lit.setBankHold(true, true, 1, 0);
+				assertTrue(lit.glowRunning());
+				now.set(GLOW_T0 + 3_000L);
+				assertTrue("the same comparison sees the ring", differ(tickerPlain,
+					LookRenderer.paint(lit, LookRenderer.height(LookRenderer.GUIDE_ONLY))));
+			}
+			finally
+			{
+				lit.stop();
+			}
+		});
+	}
+
+	/**
+	 * AS7's ring, drawn by the pure {@code paintRing} on a canvas of the card's grey. At full: the ring lies in the
+	 * box's edge in exactly the rise green, the halo's two rings stand just outside it at 45 % and 20 % of that green,
+	 * and the ring and its halo fill the box grown by 2 px - the region a frame repaints - to the pixel and not one
+	 * pixel beyond it; inside, nothing is painted past the ring's own band, so a word in the box is never painted over.
+	 * Half a breath paints the ring half-way to its green. At 0 it paints nothing at all, which is what lets a lit ring
+	 * begin its breath dark.
+	 *
+	 * <p>Planted bugs caught: a halo wider than 2 px (paint outside the region), the ring drawn on the outside of the
+	 * box's edge (its own pixel is not the green) or into the word's room (paint in the interior), the halo's two
+	 * alphas changed or swapped, a level that is not the ring's alpha (half a breath is not half-way), and a ring that
+	 * strokes at 0.
+	 */
+	@Test
+	public void paintRingDrawsTheRingAndItsHaloRoundTheBoxAndNothingElse() throws Exception
+	{
+		final Rectangle box = new Rectangle(10, 10, 50, 19);
+		final Dimension canvas = new Dimension(box.width + 2 * box.x, box.height + 2 * box.y);
+		assertFalse("at 0, not one pixel", differ(filled(canvas, ColorScheme.DARKER_GRAY_COLOR), ringFrame(box, 0d)));
+
+		final BufferedImage full = ringFrame(box, 1d);
+		final Rectangle region = new Rectangle(box);
+		region.grow(HALO_REACH, HALO_REACH);
+		assertEquals("the ring and its halo fill the repainted region, and not a pixel more", region,
+			paintedBounds(full, ColorScheme.DARKER_GRAY_COLOR));
+		final Rectangle interior = new Rectangle(box);
+		interior.grow(-3, -3);
+		assertNull("nothing inside the ring's band - the word's room", paintedBounds(
+			full.getSubimage(interior.x, interior.y, interior.width, interior.height), ColorScheme.DARKER_GRAY_COLOR));
+
+		final int y = box.y + box.height / 2;
+		assertEquals("the ring, in exactly the rise green", BankPriceMovementPanel.GLOW_COLOUR.getRGB(),
+			full.getRGB(box.x, y));
+		assertEquals("the near halo at 45 % of it", 0.45d, greenShare(full, box.x - 1, y), 0.02d);
+		assertEquals("the far halo at 20 %", 0.20d, greenShare(full, box.x - 2, y), 0.02d);
+		assertEquals("and the card beyond", ColorScheme.DARKER_GRAY_COLOR.getRGB(), full.getRGB(box.x - 3, y));
+		assertEquals("half a breath, the ring half-way to its green", 0.5d, greenShare(ringFrame(box, 0.5d), box.x, y),
+			0.02d);
+	}
+
+	/**
+	 * AS, and C33's rule for late calls: the plugin posts its word with {@code invokeLater}, so it can land after
+	 * {@code shutDown} - and a stopped panel neither mirrors it nor starts a timer; a hook handed to it is not kept; a
+	 * queued glow frame moves nothing; and neither Refresh does anything. The planted bug is a missing guard in
+	 * {@code setBankHold}: the echo would change after stop().
+	 */
+	@Test
+	public void aStoppedPanelIgnoresTheBankAndLeavesNothingTicking() throws Exception
+	{
+		build();
+		publish(rows(3), listed(3, 3));
+		bank(true, true, 2, 1);
+		assertTrue(panel.glowRunning());
+		onEdt(() -> panel.stop());
+		assertFalse("stop() puts the light out", panel.glowRunning());
+		assertFalse(panel.refreshTimersRunning());
+		final String echo = "\"bank\":{\"open\":true,\"pending\":true,\"glow\":false,\"heldEvents\":2,\"reads\":1}";
+		assertTrue(panel.describe(), panel.describe().contains(echo));
+
+		final AtomicInteger reads = new AtomicInteger();
+		bank(false, false, 9, 9);
+		bank(true, true, 9, 9);
+		onEdt(() ->
+		{
+			panel.setBankRefresh(reads::incrementAndGet);
+			panel.refreshNow();
+			panel.refreshPricesNow();
+			// Re-pointed by AS7: a frame moves no light any more - it only asks for a repaint - so what a queued frame
+			// must not do is ask.
+			final RecordingRepaintManager recorder = new RecordingRepaintManager();
+			final RepaintManager previous = RepaintManager.currentManager(panel);
+			RepaintManager.setCurrentManager(recorder);
+			try
+			{
+				panel.fireGlow();
+			}
+			finally
+			{
+				RepaintManager.setCurrentManager(previous);
+			}
+			assertTrue("a queued frame repaints nothing: " + recorder.dirty, recorder.dirty.isEmpty());
+			assertEquals("and the ring stays dark", 0d, panel.glowLevel(), 0d);
+		});
+		assertTrue("a late word is not mirrored: " + panel.describe(), panel.describe().contains(echo));
+		assertFalse("and starts nothing", panel.refreshTimersRunning());
+		assertEquals("a hook handed to a dead panel is not run", 0, reads.get());
+		verifyNoPriceCheck();
+	}
+
+	/**
+	 * AS 7.3 makes {@code setBankHold} an EDT method, and the plugin posts it there; called from anywhere else it is
+	 * posted there too - {@code onRows}' rule - so the glow's timer and the stored publish are only ever touched on
+	 * the EDT. Proven with the EDT held busy: the call returns having changed nothing, and the change lands when the
+	 * EDT runs it. The planted bug is a missing re-post: the values would change on the calling thread at once.
+	 */
+	@Test
+	public void setBankHoldFromAnotherThreadIsPostedToTheEdt() throws Exception
+	{
+		build();
+		final CountDownLatch busy = new CountDownLatch(1);
+		final CountDownLatch release = new CountDownLatch(1);
+		SwingUtilities.invokeLater(() ->
+		{
+			busy.countDown();
+			try
+			{
+				release.await(10, TimeUnit.SECONDS);
+			}
+			catch (InterruptedException e)
+			{
+				// The test thread let go or gave up; either way the EDT is free again.
+			}
+		});
+		try
+		{
+			assertTrue("the EDT is held", busy.await(10, TimeUnit.SECONDS));
+			assertFalse(SwingUtilities.isEventDispatchThread());
+			panel.setBankHold(true, true, 5, 6);
+			assertTrue("nothing changed on the calling thread: " + panel.describe(), panel.describe().contains(
+				"\"bank\":{\"open\":false,\"pending\":false,\"glow\":false,\"heldEvents\":0,\"reads\":0}"));
+		}
+		finally
+		{
+			release.countDown();
+		}
+		try
+		{
+			onEdt(() ->
+			{
+			});
+			assertTrue(panel.describe(), panel.describe().contains(
+				"\"bank\":{\"open\":true,\"pending\":true,\"glow\":true,\"heldEvents\":5,\"reads\":6}"));
+		}
+		finally
+		{
+			onEdt(() -> panel.stop());
+		}
+	}
+
+	/**
+	 * AS 7.3: {@code describe()} carries {@code "bank": {open, pending, glow, heldEvents, reads}} - the plugin's four
+	 * values as mirrored, and whether the light actually runs - beside {@code showing}, so {@code bpm state} can prove
+	 * a live run's reads without a picture. The planted bugs are a value not mirrored, a key misnamed or moved, and
+	 * {@code glow} echoing the pending flag rather than the light: hidden, the change is still owed and the light is
+	 * out, and the echo must say both.
+	 */
+	@Test
+	public void describeEchoesTheBankHold() throws Exception
+	{
+		build();
+		try
+		{
+			assertTrue(panel.describe(), panel.describe().contains(",\"showing\":false,\"bank\":{\"open\":false,"
+				+ "\"pending\":false,\"glow\":false,\"heldEvents\":0,\"reads\":0},\"options\":{"));
+			bank(true, true, 3, 2);
+			assertTrue(panel.describe(), panel.describe().contains(
+				",\"bank\":{\"open\":true,\"pending\":true,\"glow\":true,\"heldEvents\":3,\"reads\":2},"));
+			onEdt(() -> panel.onDeactivate());
+			assertTrue(panel.describe(), panel.describe().contains(
+				",\"bank\":{\"open\":true,\"pending\":true,\"glow\":false,\"heldEvents\":3,\"reads\":2},"));
+			onEdt(() -> panel.onActivate());
+			bank(false, false, 7, 3);
+			assertTrue(panel.describe(), panel.describe().contains(
+				",\"bank\":{\"open\":false,\"pending\":false,\"glow\":false,\"heldEvents\":7,\"reads\":3},"));
+		}
+		finally
+		{
+			onEdt(() -> panel.stop());
+		}
+	}
+
+	// ---- addendum AS, the fix wave after the proof wave (plan section 7.4): F5 the Refresh hover, F6 the glow
+	// timer's own action, F7 the replay only when the bank closes - F5's four re-pointed by AS8, when the click became
+	// one act in every state and the hover one sentence
+
+	/**
+	 * F5, re-pointed by AS8: the Refresh link's hover says what a click on it WILL do - and since AS8 a click does the
+	 * same thing whatever the bank is doing (it re-reads the items and re-checks the prices), so the hover is ONE
+	 * sentence, {@code REFRESH_TIP}, through the plugin's every word: the bank opening, a change owed (the link
+	 * glowing), a click, the bank closing and the next visit. F5 had switched it to "Update the list with your bank as
+	 * it is now." while the bank was open, because a click then was the local update alone; that sentence went with the
+	 * difference it described. Read with "Show hover text" on, the only setting under which a hover has words to read
+	 * ({@link #buildWithHovers()}).
+	 *
+	 * <p>Planted bug caught: a hover that still switches with the bank - F5's sync left in {@code setBankHold} with any
+	 * second sentence - fails the first open-bank assertion.
+	 */
+	@Test
+	public void theRefreshLinksHoverIsOneSentenceWithTheBankOpenAndShut() throws Exception
+	{
+		buildWithHovers();
+		try
+		{
+			assertEquals("the words AS8 asks for, pinned",
+				"Re-read your items and re-check the prices. Jagex publishes guide prices once a day.",
+				BankPriceMovementPanel.REFRESH_TIP);
+			publish(rows(3), listed(3, 3));
+			final AtomicInteger reads = new AtomicInteger();
+			onEdt(() -> panel.setBankRefresh(reads::incrementAndGet));
+			assertEquals("the bank shut", BankPriceMovementPanel.REFRESH_TIP, refreshHover());
+
+			bank(true, false, 0, 1);
+			assertEquals("the bank open: the same sentence", BankPriceMovementPanel.REFRESH_TIP, refreshHover());
+			bank(true, true, 1, 1);
+			assertTrue(panel.glowRunning());
+			assertEquals("glowing, the same", BankPriceMovementPanel.REFRESH_TIP, refreshHover());
+			onEdt(() -> press(panel.refreshLabel()));
+			assertEquals(1, reads.get());
+			assertEquals("clicked, the same", BankPriceMovementPanel.REFRESH_TIP, refreshHover());
+
+			bank(false, false, 1, 2);
+			assertEquals("the bank shut again, the same", BankPriceMovementPanel.REFRESH_TIP, refreshHover());
+			bank(true, false, 1, 2);
+			assertEquals("and the next visit, the same", BankPriceMovementPanel.REFRESH_TIP, refreshHover());
+		}
+		finally
+		{
+			onEdt(() -> panel.stop());
+		}
+	}
+
+	/**
+	 * F5 under addendum AH3's rule, re-pointed by AS8: the switch governs this hover as it governs every other. With
+	 * "Show hover text" off the link carries NO tooltip - null, never "", which Swing would open as an empty box - with
+	 * the bank shut and with it open. And turning the switch on shows the link's one sentence in either state, because
+	 * the hover is registered through {@code setHover} when the link is built, whatever the switch says, and
+	 * {@code applyHoverSwitch} re-applies what was registered. (F5 pinned here that the switch showed whichever of its
+	 * two sentences was true at that moment; AS8 left one.)
+	 *
+	 * <p>Planted bugs caught: the hover put straight onto the label behind the registry's back (the link speaks with
+	 * the switch off, so the first null fails), and a hover never registered at all (turning the switch on at the open
+	 * bank shows nothing).
+	 */
+	@Test
+	public void theRefreshLinksHoverIsSilentWithTheSwitchOffAndItsOneSentenceOnceItComesOn() throws Exception
+	{
+		build();
+		try
+		{
+			assertFalse("AJ: the quieter sidebar is what ships", panel.options().showHoverText());
+			publish(rows(3), listed(3, 3));
+			final AtomicInteger reads = new AtomicInteger();
+			onEdt(() -> panel.setBankRefresh(reads::incrementAndGet));
+			assertNull("the bank shut, the switch off", refreshHover());
+			bank(true, true, 1, 1);
+			assertNull("the bank open, the switch off", refreshHover());
+
+			onEdt(() -> panel.applyOptions(HOVERS_ON));
+			assertEquals("the switch on at the open bank", BankPriceMovementPanel.REFRESH_TIP, refreshHover());
+			onEdt(() -> panel.applyOptions(ViewOptions.DEFAULT));
+			assertNull("off again, on the flip alone", refreshHover());
+
+			bank(false, false, 1, 2);
+			assertNull("the bank shut again, the switch off", refreshHover());
+			onEdt(() -> panel.applyOptions(HOVERS_ON));
+			assertEquals("the switch on at the shut bank: the same sentence", BankPriceMovementPanel.REFRESH_TIP,
+				refreshHover());
+		}
+		finally
+		{
+			onEdt(() -> panel.stop());
+		}
+	}
+
+	/**
+	 * F5, re-pointed by AS8: the plugin's HOOK no longer moves the hover, though it still shapes the click. Through
+	 * every state tried - open without a hook, open with one, the hook taken away, the hook back and the bank shut -
+	 * the link says its one sentence, and a click does what AS8 asks of it there: wherever there is no open bank to
+	 * re-read, the price check alone, out loud ({@code refreshNow(false)}); with the bank open AND the hook, the hook
+	 * first and then the price check, quiet ({@code refreshNow(true)}). F5 pinned here that the hover followed the
+	 * hook, because the hook decided which of two things a click would be.
+	 *
+	 * <p>Planted bugs caught: a hover that still follows the hook (the hook handed over changes the sentence), the
+	 * quiet flag chosen by the bank alone (open with no hook, the price check goes out quiet - the loud count fails),
+	 * and the price half dropped where the hook ran (the quiet count fails).
+	 */
+	@Test
+	public void theRefreshLinksHoverIgnoresTheHookWhileTheClickFollowsIt() throws Exception
+	{
+		buildWithHovers();
+		try
+		{
+			publish(rows(3), listed(3, 3));
+			final AtomicInteger reads = new AtomicInteger();
+
+			bank(true, false, 0, 1);
+			assertEquals("open, no hook", BankPriceMovementPanel.REFRESH_TIP, refreshHover());
+			onEdt(() -> press(panel.refreshLabel()));
+			verify(service, times(1)).refreshNow(false);
+			verify(service, never()).refreshNow(true);
+			assertEquals(0, reads.get());
+
+			onEdt(() -> panel.setBankRefresh(reads::incrementAndGet));
+			assertEquals("the hook handed over: the same sentence", BankPriceMovementPanel.REFRESH_TIP,
+				refreshHover());
+			onEdt(() -> press(panel.refreshLabel()));
+			assertEquals("the click runs the hook", 1, reads.get());
+			verify(service, times(1)).refreshNow(true);
+			verify(service, times(1)).refreshNow(false);
+
+			onEdt(() -> panel.setBankRefresh(null));
+			assertEquals("the hook taken away, the bank still open: the same sentence",
+				BankPriceMovementPanel.REFRESH_TIP, refreshHover());
+			onEdt(() -> press(panel.refreshLabel()));
+			verify(service, times(2)).refreshNow(false);
+			assertEquals(1, reads.get());
+
+			onEdt(() -> panel.setBankRefresh(reads::incrementAndGet));
+			bank(false, false, 0, 2);
+			assertEquals("the hook back and the bank shut: the same sentence", BankPriceMovementPanel.REFRESH_TIP,
+				refreshHover());
+			onEdt(() -> press(panel.refreshLabel()));
+			verify(service, times(3)).refreshNow(false);
+			verify(service, times(1)).refreshNow(true);
+			assertEquals(1, reads.get());
+		}
+		finally
+		{
+			onEdt(() -> panel.stop());
+		}
+	}
+
+	/**
+	 * F5's thread rule ({@code setBankRefresh}'s javadoc), re-pointed by AS8: the HOOK is written at once, on whatever
+	 * thread hands it over or takes it away - a hook taken away is not run by the next click. Proven with the EDT held
+	 * busy: a click already waiting on the EDT when the hook is taken away off it finds the hook gone, and so is the
+	 * price check alone, out loud. F5 also posted the HOVER to the EDT from here, to follow the hook; since AS8 the
+	 * hover is one sentence nothing re-syncs, so it reads the same when the hook is handed over at the open bank, on
+	 * the calling thread while the EDT is held, and after it is drained. The hook is handed over AFTER the bank opens,
+	 * which is the order in which a hover that followed the hook would have something else to say.
+	 *
+	 * <p>Planted bugs caught: the field written on the EDT, posted there as F5 posted the hover (the waiting click runs
+	 * the old hook, and its price half goes out quiet), and a hover that still follows the hook, synced on the EDT or
+	 * posted there (handed over at the open bank, the hook changes the sentence).
+	 */
+	@Test
+	public void setBankRefreshFromAnotherThreadTakesTheHookAtOnce() throws Exception
+	{
+		buildWithHovers();
+		final AtomicInteger reads = new AtomicInteger();
+		bank(true, false, 0, 1);
+		onEdt(() -> panel.setBankRefresh(reads::incrementAndGet));
+		assertEquals("the hook handed over at the open bank: the one sentence", BankPriceMovementPanel.REFRESH_TIP,
+			refreshHover());
+
+		final CountDownLatch busy = new CountDownLatch(1);
+		final CountDownLatch release = new CountDownLatch(1);
+		SwingUtilities.invokeLater(() ->
+		{
+			busy.countDown();
+			try
+			{
+				release.await(10, TimeUnit.SECONDS);
+			}
+			catch (InterruptedException e)
+			{
+				// The test thread let go or gave up; either way the EDT is free again.
+			}
+		});
+		try
+		{
+			assertTrue("the EDT is held", busy.await(10, TimeUnit.SECONDS));
+			// A click already waiting on the EDT when the hook is taken away.
+			SwingUtilities.invokeLater(() -> press(panel.refreshLabel()));
+			assertFalse(SwingUtilities.isEventDispatchThread());
+			panel.setBankRefresh(null);
+			assertEquals("the hover, read on the calling thread, is the one sentence",
+				BankPriceMovementPanel.REFRESH_TIP, panel.refreshLabel().getToolTipText());
+		}
+		finally
+		{
+			release.countDown();
+		}
+		try
+		{
+			// Drains the EDT: the waiting click, and anything else queued behind it.
+			onEdt(() ->
+			{
+			});
+			assertEquals("the waiting click did not run the hook taken away", 0, reads.get());
+			verify(service, times(1)).refreshNow(false);
+			verify(service, never()).refreshNow(true);
+			assertEquals("and the hover never moved", BankPriceMovementPanel.REFRESH_TIP, refreshHover());
+		}
+		finally
+		{
+			onEdt(() -> panel.stop());
+		}
+	}
+
+	/**
+	 * F6, re-pointed by AS7: the ring is redrawn by its TIMER, so what is driven here is the timer's own action - the
+	 * one listener the 40 ms timer carries, handed the event Swing hands it - and not {@code fireGlow}, which
+	 * {@link #aGlowFrameRepaintsTheRingsRegionOfTheCardAndNothingElse} calls by name and which a timer wired to
+	 * anything else would never reach. A hundred and sixty frames, more than one breath's hundred and fifty, with the
+	 * clock moving 40 ms a frame as a real timer's would: every frame asks Swing to repaint the ring's region of the
+	 * card and nothing else, as the same {@link RecordingRepaintManager} records it, and the brightness it leaves is
+	 * the clock's breath - a frame moves nothing. The bank closing puts the ring out and repaints its region once,
+	 * which is what takes the last frame off the card. With the ring out - the bank closed, and again after
+	 * {@code stop()} - the very listener that ran those frames, arriving late as a queued frame would while the clock
+	 * runs on, repaints nothing, lays nothing out, builds nothing and lights nothing.
+	 *
+	 * <p>Planted bugs caught: a timer whose action does nothing (F6's own planted bug: frame 1 records no repaint), one
+	 * that repaints the link, the whole card or anything besides the ring's region, a second action on the timer, a
+	 * ring put out without that last repaint (its last frame would stay on the card), and an action that repaints or
+	 * relights while the ring is out.
+	 */
+	@Test
+	public void theGlowTimersOwnActionRepaintsTheRingsRegionFrameAfterFrame() throws Exception
+	{
+		final int frames = 160;
+		final AtomicLong now = new AtomicLong(GLOW_T0);
+		buildLitRing(now);
+		try
+		{
+			final AtomicReference<Timer> lit = new AtomicReference<>();
+			final AtomicReference<ActionListener[]> action = new AtomicReference<>();
+			onEdt(() ->
+			{
+				assertTrue(panel.glowRunning());
+				final Timer timer = panel.glowTimer();
+				assertNotNull(timer);
+				final ActionListener[] listeners = timer.getActionListeners();
+				assertEquals("one action on the ring's timer", 1, listeners.length);
+				lit.set(timer);
+				action.set(listeners);
+
+				final Rectangle region = ringRegion(linkInCard());
+				final int rebuilds = panel.rebuilds();
+				final RecordingRepaintManager recorder = new RecordingRepaintManager();
+				final RepaintManager previous = RepaintManager.currentManager(panel);
+				RepaintManager.setCurrentManager(recorder);
+				try
+				{
+					for (int frame = 1; frame <= frames; frame++)
+					{
+						now.addAndGet(BankPriceMovementPanel.GLOW_TICK_MILLIS);
+						fireTimer(timer, listeners);
+						assertEquals("frame " + frame + " repaints the card and only the card",
+							Collections.nCopies(frame, panel.hero()), recorder.dirty);
+						assertEquals("frame " + frame + " repaints the ring's region and only that",
+							Collections.nCopies(frame, region), recorder.regions);
+						assertEquals("frame " + frame + " leaves the clock's breath",
+							breathAt(frame * (long) BankPriceMovementPanel.GLOW_TICK_MILLIS), panel.glowLevel(), 1e-9);
+					}
+				}
+				finally
+				{
+					RepaintManager.setCurrentManager(previous);
+				}
+				assertTrue("and nothing is laid out: " + recorder.invalid.size(), recorder.invalid.isEmpty());
+				assertEquals("and nothing is built", rebuilds, panel.rebuilds());
+				assertTrue("and the ring is still lit", panel.glowRunning());
+			});
+
+			// The bank closes, the plugin's word as it delivers it: the ring goes out, and its region of the card is
+			// repainted once, which is what takes the last frame off - a ring stopped without it stays on the card.
+			onEdt(() ->
+			{
+				final Rectangle region = ringRegion(linkInCard());
+				final RecordingRepaintManager recorder = new RecordingRepaintManager();
+				final RepaintManager previous = RepaintManager.currentManager(panel);
+				RepaintManager.setCurrentManager(recorder);
+				try
+				{
+					panel.setBankHold(false, false, 1, 2);
+				}
+				finally
+				{
+					RepaintManager.setCurrentManager(previous);
+				}
+				assertFalse("the bank closed: the ring is out", panel.glowRunning());
+				assertEquals("and its region of the card is repainted once, taking the last frame off",
+					Collections.singletonList(region), recorder.regionsOf(panel.hero()));
+			});
+			assertLateFramesDoNothing("the bank closed", lit.get(), action.get(), frames, now);
+
+			bank(true, true, 2, 2);
+			assertTrue("lit again for the second way out", panel.glowRunning());
+			onEdt(() -> panel.stop());
+			assertLateFramesDoNothing("the panel stopped", lit.get(), action.get(), frames, now);
+		}
+		finally
+		{
+			onEdt(() -> panel.stop());
+		}
+	}
+
+	/**
+	 * F7, AS 7.2's "when open goes false" pinned: the stored publish is replayed when the bank CLOSES, and on no other
+	 * word of the plugin's. Mutation lane C planted a {@code setBankHold} that replays on EVERY notice and nothing
+	 * caught it, because a replay goes through {@code releaseHeld}, which asks {@code holding()} first - and while the
+	 * hold stands the answer is "still held" whichever notice asks, so an open-bank word delivered over a standing
+	 * hold replays nothing in either version. They part company only once the reader has LIFTED the hold, so the
+	 * words with the bank still open are delivered both ways here: over the standing hold, and after a click on the
+	 * glowing link.
+	 *
+	 * <p>That second state is the client's ordinary one, not a contrived race. The click's hook reads the bank on the
+	 * client thread ({@code captureHeldBank}) and posts the plugin's word to the EDT before it returns, while the
+	 * publish carrying the read comes out of the service's recompute, which runs on its executor and hops back to that
+	 * same client thread for the guide prices - so for any bank with items in it the word lands first. Replayed there,
+	 * a publish stored earlier in the visit would build a page of the OLD bank one frame before the new one: a whole
+	 * rebuild for nothing, at the bank, which is the cost addendum AS exists to take away.
+	 *
+	 * <p>Two visits. In the first no answer comes, so the close replays the stored publish - exactly once. In the
+	 * second the answer lands behind the words, as it does in the client: it is built, the stored publish is dropped
+	 * under it, and the close has nothing left to replay.
+	 *
+	 * <p>Planted bug caught: the replay made on every notice - the first word after the click builds the stored
+	 * publish (2 rebuilds where 1 is right, and its {@code thenDay} read before the close).
+	 */
+	@Test
+	public void theStoredPublishIsReplayedOnlyWhenTheBankCloses() throws Exception
+	{
+		build();
+		try
+		{
+			publish(rows(3), listed(3, 3));
+			final AtomicInteger reads = new AtomicInteger();
+			onEdt(() -> panel.setBankRefresh(reads::incrementAndGet));
+
+			// Visit one: a re-statement stored while the bank is open.
+			bank(true, true, 1, 1);
+			final PriceService.Status stored = listed(6, 6);
+			publish(rows(6), stored);
+			assertEquals("a re-statement is stored while the bank is open", 1, panel.rebuilds());
+			bank(true, true, 2, 1);
+			assertEquals("a held event's word over the standing hold replays nothing", 1, panel.rebuilds());
+
+			// The reader clicks the glowing link: the local re-read is asked for and the hold is lifted for its
+			// answer - and, since AS8, the quiet price re-check follows it, which the mocked service answers with
+			// nothing.
+			onEdt(() -> press(panel.refreshLabel()));
+			assertEquals(1, reads.get());
+			verify(service, times(1)).refreshNow(true);
+			assertEquals("the click itself builds nothing", 1, panel.rebuilds());
+
+			// The plugin's words land before any answer, the bank still open.
+			bank(true, true, 3, 1);
+			assertEquals("a held event's word after the lift replays nothing", 1, panel.rebuilds());
+			bank(true, false, 3, 2);
+			assertEquals("nor does the read's report", 1, panel.rebuilds());
+			assertEquals("the rows on screen are still the ones drawn before the bank opened", 3, panel.totalRows());
+			verify(stored, never()).thenDay();
+
+			// No answer ever comes: the close replays the stored publish, once.
+			bank(false, false, 3, 2);
+			assertEquals("the close replays it", 2, panel.rebuilds());
+			assertEquals(6, panel.totalRows());
+			assertSame(stored, panel.status());
+			verify(stored, times(1)).thenDay();
+			bank(false, false, 3, 2);
+			assertEquals("and a second word with the bank shut replays nothing more", 2, panel.rebuilds());
+			verify(stored, times(1)).thenDay();
+
+			// Visit two: the same, with the answer landing behind the words.
+			bank(true, true, 4, 2);
+			final PriceService.Status stale = listed(7, 7);
+			publish(rows(7), stale);
+			assertEquals("stored again on the new visit", 2, panel.rebuilds());
+			onEdt(() -> press(panel.refreshLabel()));
+			assertEquals(2, reads.get());
+			bank(true, false, 4, 3);
+			assertEquals("the read's report replays nothing", 2, panel.rebuilds());
+			final PriceService.Status answer = listedRead(8, PRICES_AT - 30_000L);
+			publish(rows(8), answer);
+			assertEquals("the answer is built, with the bank still open", 3, panel.rebuilds());
+			assertEquals(8, panel.totalRows());
+			bank(false, false, 4, 3);
+			assertEquals("and the close has nothing left to replay over it", 3, panel.rebuilds());
+			assertSame(answer, panel.status());
+			verify(stale, never()).thenDay();
+			verify(service, times(2)).refreshNow(true);
+			verify(service, never()).refreshNow(false);
+		}
+		finally
+		{
+			onEdt(() -> panel.stop());
+		}
+	}
+
+	// ---- addendum AS8 (2026-09-23): one click refreshes everything - the items at once, then the prices
+
+	/**
+	 * AS8, the user on the AS7 build: "manually clicking the refresh button should refresh everything for the user".
+	 * With the bank open and the plugin's hook registered a click is BOTH halves, in this order: the hook first - the
+	 * items, re-read at once - and then the price re-check, {@code refreshNow(true)}: quiet, because the items did
+	 * refresh, so a cooldown refusal of the prices must not put "wait" under a list the click has just redrawn. The
+	 * hold is lifted BEFORE the hook runs, so an answer the hook gives at once is drawn. The link acknowledges the tap
+	 * once and the ring goes out, as ever. And one click is one of each every time: a second click in the same visit,
+	 * with nothing owed any more, is both halves again.
+	 *
+	 * <p>Planted bugs caught: the price half skipped (AS4's click - the quiet check is never made), the price half
+	 * pressed out loud ({@code refreshPricesNow()} after the hook - a loud check is made), the halves swapped (the
+	 * prices asked for before the items - the order fails), and the hold lifted after the hook rather than before it
+	 * (the hook's own answer is stored - the rebuild count stays 1).
+	 */
+	@Test
+	public void aClickWithTheBankOpenReadsTheItemsFirstAndThenChecksThePricesQuietly() throws Exception
+	{
+		build();
+		try
+		{
+			publish(rows(3), listed(3, 3));
+			final List<String> calls = new ArrayList<>();
+			doAnswer(invocation -> calls.add("prices, quiet " + invocation.getArgument(0)))
+				.when(service).refreshNow(anyBoolean());
+			// The plugin's hook as the panel sees it, made to answer AT ONCE: the items re-read and a publish of them
+			// on the spot, carrying the capture already on screen - a re-statement, which only the click's lift lets
+			// through.
+			final List<MovementRow> sixRows = rows(6);
+			final PriceService.Status six = listed(6, 6);
+			onEdt(() -> panel.setBankRefresh(() ->
+			{
+				calls.add("items");
+				listener.onRows(sixRows, six);
+			}));
+			bank(true, true, 1, 1);
+			assertTrue(panel.glowRunning());
+
+			onEdt(() -> press(panel.refreshLabel()));
+			assertEquals("the items first, then the prices, quietly", Arrays.asList("items", "prices, quiet true"),
+				calls);
+			verify(service, never()).refreshNow(false);
+			assertEquals("the hook's own answer is drawn - the hold was lifted before it ran", 2, panel.rebuilds());
+			assertEquals(6, panel.totalRows());
+			assertTrue("the tap is acknowledged as ever", panel.refreshAcknowledging());
+			assertFalse("and the ring is out", panel.glowRunning());
+
+			// The plugin's report of that read, and a second click in the same visit, nothing owed: both halves again.
+			bank(true, false, 1, 2);
+			onEdt(() -> press(panel.refreshLabel()));
+			assertEquals(Arrays.asList("items", "prices, quiet true", "items", "prices, quiet true"), calls);
+			verify(service, times(2)).refreshNow(true);
+			verify(service, never()).refreshNow(false);
+			verify(service, never()).refreshNow();
+		}
+		finally
+		{
+			onEdt(() -> panel.stop());
+		}
+	}
+
+	/**
+	 * AS8's other half: with the bank SHUT a click is the price re-check alone, pressed out loud
+	 * ({@code refreshNow(false)}) - never the plugin's hook, although it is registered here the whole time, and never
+	 * the quiet form. The stored bank is already the one on screen and the service's own carried re-read covers what
+	 * the player carries, so inside the cooldown NOTHING refreshed, and the red "wait" line is then the true answer -
+	 * the behaviour before AS8, unchanged. Tried before any visit and again after one (the bank opened, clicked - both
+	 * halves - and closed), so the flag follows the bank as it is at the click and not as it was.
+	 *
+	 * <p>Planted bugs caught: the quiet flag passed when closed (a click that always presses
+	 * {@code refreshNow(true)}, or one that keys the flag on the hook being registered rather than on the bank being
+	 * open - the loud count and the never() fail), and the hook run with the bank shut (the read count fails).
+	 */
+	@Test
+	public void aClickWithTheBankShutIsThePriceCheckAloneOutLoud() throws Exception
+	{
+		build();
+		try
+		{
+			publish(rows(3), listed(3, 3));
+			final AtomicInteger reads = new AtomicInteger();
+			onEdt(() -> panel.setBankRefresh(reads::incrementAndGet));
+
+			onEdt(() -> press(panel.refreshLabel()));
+			assertEquals("the bank shut: the hook is left alone", 0, reads.get());
+			verify(service, times(1)).refreshNow(false);
+			verify(service, never()).refreshNow(true);
+			assertTrue("the tap is acknowledged as ever", panel.refreshAcknowledging());
+
+			// A visit, where the click is both halves...
+			bank(true, true, 1, 1);
+			onEdt(() -> press(panel.refreshLabel()));
+			assertEquals(1, reads.get());
+			verify(service, times(1)).refreshNow(true);
+
+			// ...and once it is over, the price check alone again, out loud.
+			bank(false, false, 1, 2);
+			onEdt(() -> press(panel.refreshLabel()));
+			assertEquals("the bank shut again: the hook is left alone", 1, reads.get());
+			verify(service, times(2)).refreshNow(false);
+			verify(service, times(1)).refreshNow(true);
+			verify(service, never()).refreshNow();
+		}
+		finally
+		{
+			onEdt(() -> panel.stop());
+		}
+	}
+
+	// ---- addendum AS7 (2026-09-23): the ring that breathes - the user's P1, 3 s in and 3 s out
+
+	/**
+	 * AS7, in the user's own numbers: the ring breathes "3 seconds from 0 to max and then 3 seconds from max to 0
+	 * again", on the cosine P1 was rendered with, read off the clock. Driven over one whole breath, a reading every
+	 * 40 ms (a frame's worth): every reading on the curve {@code (1 - cos(2 pi t / 6 s)) / 2}, rising all the way up
+	 * to 3 s and falling all the way down to 6 s - the 15 % floor as it lights, 57.5 % at 1.5 s, full at 3 s, 57.5 % at
+	 * 4.5 s, the floor at 6 s, and full again at 9 s. And the card PAINTS that level: faint as it lights, half-way up
+	 * at 1.5 s, the ring's own green exactly at 3 s, faint again at 6 s.
+	 *
+	 * <p>Planted bugs caught: another period (1.2 s, P1 as first rendered, is off the curve by the first reading and
+	 * falls again after 0.6 s), no floor or another floor (0 or P1's 25 % as it lights), a straight ramp for the
+	 * cosine (off the curve at 40 ms), a breath that starts at full, and a card that paints a fixed or stored
+	 * brightness instead of the clock's (the painted readings).
+	 */
+	@Test
+	public void theRingBreathesThreeSecondsInAndThreeSecondsOutOnTheClock() throws Exception
+	{
+		final AtomicLong now = new AtomicLong(GLOW_T0);
+		buildLitRing(now);
+		try
+		{
+			assertEquals("the user's 3 s in and 3 s out", 6_000, BankPriceMovementPanel.GLOW_BREATH_MILLIS);
+			onEdt(() ->
+			{
+				double previous = -1d;
+				for (long t = 0L; t <= 6_000L; t += BankPriceMovementPanel.GLOW_TICK_MILLIS)
+				{
+					now.set(GLOW_T0 + t);
+					final double level = panel.glowLevel();
+					assertEquals("on the curve at " + t + " ms", breathAt(t), level, 1e-9);
+					if (t > 0L && t <= 3_000L)
+					{
+						assertTrue("rising all the way up: " + t + " ms", level > previous);
+					}
+					else if (t > 3_000L)
+					{
+						assertTrue("falling all the way down: " + t + " ms", level < previous);
+					}
+					previous = level;
+				}
+				final long[] at = {0L, 1_500L, 3_000L, 4_500L, 6_000L, 9_000L};
+				final double[] want = {0.15d, 0.575d, 1d, 0.575d, 0.15d, 1d};
+				final String[] why = {"the floor as it lights", "half way in at 1.5 s", "full at 3 s",
+					"half way out at 4.5 s", "the floor again at 6 s", "and full again at 9 s"};
+				for (int i = 0; i < at.length; i++)
+				{
+					now.set(GLOW_T0 + at[i]);
+					assertEquals(why[i], want[i], panel.glowLevel(), 1e-9);
+				}
+
+				// The card paints what the clock says, at the ring's own pixel on the middle of the box's left side.
+				final Rectangle link = linkInCard();
+				final int x = link.x;
+				final int y = link.y + link.height / 2;
+				final int card = ColorScheme.DARKER_GRAY_COLOR.getRGB();
+				now.set(GLOW_T0);
+				assertEquals("faint as it lights: the floor, 15 % of the way to the green", 0.15d,
+					greenShare(cardPicture(panel.hero()), x, y), 0.02d);
+				now.set(GLOW_T0 + 1_500L);
+				assertEquals("half-way up at 1.5 s", 0.575d, greenShare(cardPicture(panel.hero()), x, y), 0.02d);
+				now.set(GLOW_T0 + 3_000L);
+				assertEquals("the ring's own green at 3 s", BankPriceMovementPanel.GLOW_COLOUR.getRGB(),
+					cardPicture(panel.hero()).getRGB(x, y));
+				now.set(GLOW_T0 + 6_000L);
+				assertEquals("faint again at 6 s", 0.15d, greenShare(cardPicture(panel.hero()), x, y), 0.02d);
+			});
+		}
+		finally
+		{
+			onEdt(() -> panel.stop());
+		}
+	}
+
+	/**
+	 * AS7: a frame that arrives late draws the breath where the CLOCK has got to, so a stalled EDT can delay the ring
+	 * but never stretch its breath. The timer's own action is fired as Swing would fire it after stalls of every
+	 * size: a frame 40 ms in; the next not until 3 s - full, where a count of frames would be at its second frame's
+	 * 0.2 %; the next at 6 s - a whole breath in three frames, dark again; then six seconds in ONE frame - dark
+	 * again, where a frame count would have the breath barely begun; then half a breath on - half lit. The card draws
+	 * the late frame's level, not the one before it. And a ring put out and lit again starts its OWN breath, from dark,
+	 * however far the clock has run since the first.
+	 *
+	 * <p>Planted bugs caught: a breath counted in frames (40 ms a frame: 3 s reads 0.0018), one that adds up the time
+	 * between frames but caps each gap at 100 ms (3 s reads 0.005 - the stalls are lost), and a start stamped only the
+	 * first time the ring lights (the second light, 3 s into the old breath, reads full instead of dark).
+	 */
+	@Test
+	public void aLateFrameDrawsTheBreathWhereTheClockSaysAndNeverStretchesIt() throws Exception
+	{
+		final AtomicLong now = new AtomicLong(GLOW_T0);
+		buildLitRing(now);
+		try
+		{
+			onEdt(() ->
+			{
+				final Timer timer = panel.glowTimer();
+				assertNotNull(timer);
+				final ActionListener[] listeners = timer.getActionListeners();
+				final Rectangle link = linkInCard();
+				final int x = link.x;
+				final int y = link.y + link.height / 2;
+
+				now.set(GLOW_T0 + 40L);
+				fireTimer(timer, listeners);
+				assertEquals("a frame on time", breathAt(40L), panel.glowLevel(), 1e-9);
+
+				now.set(GLOW_T0 + 3_000L);
+				fireTimer(timer, listeners);
+				assertEquals("the next only at 3 s: full, not a second frame's 0.2 %", 1d, panel.glowLevel(), 1e-9);
+				assertEquals("and the card draws it full", BankPriceMovementPanel.GLOW_COLOUR.getRGB(),
+					cardPicture(panel.hero()).getRGB(x, y));
+
+				now.set(GLOW_T0 + 6_000L);
+				fireTimer(timer, listeners);
+				assertEquals("the next at 6 s: a whole breath in three frames, the floor again", 0.15d, panel.glowLevel(),
+					1e-9);
+
+				now.set(GLOW_T0 + 12_000L);
+				fireTimer(timer, listeners);
+				assertEquals("six seconds in ONE frame: the floor again, not barely begun", 0.15d, panel.glowLevel(), 1e-9);
+				assertEquals("and the card draws it faint", 0.15d, greenShare(cardPicture(panel.hero()), x, y), 0.02d);
+
+				now.set(GLOW_T0 + 13_500L);
+				fireTimer(timer, listeners);
+				assertEquals("then a quarter of a breath on: half way up", breathAt(1_500L), panel.glowLevel(), 1e-9);
+			});
+
+			bank(false, false, 1, 2);
+			assertFalse(panel.glowRunning());
+			// Fifteen seconds after the first light: 3 s into a breath, had the old one run on.
+			now.set(GLOW_T0 + 15_000L);
+			bank(true, true, 2, 2);
+			onEdt(() ->
+			{
+				assertTrue(panel.glowRunning());
+				assertEquals("a new light starts its own breath, from its floor", 0.15d, panel.glowLevel(), 1e-12);
+				now.set(GLOW_T0 + 18_000L);
+				assertEquals("and is full 3 s after IT lit", 1d, panel.glowLevel(), 1e-12);
+			});
+		}
+		finally
+		{
+			onEdt(() -> panel.stop());
+		}
+	}
+
+	/**
+	 * AS7, what the render found: the Refresh link's own box is lopsided - its inset puts 6 px of air before the word
+	 * and the word's ink ends 1 px short of its right edge - so a ring round the link would stand hard against the "h".
+	 * The ring's box runs 5 px wider on the right instead, and the word sits centred in it. Measured on the real card
+	 * at the ring's peak: the ring's painted extent reaches at least 4 px past the word's last inked column, and stands
+	 * the same distance from the word's first and last columns, to a pixel.
+	 *
+	 * <p>Planted bugs caught: the ring round the link's own box (3 px of room on the right against 8 on the left -
+	 * AS4's clipped "h"), the 5 px added on the LEFT (13 against 3), and the link itself widened to make the room (the
+	 * ring moves out with it: 8 against 13).
+	 */
+	@Test
+	public void theRingIsCentredOnTheWordWithRoomOnTheRight() throws Exception
+	{
+		final AtomicLong now = new AtomicLong(GLOW_T0);
+		buildLitRing(now);
+		try
+		{
+			onEdt(() ->
+			{
+				final Rectangle link = linkInCard();
+				// The word, off a card with no ring at all (the plain twin): since the floor the lit card carries a
+				// faint ring even at the breath's first instant, which would widen the word's ink.
+				final BufferedImage dark = plainCardPicture(panel.hero());
+				final Rectangle word = inkBounds(dark, link, ColorScheme.DARKER_GRAY_COLOR);
+				assertNotNull("the word is on the card", word);
+				now.set(GLOW_T0 + 3_000L);
+				final Rectangle ring = changedBounds(dark, cardPicture(panel.hero()));
+				assertNotNull("the ring is drawn at its peak", ring);
+				final int left = word.x - ring.x;
+				final int right = (ring.x + ring.width - 1) - (word.x + word.width - 1);
+				assertTrue("at least 4 px past the word's last column: " + right + " (word " + word + ", ring " + ring
+					+ ")", right >= 4);
+				assertTrue("centred on the word to a pixel: " + left + " px to the left, " + right + " to the right",
+					Math.abs(left - right) <= 1);
+			});
+		}
+		finally
+		{
+			onEdt(() -> panel.stop());
+		}
+	}
+
+	/**
+	 * AS7's halo, on the real card at the ring's peak: going OUT from the ring's box on each of its four sides, through
+	 * the middle of that side, the first pixel is the ring in exactly the rise green, the next two are the halo - the
+	 * near ring at 45 % of that green, the far one at 20 %, each still green - and the one after is the card as it
+	 * was with the ring dark. Three distinct greens outward, then nothing: the light softens into the card and stops
+	 * 2 px out, where a frame's repaint stops.
+	 *
+	 * <p>Planted bugs caught: no halo (the second pixel is the card), the halo's two alphas swapped, equal or changed
+	 * (the greens do not fall, or fall by other shares), a ring below full at the peak (the first pixel is not the
+	 * exact green), and a halo wider than two rings (the fourth pixel is lit).
+	 */
+	@Test
+	public void atItsPeakTheRingIsTheRiseGreenWithTwoFainterRingsOutsideIt() throws Exception
+	{
+		final AtomicLong now = new AtomicLong(GLOW_T0);
+		buildLitRing(now);
+		try
+		{
+			onEdt(() ->
+			{
+				final Rectangle box = ringBox(linkInCard());
+				final BufferedImage dark = cardPicture(panel.hero());
+				now.set(GLOW_T0 + 3_000L);
+				final BufferedImage peak = cardPicture(panel.hero());
+				final int midX = box.x + box.width / 2;
+				final int midY = box.y + box.height / 2;
+				// Per side: the ring's own pixel, then the step outward.
+				final int[][] sides = {
+					{box.x, midY, -1, 0},
+					{box.x + box.width - 1, midY, 1, 0},
+					{midX, box.y, 0, -1},
+					{midX, box.y + box.height - 1, 0, 1}};
+				final String[] names = {"left", "right", "top", "bottom"};
+				for (int i = 0; i < sides.length; i++)
+				{
+					final int[] s = sides[i];
+					final String side = names[i];
+					assertEquals(side + ": the ring, in exactly the rise green",
+						BankPriceMovementPanel.GLOW_COLOUR.getRGB(), peak.getRGB(s[0], s[1]));
+					final Color near = new Color(peak.getRGB(s[0] + s[2], s[1] + s[3]));
+					final Color far = new Color(peak.getRGB(s[0] + 2 * s[2], s[1] + 2 * s[3]));
+					assertTrue(side + ": the near halo is green: " + near, isGreen(near));
+					assertTrue(side + ": the far halo is green: " + far, isGreen(far));
+					final Color farDark = new Color(dark.getRGB(s[0] + 2 * s[2], s[1] + 2 * s[3]));
+					assertTrue(side + ": three distinct greens outward: " + near + ", " + far,
+						BankPriceMovementPanel.GLOW_COLOUR.getGreen() > near.getGreen()
+							&& near.getGreen() > far.getGreen() && far.getGreen() > farDark.getGreen());
+					assertEquals(side + ": the near halo at 45 % of the ring", 0.45d,
+						greenShare(peak, s[0] + s[2], s[1] + s[3]), 0.02d);
+					assertEquals(side + ": the far halo at 20 %", 0.20d,
+						greenShare(peak, s[0] + 2 * s[2], s[1] + 2 * s[3]), 0.02d);
+					assertEquals(side + ": then the card, untouched", dark.getRGB(s[0] + 3 * s[2], s[1] + 3 * s[3]),
+						peak.getRGB(s[0] + 3 * s[2], s[1] + 3 * s[3]));
+				}
+			});
+		}
+		finally
+		{
+			onEdt(() -> panel.stop());
+		}
+	}
+
+	/**
+	 * AS7's hard rule, at the card: "with the glow off the card paints NOTHING extra". The hero card is printed against
+	 * the card as it was before AS7 - a plain {@code Widgets.column(0)} holding the same lines with the same colour
+	 * and border ({@link #plainCardPicture}) - in four states: before the ring ever lit, pixel-identical; lit, at the
+	 * breath's first instant, already different, because the breath starts at its 15 % floor; lit at its peak, different, so the
+	 * comparison can see the ring at all; and put out again after the peak, pixel-identical - a ring that has been lit
+	 * leaves nothing behind.
+	 *
+	 * <p>Planted bugs caught: a card that paints anything with the ring out - a stored or clock-read level painted
+	 * after the light went out - a ring that strokes at level 0, and a card whose layout,
+	 * ground or border is not the plain card's (the never-lit comparison).
+	 */
+	@Test
+	public void withTheRingOutTheCardPaintsExactlyWhatAPlainCardPaints() throws Exception
+	{
+		final AtomicLong now = new AtomicLong(GLOW_T0);
+		build();
+		try
+		{
+			publish(rows(3), listedWith(summary()));
+			onEdt(() ->
+			{
+				layout(SIDEBAR_WIDTH, 400);
+				panel.setGlowClock(now::get);
+				assertFalse(panel.glowRunning());
+				assertFalse("never lit: exactly the plain card",
+					differ(plainCardPicture(panel.hero()), cardPicture(panel.hero())));
+			});
+			bank(true, true, 1, 1);
+			onEdt(() ->
+			{
+				assertTrue(panel.glowRunning());
+				assertTrue("lit, at the breath's first instant: the 15 % floor already shows, so the card differs",
+					differ(plainCardPicture(panel.hero()), cardPicture(panel.hero())));
+				now.set(GLOW_T0 + 3_000L);
+				assertTrue("lit at its peak: the comparison sees the ring",
+					differ(plainCardPicture(panel.hero()), cardPicture(panel.hero())));
+			});
+			bank(false, false, 1, 2);
+			onEdt(() ->
+			{
+				assertFalse(panel.glowRunning());
+				assertFalse("out again, the clock still at the peak: exactly the plain card, nothing left behind",
+					differ(plainCardPicture(panel.hero()), cardPicture(panel.hero())));
+			});
+		}
+		finally
+		{
+			onEdt(() -> panel.stop());
+		}
+	}
+
+	// ---- addendum AS helpers
+
+	/** The plugin's word about the bank, delivered as the plugin delivers it: on the EDT (AS 7.3). */
+	private void bank(boolean open, boolean pending, int heldEvents, int reads) throws Exception
+	{
+		onEdt(() -> panel.setBankHold(open, pending, heldEvents, reads));
+	}
+
+	/**
+	 * No price re-check of either kind reached the service (AS8): not the boolean overload the panel presses since
+	 * AS8, with either flag, and not the no-argument one it pressed before. The tests that promise "nothing was
+	 * refreshed" said {@code never().refreshNow()} while that was the one method there was to press; they say this
+	 * now, so the promise is as strong as it was and no overload can slip past it.
+	 */
+	private void verifyNoPriceCheck()
+	{
+		verify(service, never()).refreshNow(anyBoolean());
+		verify(service, never()).refreshNow();
+	}
+
+	/**
+	 * A LIST status like {@link #listed} whose bank was captured at {@code bankAtMillis}: another READ of the bank.
+	 * Every {@link #listed} status carries the one capture {@code PRICES_AT - 60 s}, so a publish built from one is a
+	 * RE-STATEMENT of the bank on screen - a tick, a fetch landing - which is what the hold holds.
+	 */
+	private static PriceService.Status listedRead(int n, long bankAtMillis)
+	{
+		final PriceService.Status s = listed(n, n);
+		when(s.bankAtMillis()).thenReturn(bankAtMillis);
+		return s;
+	}
+
+	/** The Refresh link's hover as the EDT reads it (F5): null while "Show hover text" is off (AH3). */
+	@Nullable
+	private String refreshHover() throws Exception
+	{
+		final AtomicReference<String> tip = new AtomicReference<>();
+		onEdt(() -> tip.set(panel.refreshLabel().getToolTipText()));
+		return tip.get();
+	}
+
+	/**
+	 * One frame of {@code timer} as Swing delivers it (F6): {@code Timer.fireActionPerformed} in JDK 17 builds this
+	 * event - the timer as its source, id 0, its action command - and hands it to each listener, the last added
+	 * first. Driven by hand because a real 40 ms frame is not a thing to wait for in a test, and the listener is
+	 * exactly what a real frame runs.
+	 */
+	private static void fireTimer(Timer timer, ActionListener[] listeners)
+	{
+		final ActionEvent e = new ActionEvent(timer, 0, timer.getActionCommand(), System.currentTimeMillis(), 0);
+		for (int i = listeners.length - 1; i >= 0; i--)
+		{
+			listeners[i].actionPerformed(e);
+		}
+	}
+
+	/**
+	 * F6's second half, re-pointed by AS7: {@code frames} frames of the ring's timer, fired with the ring OUT - as
+	 * frames queued before it went out would arrive - while the clock runs on 40 ms a frame, repaint nothing, lay
+	 * nothing out, build nothing and light nothing again; the ring reads dark throughout.
+	 */
+	private void assertLateFramesDoNothing(String why, Timer timer, ActionListener[] listeners, int frames,
+		AtomicLong now) throws Exception
+	{
+		onEdt(() ->
+		{
+			assertFalse(why + ": the ring is out", panel.glowRunning());
+			final int rebuilds = panel.rebuilds();
+			final RecordingRepaintManager recorder = new RecordingRepaintManager();
+			final RepaintManager previous = RepaintManager.currentManager(panel);
+			RepaintManager.setCurrentManager(recorder);
+			try
+			{
+				for (int frame = 0; frame < frames; frame++)
+				{
+					now.addAndGet(BankPriceMovementPanel.GLOW_TICK_MILLIS);
+					fireTimer(timer, listeners);
+					assertEquals(why + ": the ring stays dark", 0d, panel.glowLevel(), 0d);
+				}
+			}
+			finally
+			{
+				RepaintManager.setCurrentManager(previous);
+			}
+			assertTrue(why + ": a late frame repaints nothing: " + recorder.dirty.size(), recorder.dirty.isEmpty());
+			assertTrue(why + ": nor lays anything out: " + recorder.invalid.size(), recorder.invalid.isEmpty());
+			assertEquals(why + ": nor builds anything", rebuilds, panel.rebuilds());
+			assertFalse(why + ": nor lights it again", panel.glowRunning());
+		});
+	}
+
+	/**
+	 * Every dirty region and every invalid component Swing is told about while it is installed - the proof that a
+	 * glow frame touches the ring's region of the card and nothing else: {@link #dirty} names each component asked to
+	 * repaint and {@link #regions} the rectangle it was asked for, in the component's own coordinates (AS7). It
+	 * records and forwards nothing: the test paints nothing through it, and nothing it swallows is needed afterwards,
+	 * because the previous manager is put back at once.
+	 */
+	private static final class RecordingRepaintManager extends RepaintManager
+	{
+		final List<JComponent> dirty = new ArrayList<>();
+		final List<Rectangle> regions = new ArrayList<>();
+		final List<JComponent> invalid = new ArrayList<>();
+
+		@Override
+		public void addDirtyRegion(JComponent c, int x, int y, int w, int h)
+		{
+			dirty.add(c);
+			regions.add(new Rectangle(x, y, w, h));
+		}
+
+		/** The regions {@code c} alone was asked to repaint, in order. */
+		List<Rectangle> regionsOf(JComponent c)
+		{
+			final List<Rectangle> out = new ArrayList<>();
+			for (int i = 0; i < dirty.size(); i++)
+			{
+				if (dirty.get(i) == c)
+				{
+					out.add(regions.get(i));
+				}
+			}
+			return out;
+		}
+
+		@Override
+		public void addInvalidComponent(JComponent invalidComponent)
+		{
+			invalid.add(invalidComponent);
+		}
+	}
+
+	/** A {@code size} image in one flat colour. */
+	private static BufferedImage filled(Dimension size, Color colour)
+	{
+		final BufferedImage image = new BufferedImage(Math.max(1, size.width), Math.max(1, size.height),
+			BufferedImage.TYPE_INT_RGB);
+		final Graphics2D g = image.createGraphics();
+		try
+		{
+			g.setColor(colour);
+			g.fillRect(0, 0, image.getWidth(), image.getHeight());
+		}
+		finally
+		{
+			g.dispose();
+		}
+		return image;
+	}
+
+	/** {@code border} painted alone, as Swing paints it round {@code c}, on a {@code size} image of {@code ground}. */
+	private static BufferedImage borderOnly(Border border, Component c, Dimension size, Color ground)
+	{
+		final BufferedImage image = filled(size, ground);
+		final Graphics2D g = image.createGraphics();
+		try
+		{
+			border.paintBorder(c, g, 0, 0, size.width, size.height);
+		}
+		finally
+		{
+			g.dispose();
+		}
+		return image;
+	}
+
+	/** {@code c} printed alone at {@code size} onto the card's grey - text, border and all, as the card paints it. */
+	private static BufferedImage printed(JComponent c, Dimension size)
+	{
+		c.setSize(size);
+		final BufferedImage image = filled(size, ColorScheme.DARKER_GRAY_COLOR);
+		final Graphics2D g = image.createGraphics();
+		try
+		{
+			c.printAll(g);
+		}
+		finally
+		{
+			g.dispose();
+		}
+		return image;
+	}
+
+	/**
+	 * One frame of the ring round {@code box} at {@code level}, on a canvas with {@code box}'s margin all round it
+	 * in the card grey.
+	 */
+	private static BufferedImage ringFrame(Rectangle box, double level)
+	{
+		final BufferedImage image = filled(new Dimension(box.width + 2 * box.x, box.height + 2 * box.y),
+			ColorScheme.DARKER_GRAY_COLOR);
+		final Graphics2D g = image.createGraphics();
+		try
+		{
+			BankPriceMovementPanel.paintRing(g, box, level);
+		}
+		finally
+		{
+			g.dispose();
+		}
+		return image;
+	}
+
+	/**
+	 * Where the green channel of {@code image}'s pixel stands between the card grey (0) and the ring's own green (1) -
+	 * the ring's alpha there, when the ring was drawn over the card's ground (AS7).
+	 */
+	private static double greenShare(BufferedImage image, int x, int y)
+	{
+		final int ground = ColorScheme.DARKER_GRAY_COLOR.getGreen();
+		final int green = new Color(image.getRGB(x, y)).getGreen();
+		return (green - ground) / (double) (BankPriceMovementPanel.GLOW_COLOUR.getGreen() - ground);
+	}
+
+	/** Whether a pixel reads as green at all: its green above both its red and its blue. */
+	private static boolean isGreen(Color c)
+	{
+		return c.getGreen() > c.getRed() && c.getGreen() > c.getBlue();
+	}
+
+	/**
+	 * The breath at {@code t} ms, as the user asked for it and then floored it ("okay do that, 15%"):
+	 * {@code 0.15 + 0.85 * (1 - cos(2 pi t / 6 s)) / 2}, worked out here with the numbers written out.
+	 */
+	private static double breathAt(long t)
+	{
+		return 0.15d + 0.85d * (1d - Math.cos(2d * Math.PI * t / 6_000d)) / 2d;
+	}
+
+	/** The bounds of every pixel at which {@code a} and {@code b} differ, or null when they are the same picture. */
+	@Nullable
+	private static Rectangle changedBounds(BufferedImage a, BufferedImage b)
+	{
+		Rectangle out = null;
+		for (int y = 0; y < a.getHeight(); y++)
+		{
+			for (int x = 0; x < a.getWidth(); x++)
+			{
+				if (a.getRGB(x, y) != b.getRGB(x, y))
+				{
+					out = out == null ? new Rectangle(x, y, 1, 1) : out.union(new Rectangle(x, y, 1, 1));
+				}
+			}
+		}
+		return out;
+	}
+
+	/** Whether {@code before} and {@code after} differ at all, and every pixel that changed is green in {@code after}. */
+	private static boolean onlyGreenChanged(BufferedImage before, BufferedImage after)
+	{
+		boolean changed = false;
+		for (int y = 0; y < before.getHeight(); y++)
+		{
+			for (int x = 0; x < before.getWidth(); x++)
+			{
+				if (before.getRGB(x, y) != after.getRGB(x, y))
+				{
+					changed = true;
+					if (!isGreen(new Color(after.getRGB(x, y))))
+					{
+						return false;
+					}
+				}
+			}
+		}
+		return changed;
+	}
+
+	/** The bounds of every pixel inside {@code within} that is not {@code ground} - the ink there - or null. */
+	@Nullable
+	private static Rectangle inkBounds(BufferedImage image, Rectangle within, Color ground)
+	{
+		Rectangle out = null;
+		for (int y = within.y; y < within.y + within.height; y++)
+		{
+			for (int x = within.x; x < within.x + within.width; x++)
+			{
+				if ((image.getRGB(x, y) & 0xffffff) != (ground.getRGB() & 0xffffff))
+				{
+					out = out == null ? new Rectangle(x, y, 1, 1) : out.union(new Rectangle(x, y, 1, 1));
+				}
+			}
+		}
+		return out;
+	}
+
+	/**
+	 * Builds the panel with the card on screen - a bank published, laid out at the sidebar's width, so the link has
+	 * bounds and a frame's region is a real one - and the breath's clock pinned to {@code now}, then lights the ring
+	 * the way the plugin does, the bank open and a change owed. The breath starts at {@code now}'s reading at that
+	 * moment, which is {@link #GLOW_T0} for every test that does not move it first.
+	 */
+	private void buildLitRing(AtomicLong now) throws Exception
+	{
+		build();
+		publish(rows(3), listedWith(summary()));
+		onEdt(() ->
+		{
+			layout(SIDEBAR_WIDTH, 400);
+			panel.setGlowClock(now::get);
+		});
+		bank(true, true, 1, 1);
+		assertTrue("the ring is lit", panel.glowRunning());
+	}
+
+	/** EDT. The Refresh link's bounds in the hero card's coordinates - what the ring is measured from. */
+	private Rectangle linkInCard()
+	{
+		return SwingUtilities.convertRectangle(panel.refreshLabel().getParent(), panel.refreshLabel().getBounds(),
+			panel.hero());
+	}
+
+	/** The box the ring runs round, as AS7 draws it: {@code link}, 5 px wider on the right. */
+	private static Rectangle ringBox(Rectangle link)
+	{
+		return new Rectangle(link.x, link.y, link.width + RING_EXTRA_RIGHT, link.height);
+	}
+
+	/** What a frame of the ring repaints, as AS7 draws it: {@link #ringBox} grown 2 px all round for the halo. */
+	private static Rectangle ringRegion(Rectangle link)
+	{
+		final Rectangle region = ringBox(link);
+		region.grow(HALO_REACH, HALO_REACH);
+		return region;
+	}
+
+	/** EDT. {@code card} printed alone at its laid-out size, as the sidebar paints it (the renderer's text hint). */
+	private static BufferedImage cardPicture(JPanel card)
+	{
+		final BufferedImage image = new BufferedImage(card.getWidth(), card.getHeight(), BufferedImage.TYPE_INT_RGB);
+		final Graphics2D g = image.createGraphics();
+		try
+		{
+			g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+			g.setColor(ColorScheme.DARK_GRAY_COLOR);
+			g.fillRect(0, 0, image.getWidth(), image.getHeight());
+			card.printAll(g);
+		}
+		finally
+		{
+			g.dispose();
+		}
+		return image;
+	}
+
+	/**
+	 * EDT. The card as it was before AS7, printed as {@link #cardPicture} prints the real one: a plain
+	 * {@code Widgets.column(0)} - {@code JPanel}'s own painting and nothing else - given {@code card}'s lines, colour,
+	 * border, opacity and bounds, and laid out. The lines are handed back, in their order, and the card laid out
+	 * again before this returns, whatever happens.
+	 */
+	private static BufferedImage plainCardPicture(JPanel card)
+	{
+		final Component[] lines = card.getComponents();
+		final JPanel plain = plainTwin(card);
+		plain.setBounds(card.getBounds());
+		try
+		{
+			for (Component line : lines)
+			{
+				plain.add(line);
+			}
+			LookRenderer.layoutTree(plain);
+			return cardPicture(plain);
+		}
+		finally
+		{
+			for (Component line : lines)
+			{
+				card.add(line);
+			}
+			LookRenderer.layoutTree(card);
+		}
+	}
+
+	/**
+	 * EDT. {@code p} painted as {@link LookRenderer#paint} paints it, with its hero card swapped for the card as it
+	 * was before AS7 - a plain {@code Widgets.column(0)} in the card's place in the header, holding the card's lines
+	 * with its colour, border and opacity - and everything put back afterwards, whatever happens.
+	 */
+	private static BufferedImage paintedWithPlainCard(BankPriceMovementPanel p, int height)
+	{
+		final JPanel card = p.hero();
+		final Container header = card.getParent();
+		assertNotNull("the card is in the header", header);
+		final int index = Arrays.asList(header.getComponents()).indexOf(card);
+		final Component[] lines = card.getComponents();
+		final JPanel plain = plainTwin(card);
+		header.remove(index);
+		header.add(plain, index);
+		try
+		{
+			for (Component line : lines)
+			{
+				plain.add(line);
+			}
+			return LookRenderer.paint(p, height);
+		}
+		finally
+		{
+			header.remove(plain);
+			for (Component line : lines)
+			{
+				card.add(line);
+			}
+			header.add(card, index);
+		}
+	}
+
+	/** A plain {@code Widgets.column(0)} - the card before AS7 - with {@code card}'s colour, border and opacity. */
+	private static JPanel plainTwin(JPanel card)
+	{
+		final JPanel plain = Widgets.column(0);
+		plain.setBackground(card.getBackground());
+		plain.setBorder(card.getBorder());
+		plain.setOpaque(card.isOpaque());
+		return plain;
+	}
+
+	/** The bounds of every pixel that is not {@code ground}, or null when nothing was painted. */
+	@Nullable
+	private static Rectangle paintedBounds(BufferedImage image, Color ground)
+	{
+		Rectangle out = null;
+		for (int y = 0; y < image.getHeight(); y++)
+		{
+			for (int x = 0; x < image.getWidth(); x++)
+			{
+				if ((image.getRGB(x, y) & 0xffffff) != (ground.getRGB() & 0xffffff))
+				{
+					out = out == null ? new Rectangle(x, y, 1, 1) : out.union(new Rectangle(x, y, 1, 1));
+				}
+			}
+		}
+		return out;
 	}
 
 	// ---- helpers
