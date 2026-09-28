@@ -270,7 +270,7 @@ public class PriceServiceTest
 		// L1: RuneLite's guide table, the price field, switched by day; bones are never priced (0 = no price).
 		runeliteOn(SEP_8);
 		when(itemManager.getItemPriceWithSource(anyInt(), eq(false)))
-			.thenAnswer(invocation -> runelite.getOrDefault(invocation.<Integer>getArgument(0), 0));
+			.thenAnswer(invocation -> runelite.getOrDefault(invocation.<Integer>getArgument(0), 0).longValue());
 		// L8 b: the composition's members name (built first, stubbed after - a mock made inside a stub trips Mockito).
 		final Map<Integer, ItemComposition> compositions = new HashMap<>();
 		for (final BankItem item : bank(T0).items)
@@ -1150,6 +1150,24 @@ public class PriceServiceTest
 		assertEquals("an item R0 cannot name keeps RuneLite's price", Long.valueOf(100L), rowFor(rows, BOX).unitPrice());
 		assertNull("the vessel has neither: unpriced, dropped by the band", rowFor(rows, VESSEL_BAITED));
 		assertEquals(MovementRow.PriceSource.GUIDE, status.source());
+	}
+
+	/**
+	 * Client 1.13.0 made {@code ItemManager.getItemPriceWithSource} answer a {@code long} where it answered an
+	 * {@code int}, and the guide prices read on the client thread are carried as {@code long} since: a price past
+	 * {@link Integer#MAX_VALUE} reaches its row as the number RuneLite gave, neither wrapped nor capped.
+	 */
+	@Test
+	public void aGuidePriceAboveTheIntRangeReachesItsRowWhole()
+	{
+		final long wide = 3_000_000_000L;
+		when(itemManager.getItemPriceWithSource(eq(BOX), eq(false))).thenReturn(wide);
+		warmUp();
+
+		final MovementRow box = rowFor(lastRows(), BOX);
+		assertNotNull("the box is priced by RuneLite and named by no table: it keeps its own price", box);
+		assertEquals(Long.valueOf(wide), box.unitPrice());
+		assertEquals(wide * box.quantity(), box.holdingValue());
 	}
 
 	@Test
@@ -2120,6 +2138,26 @@ public class PriceServiceTest
 		assertEquals(Long.valueOf(3L * (SEED_NOW - SEED_THEN)), body.deltaGp());
 		assertEquals("and the tooltip's line has what it needs",
 			Collections.singletonList(new BankItem.Part(ARMOUR_SEED, 3L, SEED_NAME)), body.parts());
+	}
+
+	/**
+	 * The parts path carries its guide prices in an array of its own ({@code Parts.guide}), so it is held to the
+	 * same rule as a bank stack since client 1.13.0: a part priced past {@link Integer#MAX_VALUE} is summed as
+	 * the number RuneLite gave - a cast would leave the stack at its alch value, a cap at three times the cap.
+	 */
+	@Test
+	public void aPartPricedAboveTheIntRangeIsSummedWhole()
+	{
+		final long wide = 3_000_000_000L;
+		nameTheSeed();
+		when(itemManager.getItemPriceWithSource(eq(ARMOUR_SEED), eq(false))).thenReturn(wide);
+		service.setOptions(ViewOptions.DEFAULT.withCountUntradeables(true));
+		warmUpWith(bankWithCrystalBody(T0));
+
+		final MovementRow body = rowFor(lastRows(), CRYSTAL_BODY);
+		assertNotNull("the untradeable stack is listed", body);
+		assertEquals(MovementRow.PriceSource.PARTS, body.source());
+		assertEquals("3 x 3,000,000,000", Long.valueOf(3L * wide), body.unitPrice());
 	}
 
 	/** R3: such a row counts in the bank value, in {@code itemsPriced} and in the window it has both days of. */

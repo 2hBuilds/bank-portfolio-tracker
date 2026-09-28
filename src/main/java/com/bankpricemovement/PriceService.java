@@ -1788,14 +1788,14 @@ public class PriceService
 		/** Parallel to {@link #ids}: RuneLite would answer another item's price for this one (B001). */
 		final boolean[] rewritten;
 		/** Parallel to {@link #ids}: RuneLite's guide price; 0 means none, or never asked for a rewritten id. */
-		final int[] guide;
+		final long[] guide;
 
 		private Parts(final int[] ids, final Map<Integer, String> names)
 		{
 			this.ids = ids;
 			this.names = names;
 			this.rewritten = new boolean[ids.length];
-			this.guide = new int[ids.length];
+			this.guide = new long[ids.length];
 		}
 
 		/**
@@ -4197,7 +4197,7 @@ public class PriceService
 			{
 				return;
 			}
-			final int[] guide = new int[in.items.size()];
+			final long[] guide = new long[in.items.size()];
 			final String[] names = new String[in.items.size()];
 			for (int i = 0; i < guide.length; i++)
 			{
@@ -4230,7 +4230,7 @@ public class PriceService
 	 * {@link #rewrittenByItemMapping} answers true for - see the class javadoc's carve-out. Anything that wants
 	 * "now" for such an id must take it from the guide table instead.
 	 */
-	private int guidePrice(final int id)
+	private long guidePrice(final int id)
 	{
 		try
 		{
@@ -4316,7 +4316,7 @@ public class PriceService
 	 *                  {@link Parts#EMPTY} when no stack names any
 	 */
 	private void finish(final long generation, final Inputs in, @Nullable final boolean[] rewritten,
-		@Nullable final int[] guide, @Nullable final String[] names, final Parts parts)
+		@Nullable final long[] guide, @Nullable final String[] names, final Parts parts)
 	{
 		final Agreement against = agreement(in, guide, names);
 		final LocalDate r0Day = in.r0.dataDay();
@@ -4341,7 +4341,7 @@ public class PriceService
 	 * <p>No R0 in memory means no value for anything and therefore no sample, which is what makes
 	 * {@link #deriveAnchorDay} answer null and the rows fall back to RuneLite's own prices.
 	 */
-	private static Agreement agreement(final Inputs in, @Nullable final int[] guide, @Nullable final String[] names)
+	private static Agreement agreement(final Inputs in, @Nullable final long[] guide, @Nullable final String[] names)
 	{
 		final int count = in.items.size();
 		final Long[] values = new Long[count];
@@ -4374,14 +4374,14 @@ public class PriceService
 	 * it drops out of the sample on its own. Deliberate: it would otherwise score a free match on every one of
 	 * them - its "now" IS the table's value - and bias the anchor with items that cannot be compared at all.
 	 */
-	private static Agreement tally(final Long[] values, @Nullable final int[] guide)
+	private static Agreement tally(final Long[] values, @Nullable final long[] guide)
 	{
 		int samples = 0;
 		int matches = 0;
 		for (int i = 0; i < values.length; i++)
 		{
 			final Long value = values[i];
-			final int price = guide == null ? 0 : guide[i];
+			final long price = guide == null ? 0L : guide[i];
 			if (price <= 0 || value == null)
 			{
 				continue;
@@ -4406,7 +4406,7 @@ public class PriceService
 	 * @param parts    the untradeable stacks' tradeable parts and their guide prices (R2)
 	 */
 	private static Computed rowsAndPortfolio(final Inputs in, @Nullable final boolean[] rewritten,
-		@Nullable final int[] guide, @Nullable final String[] names, final Long[] r0Values, final boolean degraded,
+		@Nullable final long[] guide, @Nullable final String[] names, final Long[] r0Values, final boolean degraded,
 		final Parts parts)
 	{
 		final int count = in.items.size();
@@ -4495,7 +4495,7 @@ public class PriceService
 				alch++;
 				continue;
 			}
-			final int price = guide == null ? 0 : guide[i];
+			final long price = guide == null ? 0L : guide[i];
 			// R0 stands in as "now" in L3's degraded mode, and for an id RuneLite would answer another item's
 			// price for (the class javadoc's carve-out) - which leaves the row unpriced when R0 cannot name it.
 			final boolean fromR0 = degraded || (rewritten != null && rewritten[i]);
@@ -4922,7 +4922,7 @@ public class PriceService
 	 *
 	 * @param table the candidate; null or empty answers false
 	 */
-	private static boolean agrees(@Nullable final GuideSnapshot table, final Inputs in, @Nullable final int[] guide,
+	private static boolean agrees(@Nullable final GuideSnapshot table, final Inputs in, @Nullable final long[] guide,
 		@Nullable final String[] names)
 	{
 		if (table == null || table.isEmpty() || guide == null)
