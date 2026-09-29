@@ -9,6 +9,7 @@ import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.EnumMap;
@@ -18,6 +19,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import javax.annotation.Nullable;
 import javax.imageio.ImageIO;
 import javax.swing.JComponent;
+import javax.swing.JScrollPane;
 import javax.swing.SwingUtilities;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.ui.ColorScheme;
@@ -78,6 +80,28 @@ import static org.mockito.Mockito.when;
  * (measured 2026-09-11: with it, this class reproduces {@code ticker-2026-09-20-AK.png} and
  * {@code ticker-hidden-2026-09-20-AK.png} to the byte; without it, neither matches while the picture is the
  * same), so a comparison against them has to be taken the same way.
+ *
+ * <p><b>The current pins are {@code docs/handoff/lab/ticker-{,hidden-,options-,live-}2026-09-28-AU.png}</b>
+ * (addendum AU): the AV pictures with the Items | Net Worth History strip inserted under the card - everything under it
+ * {@link #STRIP_HEIGHT} px lower, the pictures that much taller, and nothing else changed, which
+ * {@code ViewStripPicturesTest} measures against the AV files themselves.
+ *
+ * <p>The AV pins before them ({@code ticker-{,hidden-,options-,live-}2026-09-28-AV.png}, addendum AV): the default
+ * fixture gained its Crystal body, so the ticker, hidden and live pictures are the AR ones with that row inserted
+ * above the row with no baseline - everything under it 64 px lower, the picture then 1145 px - and, where the card
+ * shows it, the total 16,694,766 gp higher and the move the body's own -1,605,234 gp lower on every window
+ * ({@link #summary(ViewOptions)}); the options picture already held that row, so it differs from
+ * {@code ticker-options-2026-09-21-AR.png} in the card's move line alone. The AR and AV pictures stay as history.
+ *
+ * <p><b>The whole sidebar in History</b> (addendum AU) is drawn by {@link #renderHistory(HeroVisibility,
+ * BankHistorySeries)}: the same panel, opened on History with the 30d chip lit ({@link #HISTORY_WINDOW}), over
+ * {@link HistoryViewRenderer}'s 40-day fixture - the ONE History fixture, which the view's own pictures are drawn
+ * over too - with the card's total that fixture's last reading ({@link HistoryViewRenderer#LAST_GP}) and the panel's
+ * clock local noon of its last day ({@link #historyNowMillis()}). Four pictures are pinned in
+ * {@code docs/handoff/lab/}: {@link #HISTORY_FILE}, {@link #HISTORY_ONE_FILE}, {@link #HISTORY_EMPTY_FILE} and
+ * {@link #HISTORY_HIDDEN_FILE}; {@code HistorySidebarPicturesTest} proves each is what this class draws and that the
+ * card and the strip stand exactly where they stand in the Items pictures. Each is exactly as tall as its content
+ * plus {@link #HISTORY_GROUND} ({@link #historyHeight}), so no picture carries a scroll bar.
  */
 public final class LookRenderer
 {
@@ -93,8 +117,29 @@ public final class LookRenderer
 	 * <p>It is deliberately a little more than the 168: the ground under the last row is where a reader sees that
 	 * the list ended rather than ran out, and {@code everyPictureIsTallEnoughForItsListWithTheFoldOpen} fails
 	 * loudly if this is ever short again.
+	 *
+	 * <p>One row pitch taller again since addendum AV (1080 -> 1145): the default fixture gained its Crystal body,
+	 * a thirteenth row, because an untradeable made from tradeable parts now counts with the untradeables switch
+	 * off. Left at 1080 the list grew the scroll bar this constant exists to prevent. The options picture already
+	 * held that row, so {@link #OPTIONS_HEIGHT_CLOSED} gives the pitch back and stays the size it was.
+	 *
+	 * <p>And {@link #STRIP_HEIGHT} taller since addendum AU (1145 -> 1189): the Items | Net Worth History strip went
+	 * into the header under the card, and the picture grows by exactly that so everything under the strip is the AV
+	 * picture moved down and nothing else - the list keeps its height and the ground under its last row stays what it
+	 * was (measured, the column's 6 px bottom margin included: 62 px on the ticker and live pictures, 107 on the hidden
+	 * one, 121 on the options one).
 	 */
-	public static final int HEIGHT = 1080;
+	public static final int HEIGHT = 1080 + MovementRowPanel.ROW_HEIGHT + 3 + LookRenderer.STRIP_HEIGHT;
+	/**
+	 * The Items | Net Worth History strip's own height at this width, MEASURED in Swing (addendum AU; the contract's
+	 * section 10): the {@link BankPriceMovementPanel#ROW_GAP} of air under the card, the {@link Widgets#TOGGLE_HEIGHT}
+	 * px toggle and its one-line caption - which is the distance everything under the card moved when the strip went
+	 * in. Pinned as {@link #FOLD_HEIGHT} is, by {@code ViewStripPicturesTest}: a strip that grew fails there rather
+	 * than quietly squeezing the picture. The mock generator gave 40 px; the Swing strip measures 44 (read off the
+	 * painted picture as well: 6 px of air under the card, the 20 px toggle with its 1 px frame, 3 px, and the
+	 * caption's 15 px line), and the control row under it keeps its own 6 px gap.
+	 */
+	public static final int STRIP_HEIGHT = 44;
 	/**
 	 * The fold's own height at this width, measured (addendum AA, line AA3): the chip strip over the field row,
 	 * with the fold's padding - and therefore the distance everything under the control row moved when the fold
@@ -109,20 +154,24 @@ public final class LookRenderer
 	 * answers it for a CLOSED fold, so the addendum W picture can still be drawn from this class - a "reproducible"
 	 * that came back at another size would not be one.
 	 */
-	public static final int OPTIONS_HEIGHT_CLOSED = HEIGHT + 3 * (MovementRowPanel.ROW_HEIGHT + 3);
+	public static final int OPTIONS_HEIGHT_CLOSED = HEIGHT + 2 * (MovementRowPanel.ROW_HEIGHT + 3);
 	/**
 	 * The options picture's height (R5, and {@link #FOLD_HEIGHT} taller again since AA3). Its fixture carries
-	 * THREE rows the other three pictures do not - addendum Q's two untradeable stacks and addendum R's one
-	 * valued at its parts - so it is three row pitches taller than {@link #HEIGHT}, a pitch being the card plus
+	 * TWO rows the other three pictures do not - addendum Q's two untradeable stacks; addendum R's one valued at its
+	 * parts is in every picture since addendum AV - so it is two row pitches taller than {@link #HEIGHT} (three
+	 * before AV, when {@link #HEIGHT} was a pitch shorter: the same 1332 px either way, and 1376 since the AU strip
+	 * went into {@link #HEIGHT}), a pitch being the card plus
 	 * the 3 px gutter between cards. It was one pitch taller until addendum AN: at 48 px a row, {@link #HEIGHT}
 	 * had slack for two more rows and the arithmetic was never exercised; at 62 px it is, and a picture that is
 	 * short brings a scroll bar that narrows the list under the header and squeezes every 213 px row card.
 	 *
 	 * <p><b>The open fold costs the list the same thing</b> (AA3): the header grew by {@link #FOLD_HEIGHT} and the
 	 * list under it lost exactly that, and this was the one picture with no room to give - it ended on 7 px of bare
-	 * ground, where the other three end on 106 or more. Left alone it grew a scroll bar, which is the failure R5
-	 * describes, so it is given back what the fold took. The other three pictures are NOT given it: they keep the
-	 * 900 px they are compared at, and the fold simply eats 57 px of the ground under their last row.
+	 * ground at the time. Left alone it grew a scroll bar, which is the failure R5 describes, so it is given back what
+	 * the fold took. The other three pictures were NOT given it: they kept the {@link #HEIGHT} they are compared at,
+	 * and the fold simply ate 57 px of the ground under their last row (the ticker and live pictures end on 62 px of
+	 * it today, the hidden one on 107, the options picture on 121 - measured with the AU strip in, which
+	 * {@link #HEIGHT} pays for).
 	 *
 	 * <p>{@link #HEIGHT} is normally untouched on purpose - the acceptance shots are compared BYTE FOR BYTE
 	 * against the pictures the addendum before left behind, and a picture of another size cannot be - but
@@ -227,8 +276,11 @@ public final class LookRenderer
 	 * by name in {@code BankPriceMovementPanelTest}.
 	 */
 	static final LocalDate LIVE_DAY = LocalDate.of(2026, 9, 9);
-	/** How many of the fixture's twelve stacks the live picture leaves on the guide price. */
-	static final int LIVE_GUIDE_STACKS = 9;
+	/**
+	 * How many of the live picture's thirteen stacks are left on the guide price: nine of the twelve, and the
+	 * Crystal body at its guide-priced parts since addendum AV.
+	 */
+	static final int LIVE_GUIDE_STACKS = 10;
 	/** How many items the live picture's {@code /latest} snapshot names (T8's {@code latestItems}). */
 	static final int LIVE_LATEST_ITEMS = 4_535;
 
@@ -236,7 +288,10 @@ public final class LookRenderer
 	{
 	}
 
-	/** Writes all four pictures into {@code args[0]}, or {@code build/} when no directory is given. */
+	/**
+	 * Writes the four Items pictures and, since addendum AU, the four History ones into {@code args[0]}, or
+	 * {@code build/} when no directory is given.
+	 */
 	public static void main(String[] args) throws Exception
 	{
 		final File dir = new File(args.length > 0 ? args[0] : "build");
@@ -244,6 +299,14 @@ public final class LookRenderer
 		System.out.println(write(dir, HIDDEN_FILE, HeroVisibility.NONE).getAbsolutePath());
 		System.out.println(write(dir, OPTIONS_FILE, HeroVisibility.ALL, OPTIONS).getAbsolutePath());
 		System.out.println(write(dir, LIVE_FILE, HeroVisibility.ALL, LIVE).getAbsolutePath());
+		System.out.println(writeHistory(dir, HISTORY_FILE, HeroVisibility.ALL, HistoryViewRenderer.fixture())
+			.getAbsolutePath());
+		System.out.println(writeHistory(dir, HISTORY_ONE_FILE, HeroVisibility.ALL, HistoryViewRenderer.oneReading())
+			.getAbsolutePath());
+		System.out.println(writeHistory(dir, HISTORY_EMPTY_FILE, HeroVisibility.ALL, BankHistorySeries.EMPTY)
+			.getAbsolutePath());
+		System.out.println(writeHistory(dir, HISTORY_HIDDEN_FILE, HeroVisibility.NONE, HistoryViewRenderer.fixture())
+			.getAbsolutePath());
 	}
 
 	/**
@@ -323,7 +386,7 @@ public final class LookRenderer
 
 	/**
 	 * How tall the picture is drawn for a set of view switches: {@link #HEIGHT}, and {@link #OPTIONS_HEIGHT} once
-	 * the untradeable switch has put three more rows in the list than 900 px hold (R5).
+	 * the untradeable switch has put two more rows in the list than {@link #HEIGHT} holds (R5).
 	 */
 	public static int height(ViewOptions options)
 	{
@@ -331,9 +394,9 @@ public final class LookRenderer
 	}
 
 	/**
-	 * {@link #height(ViewOptions)} for a chosen fold state (AA3). The three 900 px pictures are unmoved by the
-	 * fold - it eats 57 px of the bare ground under their last row and they have 106 px or more of it - so only
-	 * the options picture has two heights, and its closed one is the picture addendum W left behind.
+	 * {@link #height(ViewOptions)} for a chosen fold state (AA3). The three twelve-row pictures are unmoved by the
+	 * fold - it eats 57 px of the bare ground under their last row, and they keep 62 px of it or more with the fold
+	 * open - so only the options picture has two heights, and its closed one is the picture addendum W left behind.
 	 */
 	public static int height(ViewOptions options, boolean foldOpen)
 	{
@@ -348,9 +411,9 @@ public final class LookRenderer
 	 * EDT. The real panel over the mocked manager and service, seeded with the fixture, drawing {@code shown}
 	 * under {@code options}.
 	 *
-	 * <p>The fixture follows the switches the way the service would (Q5, R3): with {@code countUntradeables} on,
-	 * the two alch stacks and the parts-priced Crystal body are in the published rows and in the summary; with it
-	 * off, neither the list nor the sums has ever heard of them. The panel is handed the same switches through its
+	 * <p>The fixture follows the switches the way the service would (Q5, R3, AV): the parts-priced Crystal body is
+	 * in the published rows and in the summary under every switch since addendum AV; with {@code countUntradeables}
+	 * on, the two alch stacks are too, and with it off neither the list nor the sums has ever heard of them. The panel is handed the same switches through its
 	 * prefs, which is how the client starts up.
 	 */
 	static BankPriceMovementPanel build(HeroVisibility shown, ViewOptions options)
@@ -369,11 +432,23 @@ public final class LookRenderer
 	static BankPriceMovementPanel build(HeroVisibility shown, ViewOptions options, boolean foldOpen)
 	{
 		final ViewOptions view = options == null ? GUIDE_ONLY : options;
+		return build(shown, view, foldOpen, RowFilter.DEFAULT, SidebarView.ITEMS, status(view), NOW_MILLIS);
+	}
+
+	/**
+	 * The one road every picture's panel is built by: the real panel over the mocked manager and service, the service
+	 * answering {@code status} and the rows for {@code options}, and prefs answering the filter, the card's
+	 * visibility, the switches and the fold - which is how the client starts up on stored settings - then the panel's clock
+	 * pinned to {@code nowMillis} and the panel switched to {@code showing} as the toggle would.
+	 */
+	private static BankPriceMovementPanel build(HeroVisibility shown, ViewOptions options, boolean foldOpen,
+		RowFilter filter, SidebarView showing, PriceService.Status status, long nowMillis)
+	{
+		final ViewOptions view = options == null ? GUIDE_ONLY : options;
 		final ItemManager itemManager = mock(ItemManager.class);
 		when(itemManager.getImage(anyInt(), anyInt(), anyBoolean()))
 			.thenAnswer(invocation -> sprite(invocation.getArgument(0)));
 		final PriceService service = mock(PriceService.class);
-		final PriceService.Status status = status(view);
 		when(service.currentStatus()).thenReturn(status);
 		when(service.currentRows()).thenReturn(rows(view));
 		final BankPriceMovementPanel.Prefs prefs = new BankPriceMovementPanel.Prefs()
@@ -381,7 +456,7 @@ public final class LookRenderer
 			@Override
 			public RowFilter load()
 			{
-				return RowFilter.DEFAULT;
+				return filter;
 			}
 
 			@Override
@@ -410,9 +485,144 @@ public final class LookRenderer
 		final BankPriceMovementPanel panel = new BankPriceMovementPanel(itemManager, service, prefs);
 		// The picture must be the same one whenever it is rendered, so "today" is the fixture's own day and not
 		// the day the suite happens to run: the footnote stamps a bank captured on ANOTHER day with its date
-		// rather than a clock (B044).
-		panel.setClock(() -> BANK_AT_MILLIS + 60_000L);
+		// rather than a clock (B044), and the History card and view count their days from it (AU).
+		panel.setClock(() -> nowMillis);
+		// The sidebar opens on Items; a History picture switches to it as the toggle would.
+		panel.setView(showing);
 		return panel;
+	}
+
+	/** The fixture's "now": a minute after the bank was captured - what every Items picture's panel clock reads. */
+	static final long NOW_MILLIS = BANK_AT_MILLIS + 60_000L;
+
+	// ---------------------------------------------------------------- the whole sidebar in History (addendum AU)
+
+	/** The History pictures, by the names they are pinned under in {@code docs/handoff/lab/}. */
+	public static final String HISTORY_FILE = "history-2026-09-28-AU.png";
+	/** Day one: the one reading, today's (plan 7.5 item 3: the one point, its readout, its row, no sentence). */
+	public static final String HISTORY_ONE_FILE = "history-one-2026-09-28-AU.png";
+	/** No reading yet: the card's two History lines a dash each (ruling 9.7), the view its one sentence. */
+	public static final String HISTORY_EMPTY_FILE = "history-empty-2026-09-28-AU.png";
+	/** The 40-day fixture with the card's three figures hidden (O3 in History: the card shrinks exactly as in Items). */
+	public static final String HISTORY_HIDDEN_FILE = "history-hidden-2026-09-28-AU.png";
+	/** The card's lit chip in every History picture: 30d, mock 5's own. */
+	public static final MovementWindow HISTORY_WINDOW = MovementWindow.D30;
+	/**
+	 * The bare ground under the History list, in every History picture: what shows the list ENDED. Each picture is
+	 * exactly its content's height plus this ({@link #historyHeight}), so none of them grows a scroll bar - the 40-day
+	 * list is 40 rows and is drawn whole; only in the client, where the sidebar is shorter, does it scroll.
+	 */
+	public static final int HISTORY_GROUND = 24;
+
+	/**
+	 * What the panel's clock reads in every History picture: LOCAL noon of {@link HistoryViewRenderer#TODAY}, in the zone
+	 * the panel counts its days in ({@code ZoneId.systemDefault()}), so "today" is the fixture's last day wherever the
+	 * suite runs (amendment 9.1).
+	 */
+	static long historyNowMillis()
+	{
+		return HistoryViewRenderer.TODAY.atTime(12, 0).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+	}
+
+	/**
+	 * EDT. The sidebar opened on History over {@code series}: the panel is switched to {@link SidebarView#HISTORY} and the
+	 * prefs answer {@link #HISTORY_WINDOW} as the filter's window, the status is {@link #historyStatus}, and the
+	 * clock {@link #historyNowMillis()}. The Items rows are the Items pictures' own, built behind the History card.
+	 */
+	static BankPriceMovementPanel buildHistory(HeroVisibility shown, BankHistorySeries series)
+	{
+		return build(shown, GUIDE_ONLY, FOLD_OPEN, RowFilter.DEFAULT.withWindow(HISTORY_WINDOW), SidebarView.HISTORY,
+			historyStatus(series), historyNowMillis());
+	}
+
+	/**
+	 * The Items pictures' status with the History card's own facts: the bank value is the fixture's last reading
+	 * ({@link HistoryViewRenderer#LAST_GP}) - so the card's headline and the reading it is compared with are one figure,
+	 * as they are in the client, where the reading and the total come from the same computation (amendment 9.6) - the
+	 * bank captured a minute before the clock, and {@code series} as its bank history. A MOCK status like the Items one,
+	 * so the series is stubbed on it; its {@code options()} answers null, which the card and the view read as the
+	 * defaults.
+	 */
+	static PriceService.Status historyStatus(BankHistorySeries series)
+	{
+		final PriceService.Status s = status(GUIDE_ONLY);
+		final long bankAt = historyNowMillis() - 60_000L;
+		when(s.portfolio()).thenReturn(new PortfolioSummary(HistoryViewRenderer.LAST_GP, BANK_ITEMS, BANK_ITEMS, null));
+		when(s.bankAtMillis()).thenReturn(bankAt);
+		when(s.pricesAtMillis()).thenReturn(bankAt);
+		when(s.bankHistory()).thenReturn(series);
+		return s;
+	}
+
+	/**
+	 * EDT. How tall a History picture of {@code panel} is drawn: where the cards start under the header, the History
+	 * card's whole content, and {@link #HISTORY_GROUND} - measured by laying the panel out far taller than it needs.
+	 */
+	static int historyHeight(BankPriceMovementPanel panel)
+	{
+		panel.setSize(WIDTH, 20_000);
+		layoutTree(panel);
+		final JScrollPane pane = historyPane(panel);
+		final int cardsTop = SwingUtilities.convertPoint(pane.getParent(), pane.getLocation(), panel).y;
+		return cardsTop + pane.getViewport().getView().getPreferredSize().height + HISTORY_GROUND;
+	}
+
+	/** The History card's scroll pane: the one around the panel's {@link BankHistoryView}. */
+	static JScrollPane historyPane(BankPriceMovementPanel panel)
+	{
+		final Component view = find(panel, BankHistoryView.class);
+		return (JScrollPane) SwingUtilities.getAncestorOfClass(JScrollPane.class, view);
+	}
+
+	/** The first component of {@code type} in {@code root}'s tree, or null. */
+	@Nullable
+	static <T> T find(Component root, Class<T> type)
+	{
+		if (type.isInstance(root))
+		{
+			return type.cast(root);
+		}
+		if (root instanceof Container)
+		{
+			for (Component child : ((Container) root).getComponents())
+			{
+				final T found = find(child, type);
+				if (found != null)
+				{
+					return found;
+				}
+			}
+		}
+		return null;
+	}
+
+	/** The whole sidebar in History over {@code series}, painted at {@link #historyHeight}; built and painted on the EDT. */
+	public static BufferedImage renderHistory(HeroVisibility shown, BankHistorySeries series) throws Exception
+	{
+		final AtomicReference<BufferedImage> out = new AtomicReference<>();
+		onEdt(() ->
+		{
+			final BankPriceMovementPanel panel = buildHistory(shown, series);
+			out.set(paint(panel, historyHeight(panel)));
+		});
+		return out.get();
+	}
+
+	/** {@link #renderHistory} written as {@code <dir>/<name>} (the directory is created if it is missing). */
+	public static File writeHistory(File dir, String name, HeroVisibility shown, BankHistorySeries series)
+		throws Exception
+	{
+		final BufferedImage image = renderHistory(shown, series);
+		if (!dir.isDirectory() && !dir.mkdirs())
+		{
+			throw new IOException("could not create " + dir);
+		}
+		final File out = new File(dir, name);
+		if (!ImageIO.write(image, "png", out))
+		{
+			throw new IOException("no PNG writer for " + out);
+		}
+		return out;
 	}
 
 	/** EDT. Sizes, lays out and prints {@code panel} into a fresh {@link #WIDTH} x {@code height} image. */
@@ -485,13 +695,14 @@ public final class LookRenderer
 	}
 
 	/**
-	 * The published rows for a set of view switches (Q5, R5): the twelve, and with {@code countUntradeables} on
-	 * three more - the Crystal body at what its seeds are worth, and the two alch stacks after it.
+	 * The published rows for a set of view switches (Q5, R5, AV): the twelve and the Crystal body at what its seeds
+	 * are worth - with EVERY switch since addendum AV, because an untradeable made from tradeable parts always
+	 * counts - and with {@code countUntradeables} on the two alch stacks after them.
 	 *
 	 * <p>Each lands where the LIT ordering puts it, because that is the list the service would publish. "Biggest
 	 * gainers" is percent descending with the rows that have no baseline last, so the two alch stacks - which can
 	 * never have one - go at the end, and the Crystal body, which has a real baseline and a real move (R3), goes
-	 * among the movers: its -8.8% is under Zulrah's scales and over the row with no baseline at all, which puts
+	 * among the movers: its -8.7% is under Zulrah's scales and over the row with no baseline at all, which puts
 	 * it two rows above the pair and makes the picture the comparison R5 asks for.
 	 */
 	static List<MovementRow> rows(ViewOptions options)
@@ -500,12 +711,11 @@ public final class LookRenderer
 		{
 			return liveRows();
 		}
+		final List<MovementRow> out = withCrystalBody(rows());
 		if (options == null || !options.countUntradeables())
 		{
-			return rows();
+			return Collections.unmodifiableList(out);
 		}
-		final List<MovementRow> out = new ArrayList<>(rows());
-		out.add(out.size() - 1, crystalBody());
 		out.add(alchRow(11850, "Graceful hood", 1, GRACEFUL_HOOD_ALCH));
 		out.add(alchRow(22322, "Avernic defender", 1, AVERNIC_DEFENDER_ALCH));
 		return Collections.unmodifiableList(out);
@@ -533,7 +743,9 @@ public final class LookRenderer
 	 */
 	static List<MovementRow> liveRows()
 	{
-		final List<MovementRow> out = new ArrayList<>(rows());
+		// AV: the Crystal body is in this list too - the live switch is on and the untradeables switch off - just
+		// above the row with no baseline, which leaves the four rows re-priced below where they were.
+		final List<MovementRow> out = withCrystalBody(rows());
 		out.set(0, live(row(13652, "Dragon claws", 1, false, CLAWS_LIVE_NOW, CLAWS_TRADED_THEN), null,
 			MovementRow.PriceSource.LIVE, facts(41_600_000L, 41_360_000L, 12_483L, null)));
 		// T4's awkward case, built the way the service builds it: the GUIDE pair carries the move, and the live mid
@@ -588,6 +800,17 @@ public final class LookRenderer
 	}
 
 	/**
+	 * {@code rows} with the Crystal body where "Percent change", biggest first, puts it (R5): its -8.7% is under
+	 * Zulrah's scales and over the row with no baseline, so it goes directly before the last row. A fresh list.
+	 */
+	private static List<MovementRow> withCrystalBody(List<MovementRow> rows)
+	{
+		final List<MovementRow> out = new ArrayList<>(rows);
+		out.add(out.size() - 1, crystalBody());
+		return out;
+	}
+
+	/**
 	 * An untradeable stack as the service lists one (Q5): its High Alchemy value as the unit price, no baseline,
 	 * no move, and {@link MovementRow.PriceSource#ALCH} - which is what makes the row draw its "alch" tag
 	 * instead of a pair of dashes.
@@ -601,7 +824,8 @@ public final class LookRenderer
 	/**
 	 * The untradeable stack addendum R values at its tradeable parts (R5): a Crystal body at three Crystal armour
 	 * seeds - 16,694,766 gp now against 18,300,000 on the baseline day, so it shows a real fall of -1,605,234 gp
-	 * (-8.8%) and paints exactly as a guide row does, rail and all.
+	 * (-8.77 %, printed -8.7% because a percentage truncates toward zero) and paints exactly as a guide row does,
+	 * rail and all.
 	 */
 	static MovementRow crystalBody()
 	{
@@ -639,36 +863,44 @@ public final class LookRenderer
 	}
 
 	/**
-	 * The whole-bank figures for a set of view switches (Q5, R3): the probe's, and with {@code countUntradeables}
-	 * on the three untradeable stacks added to the VALUE and to {@code itemsTotal}.
+	 * The whole-bank figures for a set of view switches (Q5, R3, AV): the probe's with the Crystal body added -
+	 * with every switch since addendum AV - and with {@code countUntradeables} on the two alch stacks added to the
+	 * VALUE and to {@code itemsTotal} as well.
 	 *
 	 * <p>The two alch stacks stop there - they have no guide price, so they are not {@code itemsPriced}, and no
 	 * baseline, so no window covers them. The Crystal body is a priced stack with a baseline like any other
-	 * (R3): it counts in {@code itemsPriced} as well, and in every window's covered set.
+	 * (R3): it counts in {@code itemsPriced} as well, and in every window's covered set - and so its own move is
+	 * in every window's move, both ends of it, exactly as the service sums a covered stack (the fixture has one
+	 * "then" for the body, {@link #crystalBody()}'s, and uses it for every window).
 	 */
 	static PortfolioSummary summary(ViewOptions options)
 	{
-		if (options != null && options.livePrices())
-		{
-			// T5: the same whole-bank figures, with the live count the card's tooltip printed until addendum AF.
-			final PortfolioSummary base = summary();
-			return new PortfolioSummary(base.valueStacks(), base.itemsPriced(), base.itemsTotal(), base.moves(),
-				base.currencyGp(), LIVE_STACKS);
-		}
-		if (options == null || !options.countUntradeables())
-		{
-			return summary();
-		}
+		// AV: the Crystal body counts whatever the untradeables switch says - a priced stack with a baseline (R3), so
+		// it is in itemsPriced, in every window's covered set and in every window's move.
 		final PortfolioSummary base = summary();
+		final long bodyThen = CRYSTAL_SEEDS * CRYSTAL_SEED_THEN;
 		final Map<MovementWindow, WindowMove> moves = new EnumMap<>(MovementWindow.class);
 		for (WindowMove m : base.moves().values())
 		{
-			moves.put(m.window(), new WindowMove(m.window(), m.thenDay(), m.valueThen(), m.valueNowCovered(),
-				m.deltaGp(), m.deltaPct(), m.itemsCovered() + 1));
+			final long valueThen = m.valueThen() + bodyThen;
+			final long deltaGp = m.deltaGp() + (CRYSTAL_BODY_NOW - bodyThen);
+			moves.put(m.window(), new WindowMove(m.window(), m.thenDay(), valueThen,
+				m.valueNowCovered() + CRYSTAL_BODY_NOW, deltaGp, deltaGp * 100.0 / valueThen, m.itemsCovered() + 1));
 		}
-		return new PortfolioSummary(
-			base.valueStacks() + GRACEFUL_HOOD_ALCH + AVERNIC_DEFENDER_ALCH + CRYSTAL_BODY_NOW,
-			base.itemsPriced() + 1, base.itemsTotal() + 3, moves);
+		final PortfolioSummary parts = new PortfolioSummary(base.valueStacks() + CRYSTAL_BODY_NOW,
+			base.itemsPriced() + 1, base.itemsTotal() + 1, moves);
+		if (options != null && options.livePrices())
+		{
+			// T5: the same whole-bank figures, with the live count the card's tooltip printed until addendum AF.
+			return new PortfolioSummary(parts.valueStacks(), parts.itemsPriced(), parts.itemsTotal(), parts.moves(),
+				parts.currencyGp(), LIVE_STACKS);
+		}
+		if (options == null || !options.countUntradeables())
+		{
+			return parts;
+		}
+		return new PortfolioSummary(parts.valueStacks() + GRACEFUL_HOOD_ALCH + AVERNIC_DEFENDER_ALCH,
+			parts.itemsPriced(), parts.itemsTotal() + 2, parts.moves());
 	}
 
 	/** The probe's whole-bank figures: one move per window, every stack covered. */

@@ -2,6 +2,7 @@ package com.bankpricemovement;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
@@ -66,13 +67,18 @@ import org.slf4j.LoggerFactory;
  * exactly right - they could only ever disagree.
  *
  * <p><b>Untradeable stacks, and their parts</b> (addendum Q line Q5, addendum R line R2). A stack the exchange does
- * not list has no series of its own. While "Include untradeable items" is on, such a stack is priced at the SUM of the
- * tradeable parts RuneLite maps it onto ({@link BankItem#parts}, recorded by {@code BankReader}) - a Crystal body at
- * three Crystal armour seeds - with every part's "now" and "then" taken through the very rules above, the carve-out
- * included ({@link #partsNow}, {@link #partsSum}). The row is then an ordinary movement row that happens to say
- * {@code PARTS}. A stack RuneLite maps to nothing, or one whose parts the guide tables cannot ALL price, keeps Q5's
- * High Alchemy value and its dash instead - half a sum is not the item's price. With the switch off none of this
- * runs: the stacks are gone from {@link Inputs#items} before a price is asked for.
+ * not list has no series of its own. Such a stack is priced at the SUM of the tradeable parts RuneLite maps it onto
+ * ({@link BankItem#parts}, recorded by {@code BankReader}) - a Crystal body at three Crystal armour seeds - with every
+ * part's "now" and "then" taken through the very rules above, the carve-out included ({@link #partsNow},
+ * {@link #partsSum}). The row is then an ordinary movement row that happens to say {@code PARTS}. A stack RuneLite
+ * maps to nothing, or one whose parts the guide tables cannot ALL price, keeps Q5's High Alchemy value and its dash
+ * instead - half a sum is not the item's price. Since addendum AV a PARTS stack is ALWAYS listed and counted, as
+ * RuneLite's own bank value counts it, and "Include alch-only untradeables" decides the alch ones alone.
+ *
+ * <p><b>Every stack is priced; the switches choose what is added up</b> (addendum AV). One computation prices every
+ * stack of the snapshot - the bank's and the carried ones, tradeable, parts and alch - in its one client-thread trip
+ * ({@link Inputs#everything}, {@link Lookups}), whatever the three counting switches say, by ONE per-stack rule
+ * ({@link #priceStack}). The switches act only when the rows and the card choose what to add up.
  *
  * <p><b>What the player is carrying</b> (addendum Y lines Y2 and Y3). While "Include inventory and worn gear" is on,
  * a computation is over the MERGED stacks: the bank's, the inventory's and the worn gear's folded onto canonical ids
@@ -389,6 +395,8 @@ public class PriceService
 	private final ClientThread clientThread;
 	private final ScheduledExecutorService executor;
 	private final LongSupplier clockMillis;
+	/** The player's time zone: what turns a bank-history reading's clock into its LOCAL day (addendum AU). */
+	private final ZoneId zone;
 	private final Consumer<Runnable> edt;
 
 	/** Guards every field below except the thread-safe {@link #listeners} and the volatile {@link #stopped}. */
@@ -469,6 +477,12 @@ public class PriceService
 	private int guideRows;
 	private int alchRows;
 	/**
+	 * The stacks the last computation left out because they ended on the alch rule while "Include alch-only
+	 * untradeables" was off (AV2) - taken off {@link Status#bankItems()}, so "n of m items" counts what the gate
+	 * kept and nothing on the panel is left unexplained (B105).
+	 */
+	private int leftOutRows;
+	/**
 	 * The live day the last computation counted back from (U1), and the day each window's bucket really held
 	 * (null where a window had none). Set in {@link #commit} from the inputs that computation used, like the three
 	 * counts above and for the same reason: a status must never name a day its own figures were not built with.
@@ -515,6 +529,60 @@ public class PriceService
 	/** Whether the "the index is full and still does not reach every window" line has been logged this session (B009). */
 	private boolean indexReachLogged;
 	private BankSnapshot bank = BankSnapshot.EMPTY;
+	/**
+	 * Whether {@link #bank} is a real one - captured by the client or loaded from disk - rather than the dev verb's
+	 * made-up stacks ({@link #setBank(BankSnapshot, boolean)} with {@code persist} false). It travels with the
+	 * snapshot into every computation over it, so no re-pricing of a made-up bank is ever a bank-history reading.
+	 */
+	private boolean bankPersist = true;
+
+	// ---- addendum AU: the bank's own daily readings (plan 7.1, 7.5; contract section 5 and 9.18)
+
+	/**
+	 * The daily readings of {@link #bankHistoryHash} / {@link #bankHistoryProfile} - loaded from the store when a
+	 * computation first commits that owner's bank, then with each accepted reading folded in. Never written out
+	 * whole: a write sends the new point (and any whose write failed, {@link #bankHistoryUnwritten}) and the store
+	 * re-reads and merges each (plan 7.1 item 4). EMPTY while no
+	 * bank with an owner has been committed.
+	 */
+	private BankHistorySeries bankHistory = BankHistorySeries.EMPTY;
+	/** The owner of {@link #bankHistory}: an account hash, 0 = nobody. */
+	private long bankHistoryHash;
+	/** The owner's profile, null read as "" (as {@link #belongsTo} reads it). */
+	private String bankHistoryProfile = "";
+	/**
+	 * The owner's file failed to load this session: its readings are kept in memory and drawn, and nothing is
+	 * written for it (plan 7.1 item 5). Reset only when another owner's series is loaded.
+	 */
+	private boolean bankHistoryFailed;
+	/**
+	 * The {@link BankSnapshot#capturedAtMillis} the last accepted reading priced; 0 = none yet. What amendment 9.18
+	 * compares a logged-out computation against: the logout read of a new capture records once, a re-pricing of
+	 * the same capture at the login screen never does.
+	 */
+	private long bankHistoryCapture;
+	/**
+	 * The owner's readings whose write the store has not confirmed (review finding H5): handed to the next write
+	 * with the reading it carries, so a write that failed - a Windows sharing violation, a clock behind the file -
+	 * is sent again at the next commit even when today's cells have not moved since. Emptied when a write is
+	 * handed out and refilled only by a write that answers false; reset with the owner.
+	 */
+	private BankHistorySeries bankHistoryUnwritten = BankHistorySeries.EMPTY;
+	/**
+	 * The readings taken while the clock stood BEHIND the owner's record (the store's clock-behind rule, review
+	 * finding H1, applied in memory): drawn while the clock stays there, never written, and dropped from
+	 * {@link #bankHistory} by the first reading taken with the clock right again, so a PC clock set a year back and
+	 * put right mid-session leaves no year-old "first reading" behind (walk-through AU-W2). Reset with the owner.
+	 */
+	private BankHistorySeries bankHistoryBehind = BankHistorySeries.EMPTY;
+	/**
+	 * Who {@link #loggedIn} is (review finding H4): the account hash and profile of the last
+	 * {@code setLoggedIn(true, ...)}, 0 and "" while logged out. A computation of ANOTHER owner's bank - the one
+	 * still held between a login and that account's own bank landing - is not that owner's login, and records only
+	 * under amendment 9.18's logout-read rule.
+	 */
+	private long loginHash;
+	private String loginProfile = "";
 	/**
 	 * The last snapshot {@link #setBank} handed to the store, for its content test; null until one is written.
 	 * Never the disk copy {@link #setLoggedIn} loads - that one has not been re-written, and comparing against it
@@ -612,6 +680,22 @@ public class PriceService
 		final ClientThread clientThread, final ScheduledExecutorService executor, final LongSupplier clockMillis,
 		final Consumer<Runnable> edt, @Nullable final TradedPriceClient traded)
 	{
+		this(wiki, store, itemManager, clientThread, executor, clockMillis, edt, traded, ZoneId.systemDefault());
+	}
+
+	/**
+	 * The same, in a given time zone (addendum AU, plan 7.1 item 2): the zone a bank-history reading's clock is
+	 * turned into the player's LOCAL day in - {@link ZoneId#systemDefault()} through every other constructor, a
+	 * fixed zone where a test has to stand either side of a local midnight. Nothing else here reads it: every
+	 * guide and traded day stays UTC (L9, U1).
+	 *
+	 * @param zone the player's time zone; null reads as {@link ZoneId#systemDefault()}
+	 */
+	PriceService(final GuidePriceClient wiki, final PriceStore store, final ItemManager itemManager,
+		final ClientThread clientThread, final ScheduledExecutorService executor, final LongSupplier clockMillis,
+		final Consumer<Runnable> edt, @Nullable final TradedPriceClient traded, @Nullable final ZoneId zone)
+	{
+		this.zone = zone == null ? ZoneId.systemDefault() : zone;
 		this.traded = traded;
 		this.wiki = Objects.requireNonNull(wiki, "wiki");
 		this.store = Objects.requireNonNull(store, "store");
@@ -735,6 +819,8 @@ public class PriceService
 	 * <p>Every date here is a UTC calendar day (L9): the guide price steps once a day near the top of the UTC day
 	 * (rollover observed 00:47-02:06 UTC, L-A) and {@link #dayLabel} prints a day, never a local clock. The one
 	 * local-time value in the header is the "Bank as of HH:MM" capture clock.
+	 *
+	 * <p>{@link #bankHistory()} days are LOCAL dates, unlike every other day here (addendum AU, plan 7.1 item 2).
 	 */
 	public static class Status
 	{
@@ -966,6 +1052,8 @@ public class PriceService
 		private final PortfolioSummary portfolio;
 		private final ViewOptions options;
 		private final LiveStatus live;
+		/** The drawn bank's owner's daily readings (addendum AU); EMPTY from every public constructor. */
+		private final BankHistorySeries bankHistory;
 
 		/**
 		 * @param pricesAtMillis          when the guide prices in the rows were read (the last computation that
@@ -1088,6 +1176,49 @@ public class PriceService
 			this.anchorDegraded = degraded && anchorDegraded;
 			this.degradedReason = degraded ? degradedReason : null;
 			this.portfolio = portfolio == null ? PortfolioSummary.EMPTY : portfolio;
+			this.bankHistory = BankHistorySeries.EMPTY;
+		}
+
+		/** Every field of {@code base}, with {@code bankHistory} in place of its series (amendment 9.3). */
+		private Status(final Status base, final BankHistorySeries bankHistory)
+		{
+			this.pricesAtMillis = base.pricesAtMillis;
+			this.bankAtMillis = base.bankAtMillis;
+			this.bankLoaded = base.bankLoaded;
+			this.loggedIn = base.loggedIn;
+			this.source = base.source;
+			this.problem = base.problem;
+			this.problemKind = base.problemKind;
+			this.totalRows = base.totalRows;
+			this.bankItems = base.bankItems;
+			this.window = base.window;
+			this.baselineLoaded = base.baselineLoaded;
+			this.baselineRevisionSeconds = base.baselineRevisionSeconds;
+			this.baselineRevId = base.baselineRevId;
+			this.mappingAtMillis = base.mappingAtMillis;
+			this.indexAtMillis = base.indexAtMillis;
+			this.anchorDay = base.anchorDay;
+			this.agree = base.agree;
+			this.agreeSamples = base.agreeSamples;
+			this.r0Day = base.r0Day;
+			this.r0RevId = base.r0RevId;
+			this.degraded = base.degraded;
+			this.anchorDegraded = base.anchorDegraded;
+			this.degradedReason = base.degradedReason;
+			this.portfolio = base.portfolio;
+			this.options = base.options;
+			this.live = base.live;
+			this.bankHistory = bankHistory;
+		}
+
+		/**
+		 * This status carrying {@code series} as its {@link #bankHistory()} (addendum AU, amendment 9.3) - how the
+		 * service attaches the drawn owner's readings to every status it builds, and how a test puts a series on a
+		 * fixture. Null reads as {@link BankHistorySeries#EMPTY}.
+		 */
+		public Status withBankHistory(@Nullable final BankHistorySeries series)
+		{
+			return new Status(this, series == null ? BankHistorySeries.EMPTY : series);
 		}
 
 		public long pricesAtMillis()
@@ -1316,6 +1447,17 @@ public class PriceService
 		}
 
 		/**
+		 * The daily readings of the drawn bank's owner - one per LOCAL day, the last of the day winning (addendum
+		 * AU) - as the service holds them in memory, today's point of this very computation included. Never null
+		 * on a real status; {@link BankHistorySeries#EMPTY} when there is none. A mocked status answers null, so a
+		 * consumer reads null as EMPTY (amendment 9.2).
+		 */
+		public BankHistorySeries bankHistory()
+		{
+			return bankHistory;
+		}
+
+		/**
 		 * The status line (C21, K7): the {@link #problem()} sentence when there is one - the live acceptance list
 		 * reads "Wiki history down - no movement" and the cooldown text off this line, and at 213 px there
 		 * is no room for both - otherwise {@link #headerText()}.
@@ -1417,7 +1559,8 @@ public class PriceService
 				&& Objects.equals(degradedReason, other.degradedReason)
 				&& portfolio.equals(other.portfolio)
 				&& options.equals(other.options)
-				&& live.equals(other.live);
+				&& live.equals(other.live)
+				&& bankHistory.equals(other.bankHistory);
 		}
 
 		@Override
@@ -1426,7 +1569,7 @@ public class PriceService
 			return Objects.hash(pricesAtMillis, bankAtMillis, bankLoaded, loggedIn, source, problem, totalRows,
 				bankItems, window, baselineLoaded, baselineRevisionSeconds, baselineRevId, mappingAtMillis,
 				indexAtMillis, anchorDay, agree, agreeSamples, r0Day, r0RevId, degraded, anchorDegraded,
-				degradedReason, portfolio, options, live);
+				degradedReason, portfolio, options, live, bankHistory);
 		}
 
 		@Override
@@ -1440,7 +1583,8 @@ public class PriceService
 				+ ", agreeSamples=" + agreeSamples + ", r0Day=" + r0Day + ", r0RevId=" + r0RevId
 				+ ", degraded=" + degraded + ", bankValue=" + portfolio.valueNow()
 				+ ", options=" + options
-				+ (LiveStatus.OFF.equals(live) ? "" : ", live=" + live) + '}';
+				+ (LiveStatus.OFF.equals(live) ? "" : ", live=" + live)
+				+ (bankHistory.isEmpty() ? "" : ", bankHistory=" + bankHistory.size()) + '}';
 		}
 	}
 
@@ -1513,6 +1657,35 @@ public class PriceService
 	}
 
 	/**
+	 * What a computation needs to know of the snapshot it prices beyond its stacks (addendum AU, plan 7.1 item 3):
+	 * whose it is, when it was captured, whether it is real, and its cash before any switch - taken under the lock
+	 * with the stacks, so a bank-history reading is filed under the owner of the very bank it priced.
+	 */
+	private static final class PricedBank
+	{
+		final long accountHash;
+		/** Null read as "", as {@link #belongsTo} reads it. */
+		final String profileType;
+		final long capturedAtMillis;
+		/** False for the dev verb's made-up bank ({@link #setBank(BankSnapshot, boolean)}): never a reading. */
+		final boolean persist;
+		/** {@link BankSnapshot#currencyGp}, whatever "Include coins and platinum tokens" says. */
+		final long bankCashGp;
+		/** {@link BankSnapshot#carriedGp}, whatever the coins and inventory switches say. */
+		final long carriedCashGp;
+
+		PricedBank(final BankSnapshot snapshot, final boolean persist)
+		{
+			this.accountHash = snapshot.accountHash;
+			this.profileType = snapshot.profileType == null ? "" : snapshot.profileType;
+			this.capturedAtMillis = snapshot.capturedAtMillis;
+			this.persist = persist;
+			this.bankCashGp = Math.max(0L, snapshot.currencyGp);
+			this.carriedCashGp = Math.max(0L, snapshot.carriedGp);
+		}
+	}
+
+	/**
 	 * One computation's inputs, snapshotted under the lock so the client-thread hop and the finish read one state.
 	 * Since addendum M the snapshot carries EVERY window's baseline and the table behind it (M3: the portfolio's
 	 * moves are computed for every baseline in memory, through the same name ladder as the rows), not only the
@@ -1521,11 +1694,21 @@ public class PriceService
 	private static final class Inputs
 	{
 		/**
-		 * The stacks this computation is over: every one of them, or the GE-tradeable ones alone when "Count
-		 * untradeable items" is off (Q5) - the filter is applied once, here, so everything downstream simply works
-		 * on "the bank" and the switch cannot be half-applied.
+		 * The stacks this computation's rows and card are over: every one of them, or - while "Include alch-only
+		 * untradeables" is off - every one but the untradeables with no tradeable parts (Q5, addendum AV line AV2).
+		 * A parts stack whose parts cannot ALL be priced is still here with the switch off; {@link #rowsAndPortfolio}
+		 * leaves it out once pricing has shown it ended on the alch rule.
 		 */
 		final List<BankItem> items;
+		/**
+		 * EVERY stack the snapshot holds, whatever the three counting switches say (addendum AV, line AV1): the bank,
+		 * the inventory and the worn gear folded onto canonical ids, with their {bank, inventory, worn} splits - the
+		 * list {@link #stacksOf} answers with cash, untradeables and carried all switched on. The one client-thread
+		 * trip prices every stack in it ({@link Lookups}), so a switch that is off never leaves a stack unpriced;
+		 * the switches only choose, afterwards, what the rows and the card add up. {@link #items} is a subset of it
+		 * by canonical id. The same instance as {@link #items}' own stacks when all three switches are on.
+		 */
+		final Stacks everything;
 		/**
 		 * Where each stack's quantity is (Y3), by canonical id: {bank, inventory, worn}. Empty while "Include
 		 * inventory and worn gear" is off, which is what leaves every row's split at three zeros.
@@ -1590,17 +1773,25 @@ public class PriceService
 		final boolean liveFailed;
 		/** The clock this computation was taken at, unix seconds - T3 check 2's freshness half. */
 		final long nowSeconds;
+		/**
+		 * The priced snapshot itself (addendum AU, plan 7.1 item 3): the owner of any bank-history reading this
+		 * computation makes - always the snapshot's, never the live login - its capture stamp, whether it is a
+		 * real bank ({@link #bankPersist}), and its RAW cash, bank and carried apart, whatever the switches say.
+		 */
+		final PricedBank priced;
 
-		Inputs(final Stacks stacks, final long currencyGp, final RowFilter filter, final ViewOptions options,
-			final Map<MovementWindow, PriceMap> baselines, final Map<MovementWindow, GuideSnapshot> tables,
-			final List<GuideSnapshot> inMemory, final GuideSnapshot r0, final PriceMap r0Map,
-			final Map<Integer, String> mapping, final Map<Integer, String> foldedNames,
+		Inputs(final Stacks stacks, final Stacks everything, final long currencyGp, final RowFilter filter,
+			final ViewOptions options, final Map<MovementWindow, PriceMap> baselines,
+			final Map<MovementWindow, GuideSnapshot> tables, final List<GuideSnapshot> inMemory, final GuideSnapshot r0,
+			final PriceMap r0Map, final Map<Integer, String> mapping, final Map<Integer, String> foldedNames,
 			final Map<String, Integer> owners, final Map<Integer, TradedPriceClient.Quote> quotes,
 			final Map<MovementWindow, PriceStore.TradedDay> tradedDays, @Nullable final LocalDate liveDay,
-			final boolean liveOn, final boolean liveFailed, final long nowSeconds)
+			final boolean liveOn, final boolean liveFailed, final long nowSeconds, final PricedBank priced)
 		{
+			this.priced = priced;
 			this.items = stacks.items;
 			this.splits = stacks.splits;
+			this.everything = everything;
 			this.currencyGp = currencyGp;
 			this.filter = filter;
 			this.options = options;
@@ -1799,9 +1990,9 @@ public class PriceService
 		}
 
 		/**
-		 * Every part named by an untradeable stack in this computation's bank, or {@link #EMPTY} when there is
-		 * none - which is every bank before addendum R, and every bank at all while "Include untradeable items" is
-		 * off (the switch has already removed those stacks from {@code items}).
+		 * Every part named by an untradeable stack in {@code items}, or {@link #EMPTY} when there is none - which is
+		 * every bank before addendum R. Since addendum AV it is asked of {@link Inputs#everything}, so a part is
+		 * priced whatever the counting switches say.
 		 */
 		static Parts of(final List<BankItem> items)
 		{
@@ -1842,6 +2033,221 @@ public class PriceService
 		boolean isEmpty()
 		{
 			return ids.length == 0;
+		}
+	}
+
+	/**
+	 * What the ONE client-thread trip of a computation read (addendum AV, line AV1), for EVERY stack of
+	 * {@link Inputs#everything} whatever the counting switches say: RuneLite's guide price, the members name where
+	 * the L8 b ladder may need it, the B001 flag, and the tradeable parts of every untradeable stack with their
+	 * guide prices. Keyed by canonical id, so any list of stacks drawn from the same snapshot - the switched list
+	 * {@link Inputs#items} or the whole of {@link Inputs#everything} - reads the same figure for the same item.
+	 *
+	 * <p>Built on the executor from the arrays the client thread filled; immutable once built.
+	 */
+	private static final class Lookups
+	{
+		/** Nothing read: the snapshot held no stack at all. */
+		static final Lookups EMPTY = new Lookups(Collections.<BankItem>emptyList(), new boolean[0], new long[0],
+			new String[0], Parts.EMPTY);
+
+		/** Canonical id to its index in the arrays below (the first stack with that id). */
+		private final Map<Integer, Integer> index;
+		private final boolean[] rewritten;
+		private final long[] guide;
+		private final String[] names;
+		/** The tradeable parts of every untradeable stack in the list, with their guide prices (R2). */
+		final Parts parts;
+
+		/**
+		 * @param items     the stacks the arrays are parallel to
+		 * @param rewritten per stack: RuneLite's price for it is another item's ({@link #rewrittenByItemMapping})
+		 * @param guide     per stack: RuneLite's guide price; 0 = none, or never asked (untradeable, rewritten)
+		 * @param names     per stack: {@code getMembersName()} where it was read, else null
+		 */
+		Lookups(final List<BankItem> items, final boolean[] rewritten, final long[] guide, final String[] names,
+			final Parts parts)
+		{
+			final Map<Integer, Integer> byId = new HashMap<>(items.size() * 2);
+			for (int i = 0; i < items.size(); i++)
+			{
+				final BankItem item = items.get(i);
+				if (item != null)
+				{
+					byId.putIfAbsent(item.id, i);
+				}
+			}
+			this.index = byId;
+			this.rewritten = rewritten;
+			this.guide = guide;
+			this.names = names;
+			this.parts = parts;
+		}
+
+		boolean isEmpty()
+		{
+			return index.isEmpty();
+		}
+
+		/** RuneLite's guide price for one id; 0 when it has none or was never asked. */
+		long guideOf(final int id)
+		{
+			final Integer at = index.get(id);
+			return at == null ? 0L : guide[at];
+		}
+
+		/** The members name read for one id, or null when none was read. */
+		@Nullable
+		String nameOf(final int id)
+		{
+			final Integer at = index.get(id);
+			return at == null ? null : names[at];
+		}
+
+		/** Whether RuneLite would answer another item's price for this id (B001). */
+		boolean rewrittenOf(final int id)
+		{
+			final Integer at = index.get(id);
+			return at != null && rewritten[at];
+		}
+
+		/** {@link #guideOf} for every stack of a list, in its order - the L3 agreement's array. Null when EMPTY. */
+		@Nullable
+		long[] guideFor(final List<BankItem> items)
+		{
+			if (isEmpty())
+			{
+				return null;
+			}
+			final long[] out = new long[items.size()];
+			for (int i = 0; i < out.length; i++)
+			{
+				final BankItem item = items.get(i);
+				out[i] = item == null ? 0L : guideOf(item.id);
+			}
+			return out;
+		}
+
+		/** {@link #nameOf} for every stack of a list, in its order. Null when EMPTY. */
+		@Nullable
+		String[] namesFor(final List<BankItem> items)
+		{
+			if (isEmpty())
+			{
+				return null;
+			}
+			final String[] out = new String[items.size()];
+			for (int i = 0; i < out.length; i++)
+			{
+				final BankItem item = items.get(i);
+				out[i] = item == null ? null : nameOf(item.id);
+			}
+			return out;
+		}
+	}
+
+	/**
+	 * The "now" of every tradeable part {@link Lookups#parts} names (R2), and which of them the traded feeds may
+	 * price (T3): {@link #partsNow} and {@link #partsLive}, worked out once per computation over EVERY part so the
+	 * rows and anything else priced from the same computation read the same sums.
+	 */
+	private static final class PartPrices
+	{
+		/** The parts and their names, for the "then" side's L8 ladder. */
+		final Parts parts;
+		/** Part id to its guide "now" (R0 in the degraded mode and for a rewritten id); absent = no price. */
+		final Map<Integer, Long> now;
+		/** Part id to its live mid, for the parts that pass all five checks. */
+		final Map<Integer, Long> live;
+		/** Part id to the first check that refused it. */
+		final Map<Integer, String> refusal;
+
+		private PartPrices(final Parts parts, final Map<Integer, Long> now, final Map<Integer, Long> live,
+			final Map<Integer, String> refusal)
+		{
+			this.parts = parts;
+			this.now = now;
+			this.live = live;
+			this.refusal = refusal;
+		}
+
+		static PartPrices of(final Inputs in, final Parts parts, final boolean degraded)
+		{
+			final Map<Integer, Long> now = partsNow(in, parts, degraded);
+			final Map<Integer, Long> live = new HashMap<>();
+			final Map<Integer, String> refusal = new HashMap<>();
+			partsLive(in, parts, now, live, refusal);
+			return new PartPrices(parts, now, live, refusal);
+		}
+	}
+
+	/**
+	 * What a stack's "now" came out as in one computation (addendum AV) - its ACTUAL source, decided after pricing:
+	 * a parts stack whose parts cannot all be priced is {@link #ALCH}, not {@link #PARTS}.
+	 */
+	enum StackKind
+	{
+		/** A GE-tradeable stack: RuneLite's guide price (or R0 standing in), or the live mid. */
+		TRADEABLE,
+		/** An untradeable stack priced as the sum of its tradeable parts (R2). */
+		PARTS,
+		/** An untradeable stack at its High Alchemy value (Q5): no parts, or a part with no price. */
+		ALCH
+	}
+
+	/**
+	 * One stack's "now", per item, as the card prices it (addendum AV): the ONE rule {@link #priceStack} spells.
+	 * Both units are per ITEM; multiply by a quantity with {@link MovementMath#holdingValue}.
+	 */
+	static final class StackPrice
+	{
+		final StackKind kind;
+		/**
+		 * The unit price at guide prices alone: the guide "now" of a tradeable stack (null when nothing prices it),
+		 * the parts summed at their guide prices, or the alch value.
+		 */
+		@Nullable
+		final Long guideUnit;
+		/** The unit price the card counts: the live mid (or the live parts sum) where the stack is live, else guideUnit. */
+		@Nullable
+		final Long cardUnit;
+		/** Whether {@link #cardUnit} came from the traded series (T3). */
+		final boolean live;
+		/** T3's facts for the row's tooltip; null while the traded series is not usable, and for an alch stack. */
+		@Nullable
+		final MovementRow.LiveFacts facts;
+
+		StackPrice(final StackKind kind, @Nullable final Long guideUnit, @Nullable final Long cardUnit,
+			final boolean live, @Nullable final MovementRow.LiveFacts facts)
+		{
+			this.kind = kind;
+			this.guideUnit = guideUnit;
+			this.cardUnit = cardUnit;
+			this.live = live;
+			this.facts = facts;
+		}
+	}
+
+	/**
+	 * One computation's bank-history cells (addendum AU, contract section 2): the whole snapshot's worth split
+	 * eight ways - in the bank or carried, by {@link StackKind} and cash - at the card's prices and at guide
+	 * prices alone, whatever the counting switches say. Indexed by {@link BankHistoryPoint#BANK_TRADEABLE} and the
+	 * rest; each array is this object's own and is copied again by {@link BankHistoryPoint}.
+	 */
+	private static final class BankHistoryCells
+	{
+		/** As the card priced each stack: the live mid where it is live, else the guide figure. */
+		final long[] card;
+		/** At guide prices alone. */
+		final long[] guide;
+		/** The snapshot holds at least one GE-tradeable stack and not one of them has a price (plan 7.1 item 6). */
+		final boolean unpriced;
+
+		BankHistoryCells(final long[] card, final long[] guide, final boolean unpriced)
+		{
+			this.card = card;
+			this.guide = guide;
+			this.unpriced = unpriced;
 		}
 	}
 
@@ -1890,15 +2296,37 @@ public class PriceService
 		final int live;
 		/** Untradeable stacks counted at their High Alchemy value (Q5). */
 		final int alch;
+		/** Stacks that ended on the alch rule and were left out with "Include alch-only untradeables" off (AV2). */
+		final int leftOut;
+		/**
+		 * The whole snapshot's eight bank-history cells, priced by the same rule in the same pass (addendum AU);
+		 * null until {@link #finish} puts them on with {@link #withBankHistoryCells}.
+		 */
+		@Nullable
+		final BankHistoryCells bankHistoryCells;
 
 		Computed(final List<MovementRow> rows, final PortfolioSummary summary, final int priced, final int live,
-			final int alch)
+			final int alch, final int leftOut)
+		{
+			this(rows, summary, priced, live, alch, leftOut, null);
+		}
+
+		private Computed(final List<MovementRow> rows, final PortfolioSummary summary, final int priced,
+			final int live, final int alch, final int leftOut, @Nullable final BankHistoryCells bankHistoryCells)
 		{
 			this.rows = rows;
 			this.summary = summary;
 			this.priced = priced;
 			this.live = live;
 			this.alch = alch;
+			this.leftOut = leftOut;
+			this.bankHistoryCells = bankHistoryCells;
+		}
+
+		/** This computation with its bank-history cells on it. */
+		Computed withBankHistoryCells(final BankHistoryCells cells)
+		{
+			return new Computed(rows, summary, priced, live, alch, leftOut, cells);
 		}
 
 		/** Stacks priced from the Jagex guide table - a parts sum is guide prices summed (R3), so it counts here. */
@@ -2431,6 +2859,7 @@ public class PriceService
 	{
 		final String profile = profileType == null ? "" : profileType;
 		final long generation;
+		boolean recordDay = false;
 		synchronized (lock)
 		{
 			if (stopped)
@@ -2438,9 +2867,16 @@ public class PriceService
 				return;
 			}
 			this.loggedIn = loggedIn;
+			loginHash = loggedIn ? accountHash : 0L;
+			loginProfile = loggedIn ? profile : "";
 			if (!loggedIn || belongsTo(bank, accountHash, profile))
 			{
 				generation = 0L;
+				// Review finding H3: a re-login of the account whose bank is held reloads nothing and recomputed
+				// nothing, so a login on a day with no reading yet - the next morning, the sidebar on another plugin,
+				// the bank opened unchanged (addendum AS reads nothing then) - left that day "carried" although the
+				// player logged in (plan 7.5 item 1). One computation, only then.
+				recordDay = loggedIn && bankPersist && accountHash > 0L && !hasBankHistoryTodayLocked(accountHash, profile);
 			}
 			else
 			{
@@ -2450,6 +2886,10 @@ public class PriceService
 		if (generation == 0L)
 		{
 			publishStatusOnly(null);
+			if (recordDay)
+			{
+				scheduleRecompute();
+			}
 			return;
 		}
 		execute(() ->
@@ -2469,6 +2909,7 @@ public class PriceService
 					return;
 				}
 				bank = loaded;
+				bankPersist = true;
 			}
 			log.debug("bank-portfolio-tracker: loaded the persisted bank for {}/{} ({} stacks)", accountHash, profile, itemCount(loaded));
 			scheduleRecompute();
@@ -2555,7 +2996,8 @@ public class PriceService
 	 * {@code bank-<liveHash>-<profile>.json} - and the operator drives exactly that verb while working the live
 	 * acceptance list.
 	 *
-	 * @param persist whether the snapshot is written to disk; false is the synthetic, session-only path
+	 * @param persist whether the snapshot is written to disk; false is the synthetic, session-only path, and no
+	 *                computation over such a bank is ever a bank-history reading (addendum AU, plan 7.1 item 6)
 	 */
 	public void setBank(@Nullable final BankSnapshot snapshot, final boolean persist)
 	{
@@ -2570,8 +3012,18 @@ public class PriceService
 			{
 				return;
 			}
+			// Review finding H10: the plugin's Refresh re-stamps the bank it is drawing with a fresh carried half
+			// (setBank(bank().withCarried(...)), persist true). When that bank is the dev verb's made-up one, the
+			// re-stamp - a NEW snapshot that keeps the held one's own item list (withCarried shares it), capture stamp
+			// and owner - stays made-up: never saved, never a reading. The same snapshot handed in again with
+			// persist true is still a real capture (B021: the refusal is per call, not sticky).
+			final boolean restamp = !bankPersist && bank != null && snapshot != bank && snapshot.items == bank.items
+				&& bank.capturedAtMillis > 0L && snapshot.capturedAtMillis == bank.capturedAtMillis
+				&& snapshot.accountHash == bank.accountHash && Objects.equals(snapshot.profileType, bank.profileType);
+			final boolean real = persist && !restamp;
 			bank = snapshot;
-			save = persist && snapshot != BankSnapshot.EMPTY && snapshot.capturedAtMillis > 0L
+			bankPersist = real;
+			save = real && snapshot != BankSnapshot.EMPTY && snapshot.capturedAtMillis > 0L
 				&& !snapshot.sameContentAs(savedBank);
 			if (save)
 			{
@@ -4158,24 +4610,30 @@ public class PriceService
 					}
 				}
 			}
-			// Q4/Q5/Y3: the three switches that change the FIGURES are applied here, once - the stacks the
-			// computation may see (the bank's, and what the player carries and wears when Y3's switch is on, folded
-			// into one list), and the cash it may count. Nothing downstream asks about them again.
-			in = new Inputs(stacksOf(bank, options), cashOf(bank, options),
+			// Q4/Q5/Y3: the three switches that change the FIGURES choose, here and once, the stacks the rows and the
+			// card may add up (the bank's, and what the player carries and wears when Y3's switch is on, folded into
+			// one list) and the cash they may count. AV: EVERY stack is priced all the same - the second list is the
+			// snapshot with all three switches on, and it is the one the client-thread trip below reads.
+			final Stacks counted = stacksOf(bank, options);
+			final ViewOptions allOn = options.withCountCash(true).withCountUntradeables(true).withCountInventory(true);
+			final Stacks everything = allOn.equals(options) ? counted : stacksOf(bank, allOn);
+			in = new Inputs(counted, everything, cashOf(bank, options),
 				filter, options, snapshotBaselines, snapshotTables, inMemory, r0, r0Map, mapping, foldedNames, owners,
-				snapshotQuotes, snapshotTraded, liveDay, liveOn, liveFailed, nowMillis / 1000L);
+				snapshotQuotes, snapshotTraded, liveDay, liveOn, liveFailed, nowMillis / 1000L,
+				new PricedBank(bank, bankPersist));
 		}
-		if (in.items.isEmpty())
+		final List<BankItem> all = in.everything.items;
+		if (all.isEmpty())
 		{
-			finish(generation, in, null, null, null, Parts.EMPTY);
+			finish(generation, in, Lookups.EMPTY);
 			return;
 		}
 		final boolean anyTable = in.anyTable();
-		final boolean[] needsName = new boolean[in.items.size()];
-		final boolean[] rewritten = new boolean[in.items.size()];
+		final boolean[] needsName = new boolean[all.size()];
+		final boolean[] rewritten = new boolean[all.size()];
 		for (int i = 0; i < needsName.length; i++)
 		{
-			final BankItem item = in.items.get(i);
+			final BankItem item = all.get(i);
 			// An untradeable stack (Q5) has no guide price and no baseline of its own, so there is nothing to look
 			// up for it here: no guide price, no wiki name, and no place in the agreement sample below. Since
 			// addendum R its PARTS are looked up instead (below), which is a different set of ids.
@@ -4184,9 +4642,9 @@ public class PriceService
 			// Needs no game state, so it is settled here rather than on the client thread's hop.
 			rewritten[i] = priceable && rewrittenByItemMapping(item.id);
 		}
-		// R2: the tradeable parts of every untradeable stack this computation covers, priced by exactly the same
-		// per-id rules - RuneLite's table, or the newest guide table for an id RuneLite rewrites (B001).
-		final Parts parts = Parts.of(in.items);
+		// R2: the tradeable parts of every untradeable stack in the snapshot, priced by exactly the same per-id
+		// rules - RuneLite's table, or the newest guide table for an id RuneLite rewrites (B001).
+		final Parts parts = Parts.of(all);
 		for (int i = 0; i < parts.ids.length; i++)
 		{
 			parts.rewritten[i] = rewrittenByItemMapping(parts.ids[i]);
@@ -4197,11 +4655,11 @@ public class PriceService
 			{
 				return;
 			}
-			final long[] guide = new long[in.items.size()];
-			final String[] names = new String[in.items.size()];
+			final long[] guide = new long[all.size()];
+			final String[] names = new String[all.size()];
 			for (int i = 0; i < guide.length; i++)
 			{
-				final BankItem item = in.items.get(i);
+				final BankItem item = all.get(i);
 				// An untradeable stack is never asked for either (Q5): RuneLite has no guide price for an item the
 				// exchange does not list, and leaving its price at 0 keeps it out of the L3 agreement sample, where
 				// it could only add noise to the day the prices are dated by.
@@ -4217,7 +4675,7 @@ public class PriceService
 			{
 				parts.guide[i] = parts.rewritten[i] ? 0 : guidePrice(parts.ids[i]);
 			}
-			execute(() -> finish(generation, in, rewritten, guide, names, parts));
+			execute(() -> finish(generation, in, new Lookups(all, rewritten, guide, names, parts)));
 		});
 	}
 
@@ -4310,14 +4768,18 @@ public class PriceService
 	 * changed, the baselines are re-picked at once (L3: "re-evaluated on every recompute, so the panel follows the
 	 * Jagex rollover within one recompute").
 	 *
-	 * @param rewritten one flag per item: RuneLite's price for it is another item's ({@link #rewrittenByItemMapping});
-	 *                  its "now" comes from R0 instead and it never enters the agreement sample. Null for an empty bank
-	 * @param parts     the tradeable parts of the untradeable stacks and the guide prices read for them (R2);
-	 *                  {@link Parts#EMPTY} when no stack names any
+	 * <p><b>Addendum AV.</b> {@code lookups} covers EVERY stack of the snapshot ({@link Inputs#everything}); the
+	 * day, the agreement and the degraded flag are still decided over the switched list {@link Inputs#items} alone,
+	 * exactly as before, so pricing more stacks moves no anchor. {@link #priceStacks} answers the "now" of any list
+	 * drawn from the same snapshot with the same {@code lookups}, {@code degraded} and {@link PartPrices}.
+	 *
+	 * @param lookups what the client-thread trip read, by canonical id: RuneLite's guide price, the members name,
+	 *                the B001 flag and the parts' guide prices; {@link Lookups#EMPTY} for an empty snapshot
 	 */
-	private void finish(final long generation, final Inputs in, @Nullable final boolean[] rewritten,
-		@Nullable final long[] guide, @Nullable final String[] names, final Parts parts)
+	private void finish(final long generation, final Inputs in, final Lookups lookups)
 	{
+		final long[] guide = lookups.guideFor(in.items);
+		final String[] names = lookups.namesFor(in.items);
 		final Agreement against = agreement(in, guide, names);
 		final LocalDate r0Day = in.r0.dataDay();
 		final LocalDate derived = in.items.isEmpty() ? null : deriveAnchorDay(against.matches, against.samples, r0Day);
@@ -4329,8 +4791,96 @@ public class PriceService
 		final LocalDate anchor = behind ? r0Day.minusDays(1) : derived;
 		final boolean degraded = !in.r0.isEmpty() && !in.items.isEmpty() && against.samples < AGREE_MIN_SAMPLES;
 
-		commit(generation, in, rowsAndPortfolio(in, rewritten, guide, names, against.values, degraded, parts),
-			anchor, against, degraded, behind);
+		final PartPrices partPrices = PartPrices.of(in, lookups.parts, degraded);
+
+		// AU: the bank-history cells beside the rows, over EVERY stack, by the same rule and the same degraded flag -
+		// so the parts the switches pick add up to the card's figure to the gp (contract section 2, the invariant).
+		commit(generation, in, rowsAndPortfolio(in, lookups, against.values, degraded, partPrices)
+			.withBankHistoryCells(bankHistoryCells(in, lookups, degraded, partPrices)), anchor, against, degraded, behind);
+	}
+
+	/**
+	 * The eight bank-history cells of one computation (addendum AU, contract section 2, plan 7.7 items 1-4): every
+	 * stack of {@link Inputs#everything} priced by {@link #priceStacks} - the ONE "now" rule the rows and the card
+	 * use, never a copy of it - and filed by the kind it ACTUALLY ended as (a parts stack with an unpriced part is
+	 * {@link StackKind#ALCH}), in the bank or carried:
+	 *
+	 * <ul>
+	 * <li>bank cell = {@code holdingValue(unit, bankQty)};</li>
+	 * <li>carried cell = {@code holdingValue(unit, mergedQty) - holdingValue(unit, bankQty)}, so bank + carried is
+	 * exactly the stack's holding and the long clamp cannot break the sum;</li>
+	 * <li>the two cash cells are the snapshot's raw {@link BankSnapshot#currencyGp} and
+	 * {@link BankSnapshot#carriedGp}.</li>
+	 * </ul>
+	 *
+	 * <p>A price that is absent or not positive counts nothing, which is how {@link PortfolioMath} reads it. Pure:
+	 * no counting switch is read, so flipping one changes no cell.
+	 */
+	private static BankHistoryCells bankHistoryCells(final Inputs in, final Lookups lookups, final boolean degraded,
+		final PartPrices partPrices)
+	{
+		final List<BankItem> items = in.everything.items;
+		final StackPrice[] prices = priceStacks(in, items, lookups, null, degraded, partPrices);
+		final long[] card = new long[BankHistoryPoint.CELLS];
+		final long[] guide = new long[BankHistoryPoint.CELLS];
+		boolean anyTradeable = false;
+		boolean anyTradeablePriced = false;
+		for (int i = 0; i < prices.length; i++)
+		{
+			final BankItem item = items.get(i);
+			final StackPrice price = prices[i];
+			if (item == null || price == null)
+			{
+				continue;
+			}
+			final int[] split = in.everything.splits.get(item.id);
+			// No split at all means nothing is carried: the whole stack is the bank's.
+			final int bankQty = split == null ? item.quantity : split[0];
+			final int bankCell;
+			final int carriedCell;
+			if (price.kind == StackKind.TRADEABLE)
+			{
+				anyTradeable = true;
+				anyTradeablePriced |= positive(price.cardUnit) != null;
+				bankCell = BankHistoryPoint.BANK_TRADEABLE;
+				carriedCell = BankHistoryPoint.CARRIED_TRADEABLE;
+			}
+			else if (price.kind == StackKind.PARTS)
+			{
+				bankCell = BankHistoryPoint.BANK_PARTS;
+				carriedCell = BankHistoryPoint.CARRIED_PARTS;
+			}
+			else
+			{
+				bankCell = BankHistoryPoint.BANK_ALCH;
+				carriedCell = BankHistoryPoint.CARRIED_ALCH;
+			}
+			addHolding(card, bankCell, carriedCell, positive(price.cardUnit), bankQty, item.quantity);
+			addHolding(guide, bankCell, carriedCell, positive(price.guideUnit), bankQty, item.quantity);
+		}
+		final PricedBank bank = in.priced;
+		card[BankHistoryPoint.BANK_CASH] = bank.bankCashGp;
+		card[BankHistoryPoint.CARRIED_CASH] = bank.carriedCashGp;
+		guide[BankHistoryPoint.BANK_CASH] = bank.bankCashGp;
+		guide[BankHistoryPoint.CARRIED_CASH] = bank.carriedCashGp;
+		return new BankHistoryCells(card, guide, anyTradeable && !anyTradeablePriced);
+	}
+
+	/** One stack's holding into a bank cell and a carried cell (contract section 2's arithmetic), clamped sums. */
+	private static void addHolding(final long[] cells, final int bankCell, final int carriedCell,
+		@Nullable final Long unit, final int bankQty, final int mergedQty)
+	{
+		final long inBank = MovementMath.holdingValue(unit, bankQty);
+		final long carried = Math.max(0L, MovementMath.holdingValue(unit, mergedQty) - inBank);
+		cells[bankCell] = PortfolioMath.clampedAdd(cells[bankCell], inBank);
+		cells[carriedCell] = PortfolioMath.clampedAdd(cells[carriedCell], carried);
+	}
+
+	/** A price that counts - present and positive - or null, the way {@link PortfolioMath} reads one. */
+	@Nullable
+	private static Long positive(@Nullable final Long gp)
+	{
+		return gp == null || gp <= 0L ? null : gp;
 	}
 
 	/**
@@ -4357,12 +4907,106 @@ public class PriceService
 			{
 				continue;
 			}
-			final PricePoint point = in.r0Map.get(item.id);
-			final Long value = point == null ? null : point.mid();
-			values[i] = value != null ? value
-				: fallbackThen(in.r0, names == null ? null : names[i], item.name, item.id, in.owners);
+			values[i] = r0Of(in, item, names == null ? null : names[i]);
 		}
 		return tally(values, guide);
+	}
+
+	/**
+	 * R0's value for one tradeable bank stack (L3): the projected {@link Inputs#r0Map} first, the L8 name ladder
+	 * (the fresh members name, then the bank's own name) second; null when R0 is not in memory or names nothing.
+	 * The "now" of a degraded computation and of an id RuneLite rewrites - spelled once, for {@link #agreement} and
+	 * {@link #priceStacks} alike.
+	 */
+	@Nullable
+	private static Long r0Of(final Inputs in, final BankItem item, @Nullable final String membersName)
+	{
+		if (in.r0.isEmpty())
+		{
+			return null;
+		}
+		final PricePoint point = in.r0Map.get(item.id);
+		final Long value = point == null ? null : point.mid();
+		return value != null ? value : fallbackThen(in.r0, membersName, item.name, item.id, in.owners);
+	}
+
+	/**
+	 * The "now" of every stack of {@code items} (addendum AV): {@link #priceStack} over the list, in its order,
+	 * null where the list holds null. Any list drawn from the computation's own snapshot may be asked - the
+	 * switched {@link Inputs#items} (what {@link #rowsAndPortfolio} does) or the whole of
+	 * {@link Inputs#everything} - and a stack gets the same answer in either, because every figure it reads is
+	 * keyed by canonical id.
+	 *
+	 * @param r0Values R0's value per stack of {@code items}, parallel to it (the agreement's own array for
+	 *                 {@link Inputs#items}); null to have it read here, where the rule needs it
+	 * @param degraded the computation's L3 flag, as {@link #finish} decided it
+	 */
+	static StackPrice[] priceStacks(final Inputs in, final List<BankItem> items, final Lookups lookups,
+		@Nullable final Long[] r0Values, final boolean degraded, final PartPrices partPrices)
+	{
+		final StackPrice[] out = new StackPrice[items.size()];
+		for (int i = 0; i < out.length; i++)
+		{
+			final BankItem item = items.get(i);
+			if (item == null)
+			{
+				continue;
+			}
+			final boolean fromR0 = !item.untradeable && (degraded || lookups.rewrittenOf(item.id));
+			final Long r0 = !fromR0 ? null
+				: r0Values != null ? r0Values[i] : r0Of(in, item, lookups.nameOf(item.id));
+			out[i] = priceStack(in, item, lookups, r0, degraded, partPrices);
+		}
+		return out;
+	}
+
+	/**
+	 * THE per-stack "now" rule (R2, Q5, L3, B001, T3), in one place so nothing priced from a computation can
+	 * drift from what the card counts:
+	 *
+	 * <ul>
+	 * <li>an untradeable stack whose tradeable parts can ALL be priced is {@link StackKind#PARTS}: their guide sum,
+	 * and the live sum where every part passes the five checks;</li>
+	 * <li>any other untradeable stack is {@link StackKind#ALCH}: its High Alchemy value, no live price;</li>
+	 * <li>a tradeable stack is {@link StackKind#TRADEABLE}: RuneLite's guide price - R0 standing in for it in the
+	 * degraded mode and for an id RuneLite rewrites, when R0 names it - and the live mid where it passes.</li>
+	 * </ul>
+	 *
+	 * <p>It never looks at a counting switch: which of these the rows and the card add up is decided by the caller.
+	 *
+	 * @param r0 R0's value for a tradeable stack that takes its "now" from R0; ignored otherwise
+	 */
+	private static StackPrice priceStack(final Inputs in, final BankItem item, final Lookups lookups,
+		@Nullable final Long r0, final boolean degraded, final PartPrices partPrices)
+	{
+		if (item.untradeable)
+		{
+			if (item.hasParts())
+			{
+				final Long unit = partsSum(item.parts, partPrices.now::get);
+				if (unit != null)
+				{
+					// T3: the whole stack is live only when every part is - the parts ARE the market for it, and a
+					// sum of one live price and one guide price is neither series.
+					final Long liveUnit = in.liveUsable() ? partsSum(item.parts, partPrices.live::get) : null;
+					final MovementRow.LiveFacts facts = in.liveUsable()
+						? partsFacts(in, item.parts, liveUnit, partPrices.refusal) : null;
+					return new StackPrice(StackKind.PARTS, unit, liveUnit != null ? liveUnit : unit, liveUnit != null,
+						facts);
+				}
+			}
+			final Long alch = item.alchPrice();
+			return new StackPrice(StackKind.ALCH, alch, alch, false, null);
+		}
+		final long price = lookups.guideOf(item.id);
+		// R0 stands in as "now" in L3's degraded mode, and for an id RuneLite would answer another item's price for
+		// (the class javadoc's carve-out) - which leaves the stack unpriced when R0 cannot name it.
+		final boolean fromR0 = degraded || lookups.rewrittenOf(item.id);
+		final Long nowGp = fromR0 && r0 != null ? r0 : (price > 0 ? Long.valueOf(price) : null);
+		// T3 and V3/V4: the five checks, asked once per stack, in the one place that spells them.
+		final MovementRow.LiveFacts facts = in.liveUsable() ? facts(in, item.id, nowGp) : null;
+		final Long liveMid = facts != null && facts.live() ? in.quotes.get(item.id).mid() : null;
+		return new StackPrice(StackKind.TRADEABLE, nowGp, liveMid != null ? liveMid : nowGp, liveMid != null, facts);
 	}
 
 	/**
@@ -4401,13 +5045,18 @@ public class PriceService
 	 * L8 ladder, then {@code MovementMath.row} and the filter. Pure: nothing here touches the service's state, so
 	 * a computation that turns out to be superseded has changed nothing.
 	 *
-	 * @param r0Values R0's value per item from {@link #agreement}, the "now" of a degraded computation
-	 * @param degraded fewer than {@value #AGREE_MIN_SAMPLES} items compared, so R0 IS "now" (L3)
-	 * @param parts    the untradeable stacks' tradeable parts and their guide prices (R2)
+	 * <p>Since addendum AV the "now" of each stack is {@link #priceStacks}'s, and "Include alch-only untradeables"
+	 * acts here a second time, after pricing (AV2): a stack that ENDED on the alch rule is neither a row nor in the
+	 * bank value while it is off. A parts stack that priced is a row and counts whatever it says.
+	 *
+	 * @param lookups    what the client-thread trip read, by canonical id
+	 * @param r0Values   R0's value per item of {@link Inputs#items} from {@link #agreement}, the "now" of a degraded
+	 *                   computation
+	 * @param degraded   fewer than {@value #AGREE_MIN_SAMPLES} items compared, so R0 IS "now" (L3)
+	 * @param partPrices the parts' "now" and live prices (R2, T3)
 	 */
-	private static Computed rowsAndPortfolio(final Inputs in, @Nullable final boolean[] rewritten,
-		@Nullable final long[] guide, @Nullable final String[] names, final Long[] r0Values, final boolean degraded,
-		final Parts parts)
+	private static Computed rowsAndPortfolio(final Inputs in, final Lookups lookups, final Long[] r0Values,
+		final boolean degraded, final PartPrices partPrices)
 	{
 		final int count = in.items.size();
 		final List<MovementRow> all = new ArrayList<>(count);
@@ -4426,15 +5075,17 @@ public class PriceService
 		// R2/R3: the stacks that came out PARTS-priced, so the portfolio resolves their "then" the same way the
 		// rows just did - as a sum over the parts, never as a lookup of the untradeable id itself.
 		final Map<Integer, List<BankItem.Part>> partsById = new HashMap<>();
-		final Map<Integer, Long> partNow = partsNow(in, parts, degraded);
-		// T3, for the parts of every untradeable stack: which of them the traded feeds may price, and the first
-		// check that refused the rest. A parts stack is live only when EVERY part is.
-		final Map<Integer, Long> partLive = new HashMap<>();
-		final Map<Integer, String> partRefusal = new HashMap<>();
-		partsLive(in, parts, partNow, partLive, partRefusal);
+		final Map<Integer, String> partNames = partPrices.parts.names;
 		final PriceMap baseline = in.baseline();
 		final GuideSnapshot table = in.table();
 		final MovementWindow current = in.filter.window();
+		// AV: the "now" of every stack, by the one rule - which of them the rows and the card add up is decided
+		// below, after pricing, because only pricing knows whether a parts stack ended on its parts or its alch.
+		final StackPrice[] prices = priceStacks(in, in.items, lookups, r0Values, degraded, partPrices);
+		// AV2: the stacks left out because they ended on the alch rule while "Include alch-only untradeables" is
+		// off. Null until the first one, so a bank that loses none hands the summary the very list it had before.
+		boolean[] leftOut = null;
+		int leftOutCount = 0;
 		int priced = 0;
 		for (int i = 0; i < count; i++)
 		{
@@ -4443,70 +5094,71 @@ public class PriceService
 			{
 				continue;
 			}
+			final StackPrice price = prices[i];
 			// R2: a stack the exchange does not list but RuneLite maps onto tradeable parts is worth the sum of
 			// those parts - a real guide price, with a real baseline and a real move - so it is built as an ordinary
 			// row over the two sums and then says where the price came from. Only a stack with no mapping, or one
 			// whose parts cannot ALL be priced, keeps Q5's alch rule below: half a sum is not the item's price.
-			if (item.untradeable && item.hasParts())
+			if (price.kind == StackKind.PARTS)
 			{
-				final Long unit = partsSum(item.parts, partNow::get);
-				if (unit != null)
+				final Long unit = price.guideUnit;
+				final Long partsThen = partsSum(item.parts,
+					id -> thenPrice(baseline, table, id, partNames.get(id), partNames.get(id), in.owners));
+				final Long liveUnit = price.live ? price.cardUnit : null;
+				MovementRow row = MovementMath
+					.row(item, guidePoint(unit), partsThen == null ? null : guidePoint(partsThen), 0)
+					.asParts(item.parts);
+				if (liveUnit != null)
 				{
-					final Long partsThen = partsSum(item.parts,
-						id -> thenPrice(baseline, table, id, parts.names.get(id), parts.names.get(id), in.owners));
-					// T3: the whole stack is live only when every part is - the parts ARE the market for it, and a
-					// sum of one live price and one guide price is neither series.
-					final Long liveUnit = in.liveUsable() ? partsSum(item.parts, partLive::get) : null;
-					final MovementRow.LiveFacts facts = in.liveUsable()
-						? partsFacts(in, item.parts, liveUnit, partRefusal) : null;
-					MovementRow row = MovementMath
-						.row(item, guidePoint(unit), partsThen == null ? null : guidePoint(partsThen), 0)
-						.asParts(item.parts);
-					if (liveUnit != null)
-					{
-						final Map<MovementWindow, MovementRow.PriceSource> sources = new EnumMap<>(MovementWindow.class);
-						final Map<MovementWindow, LocalDate> days = new EnumMap<>(MovementWindow.class);
-						final Long tradedThen = partsWindows(in, item.id, item.parts, unit, sources, days,
-							windowNow, windowThen, current);
-						row = rebuildLive(item, row, liveUnit, tradedThen)
-							.asParts(item.parts)
-							.asLive(liveUnit, sources, days, facts);
-						live++;
-					}
-					else
-					{
-						row = row.withLiveRefusal(facts);
-					}
-					all.add(in.withSplit(row));
-					// Priced: every gp in that sum came out of the guide table, which is what the word means here
-					// and what the header's GUIDE source and its clock are about (R3).
-					priced++;
-					nowById.put(item.id, liveUnit != null ? liveUnit : unit);
-					partsById.put(item.id, item.parts);
-					continue;
+					final Map<MovementWindow, MovementRow.PriceSource> sources = new EnumMap<>(MovementWindow.class);
+					final Map<MovementWindow, LocalDate> days = new EnumMap<>(MovementWindow.class);
+					final Long tradedThen = partsWindows(in, item.id, item.parts, unit, sources, days,
+						windowNow, windowThen, current);
+					row = rebuildLive(item, row, liveUnit, tradedThen)
+						.asParts(item.parts)
+						.asLive(liveUnit, sources, days, price.facts);
+					live++;
 				}
+				else
+				{
+					row = row.withLiveRefusal(price.facts);
+				}
+				all.add(in.withSplit(row));
+				// Priced: every gp in that sum came out of the guide table, which is what the word means here
+				// and what the header's GUIDE source and its clock are about (R3).
+				priced++;
+				nowById.put(item.id, price.cardUnit);
+				partsById.put(item.id, item.parts);
+				continue;
 			}
 			// Q5: an untradeable stack with no parts value is its own little row - the alch value, no baseline, no
 			// move - and it takes no part in anything below it. It is not counted as PRICED either: that word means
 			// "the guide table has a price for it", and an alch value is a constant of the item.
-			if (item.untradeable)
+			if (price.kind == StackKind.ALCH)
 			{
+				// AV2: with "Include alch-only untradeables" off such a stack is neither a row nor in the bank value -
+				// whether it never had parts (keep() let it through only if it had) or one of its parts has no price
+				// today (the all-or-nothing rule of R2 stands).
+				if (!in.options.countUntradeables())
+				{
+					if (leftOut == null)
+					{
+						leftOut = new boolean[count];
+					}
+					leftOut[i] = true;
+					leftOutCount++;
+					continue;
+				}
 				all.add(in.withSplit(MovementMath.alchRow(item)));
 				alch++;
 				continue;
 			}
-			final long price = guide == null ? 0L : guide[i];
-			// R0 stands in as "now" in L3's degraded mode, and for an id RuneLite would answer another item's
-			// price for (the class javadoc's carve-out) - which leaves the row unpriced when R0 cannot name it.
-			final boolean fromR0 = degraded || (rewritten != null && rewritten[i]);
-			final Long nowGp = fromR0 && r0Values[i] != null ? r0Values[i] : (price > 0 ? Long.valueOf(price) : null);
-			final String membersName = names == null ? null : names[i];
+			final Long nowGp = price.guideUnit;
+			final String membersName = lookups.nameOf(item.id);
 			final PricePoint now = nowGp == null ? null : guidePoint(nowGp);
 			final Long thenGp = thenPrice(baseline, table, item.id, membersName, item.name, in.owners);
 			final PricePoint then = thenGp == null ? null : guidePoint(thenGp);
-			// T3 and V3/V4: the five checks, asked once per stack, in the one place that spells them.
-			final MovementRow.LiveFacts facts = in.liveUsable() ? facts(in, item.id, nowGp) : null;
-			final Long liveMid = facts != null && facts.live() ? in.quotes.get(item.id).mid() : null;
+			final Long liveMid = price.live ? price.cardUnit : null;
 			MovementRow row;
 			if (liveMid != null)
 			{
@@ -4520,12 +5172,12 @@ public class PriceService
 				row = (tradedThen != null
 					? MovementMath.row(item, guidePoint(liveMid), guidePoint(tradedThen), 0)
 					: MovementMath.row(item, now, then, 0))
-					.asLive(liveMid, sources, days, facts);
+					.asLive(liveMid, sources, days, price.facts);
 				live++;
 			}
 			else
 			{
-				row = MovementMath.row(item, now, then, 0).withLiveRefusal(facts);
+				row = MovementMath.row(item, now, then, 0).withLiveRefusal(price.facts);
 			}
 			if (row.unitPrice() != null)
 			{
@@ -4533,10 +5185,9 @@ public class PriceService
 			}
 			all.add(in.withSplit(row));
 			// T5: the headline counts each stack at the price its own row prints - the live mid for a live stack.
-			final Long ownNow = liveMid != null ? liveMid : nowGp;
-			if (ownNow != null)
+			if (price.cardUnit != null)
 			{
-				nowById.put(item.id, ownNow);
+				nowById.put(item.id, price.cardUnit);
 			}
 			if (membersName != null)
 			{
@@ -4544,12 +5195,29 @@ public class PriceService
 			}
 			bankNames.put(item.id, item.name);
 		}
+		// AV2: the list the bank value is summed over - the switched stacks, less the ones just left out.
+		final List<BankItem> summed = leftOut == null ? in.items : without(in.items, leftOut);
 		// EMPTY only when there is genuinely nothing: a bank of nothing but coins has a value, and P1 puts it on the
 		// card (the stacks are what EMPTY is about, and cash is not a stack).
-		final PortfolioSummary summary = count == 0 && in.currencyGp <= 0L
+		final PortfolioSummary summary = summed.isEmpty() && in.currencyGp <= 0L
 			? PortfolioSummary.EMPTY
-			: summarise(in, nowById, membersNames, bankNames, partsById, parts.names, windowNow, windowThen, live);
-		return new Computed(MovementMath.apply(all, in.filter), summary, priced, live, alch);
+			: summarise(in, summed, nowById, membersNames, bankNames, partsById, partNames, windowNow, windowThen,
+				live);
+		return new Computed(MovementMath.apply(all, in.filter), summary, priced, live, alch, leftOutCount);
+	}
+
+	/** {@code items} without the stacks {@code drop} marks - a fresh list, in the same order. */
+	private static List<BankItem> without(final List<BankItem> items, final boolean[] drop)
+	{
+		final List<BankItem> kept = new ArrayList<>(items.size());
+		for (int i = 0; i < items.size(); i++)
+		{
+			if (!drop[i])
+			{
+				kept.add(items.get(i));
+			}
+		}
+		return kept;
 	}
 
 	/**
@@ -4836,12 +5504,21 @@ public class PriceService
 	 *
 	 * <p>A changed anchor day reconciles at once, AFTER the publish (L3: "the panel follows the Jagex rollover
 	 * within one recompute").
+	 *
+	 * <p><b>Addendum AU.</b> Inside the same lock hold and BEFORE the status is built, today's bank-history reading
+	 * is folded into the in-memory series of the PRICED snapshot's owner ({@link #foldBankHistoryLocked}), so the
+	 * publish that carries a new total carries its point too; the file half follows on the executor through
+	 * {@link #submitWrite}, which {@link #flush()} covers at shutdown. A new owner's series is read from the store
+	 * here, on the executor, before the lock is taken.
 	 */
 	private void commit(final long generation, final Inputs in, final Computed computed, @Nullable final LocalDate anchor,
 		final Agreement against, final boolean degraded, final boolean behind)
 	{
 		final long readAt = clockMillis.getAsLong();
+		final LocalDate today = BankHistoryMath.dayOf(readAt, zone);
+		final PriceStore.BankHistoryLoad load = loadBankHistoryFor(generation, in.priced);
 		final boolean anchorChanged;
+		final BankHistoryWrite recorded;
 		synchronized (lock)
 		{
 			if (stopped || generation != computeGeneration)
@@ -4857,6 +5534,7 @@ public class PriceService
 			liveRows = computed.live;
 			guideRows = computed.guide();
 			alchRows = computed.alch;
+			leftOutRows = computed.leftOut;
 			// U1/U4: the live calendar these rows were computed on - the snapshot's own UTC date, and the day each
 			// window's bucket really held (U2's fallback included, because that is the day the rows compared
 			// against and the day the tooltip prints).
@@ -4882,7 +5560,12 @@ public class PriceService
 			agreeSamples = against.samples;
 			anchorDegraded = degraded;
 			anchorBehind = behind;
+			recorded = foldBankHistoryLocked(in.priced, load, computed.bankHistoryCells, readAt, today);
 			status = buildStatusLocked(null);
+		}
+		if (recorded != null)
+		{
+			submitWrite("recording the bank history", () -> writeBankHistory(recorded));
 		}
 		publish();
 		if (anchorChanged)
@@ -4891,6 +5574,256 @@ public class PriceService
 				against.matches, against.samples);
 			reconcile(readAt, "anchor day " + anchor, false);
 		}
+	}
+
+	/**
+	 * Executor, outside the lock: the stored series of the priced snapshot's owner when it is not the one in memory
+	 * (addendum AU, contract section 5) - a hop or a re-login of the same account and profile keeps the series in
+	 * hand and reads nothing. Null when nothing is to be read: the owner is the one in memory, the snapshot has no
+	 * owner, or the computation is already superseded. A store that answers null (a mock) reads as MISSING.
+	 */
+	@Nullable
+	private PriceStore.BankHistoryLoad loadBankHistoryFor(final long generation, final PricedBank bank)
+	{
+		if (bank.accountHash <= 0L)
+		{
+			return null;
+		}
+		synchronized (lock)
+		{
+			if (stopped || generation != computeGeneration || ownsBankHistoryLocked(bank))
+			{
+				return null;
+			}
+		}
+		final PriceStore.BankHistoryLoad load = store.loadBankHistory(bank.accountHash, bank.profileType);
+		return load == null ? PriceStore.BankHistoryLoad.missing() : load;
+	}
+
+	/** Under the lock. Whether the series in memory is the one of the snapshot's owner. */
+	private boolean ownsBankHistoryLocked(final PricedBank bank)
+	{
+		return bankHistoryHash > 0L && bankHistoryHash == bank.accountHash && bankHistoryProfile.equals(bank.profileType);
+	}
+
+	/**
+	 * Under the lock. Whether the series in memory is this owner's AND already holds a reading of the local day the
+	 * clock stands on now - {@link #setLoggedIn}'s test for "a re-login needs no computation" (review finding H3).
+	 */
+	private boolean hasBankHistoryTodayLocked(final long accountHash, final String profile)
+	{
+		return bankHistoryHash == accountHash && bankHistoryProfile.equals(profile)
+			&& bankHistory.on(BankHistoryMath.dayOf(clockMillis.getAsLong(), zone)) != null;
+	}
+
+	/**
+	 * Under the lock, inside {@link #commit}: swaps in the priced owner's series when it is a new one, then folds
+	 * this computation's reading into it when the computation IS a reading. Answers the point to write to the
+	 * store, or null when nothing is to be written.
+	 *
+	 * <p><b>Not a reading</b> (plan 7.1 item 6, 7.5 item 1, amendment 9.18): an owner hash {@code <= 0}; a made-up
+	 * bank ({@code persist} false); a snapshot holding GE-tradeable stacks of which not one is priced; and a client
+	 * that is not logged in - UNLESS this is the first computation to price a capture other than the one the last
+	 * reading priced, and that capture was taken today (the logout read of a bank captured that day). A DEGRADED
+	 * computation still records: "now" is still a guide price.
+	 *
+	 * <p><b>Logged in means THIS owner is</b> (review finding H4): between a login and that account's own bank
+	 * landing, the service still holds the previous account's snapshot, and a computation of it then is not that
+	 * account's login.
+	 *
+	 * <p><b>No change, no write</b> (plan 7.7 item 7): when today's reading in memory has the very same cells, the
+	 * series is left as it is and nothing new is written - which is what a flipped counting switch comes to, because
+	 * the cells are computed with every counting switch on. Readings whose earlier write failed are sent again all
+	 * the same (review finding H5). After a FAILED load the readings are folded in memory and drawn, and nothing is
+	 * written for that owner (plan 7.1 item 5).
+	 *
+	 * <p><b>A clock that was wrong</b> (plan 7.1 item 7; review finding H1; walk-through AU-W1 and AU-W2): the series
+	 * in memory follows the store's own rules. A held reading of today stamped after this one came from a clock that
+	 * was ahead and is replaced. With the clock right, readings dated after today leave memory as the store drops them
+	 * from the file. With the clock BEHIND the record - as many readings after today as on or before it, this one
+	 * counted - the reading is drawn but never sent (the store would refuse it, and a refused reading sent again once
+	 * the clock is right would enter the file as a real day), and the first reading taken with the clock right drops
+	 * it again ({@link #bankHistoryBehind}).
+	 *
+	 * @return what to hand the store - the owner, taken from the PRICED snapshot, and every reading not yet on disk
+	 */
+	@Nullable
+	private BankHistoryWrite foldBankHistoryLocked(final PricedBank bank, @Nullable final PriceStore.BankHistoryLoad load,
+		@Nullable final BankHistoryCells cells, final long readAt, final LocalDate today)
+	{
+		if (bank.accountHash <= 0L)
+		{
+			// The drawn bank belongs to nobody: there is no one's history to draw.
+			bankHistory = BankHistorySeries.EMPTY;
+			bankHistoryHash = 0L;
+			bankHistoryProfile = "";
+			bankHistoryFailed = false;
+			bankHistoryUnwritten = BankHistorySeries.EMPTY;
+			bankHistoryBehind = BankHistorySeries.EMPTY;
+			return null;
+		}
+		if (!ownsBankHistoryLocked(bank))
+		{
+			final PriceStore.BankHistoryLoad read = load == null ? PriceStore.BankHistoryLoad.missing() : load;
+			bankHistoryHash = bank.accountHash;
+			bankHistoryProfile = bank.profileType;
+			bankHistoryFailed = read.state() == PriceStore.BankHistoryLoad.State.FAILED;
+			bankHistory = read.series();
+			bankHistoryUnwritten = BankHistorySeries.EMPTY;
+			bankHistoryBehind = BankHistorySeries.EMPTY;
+			// Debug, not WARN (review finding H8): the store has already warned once, naming the file and the cause.
+			log.debug("bank-portfolio-tracker: bank history {} with {} readings{}", read.state(), bankHistory.size(),
+				bankHistoryFailed ? " - kept in memory only, nothing is written to it this session" : "");
+		}
+		if (cells == null || !bank.persist || cells.unpriced)
+		{
+			return null;
+		}
+		final boolean ownerLoggedIn = loggedIn && bank.accountHash == loginHash && bank.profileType.equals(loginProfile);
+		final boolean logoutRead = bank.capturedAtMillis != bankHistoryCapture
+			&& today.equals(BankHistoryMath.dayOf(bank.capturedAtMillis, zone));
+		if (!ownerLoggedIn && !logoutRead)
+		{
+			return null;
+		}
+		bankHistoryCapture = bank.capturedAtMillis;
+		final BankHistoryPoint point = new BankHistoryPoint(today, readAt, bank.capturedAtMillis, cells.card, cells.guide);
+		final BankHistoryPoint held = bankHistory.on(today);
+		// A held reading stamped after this one was taken under a clock that was AHEAD (walk-through AU-W1): it is not
+		// the day's last reading, whatever its cells say, so this one replaces it and is written.
+		final boolean changed = held == null || held.readAtMillis() > readAt || !sameCells(held, point);
+		final BankHistorySeries added = changed ? bankHistory.with(point) : bankHistory;
+		final BankHistorySeries kept = added.upTo(today);
+		final int ahead = added.size() - kept.size();
+		if (ahead > 0 && ahead >= kept.size())
+		{
+			// The clock is BEHIND the record, by the store's own rule (H1): the store would refuse the write, so none
+			// is sent - nor sent again later (AU-W2). The reading is drawn while the clock stays here and is dropped by
+			// the first reading taken with the clock right (below).
+			bankHistory = added;
+			if (changed)
+			{
+				bankHistoryBehind = bankHistoryBehind.with(point);
+				log.debug("bank-portfolio-tracker: bank history reading for {} kept in memory only - the clock is behind"
+					+ " {} of the readings", today, ahead);
+			}
+			return null;
+		}
+		// The clock is right: readings dated after today (a clock that WAS ahead) are no longer drawn - the store drops
+		// them from the file at this write (plan 7.1 item 7; AU-W1) - and neither are the readings taken while it
+		// stood behind the record.
+		bankHistory = withoutBehind(kept);
+		bankHistoryBehind = BankHistorySeries.EMPTY;
+		if (changed)
+		{
+			if (!bankHistoryFailed)
+			{
+				bankHistoryUnwritten = bankHistoryUnwritten.with(point);
+			}
+			log.debug("bank-portfolio-tracker: bank history reading for {}", today);
+		}
+		if (bankHistoryFailed || bankHistoryUnwritten.isEmpty())
+		{
+			return null;
+		}
+		final BankHistoryWrite write = new BankHistoryWrite(bank.accountHash, bank.profileType, bankHistoryUnwritten,
+			today);
+		bankHistoryUnwritten = BankHistorySeries.EMPTY;
+		return write;
+	}
+
+	/**
+	 * Executor, from {@link #submitWrite}: hands each reading to the store, oldest first. A reading the store did not
+	 * take is put back into {@link #bankHistoryUnwritten} for the next write (review finding H5) - but only while it
+	 * is still the owner's reading of its day in memory, so a failed write can never send an older reading over a
+	 * newer one that was taken meanwhile.
+	 */
+	private void writeBankHistory(final BankHistoryWrite write)
+	{
+		BankHistorySeries failed = BankHistorySeries.EMPTY;
+		for (final BankHistoryPoint point : write.points.points())
+		{
+			if (!store.recordBankHistory(write.accountHash, write.profileType, point, write.today))
+			{
+				failed = failed.with(point);
+			}
+		}
+		if (failed.isEmpty())
+		{
+			return;
+		}
+		synchronized (lock)
+		{
+			if (stopped || bankHistoryFailed || bankHistoryHash != write.accountHash
+				|| !bankHistoryProfile.equals(write.profileType))
+			{
+				return;
+			}
+			for (final BankHistoryPoint point : failed.points())
+			{
+				if (point.equals(bankHistory.on(point.day())) && bankHistoryUnwritten.on(point.day()) == null)
+				{
+					bankHistoryUnwritten = bankHistoryUnwritten.with(point);
+				}
+			}
+		}
+		log.debug("bank-portfolio-tracker: {} bank history readings not saved - sent again with the next one",
+			failed.size());
+	}
+
+	/**
+	 * One write of the bank history, built under the lock by {@link #foldBankHistoryLocked}: the owner is the PRICED
+	 * snapshot's, fixed there, so nothing that lands after the lock is released can send it to another account's
+	 * file. Immutable.
+	 */
+	private static final class BankHistoryWrite
+	{
+		final long accountHash;
+		final String profileType;
+		/** Every reading to send, today's included; never empty. */
+		final BankHistorySeries points;
+		/** The LOCAL today of the commit that built it. */
+		final LocalDate today;
+
+		BankHistoryWrite(final long accountHash, final String profileType, final BankHistorySeries points,
+			final LocalDate today)
+		{
+			this.accountHash = accountHash;
+			this.profileType = profileType;
+			this.points = points;
+			this.today = today;
+		}
+	}
+
+	/** Under the lock: {@code series} without the readings {@link #bankHistoryBehind} holds, each while it is still its day's. */
+	private BankHistorySeries withoutBehind(final BankHistorySeries series)
+	{
+		if (bankHistoryBehind.isEmpty())
+		{
+			return series;
+		}
+		final List<BankHistoryPoint> kept = new ArrayList<>(series.size());
+		for (final BankHistoryPoint point : series.points())
+		{
+			if (!point.equals(bankHistoryBehind.on(point.day())))
+			{
+				kept.add(point);
+			}
+		}
+		return BankHistorySeries.of(kept);
+	}
+
+	/** Whether two readings carry the same eight cells, card and guide - what a write is decided on (plan 7.7 item 7). */
+	private static boolean sameCells(final BankHistoryPoint a, final BankHistoryPoint b)
+	{
+		for (int cell = 0; cell < BankHistoryPoint.CELLS; cell++)
+		{
+			if (a.card(cell) != b.card(cell) || a.guide(cell) != b.guide(cell))
+			{
+				return false;
+			}
+		}
+		return true;
 	}
 
 	/**
@@ -4996,13 +5929,16 @@ public class PriceService
 	 * {@code nowById} under its own id, and its "then" goes through {@code partsById} here, never through a lookup
 	 * of the untradeable id - which no guide table names, and which a name fallback could only answer wrongly.
 	 *
+	 * @param items        the stacks the value is summed over: {@link Inputs#items} less the alch stacks addendum
+	 *                     AV's gate left out (AV2)
 	 * @param nowById      the "now" price of every priced stack, by canonical id
 	 * @param membersNames the fresh {@code getMembersName()} of every item the mapping did not cover, by id
 	 * @param bankNames    every stack's own name as the bank captured it, by id
 	 * @param partsById    the parts of every stack the rows priced as a parts sum, by that stack's id (R2)
 	 * @param partNames    the name the bank recorded for each part id, for that sum's own L8 ladder
 	 */
-	private static PortfolioSummary summarise(final Inputs in, final Map<Integer, Long> nowById,
+	private static PortfolioSummary summarise(final Inputs in, final List<BankItem> items,
+		final Map<Integer, Long> nowById,
 		final Map<Integer, String> membersNames, final Map<Integer, String> bankNames,
 		final Map<Integer, List<BankItem.Part>> partsById, final Map<Integer, String> partNames,
 		final Map<MovementWindow, Map<Integer, Long>> windowNow,
@@ -5052,7 +5988,7 @@ public class PriceService
 				thenDays.put(window, day);
 			}
 		}
-		return PortfolioMath.summariseResolved(in.items, nowById::get, thenPrices, nowPrices, thenDays,
+		return PortfolioMath.summariseResolved(items, nowById::get, thenPrices, nowPrices, thenDays,
 			in.currencyGp, liveRows);
 	}
 
@@ -5164,8 +6100,8 @@ public class PriceService
 			problem.kind,
 			rows.size(),
 			// Counted under the options the rows were computed with (Q5), so "n of m stacks" and the summary's own
-			// itemsTotal are the same m.
-			itemCount(bank, optionsUsed),
+			// itemsTotal are the same m - less the stacks AV2 left out after pricing, which the snapshot cannot know of.
+			Math.max(0, itemCount(bank, optionsUsed) - leftOutRows),
 			window,
 			loaded,
 			loaded ? baseline.bucketSeconds() : 0L,
@@ -5188,7 +6124,9 @@ public class PriceService
 			liveOnUsed
 				? new Status.LiveStatus(latestAtMillis, latest.size(), liveRows, guideRows, alchRows, liveDayUsed,
 					windowDaysUsed)
-				: Status.LiveStatus.OFF);
+				: Status.LiveStatus.OFF)
+			// AU, amendment 9.3: the one place a status is built, so a status-only publish carries the series too.
+			.withBankHistory(bankHistory);
 	}
 
 	/**
@@ -5527,8 +6465,8 @@ public class PriceService
 	 * figures its row's hover names ({@link Stacks#splits}).</li>
 	 * </ul>
 	 *
-	 * <p>Then "Include untradeable items" (Q5), over the merged list: a worn or carried untradeable follows that
-	 * switch exactly as a banked one does.
+	 * <p>Then "Include alch-only untradeables" (Q5, split by addendum AV), over the merged list: a worn or carried
+	 * untradeable follows that switch exactly as a banked one does ({@link #keep}).
 	 */
 	private static Stacks stacksOf(@Nullable final BankSnapshot snapshot, final ViewOptions options)
 	{
@@ -5600,12 +6538,33 @@ public class PriceService
 	}
 
 	/**
-	 * Q5 over one stack list: every stack while "Include untradeable items" is on, and only the GE-tradeable ones
-	 * while it is off. A fresh list either way - the caller's may be the snapshot's own.
+	 * Q5 over one stack list, as addendum AV (line AV1) split it: every stack while "Include alch-only
+	 * untradeables" is on; while it is off, every stack but an untradeable one with no tradeable parts - an
+	 * untradeable RuneLite maps onto tradeable items is always offered to the computation, which prices it and
+	 * leaves it out again only if it ends on the alch rule ({@link #rowsAndPortfolio}). A fresh list when anything
+	 * is dropped - the caller's may be the snapshot's own.
 	 */
 	private static List<BankItem> keep(final List<BankItem> stacks, final ViewOptions options)
 	{
-		return options.countUntradeables() ? stacks : tradeableOnly(stacks);
+		if (options.countUntradeables() || stacks.isEmpty())
+		{
+			return stacks;
+		}
+		final List<BankItem> kept = new ArrayList<>(stacks.size());
+		for (final BankItem item : stacks)
+		{
+			if (!alchOnly(item))
+			{
+				kept.add(item);
+			}
+		}
+		return kept;
+	}
+
+	/** An untradeable stack with no tradeable parts - what AV's switch alone admits (AV1); null is not one. */
+	private static boolean alchOnly(@Nullable final BankItem item)
+	{
+		return item != null && item.untradeable && !item.hasParts();
 	}
 
 	/**
@@ -5649,7 +6608,9 @@ public class PriceService
 	/**
 	 * How many stacks {@link #stacksOf(BankSnapshot, ViewOptions)} would hand a computation - the status's bank
 	 * count, and the {@code m} of "n of m stacks". Since Y3 that is the MERGED count while "Include inventory and
-	 * worn gear" is on: one row for a stack held in two places, counted once.
+	 * worn gear" is on: one row for a stack held in two places, counted once. A parts stack that ends on the alch
+	 * rule is counted here and taken off again by {@link #buildStatusLocked} ({@link #leftOutRows}, AV2): only
+	 * pricing can tell.
 	 */
 	private static int itemCount(@Nullable final BankSnapshot snapshot, final ViewOptions options)
 	{
@@ -5665,10 +6626,12 @@ public class PriceService
 		{
 			return snapshot.items.size();
 		}
+		// AV1: an untradeable stack with tradeable parts is offered to the computation whatever the switch says,
+		// so it is one of the stacks counted here too; only the alch-only ones wait for the switch.
 		int count = 0;
 		for (final BankItem item : snapshot.items)
 		{
-			if (item == null || !item.untradeable)
+			if (!alchOnly(item))
 			{
 				count++;
 			}

@@ -62,7 +62,10 @@ public class BankPriceMovementConfigTest
 		// alone on this page in showing LESS than the build before it. It was deleted for one day by addendum AI
 		// and restored by AJ, which is why a stored value under this spelling may have been swept once: the key
 		// never changed, so a profile that kept it still reads back.
-		"showHoverText"
+		"showHoverText",
+		// Addendum AU: the sixteenth key and the last on the page - the tab the sidebar opens on (Items unless the
+		// player chose Net Worth History). The player's choice, never the last tab used.
+		"startTab"
 	);
 
 	/** Every zero-argument {@code @ConfigItem} method visible on the interface, inherited ones included. */
@@ -125,7 +128,9 @@ public class BankPriceMovementConfigTest
 			keys.add(m.getAnnotation(ConfigItem.class).keyName());
 		}
 		assertEquals("unexpected set of config keys", new TreeSet<>(EXPECTED_KEYS), keys);
-		assertEquals("unexpected number of config items", 15, methods.size());
+		// Sixteen: addendum AU's "view" (the last tab used) was deleted before it shipped and "startTab" (the player's
+		// choice) took the sixteenth place.
+		assertEquals("unexpected number of config items", 16, methods.size());
 	}
 
 	/**
@@ -290,10 +295,11 @@ public class BankPriceMovementConfigTest
 		assertEquals("Coins and platinum tokens (1,000 gp each) count in the bank value", cash.description());
 		assertEquals(10, cash.position());
 
+		// Addendum AV renamed the untradeables switch in the user's words - it reaches the alch-only ones alone -
+		// and left its key, its default and its position where they were.
 		final ConfigItem untradeables = item("countUntradeables");
-		assertEquals("Include untradeable items", untradeables.name());
-		assertEquals("List untradeable stacks at their tradeable parts' value, or else their High Alchemy value,"
-			+ " and count them in the bank value", untradeables.description());
+		assertEquals("Include alch-only untradeables", untradeables.name());
+		assertEquals("Counts untradeables with no tradeable parts, at alch value.", untradeables.description());
 		assertEquals(11, untradeables.position());
 	}
 
@@ -356,7 +362,7 @@ public class BankPriceMovementConfigTest
 		assertEquals("Show change in %", item("showBankMovePct").name());
 		assertEquals("Use live prices", item("livePrices").name());
 		assertEquals("Include coins and platinum tokens", item("countCash").name());
-		assertEquals("Include untradeable items", item("countUntradeables").name());
+		assertEquals("Include alch-only untradeables", item("countUntradeables").name());
 		assertEquals("Include inventory and worn gear", item("countInventory").name());
 		assertEquals("Show hover text", item("showHoverText").name());
 	}
@@ -389,13 +395,13 @@ public class BankPriceMovementConfigTest
 	 * and what happens to everything else ("thin items keep the daily guide price"), with no jargon in between.
 	 * The name is the one addendum Y line Y4 gave it ("Live prices" read as a heading rather than as a switch).
 	 *
-	 * <p><b>Its position is 14.</b> It has been the LAST item on the settings page since addendum T, and it still
-	 * is - addendum AH inserted {@code showHoverText} above it and pushed it down, exactly as Z and AA renumbered
-	 * the items below them; addendum AI took that item away and AJ put it back in the same slot; addendum AO
-	 * deleted {@code holdingOnRows} from above both and moved this one back up from 15 to 14. Positions are not
-	 * frozen and keys are, so this assertion is about the ORDER a reader meets the page in and about nothing
-	 * stored: what it pins is that every arrival and departure above has been slotted in rather than appended
-	 * past this one, and that the page has no gap in it.
+	 * <p><b>Its position is 14.</b> It was the LAST item on the settings page from addendum T until addendum AU
+	 * appended {@code view} under it (amendment 9.15) - addendum AH inserted {@code showHoverText} above it and
+	 * pushed it down, exactly as Z and AA renumbered the items below them; addendum AI took that item away and AJ put
+	 * it back in the same slot; addendum AO deleted {@code holdingOnRows} from above both and moved this one back up
+	 * from 15 to 14. Positions are not frozen and keys are, so this assertion is about the ORDER a reader meets the
+	 * page in and about nothing stored: it pins this item at 14 and last (addendum AU's view item, once the 15th, was
+	 * deleted before it shipped).
 	 */
 	@Test
 	public void theLivePricesSwitchIsNamedAsTheGearMenuNamesIt()
@@ -405,13 +411,34 @@ public class BankPriceMovementConfigTest
 		assertEquals("Actively traded items use the wiki's live traded prices for every figure;"
 			+ " thin items keep the daily guide price", live.description());
 		assertEquals(14, live.position());
-		// ...and last means last: nothing on the page sits below it.
+		// Only addendum AU's startTab (15) sits below it.
 		for (Method m : itemMethods())
 		{
 			final ConfigItem other = m.getAnnotation(ConfigItem.class);
-			assertTrue("\"" + other.name() + "\" is drawn below the last item on the page",
-				other.position() <= live.position());
+			assertTrue("\"" + other.name() + "\" is drawn below the start-tab item",
+				other.position() <= item("startTab").position());
+			assertTrue("\"" + other.name() + "\" is below livePrices but is not the start-tab item",
+				other.position() <= live.position() || other.keyName().equals("startTab"));
 		}
+		assertEquals(15, item("startTab").position());
+	}
+
+	/**
+	 * Addendum AU: the sidebar always opens on Items, so there is NO "view" config item; the two labels are what the
+	 * toggle prints, and the constant names stay identifiers.
+	 */
+	@Test
+	public void thereIsNoViewItemAndTheLabelsAreTheTogglesWords()
+	{
+		assertFalse("the sidebar always opens on Items - no setting", EXPECTED_KEYS.contains("view"));
+		for (Method m : itemMethods())
+		{
+			assertFalse("view", m.getAnnotation(ConfigItem.class).keyName().equals("view"));
+		}
+		assertEquals("Items", SidebarView.ITEMS.toString());
+		assertEquals("Net Worth History", SidebarView.HISTORY.toString());
+		assertEquals("the identifiers", Arrays.asList("ITEMS", "HISTORY"),
+			Arrays.asList(SidebarView.ITEMS.name(), SidebarView.HISTORY.name()));
 	}
 
 	/**

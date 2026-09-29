@@ -159,6 +159,13 @@ public class BankPriceMovementPlugin extends Plugin
 	 */
 	static final String FOLD_OPEN_KEY = "foldOpen";
 	/**
+	 * Addendum AU's start-tab setting, the sixteenth stored key: which of the sidebar's two tabs it opens on. It takes
+	 * a SIXTH {@code ConfigChanged} road ({@link #isStartTabKey(String)}) of the fold's shape: it is a piece of the
+	 * sidebar's SHAPE, so the panel's settings menu is told and nobody else - not the filter, not a figure, and not
+	 * the tab that is showing now.
+	 */
+	static final String START_TAB_KEY = "startTab";
+	/**
 	 * Addendum N's look switch, which addendum O deleted (O1). The key survives only as something to SWEEP:
 	 * see {@link #unstickLook()}.
 	 */
@@ -463,6 +470,9 @@ public class BankPriceMovementPlugin extends Plugin
 		// is the statement that the STORED answer is the one it opens on. setFoldOpen and not pressFold: seeding is
 		// not a press, and writing the value back over itself would be a config write on every launch.
 		panel.setFoldOpen(foldOpenFromConfig());
+		// AU, and the panel alone once more: the menu's dot stands on the tab this profile chose. setStartTab and not
+		// pressStartTab, for setFoldOpen's reason - seeding is not a press and writes nothing back.
+		panel.setStartTab(startTabFromConfig());
 		service.setFilter(filterFromConfig());
 		service.setOptions(options);
 		// Y2 (b): the Refresh link's second job. PriceService owns the cooldown and the re-check; what it
@@ -1770,6 +1780,20 @@ public class BankPriceMovementPlugin extends Plugin
 			}
 			return;
 		}
+		if (isStartTabKey(event.getKey()))
+		{
+			// AU's SIXTH road, the fold's twin: the start tab is the sidebar's shape and is read only when a panel is
+			// built, so the panel is told and nobody else - no figure is recomputed, no list is asked for, and the
+			// tab that is showing does not change.
+			final SidebarView tab = startTabFromConfig();
+			final BankPriceMovementPanel shape = panel;
+			if (shape != null)
+			{
+				// setStartTab and not pressStartTab: this IS the config, so writing it back would say nothing.
+				SwingUtilities.invokeLater(() -> shape.setStartTab(tab));
+			}
+			return;
+		}
 		final RowFilter filter = filterFromConfig();
 		final BankPriceMovementPanel p = panel;
 		if (p != null)
@@ -1931,6 +1955,27 @@ public class BankPriceMovementPlugin extends Plugin
 	static boolean isFoldKey(@Nullable String key)
 	{
 		return FOLD_OPEN_KEY.equals(key);
+	}
+
+	/**
+	 * The sixteenth stored key as the tab the sidebar opens on (AU) - the plugin's only reader of {@code startTab}:
+	 * the panel's {@code Prefs.loadStartTab}, the value {@link #startUp()} seeds the menu's dot with, and what
+	 * {@link #onConfigChanged} hands it when the item changes on the settings page. Never null: a config that answers
+	 * none (a mock) reads as {@link SidebarView#ITEMS}.
+	 */
+	SidebarView startTabFromConfig()
+	{
+		final SidebarView v = config.startTab();
+		return v == null ? SidebarView.ITEMS : v;
+	}
+
+	/**
+	 * Whether a {@code ConfigChanged} key is addendum AU's start-tab setting - the sixth road, and like the fold's it
+	 * reaches nothing but the panel.
+	 */
+	static boolean isStartTabKey(@Nullable String key)
+	{
+		return START_TAB_KEY.equals(key);
 	}
 
 	/**
@@ -2174,6 +2219,34 @@ public class BankPriceMovementPlugin extends Plugin
 				try
 				{
 					cm.setConfiguration(BankPriceMovementConfig.GROUP, FOLD_OPEN_KEY, open);
+				}
+				finally
+				{
+					prefsWriter = outer;
+				}
+			}
+
+			@Override
+			public SidebarView loadStartTab()
+			{
+				return startTabFromConfig();
+			}
+
+			@Override
+			public void saveStartTab(SidebarView tab)
+			{
+				final ConfigManager cm = configManager;
+				if (tab == null || cm == null)
+				{
+					return;
+				}
+				// ONE key and no service, guarded as saveFoldOpen is: the menu's dot has already moved itself, and
+				// the ConfigChanged this write posts on this thread would only move it again.
+				final Thread outer = prefsWriter;
+				prefsWriter = Thread.currentThread();
+				try
+				{
+					cm.setConfiguration(BankPriceMovementConfig.GROUP, START_TAB_KEY, tab);
 				}
 				finally
 				{

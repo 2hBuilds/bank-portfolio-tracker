@@ -267,6 +267,18 @@ public class BpmCommands implements Function<String, String>
 	 * and a script that knows which way it wants the fold says so rather than reading first.
 	 */
 	static final String FOLD_VERBS = "on, off or toggle";
+	/**
+	 * What {@code view=} answers for a word that names neither view (addendum AU), up to the word itself, which is
+	 * quoted back as typed.
+	 */
+	static final String VIEW_REFUSAL = "view= wants items or history, not '";
+	/** What {@code starttab=} answers for a word that names neither tab (addendum AU), up to the word itself. */
+	static final String START_TAB_REFUSAL = "starttab= wants items or history, not '";
+	/**
+	 * What {@code range=} answers for a word that is not one of the History chart's four range labels (amendment
+	 * 9.11's exact words), up to the word itself.
+	 */
+	static final String RANGE_REFUSAL = "range= wants 7d, 30d, 90d or all, not '";
 	private static final Logger log = LoggerFactory.getLogger(BpmCommands.class);
 
 	/**
@@ -436,6 +448,12 @@ public class BpmCommands implements Function<String, String>
 				return presets(value);
 			case "fold":
 				return fold(value);
+			case "view":
+				return view(value);
+			case "starttab":
+				return startTab(value);
+			case "range":
+				return range(value);
 			case "refresh":
 				return refresh();
 			case "more":
@@ -448,7 +466,7 @@ public class BpmCommands implements Function<String, String>
 				return shot(value);
 			default:
 				return error("unknown command '" + key + "' (state, window=, sort=, dir=, min=, max=, presets=,"
-					+ " fold=, hero=, opt=, refresh, more, bank=, wiki=, shot[=])");
+					+ " fold=, view=, starttab=, range=, hero=, opt=, refresh, more, bank=, wiki=, shot[=])");
 		}
 	}
 
@@ -868,6 +886,74 @@ public class BpmCommands implements Function<String, String>
 		return state();
 	}
 
+	/**
+	 * The settings menu's "Tab to open on startup" dots, pressed as the reader presses them (addendum AU): through
+	 * {@link BankPriceMovementPanel#pressStartTab}, so the choice is WRITTEN as a hand press writes it and the tab
+	 * that is showing does not change. Idempotent. The answer's top-level {@code startTab} is the echo.
+	 */
+	private Map<String, Object> startTab(@Nullable String value)
+	{
+		final String raw = value == null ? "" : value.trim();
+		final String v = raw.toLowerCase(Locale.ROOT);
+		if ("items".equals(v))
+		{
+			panel.pressStartTab(SidebarView.ITEMS);
+		}
+		else if ("history".equals(v))
+		{
+			panel.pressStartTab(SidebarView.HISTORY);
+		}
+		else
+		{
+			return error(START_TAB_REFUSAL + raw + "'");
+		}
+		return state();
+	}
+
+	/**
+	 * The Items | Net Worth History toggle, pressed as the reader presses it (addendum AU, amendment 9.11): through
+	 * {@link BankPriceMovementPanel#pressView}, so the choice is REMEMBERED as a hand press remembers it and, like
+	 * one, never lifts the bank hold. Idempotent - the same view again writes nothing. The answer's top-level
+	 * {@code view} is the echo.
+	 */
+	private Map<String, Object> view(@Nullable String value)
+	{
+		final String raw = value == null ? "" : value.trim();
+		final String v = raw.toLowerCase(Locale.ROOT);
+		if ("items".equals(v))
+		{
+			panel.pressView(SidebarView.ITEMS);
+		}
+		else if ("history".equals(v))
+		{
+			panel.pressView(SidebarView.HISTORY);
+		}
+		else
+		{
+			return error(VIEW_REFUSAL + raw + "'");
+		}
+		return state();
+	}
+
+	/**
+	 * The History chart's range (amendment 9.11): one of {@link BankHistoryRange}'s labels, matched without regard to
+	 * case, moving the chart alone - as the chart's own chips do: unsaved, never sent to the service, and overruled by
+	 * the card's next window. The echo is {@code state.bankHistory.range}.
+	 */
+	private Map<String, Object> range(@Nullable String value)
+	{
+		final String raw = value == null ? "" : value.trim();
+		for (BankHistoryRange r : BankHistoryRange.values())
+		{
+			if (r.label().equalsIgnoreCase(raw))
+			{
+				panel.setHistoryRange(r);
+				return state();
+			}
+		}
+		return error(RANGE_REFUSAL + raw + "'");
+	}
+
 	// ---------------------------------------------------------------- the other verbs
 
 	/**
@@ -1113,6 +1199,15 @@ public class BpmCommands implements Function<String, String>
 		// which nests whole like every other object in it. No key is added here for it: the panel is the only
 		// side of this seam the plugin talks to.
 		m.put("panel", parse(panel.describe()));
+		// AU (amendment 9.11): which view the sidebar shows, and what the History view says about itself - both at the
+		// top level and serialised by the injected Gson, not inside the panel's hand-written line. A mocked panel
+		// answers null and an empty map; Gson leaves a null out.
+		final SidebarView v = panel.view();
+		m.put("view", v == null ? null : v.name());
+		// AU: the tab the settings menu's dot stands on - the setting, not the tab showing.
+		final SidebarView start = panel.startTab();
+		m.put("startTab", start == null ? null : start.name());
+		m.put("bankHistory", panel.bankHistoryState());
 		if (syntheticBank)
 		{
 			// The rows below came from bank= and not from a real bank: nothing measured off them is evidence.

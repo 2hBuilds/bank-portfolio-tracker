@@ -19,10 +19,11 @@ import java.util.Objects;
  * unnoted twin are ONE entry with the quantities summed (design D6).
  *
  * <p><b>Untradeable stacks</b> (addendum Q, line Q5). Since Q the reader also keeps a stack the Grand Exchange
- * does not list when it has a High Alchemy value, so the "Include untradeable items" switch can list it without a
- * bank visit ({@link #untradeable} and {@link #haPrice} are the two fields that carry it). The negative spelling
- * is deliberate and load-bearing: a {@code bank-*.json} written before Q has neither field, and Gson leaves an
- * absent boolean at {@code false} - so {@code untradeable} reads as "tradeable" for every stack of an old file,
+ * does not list when it has a High Alchemy value, so the service can list it without a bank visit - one RuneLite
+ * maps onto tradeable parts always, an alch-only one while "Include alch-only untradeables" is on (addendum AV)
+ * ({@link #untradeable} and {@link #haPrice} are the two fields that carry it). The negative spelling is
+ * deliberate and load-bearing: a {@code bank-*.json} written before Q has neither field, and Gson leaves an absent
+ * boolean at {@code false} - so {@code untradeable} reads as "tradeable" for every stack of an old file,
  * which is exactly what those files held. A {@code tradeable} field would have read every old stack as
  * untradeable and emptied the sidebar.
  *
@@ -134,8 +135,9 @@ public class BankItem
 
 	/**
 	 * True when the Grand Exchange does not list this item ({@code ItemComposition.isGeTradeable()} is false), so
-	 * it has no market price and no movement - it is valued at {@link #haPrice} instead, and only while the
-	 * "Include untradeable items" switch is on (Q5). False for every ordinary stack, and false for every stack of a
+	 * it has no market price and no movement - it is valued at its {@link #parts} when they can all be priced
+	 * (addendum R, always counted since addendum AV), else at {@link #haPrice}, and then only while the "Include
+	 * alch-only untradeables" switch is on (Q5, AV). False for every ordinary stack, and false for every stack of a
 	 * file written before addendum Q (see the class comment).
 	 */
 	public boolean untradeable;
@@ -154,7 +156,7 @@ public class BankItem
 	 * base piece for a degraded barrows item. Null for a tradeable stack, for an untradeable one RuneLite has no
 	 * mapping for, and for every stack of a file written before addendum R; never empty when it is present.
 	 *
-	 * <p>Recorded whatever the "Include untradeable items" switch says, exactly as {@link #haPrice} is: a snapshot
+	 * <p>Recorded whatever the "Include alch-only untradeables" switch says, exactly as {@link #haPrice} is: a snapshot
 	 * that held only what the switch of the day wanted would need a bank visit every time it was flipped.
 	 */
 	public List<Part> parts;

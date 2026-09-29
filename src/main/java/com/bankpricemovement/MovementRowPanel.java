@@ -156,7 +156,8 @@ import net.runelite.client.util.LinkBrowser;
  * <ul>
  * <li><b>Untradeables</b> (Q5, as addendum R rewrote them;
  * {@code docs/bank-price-movement-addendum-R-2026-09-11.md}). A stack the Grand Exchange does not trade has no
- * guide price OF ITS OWN, and with {@code countUntradeables} on the service values it one of two ways and says
+ * guide price OF ITS OWN, and the service values it one of two ways (the parts one always since addendum AV, the
+ * alch one only with {@code countUntradeables} on) and says
  * which through the row's source. When RuneLite can take the item apart ({@code ItemMapping}) the row is worth
  * what its tradeable PARTS are worth - a Crystal body is three Crystal armour seeds, R2 - so it has a real
  * baseline and a real move and it paints EXACTLY as a guide row does: price, gp figure, percentage, rail. Only
@@ -320,6 +321,12 @@ public class MovementRowPanel extends JPanel
 	static final int FACE_HEIGHT = ROW_HEIGHT - PADDING.top - PADDING.bottom;
 	/** Air between the face and the detail block of an open row, in px. */
 	private static final int DETAIL_GAP = 4;
+	/**
+	 * Air on the left of the detail block's text, in px. The block starts at the very edge of the label, and the
+	 * first letter of "Worth now" and "Was" (a W, whose left stroke is its outermost ink) lost its stroke there in
+	 * the client. The user's own number; the HTML's width is cut by the same amount so the right edge is unchanged.
+	 */
+	static final int DETAIL_LEFT = 2;
 	/**
 	 * Between the picture's cell and the text block. Addendum AQ made it equal to {@code PADDING.left} (3), which
 	 * centred the FRAME; addendum AR moved {@link #ART_NUDGE} of it to the other side of the picture, to centre
@@ -580,7 +587,7 @@ public class MovementRowPanel extends JPanel
 		// written first, so the cell still grows in one beat.
 		detailLabel = Widgets.label("", SMALL_FONT, ColorScheme.LIGHT_GRAY_COLOR);
 		detailLabel.setVerticalAlignment(SwingConstants.TOP);
-		detailLabel.setBorder(new EmptyBorder(DETAIL_GAP, 0, 0, 0));
+		detailLabel.setBorder(new EmptyBorder(DETAIL_GAP, DETAIL_LEFT, 0, 0));
 		detailLabel.setVisible(false);
 		add(detailLabel, BorderLayout.CENTER);
 		Widgets.fixed(this, ROW_WIDTH, ROW_HEIGHT);
@@ -793,7 +800,7 @@ public class MovementRowPanel extends JPanel
 		final MovementWindow w = window == null ? MovementWindow.DEFAULT : window;
 
 		final StringBuilder sb = new StringBuilder(384);
-		sb.append("<html><div width=\"").append(INNER_WIDTH).append("\">");
+		sb.append("<html><div width=\"").append(INNER_WIDTH - DETAIL_LEFT).append("\">");
 		if (showName)
 		{
 			sb.append("<b>").append(Widgets.escapeHtml(row.name())).append("</b>");
@@ -1113,7 +1120,7 @@ public class MovementRowPanel extends JPanel
 	 * <p>Nothing else rounds: under 1,000 and at 10,000 and up, {@link MovementMath#formatGp} already fits.
 	 * Tenths are rounded half-up on the absolute value, so the sign never decides which way a figure goes.
 	 */
-	private static String signedGp(long d)
+	static String signedGp(long d)
 	{
 		final long a = Math.abs(d);
 		final String sign = d > 0 ? "+" : d < 0 ? "-" : "";

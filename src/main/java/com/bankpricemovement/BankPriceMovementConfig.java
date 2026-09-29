@@ -6,9 +6,14 @@ import net.runelite.client.config.ConfigItem;
 
 /**
  * The plugin's single config (contract C39; items 7-9 are addendum O line O2, items 10-11 addendum Q line Q3,
- * item 12 addendum Y line Y1, item 13 addendum AH and item 14 addendum T line T1). Fifteen items, and every one
- * of them is also a widget in the sidebar: the config panel and the sidebar are the same switch, so a change in
- * either place is written here and read back by the other through {@code ConfigChanged}.
+ * item 12 addendum Y line Y1, item 13 addendum AH, item 14 addendum T line T1, item 15 addendum AU). Sixteen
+ * items, and every one of them is also a widget in the sidebar: the config panel and the sidebar are the same switch,
+ * so a change in either place is written here and read back by the other through {@code ConfigChanged}.
+ *
+ * <p><b>Addendum AU added a sixteenth, took it away before it shipped, and put a different one in its place</b>:
+ * {@code view}, which remembered the last tab used, was deleted on 2026-09-29 ("Yes, always open on Items, no
+ * setting"); the same day the user asked for a setting of a different meaning, {@code startTab}, the tab the
+ * sidebar opens on, chosen by the player and never changed by the toggle. Nothing stored under the old key is read.
  *
  * <p><b>Addendum AO took one away</b> (AO1), the first key this plugin has ever dropped: {@code holdingOnRows}
  * ("Show stack value on rows", addendum Q line Q3), which chose whether a row printed the per-ITEM reading or the
@@ -36,9 +41,10 @@ import net.runelite.client.config.ConfigItem;
  * <p><b>Addendum Y renamed six of them</b> (Y4) and added the thirteenth (Y1). The names are the gear menu's
  * labels - the menu item IS the config item's {@code name} - so both were re-read in plain words at once:
  * "Show change in gp" and "Show change in %" for the card's two move figures, "Use live prices", "Include coins
- * and platinum tokens", "Include untradeable items", "Include inventory and worn gear" and "Show stack value on
- * rows". Every stored KEY is untouched by that, and must be: a rename discards the setting. Positions are not
- * frozen and were renumbered to put the new item where the menu lists it.
+ * and platinum tokens", "Include untradeable items" (renamed "Include alch-only untradeables" by addendum AV),
+ * "Include inventory and worn gear" and "Show stack value on rows". Every stored KEY is untouched by that, and
+ * must be: a rename discards the setting. Positions are not frozen and were renumbered to put the new item where
+ * the menu lists it.
  *
  * <p><b>Why this interface extends {@link Config} and nothing else.</b> RuneLite's
  * {@code ConfigManager.setDefaultConfiguration} only walks {@code getDeclaredMethods()} of the interface it
@@ -300,13 +306,17 @@ public interface BankPriceMovementConfig extends Config
 	 * is the tradeable one and an untradeable stack has no guide price and therefore no movement at all: it
 	 * arrives as a row with an "alch" tag where the move figures go, counted in the bank value and in the
 	 * "N of M stacks" line, and in no window's sums (Q5).
+	 *
+	 * <p>Since addendum AV ({@code docs/bank-price-movement-addendum-AV-2026-09-28.md}) it reaches the ALCH-ONLY
+	 * untradeables alone: one RuneLite maps onto tradeable parts - a charged bow, crystal armour, a slayer helmet -
+	 * is always listed and counted at those parts' prices, as RuneLite's own bank value counts it. Only the name and
+	 * the description changed (the user's words); the key, its type, its default and its position did not.
 	 */
 	@ConfigItem(
 		position = 11,
 		keyName = "countUntradeables",
-		name = "Include untradeable items",
-		description = "List untradeable stacks at their tradeable parts' value, or else their High Alchemy value,"
-			+ " and count them in the bank value"
+		name = "Include alch-only untradeables",
+		description = "Counts untradeables with no tradeable parts, at alch value."
 	)
 	default boolean countUntradeables()
 	{
@@ -401,5 +411,27 @@ public interface BankPriceMovementConfig extends Config
 	default boolean livePrices()
 	{
 		return true;
+	}
+
+	/**
+	 * Addendum AU, the sixteenth item and the LAST on the page: which tab the sidebar shows when the plugin starts -
+	 * Items, the list, or Net Worth History, the chart. The user, 2026-09-29: "in settings i want the default load
+	 * tab option, by default have the plugin load into the items tab but have the option there for them to change
+	 * that to open onto the net worth history tab".
+	 *
+	 * <p>It is the player's CHOICE and not the last tab used: the Items | Net Worth History toggle switches the tab
+	 * for the session and writes nothing. It is a piece of the sidebar's SHAPE, like {@code foldOpen}, so it takes a
+	 * road of its own ({@link BankPriceMovementPlugin#isStartTabKey}) that reaches the panel's settings menu and
+	 * nobody else: it does not switch the tab that is showing now, and the service is never told.
+	 */
+	@ConfigItem(
+		position = 15,
+		keyName = "startTab",
+		name = "Tab to open on startup",
+		description = "Which tab the sidebar shows when the plugin starts."
+	)
+	default SidebarView startTab()
+	{
+		return SidebarView.ITEMS;
 	}
 }

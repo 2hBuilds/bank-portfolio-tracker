@@ -5,17 +5,18 @@
 
 Your whole bank, priced, with what each item's Grand Exchange price has done over the last day, week, month,
 quarter or half year - live traded prices for the items the market is actually trading, the daily guide price
-for the rest, and your inventory and worn gear counted in.
+for the rest, and your inventory and worn gear counted in. It also has a **Net Worth History**: your bank's own
+total, one reading a day.
 
 ## What the sidebar shows
 
 **The Bank value card**, at the top, is your whole bank as one figure:
 
 - the **total** - every stack that has a price, `unit price x quantity`, summed, **plus your coins and
-  platinum tokens** (1,000 gp each), and by default what you are carrying and wearing too (see below). With
-  *Include inventory and worn gear* and *Use live prices* both off, it matches the figure RuneLite's own Bank
-  plugin puts in the bank window's title bar whenever every stack has a guide price (an untradeable or unpriced
-  stack is counted by neither);
+  platinum tokens** (1,000 gp each), and by default what you are carrying and wearing too (see below). It counts
+  the same kinds of items RuneLite's own Bank plugin counts in the bank window's title bar - tradeable stacks,
+  coins and platinum tokens, and untradeables made from tradeable items - but the two are not the same number:
+  the prices come from different places, and the title bar totals whichever bank tab you are looking at;
 - the **gp move** and the **percentage** for the window you have lit, computed over the stacks that had a price
   on *both* days, so the two ends of the comparison are the same basket;
 - the **window chips** `1d | 7d | 30d | 90d | 180d` - click one and the whole panel follows it;
@@ -36,17 +37,16 @@ for the rest, and your inventory and worn gear counted in.
   hover text* on, hovering the line above tells you when the prices on screen were last read, so you can tell
   "nothing changed" from "nothing happened". A click is answered in two words: *Refreshing...*, then **Up to
   date**, which fades back to *Refresh* on its own a minute later;
-- a small **gear**, just under the Refresh link, which opens the panel's **Options** menu: *Refresh prices
-  now* (the prices alone, whether your bank is open or not), the three switches for the card's own figures,
-  the four that decide what the panel counts and which
-  stacks get a row (see *Settings* - they are the same switches as RuneLite's settings page, so either place
-  works),
-  then the three **Preset price ranges** boxes, and last in the list **Show hover text**, with a small box
-  beside it - empty when it is off, ticked when it is on. Along the bottom sit two buttons: **Reset to
-  default** on the left, which puts *100k / 1m / 10m* back into the preset boxes, and **OK** on the right,
-  which closes the menu - it takes the boxes with it on the way out, which closing the menu does anyway, since
-  everything in here saves itself as you set it. Clicking the gear again while the menu is open closes it too:
-  the gear is a switch, not just a way in.
+- a small **settings icon**, just under the Refresh link, which opens the panel's **Options** menu: *Refresh
+  prices now* (the prices alone, whether your bank is open or not), the three switches for the card's own
+  figures, the four that decide what the panel counts and which stacks get a row (see *Settings* - they are the
+  same switches as RuneLite's settings page, so either place works), then the three **Preset price ranges**
+  boxes, and last in the list **Show hover text**, with a small box beside it - empty when it is off, ticked
+  when it is on. Along the bottom sit two buttons: **Reset to default** on the left, which puts *100k / 1m /
+  10m* back into the preset boxes, and **OK** on the right, which closes the menu - it takes the boxes with it
+  on the way out, which closing the menu does anyway, since everything in here saves itself as you set it.
+  Clicking the settings icon again while the menu is open closes it too: the icon is a switch, not just a way
+  in.
 
 The gp band you set does **not** apply here: a portfolio is everything you own, coins included. Each of the
 three figures has its own switch, and a switch you turn off **removes** the line rather than blanking it - the
@@ -117,9 +117,9 @@ Click the row for the exact number.
   bound; text the parser refuses turns the field red and changes nothing. The band filters on the **unit** price.
   Click the band button to fold the whole strip away if you want a shorter header - the choice is remembered, and
   *Show preset price ranges* in the settings does the same thing. **The three presets are yours to set**:
-  *Preset price ranges*, at the foot of the Options menu (the gear, under the Refresh link), carries a box for
-  each, and typing a new amount into one re-cuts that chip - so a big bank can read *1m+ / 10m+ / 100m+*. *Reset
-  to default*, bottom left of that menu, puts *100k / 1m / 10m* back.
+  *Preset price ranges*, at the foot of the Options menu (behind the settings icon, under the Refresh link),
+  carries a box for each, and typing a new amount into one re-cuts that chip - so a big bank can read *1m+ /
+  10m+ / 100m+*. *Reset to default*, bottom left of that menu, puts *100k / 1m / 10m* back.
 - on the **right**, a **sort button** naming the column the list is ordered on, with a small **arrow** for the
   direction: down for biggest first, up for smallest. Click it for the four columns - *Percent change*, *gp
   change*, *Item price*, *Stack price* - and click the lit one again to flip it; a column you have just picked
@@ -133,6 +133,66 @@ Click the row for the exact number.
 Rows come in pages of 250 with a "Show *n* more" button under them, so an 800-item bank does not freeze the
 sidebar. If a band matches nothing, the panel says so and offers *Clear price range* in one click.
 
+## Net Worth History
+
+Under the Bank value card sit two buttons, **Items | Net Worth History**, with one grey line beneath them saying
+what the panel is showing: *Item price changes* for the list of your items, *Bank net worth history* for this
+view. They appear once the panel has your bank, and the panel opens on Items unless the *Tab to open on startup* setting says
+Net Worth History; the buttons themselves only switch the tab for that session. In the Net Worth History the sort and band buttons and the price ranges under them step
+aside - they order and filter the item list, which the Net Worth History does not show.
+
+**The Net Worth History is your bank's own total, one reading a day** - the Bank value figure, kept for every
+day you log in. Each time the total is worked out that day - when your bank is read, when you log in, when you
+open the panel or press Refresh, and every 30 minutes while the panel is on screen - the day's reading is
+brought up to date, so the last one of the day is the one that stays. Past days never change. A day you did not
+log in has no reading of its own: the panel carries your last reading across it rather than guessing. Days are
+your own local dates, and nothing is recorded while you sit at the login screen.
+
+**The card** keeps its place and its size, but in the Net Worth History it compares your total now with the
+total you actually had: *30d vs your 27 Aug total*. If there is no reading on that exact day, it uses the one
+before it and says how far back that is: *1d vs your 25 Sep total (3 days)*. A window your record is not long
+enough for yet is greyed, its move reads a dash, and the footnote says when it fills - *30d from 17 Oct* -
+though you can still click it. Instead of *Item prices update every 24hrs*, the last line says how long your
+record is: *37 days recorded since 18 Aug*.
+
+**The chart** starts with the change over its range and the days it spans (*27 Aug - 26 Sep +24.2m +3.4%*), then
+a line naming a day and its total to the last gp, then the chart itself: a line of your total, green when the
+range rose and red when it fell, over a shading of the same colour that fades out towards the bottom, with the
+range's highest and lowest reading marked by a small grey dot and their short totals (*759m*, *712m*), and your
+latest reading by a dot in a soft glow. Rest the pointer on the chart and the line above it names the day under
+it; move away and it goes back to your latest reading. A day with no reading carries your last total across,
+drawn like any other day, so the line never breaks. Under the chart, a bar of four chips - *7d*, *30d*, *90d*
+and *all*, the one in use filled orange - picks its range. Picking a window on the card moves the chart with it
+(*1d* and *7d* show the last 7 days, *180d* shows everything); the chart's own chips move the chart and nothing
+else. A chip whose range reaches back before your first reading is drawn grey, and picking it shows the change
+since your first reading. Over a long record the chart draws at most 120 points, each the last reading of its
+few days.
+
+**The list of days** under the chart has every day since your first reading, newest first, whatever the chart
+shows: the date, your total (short and to the gp), and the change since the reading before - the percentage in
+bold, the gp a shade quieter, and under the date the day it is compared with (*vs 25 Sep*, or *vs 21 Sep, 2
+days* across a gap). Your first reading ever says *first reading*. A day with no reading is a thin grey line
+with its date alone - *Tue 22 Sep* - while the chart carries your total across it. A day more than 300 days ago
+shows its year. The days come in pages of 250, like the items.
+
+**It adds up the way the card does.** Every reading is saved in parts - what was in your bank and what you were
+carrying, each split into tradeable items, coins and platinum tokens, untradeables made from tradeable items,
+and alch-only untradeables - so the Net Worth History always counts exactly what your settings count. Turn off
+*Include coins and platinum tokens* and the whole line redraws without coins, past days included; it never shows
+up as a one-day loss. A reading is priced the way the card priced it that day, and the guide-price figure is
+saved beside it, so turning *Use live prices* off redraws the line on guide prices alone. A day saved with live
+prices off has only its guide figure, so turning them on later can show a small step at the first live day.
+
+**Before your first reading** the view says *No readings yet - open your bank to load your first reading.* On
+your first day the chart shows that one point, and the list its one row.
+
+One thing to know: if you stay logged in past midnight with the panel closed and your bank untouched, the new
+day gets no reading until your bank changes, you press Refresh, open the panel or log in again - until then that
+day shows as a day with no reading.
+
+Your history is kept on your computer, one small file per account and profile (see *Where its files live*), and
+is never uploaded.
+
 ## While you bank
 
 A quick gear swap should cost you nothing, so the panel keeps still while your bank is open:
@@ -141,8 +201,9 @@ A quick gear swap should cost you nothing, so the panel keeps still while your b
   re-read and nothing is rebuilt until you are done. Anything you click in the panel itself - a window chip, the
   sort button, a price band - still answers at once.
 - **A thin green ring breathes round the Refresh link** when your bank, or what you are carrying or wearing, has
-  changed since the list last read it - a sign the list is behind. It breathes from faint to full over three seconds and
-  back out over three, again and again until the list catches up, and it only shows while the panel is on screen.
+  changed since the list last read it - a sign the list is behind. It breathes from faint to full over three
+  seconds and back out over three, again and again until the list catches up, and it only shows while the panel
+  is on screen.
 - **The list catches up once**: when you close the bank, or straight away if you click the glowing *Refresh*
   with the bank still open - which re-checks the prices as well, as every click on it does. The ring goes out
   either way.
@@ -157,13 +218,13 @@ different - it is simply part of why the list redraws quickly.
 
 ## Hover text
 
-**Hover text is off until you ask for it.** Turn on **Show hover text** - last in the Options menu, under the
-gear, in the row above *OK* - and the panel starts explaining itself when you rest the pointer on something: the
-bank value gives you the exact total to the last gp, and the sort button, the band button, the Refresh link, the
-*"Item prices update every 24hrs"* line and every item in the Options menu say what they do. The Refresh link's
-hover reads *"Re-read your items and re-check the prices. Jagex publishes guide prices once a day."* - the same
-wherever you are, because a click does the same thing everywhere. Leave the switch off and nothing opens
-anywhere. It is off when you install the plugin, and it remembers whichever way you set it.
+**Hover text is off until you ask for it.** Turn on **Show hover text** - last in the Options menu, behind the
+settings icon, in the row above *OK* - and the panel starts explaining itself when you rest the pointer on
+something: the bank value gives you the exact total to the last gp, and the sort button, the band button, the
+Refresh link, the *"Item prices update every 24hrs"* line and every item in the Options menu say what they do.
+The Refresh link's hover reads *"Re-read your items and re-check the prices. Jagex publishes guide prices once a
+day."* - the same wherever you are, because a click does the same thing everywhere. Leave the switch off and
+nothing opens anywhere. It is off when you install the plugin, and it remembers whichever way you set it.
 
 **An item row never opens a hover, at either setting.** Its detail is not a tooltip - you **click the row** and it
 opens on the page, under the row's own line, and stays there until you close it. That is also where you read an
@@ -192,26 +253,27 @@ here - never a bigger number, and never a different sign. (A row's face drops th
 described under the row; the truncation and the sign rule are the same.)
 
 **What is left out of the LIST:** coins, platinum tokens, bank placeholders, bank fillers and anything the
-Grand Exchange does not list. Noted stacks fold onto the item they note, and duplicate stacks of one item are
-summed. Coins and platinum tokens get no row because their price never moves - but they *are* counted in the
-Bank value card, at face value and 1,000 gp each, because they are part of what your bank is worth. That is
-also why a cash-heavy bank shows a smaller percentage than its items do: the cash sits in the denominator and
-does not move. If you would rather read your bank as the items alone, turn off *Include coins and platinum
-tokens* in the Options menu.
+Grand Exchange does not list, apart from the untradeables described below. Noted stacks fold onto the item they
+note, and duplicate stacks of one item are summed. Coins and platinum tokens get no row because their price never
+moves - but they *are* counted in the Bank value card, at face value and 1,000 gp each, because they are part of
+what your bank is worth. That is also why a cash-heavy bank shows a smaller percentage than its items do: the
+cash sits in the denominator and does not move. If you would rather read your bank as the items alone, turn off
+*Include coins and platinum tokens* in the Options menu.
 
-**Untradeable items** - graceful, void, barrows gloves, your fire cape - have no guide price at all, so they
-are left out by default. Turn on *Include untradeable items* and each one gets a row at its **High Alchemy**
-value, tagged *alch* where the movement figures would be, and is counted in the Bank value. An untradeable
-RuneLite can take apart is priced at what its **tradeable parts** are worth instead - crystal armour at its
-crystal armour seeds (three of them for a body), a slayer helmet at its black mask, a Bow of Faerdhinen at its
-inactive form - and such a row carries a real gp and percentage move, because the part it is made of has a
-guide price that moves. The ones left at an alch value never appear in a percentage or a gp move: there is no
-earlier price to compare an alch value with.
+**Untradeable items** have no guide price of their own. One that RuneLite can take apart into tradeable items
+is **always counted**, at what its **tradeable parts** are worth - crystal armour at its crystal armour seeds
+(three of them for a body), a slayer helmet at its black mask, a Bow of Faerdhinen at its inactive form - and
+such a row carries a real gp and percentage move, because the part it is made of has a guide price that moves.
+If one of its parts has no price on a given day, it is treated as alch-only for that day. The rest - graceful,
+void, barrows gloves, your fire cape - have only a **High Alchemy** value, so they are left out by default. Turn
+on *Include alch-only untradeables* and each of those gets a row at its alch value, tagged *alch* where the
+movement figures would be, and is counted in the Bank value. The ones at an alch value never appear in a
+percentage or a gp move: there is no earlier price to compare an alch value with.
 
 **What you are carrying counts too.** *Include inventory and worn gear* is **on by default**: the items in your
 inventory and the gear you are wearing are valued and listed exactly like the bank's own stacks, by the same
 rules - noted stacks fold onto the item they note, coins and platinum tokens in hand are worth face value and
-1,000 gp each, and an untradeable you are wearing follows the untradeables switch like any other.
+1,000 gp each, and an untradeable you are wearing is counted by the same rules as one in your bank.
 
 They are read together with your bank - **when you open it or close it, and when you press Refresh** - and at no
 other time. Nothing is watched in between - eat a shark with the bank closed and the row sits still until one of
@@ -224,8 +286,8 @@ names the split under its figures: *"3 in bank, 1 in inventory, 1 worn"* (a
 worn-only item just says *"1 worn"*). The Bank value card counts the lot.
 
 One consequence worth knowing: **RuneLite's own bank title bar will read lower than this card**, by roughly what
-you are carrying and wearing, because it counts the bank container and nothing else. Turn the switch off and the
-two agree again - every figure here is then the bank alone.
+you are carrying and wearing, because it counts the bank container and nothing else. Turn the switch off and
+every figure here is the bank alone, as the title bar's is.
 
 If the wiki cannot be reached, the rows keep their prices - they are RuneLite's, not the wiki's - and lose only
 their movement; the status line says so in grey, and nothing is red about it.
@@ -275,15 +337,15 @@ together today - yesterday's were 12 gp and 37 gp, which is not a price to measu
 bank the two extra tests sent about seventy stacks back to the daily guide price, and every one of them reads
 about 0 % there.
 
-**Turn it off** (the gear menu, or RuneLite's settings) and the plugin is exactly the guide-price plugin it was
-before: one series for everything, no traded requests made at all, and every figure matching the Grand Exchange
-website. That last point is the reason to turn it off - **the GE website shows the guide price, so the two only
-agree with this switch off**. With it on, the line at the foot of the card says so: *"Live prices on - thin
-items daily"*.
+**Turn it off** (the Options menu behind the settings icon, or RuneLite's settings) and the plugin is exactly
+the guide-price plugin it was before: one series for everything, no traded requests made at all, and every
+figure matching the Grand Exchange website. That last point is the reason to turn it off - **the GE website
+shows the guide price, so the two only agree with this switch off**. With it on, the line at the foot of the
+card says so: *"Live prices on - thin items daily"*.
 
 ## Settings
 
-Fifteen items, and every one of them is also a control in the sidebar: change it in either place and the other
+Sixteen items, and every one of them is also a control in the sidebar: change it in either place and the other
 follows.
 
 | Setting | What it does |
@@ -299,17 +361,19 @@ follows.
 | Show change in gp | The bank's gp change for the chosen window. |
 | Show change in % | The bank's percentage change for the chosen window. |
 | Include coins and platinum tokens | Coins and platinum tokens (1,000 gp each) count in the bank value. On by default. |
-| Include untradeable items | List untradeable stacks at their tradeable parts' value, or else their High Alchemy value, and count them in the bank value. |
+| Include alch-only untradeables | Counts untradeables with no tradeable parts, at alch value. Off by default. Untradeables made from tradeable items always count, at their parts' prices. |
 | Include inventory and worn gear | Items in your inventory and worn gear count in the bank value and are listed with the bank's stacks. They are read when you open or close the bank, or press Refresh. On by default. |
 | Show hover text | The bank value and the panel's controls explain themselves when you rest the pointer on them. Off by default. Item rows never use hover text either way - click a row to open its detail. |
 | Use live prices | Actively traded items use the wiki's live traded prices for every figure; thin items keep the daily guide price. On by default. |
+| Tab to open on startup | Which tab the sidebar shows when the plugin starts: Items or Net Worth History. Items by default. The Items \| Net Worth History buttons switch the tab for that session only and never change this setting. |
 
-Eight of them are also switches in the panel's own **Options** menu, under the gear beneath the Refresh link -
-the three that decide what the card draws, then *Use live prices* and the three that decide what the card counts
-and which stacks get a row, and last of all *Show hover text*. *Preset price ranges* is in that menu too, as three
-boxes, with *Refresh prices now* at its top and a *Reset to default* and an *OK* button along the bottom.
-*Show preset price ranges* has no entry of its own: the band button in the sidebar is the switch, and this row
-is where it reads back.
+Nine of them are also controls in the panel's own **Options** menu, behind the settings icon beneath the
+Refresh link - the three that decide what the card draws, then *Use live prices* and the three that decide what
+the card counts and which stacks get a row, then *Tab to open on startup* with a dot beside *Items* or *Net Worth History* (choosing
+one changes the setting for the next start, not the tab you are looking at), and last of all *Show hover text*. *Preset price ranges* is in that
+menu too, as three boxes, with *Refresh prices now* at its top and a *Reset to default* and an *OK* button along
+the bottom. *Show preset price ranges* has no entry of its own: the band button in the sidebar is the switch,
+and this row is where it reads back.
 
 ## Where its files live
 
@@ -318,6 +382,7 @@ Everything is under `~/.runelite/plugin-data/bank-portfolio-tracker/`:
 | File | What it holds |
 |---|---|
 | `bank-<accountHash>-<profileType>.json` | the last bank seen, one file per account and profile |
+| `history-<accountHash>-<profileType>.json` | your bank net worth, one reading a day, one file per account and profile |
 | `mapping.json` | the item id -> wiki name table (refreshed weekly) |
 | `revindex.json` | the guide page's revision history (refreshed every six hours) |
 | `baseline-D1.json` … `baseline-D180.json` | one guide table per window |
@@ -345,18 +410,20 @@ there the moment you open the sidebar.
   day-over-day comparison rather than a ticker: refreshing more often than that changes nothing for those rows.
   The line at the foot of the card says why when you hover it - with *Show hover text* on - along with the time
   the prices on screen were last checked. The guide price is the one shown on the Grand Exchange website, so
-  **the plugin agrees with that site only with *Use live prices* off**. RuneLite's own item hover uses the wiki's traded price by default,
-  which differs most on thinly traded items - so a guide row here can sit a long way from that hover on
-  something rarely traded, and a live row will usually sit close to it. Jagex moves a guide price by at most
-  about 5% a day, so a large move shows over several days.
+  **the plugin agrees with that site only with *Use live prices* off**. RuneLite's own item hover uses the
+  wiki's traded price by default, which differs most on thinly traded items - so a guide row here can sit a long
+  way from that hover on something rarely traded, and a live row will usually sit close to it. Jagex moves a
+  guide price by at most about 5% a day, so a large move shows over several days.
 - A percentage here can differ from the GE site's by a tenth: the site prints whole percents of the same
   truncated figure.
 - An item with no baseline on the chosen day shows "-" and sorts last under every ordering.
 - Bank value counts every stack that has a price, plus your coins and platinum tokens unless you switch
-  them off. Untradeable items are not in it until you ask for them, and even then the ones RuneLite cannot take
-  apart are counted at their High Alchemy value, which is not what anyone would pay you for them. The ones it
-  can are counted at their parts' guide price, which is. Whenever the total looks short, the stacks reading "-"
-  in the list are the ones it is leaving out.
+  them off. Untradeables RuneLite can take apart are always in it, at what their parts are worth, which is what
+  anyone would pay you for those parts. The ones it cannot are in it only when you ask for them, and then at
+  their High Alchemy value, which is not what anyone would pay you for them. Whenever the total looks short, the
+  stacks reading "-" in the list are the ones it is leaving out.
+- Items waiting to be collected from the Grand Exchange are not in your bank until you collect them, so neither
+  the list nor the Bank value counts them until then.
 
 ## Licence
 

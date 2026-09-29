@@ -84,9 +84,10 @@ public class BankSnapshot
 	/**
 	 * The stacks in the player's INVENTORY at the last carried read (addendum Y, line Y2), one per canonical id and
 	 * by exactly the rules {@link #items} follows. Never null after {@link #normalize()}; EMPTY in every
-	 * {@code bank-*.json} written before addendum Y, and empty whenever the switch has never been on with a client
-	 * logged in - "we have read nothing" and "you were carrying nothing" are the same thing to every reader, because
-	 * both mean there is nothing to add.
+	 * {@code bank-*.json} written before addendum Y. It is read at every bank read and every Refresh WHATEVER
+	 * "Include inventory and worn gear" says - the switch acts only when the service adds up (addendum AV), which is
+	 * what lets addendum AU's History keep the carried half of every reading - and "we have read nothing" and "you
+	 * were carrying nothing" are the same thing to every reader, because both mean there is nothing to add.
 	 */
 	public List<BankItem> inventory;
 

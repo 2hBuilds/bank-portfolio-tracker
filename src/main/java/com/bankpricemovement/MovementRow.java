@@ -70,10 +70,10 @@ public final class MovementRow
 		/**
 		 * The item's HIGH ALCHEMY value ({@code ItemComposition.getHaPrice()}, carried on the stack as
 		 * {@link BankItem#haPrice}) - the only price an item the Grand Exchange does not list has (addendum Q,
-		 * line Q5). Produced only while "Include untradeable items" is on, and never with a baseline: an alch value
-		 * is a constant of the item, not a series, so such a row has no {@link MovementRow#thenPrice()},
-		 * {@link MovementRow#deltaGp()} or {@link MovementRow#deltaPct()} and the panel prints a small grey "alch"
-		 * tag where the move would go.
+		 * line Q5). Produced only while "Include alch-only untradeables" is on (addendum AV), and never with a
+		 * baseline: an alch value is a constant of the item, not a series, so such a row has no
+		 * {@link MovementRow#thenPrice()}, {@link MovementRow#deltaGp()} or {@link MovementRow#deltaPct()} and the
+		 * panel prints a small grey "alch" tag where the move would go.
 		 */
 		ALCH,
 		/**
@@ -85,9 +85,8 @@ public final class MovementRow
 		 * {@link #GUIDE} row's does and every part's "then" from the same baseline, so such a row carries a real
 		 * {@link MovementRow#thenPrice()}, {@link MovementRow#deltaGp()} and {@link MovementRow#deltaPct()} and is
 		 * painted exactly as a GUIDE row is (R4). The "then" is null - the dash - when ANY part has no baseline
-		 * value, because a sum of some of the parts is not the item's price. Produced only while "Include
-		 * untradeable items" is on, and only for a stack whose every part could be priced; one that could not falls to
-		 * {@link #ALCH}.
+		 * value, because a sum of some of the parts is not the item's price. Produced whatever the switches say since
+		 * addendum AV, only for a stack whose every part could be priced; one that could not falls to {@link #ALCH}.
 		 */
 		PARTS,
 		/**

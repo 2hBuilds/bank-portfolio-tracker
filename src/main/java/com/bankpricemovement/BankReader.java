@@ -63,13 +63,13 @@ import org.slf4j.LoggerFactory;
  * exchange search filters on the same flag ({@code GrandExchangeSearchPanel.java:207}). Amended by the lead
  * 2026-09-08 13:55 (contract C11) and switched by the gate. NARROWED by addendum Q line Q5: such a stack is
  * skipped only when it has no High Alchemy value either ({@code getHaPrice()}, :120). One WITH a value is kept
- * and marked ({@link BankItem#untradeable}, {@link BankItem#haPrice}) so the "Include untradeable items" switch
- * can list it at that value; the switch itself lives in the service, not here, because a snapshot that recorded
- * only what the switch of the day wanted would need a bank visit every time it was flipped - the same reasoning
- * that puts {@link BankSnapshot#currencyGp} in every capture (P1). WIDENED again by addendum R line R1: a kept
- * untradeable stack also records what RuneLite maps it onto ({@link BankItem#parts}, {@link #partsOf}), so it can
- * be valued at its tradeable parts instead - a Crystal body at three Crystal armour seeds rather than at its 900k
- * alch value.</li>
+ * and marked ({@link BankItem#untradeable}, {@link BankItem#haPrice}) so the service can list it at that value
+ * ("Include alch-only untradeables", addendum AV); the switch itself lives in the service, not here, because a
+ * snapshot that recorded only what the switch of the day wanted would need a bank visit every time it was flipped -
+ * the same reasoning that puts {@link BankSnapshot#currencyGp} in every capture (P1). WIDENED again by addendum R
+ * line R1: a kept untradeable stack also records what RuneLite maps it onto ({@link BankItem#parts},
+ * {@link #partsOf}), so it can be valued at its tradeable parts instead - a Crystal body at three Crystal armour seeds
+ * rather than at its 900k alch value.</li>
  * </ul>
  *
  * <p><b>The name is {@code getMembersName()}</b> (addendum L line L8 b, and K3 before it). On a members world

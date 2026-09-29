@@ -50,7 +50,8 @@ import javax.annotation.Nullable;
  * {@code itemsTotal}, is NOT counted in {@code itemsPriced}, and is in no window's covered set on either side - an
  * alch value is a constant of the item, so including it would add the same number to both sides of every move and
  * dilute the percentage with something that cannot move. Whether such stacks are in the list at all is the
- * "Include untradeable items" switch, applied by the caller; a list without them is the pre-Q behaviour exactly.
+ * "Include alch-only untradeables" switch (addendum AV), applied by the caller; a list without them is the pre-Q
+ * behaviour exactly.
  *
  * <p><b>...unless they have parts</b> (addendum R, line R3). A stack RuneLite maps onto tradeable parts
  * ({@link BankItem#hasParts()}) is worth what those parts fetch on the exchange, which IS a market price and does
@@ -196,7 +197,8 @@ public final class PortfolioMath
 			// else. It counts in the total and in itemsTotal, it is NOT "priced" - that word means "has a guide
 			// price", and the card's "over N of M stacks" is the count of the market prices behind the figure - and
 			// it enters no window, so nowOf stays null and every loop below skips it. Whether such a stack is in
-			// this list at all is the "Include untradeable items" switch, decided by the caller (PriceService).
+			// this list at all is the "Include alch-only untradeables" switch, decided by the caller (PriceService,
+			// AV2).
 			if (gp == null && item.untradeable)
 			{
 				valueStacks = clampedAdd(valueStacks, MovementMath.holdingValue(item.alchPrice(), item.quantity));

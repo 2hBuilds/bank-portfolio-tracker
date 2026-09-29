@@ -136,11 +136,11 @@ public final class MovementMath
 	}
 
 	/**
-	 * The row an UNTRADEABLE stack becomes while "Include untradeable items" is on (addendum Q, line Q5): its unit
-	 * price is the item's High Alchemy value ({@link BankItem#alchPrice()}), its source is
-	 * {@link MovementRow.PriceSource#ALCH}, and it has no baseline and therefore no move - an alch value is a
-	 * constant of the item rather than a series, so subtracting one from another would invent a movement that
-	 * never happened.
+	 * The row an UNTRADEABLE stack that could not be parts-priced becomes while "Include alch-only untradeables" is
+	 * on (addendum Q, line Q5; addendum AV): its unit price is the item's High Alchemy value
+	 * ({@link BankItem#alchPrice()}), its source is {@link MovementRow.PriceSource#ALCH}, and it has no baseline and
+	 * therefore no move - an alch value is a constant of the item rather than a series, so subtracting one from
+	 * another would invent a movement that never happened.
 	 *
 	 * <p>The holding is the alch value times the quantity, as for any other row, which is what puts the stack in
 	 * the bank value and what the row's headline line prints (addendum AN).

@@ -1,6 +1,9 @@
 package com.bankpricemovement;
 
 import com.google.gson.Gson;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
 import com.google.gson.stream.JsonReader;
 import java.io.IOException;
@@ -15,12 +18,16 @@ import java.nio.file.StandardOpenOption;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -54,6 +61,11 @@ import org.slf4j.LoggerFactory;
  * window counts back to from the live snapshot's own UTC date, addendum U line U1 - which is not the guide
  * baseline's day and need not be). Both carry their own {@code schema}, both are swept by the rules below, and
  * neither is written or read while the {@code livePrices} switch is off.</li>
+ * <li>{@code history-<accountHash>-<profileType>.json} - the player's own net worth, one reading per LOCAL day
+ * (addendum AU), paired with the bank file of the same account and profile. The one file here that is not a cache:
+ * nothing can fetch it again, so it has its own load with three outcomes ({@link #loadBankHistory}), every write
+ * re-reads it and merges one point ({@link #recordBankHistory}), and a file that failed to read once is never
+ * written over for the rest of the session. The sweep never touches it.</li>
  * </ul>
  *
  * <p><b>What addendum K took away.</b> The real-time trade endpoints are gone from the plugin, so there is no
@@ -75,7 +87,8 @@ import org.slf4j.LoggerFactory;
  * synchronous write on the client thread froze the client for 3-5 s once already (playbook 7.2). Nothing here
  * touches Swing or the client, and the only RuneLite state it reaches is the {@link Filepath} its
  * {@link Directory} hands it - {@code Plugin.getPluginDirectory()} in production - so the store needs no thread
- * of its own and holds no mutable state beyond the memo of that one lookup; two callers on two threads only race
+ * of its own and holds no mutable state beyond the memo of that one lookup and the history owners whose file
+ * failed to read this session (addendum AU); two callers on two threads only race
  * on the file system, where the atomic replace of {@link #writeAtomic} makes the last write win whole.
  *
  * <p><b>Every byte goes through {@link Filepath}</b> (addendum AD), RuneLite's sandboxed path wrapper: a
@@ -123,6 +136,11 @@ public class PriceStore
 	 * {@link #deleteStaleFiles()}.
 	 */
 	public static final String TRADED_PREFIX = "traded-";
+	/**
+	 * Prefix of a net-worth history file; the account hash and profile type follow, exactly as for a bank file
+	 * (addendum AU, plan 7.1 item 1), so a bank and its history always pair up.
+	 */
+	public static final String HISTORY_PREFIX = "history-";
 	/** Suffix of every file this store writes. */
 	public static final String JSON_SUFFIX = ".json";
 
@@ -173,6 +191,31 @@ public class PriceStore
 	 * the Plugin Hub's reviewers look for.
 	 */
 	private volatile boolean warnedNoDirectory;
+	/**
+	 * The history files that failed to read this session, by owner ({@link #historyOwner}): nothing is written to
+	 * any of them again until the client restarts (addendum AU, plan 7.1 item 5). This is the rule that stops one
+	 * locked or damaged read from replacing years of readings with a single point.
+	 */
+	private final Set<String> failedHistory = ConcurrentHashMap.newKeySet();
+	/**
+	 * The history owners whose file this session has already copied aside before a rewrite that drops something it
+	 * held ({@link BankHistoryLoad#lossy()}; review finding H7) - one copy per owner per session is enough, because
+	 * the copy holds the file as it was before this build first touched it.
+	 */
+	private final Set<String> backedUpHistory = ConcurrentHashMap.newKeySet();
+	/**
+	 * The history owners whose file this session has already warned it could not write (final review R5): a reading
+	 * the store did not take is sent again with every later one (review finding H5), which with a file that reads but
+	 * will not write is every bank change and every half-hourly re-check - one WARN per owner per session is the
+	 * news, and the retries after it log at debug.
+	 */
+	private final Set<String> warnedHistoryWrite = ConcurrentHashMap.newKeySet();
+	/**
+	 * Held across a history record's read, merge and write, so two records from two threads of one store cannot
+	 * each read the file before the other writes it and lose a day between them. Two CLIENTS still race; each
+	 * re-reads before it writes, which narrows that race to the moment between one read and its own write.
+	 */
+	private final Object historyLock = new Object();
 
 	/**
 	 * Where the store's directory comes from, resolved on first use rather than in the constructor.
@@ -301,6 +344,23 @@ public class PriceStore
 	}
 
 	/**
+	 * {@code history-<accountHash>-<profileType>.json} for one account on one profile (addendum AU, plan 7.1 item
+	 * 1) - named by the same two keys and the same {@code safeProfile} as {@link #bankFile}, because a Leagues or
+	 * Deadman profile is a different bank and so a different history.
+	 */
+	@Nullable
+	public Filepath historyFile(final long accountHash, @Nullable final String profileType)
+	{
+		return file(historyOwner(accountHash, profileType) + JSON_SUFFIX);
+	}
+
+	/** The history file's name without its suffix - also the key {@link #failedHistory} remembers an owner by. */
+	private static String historyOwner(final long accountHash, @Nullable final String profileType)
+	{
+		return HISTORY_PREFIX + accountHash + "-" + safeProfile(profileType);
+	}
+
+	/**
 	 * {@code baseline-<window name>.json} - one per window, so switching windows in the sidebar never has to
 	 * re-fetch a baseline it already holds. Since K11 the file holds a guide-price map and its revision id; the
 	 * method keeps its pre-K name because {@code PriceService} calls it and this wave does not rename across
@@ -392,6 +452,386 @@ public class PriceStore
 			return;
 		}
 		write(bankFile(snapshot.accountHash, snapshot.profileType), snapshot);
+	}
+
+	// ---- the net-worth history (addendum AU)
+
+	/**
+	 * The version of the history file's shape this build writes. Bump it when a stored field's MEANING changes, AND
+	 * when a field is ADDED - this build rewrites only the keys it knows, so a newer build's extra field would be
+	 * lost the next time an older build wrote the file, while a higher number makes the older build leave it alone -
+	 * and teach {@link #migrateHistory} the step; a file with a HIGHER number is a newer build's and is left alone.
+	 */
+	static final int HISTORY_SCHEMA = 1;
+
+	private static final String POINTS_KEY = "points";
+	private static final String DAY_KEY = "day";
+	private static final String READ_AT_KEY = "readAtMillis";
+	private static final String BANK_AT_KEY = "bankAtMillis";
+	private static final String CARD_KEY = "card";
+	private static final String GUIDE_KEY = "guide";
+	/** Every key a history document holds at its top level, and every key an entry holds, in this build. */
+	private static final Set<String> HISTORY_ROOT_KEYS = new HashSet<>(Arrays.asList(SCHEMA_KEY, POINTS_KEY));
+	private static final Set<String> HISTORY_ENTRY_KEYS = new HashSet<>(Arrays.asList(DAY_KEY, READ_AT_KEY, BANK_AT_KEY,
+		CARD_KEY, GUIDE_KEY));
+
+	/**
+	 * One account's history as it is on disk now (addendum AU, plan 7.1 item 5; contract section 4), with the
+	 * outcome of the read - which, unlike every other load here, is not folded into one "empty" answer:
+	 * <ul>
+	 * <li>{@link BankHistoryLoad.State#MISSING} - no such file (or an owner hash {@code <= 0}, which never has one):
+	 * start a series.</li>
+	 * <li>{@link BankHistoryLoad.State#LOADED} - the file read and parsed. An entry that does not parse is skipped
+	 * and the rest kept; an older schema is migrated, never read as empty.</li>
+	 * <li>{@link BankHistoryLoad.State#FAILED} - the file exists and could not be read (locked, a directory in the
+	 * way; it is left exactly where it is), or it could not be parsed at all (moved aside as
+	 * {@code .corrupt-<millis>}), or a newer build wrote it (left alone), or there is no data directory. After a
+	 * FAILED read of a real file nothing is written to it for the rest of the session, and every later load of
+	 * that owner answers FAILED at once, without reading or logging again (review finding H8: one WARN).</li>
+	 * </ul>
+	 * Never throws. Reads the file every time otherwise; nothing is cached.
+	 */
+	public BankHistoryLoad loadBankHistory(final long accountHash, @Nullable final String profileType)
+	{
+		if (accountHash <= 0L)
+		{
+			return BankHistoryLoad.missing();
+		}
+		if (failedHistory.contains(historyOwner(accountHash, profileType)))
+		{
+			log.debug("bank-portfolio-tracker: not reading the history again - its file failed to read this session");
+			return BankHistoryLoad.failed();
+		}
+		final Filepath file = historyFile(accountHash, profileType);
+		final BankHistoryLoad load = readHistory(file);
+		if (file != null && load.state() == BankHistoryLoad.State.FAILED)
+		{
+			failedHistory.add(historyOwner(accountHash, profileType));
+		}
+		return load;
+	}
+
+	/**
+	 * Records one reading (addendum AU, plan 7.1 items 4 and 7; contract section 4): reads the file FRESH, puts
+	 * {@code point} in as its day's reading (last wins for that day), drops every reading dated after
+	 * {@code today}, and replaces the file atomically through {@link #writeAtomic(Filepath, String)}. The series in
+	 * a caller's memory is never written straight out, so a second client's days are kept.
+	 *
+	 * <p>Writes NOTHING and answers false when: the owner hash is {@code <= 0} (as {@link #saveBank}); the point is
+	 * dated after {@code today}; there is no data directory; this session already failed to read the owner's file;
+	 * the fresh read FAILS now - which is then remembered for the rest of the session; or the clock is BEHIND the
+	 * file - at least as many stored readings are dated after {@code today} as on or before it, the new point
+	 * counted (review finding H1: a clock set back to 2000 must not prune years of readings as "the future"; a
+	 * few stray readings of a clock that WAS ahead are still dropped, plan 7.1 item 7). Writes nothing and answers
+	 * true when the merge equals what was read (the point is already there). Otherwise answers whether the write
+	 * succeeded. Never throws.
+	 *
+	 * <p>A file that holds something the series does not ({@link BankHistoryLoad#lossy()}: an entry that did not
+	 * parse, two entries for one day, a key this build does not know) is COPIED aside as
+	 * {@code <name>.corrupt-<millis>} before its first rewrite of the session (review finding H7), and nothing is
+	 * written when that copy fails. The write itself is durable: the temp file is written through
+	 * {@code DSYNC} before the atomic move, so a power cut cannot leave the one file here that is not a cache as a
+	 * file of zeros (review finding H6).
+	 *
+	 * @param point a reading, filed under its own {@link BankHistoryPoint#day()}
+	 * @param today the caller's LOCAL today
+	 * @return true when the file holds the point once this returns
+	 */
+	public boolean recordBankHistory(final long accountHash, @Nullable final String profileType,
+		@Nullable final BankHistoryPoint point, @Nullable final LocalDate today)
+	{
+		if (point == null || today == null)
+		{
+			return false;
+		}
+		if (accountHash <= 0L)
+		{
+			log.debug("bank-portfolio-tracker: not recording history for account {} - it has no owner", accountHash);
+			return false;
+		}
+		if (point.day().isAfter(today))
+		{
+			log.debug("bank-portfolio-tracker: not recording a reading of {} on {} - it is in the future",
+				point.day(), today);
+			return false;
+		}
+
+		final String owner = historyOwner(accountHash, profileType);
+		synchronized (historyLock)
+		{
+			if (failedHistory.contains(owner))
+			{
+				log.debug("bank-portfolio-tracker: not recording history - its file failed to read this session");
+				return false;
+			}
+			final Filepath file = historyFile(accountHash, profileType);
+			if (file == null)
+			{
+				log.debug("bank-portfolio-tracker: no data directory, so no history was recorded");
+				return false;
+			}
+
+			final BankHistoryLoad read = readHistory(file);
+			if (read.state() == BankHistoryLoad.State.FAILED)
+			{
+				failedHistory.add(owner);
+				return false;
+			}
+
+			final BankHistorySeries added = read.series().with(point);
+			final BankHistorySeries merged = added.upTo(today);
+			final int ahead = added.size() - merged.size();
+			if (ahead > 0 && ahead >= merged.size())
+			{
+				log.debug("bank-portfolio-tracker: not recording a reading of {} - the clock is behind {} of the stored"
+					+ " readings", today, ahead);
+				return false;
+			}
+			if (merged.equals(read.series()))
+			{
+				return true;
+			}
+			if (read.lossy() && !backedUpHistory.contains(owner))
+			{
+				try
+				{
+					file.copyTo(file.getParent().joinSegment(file.getFileName() + CORRUPT_SUFFIX
+						+ System.currentTimeMillis()), StandardCopyOption.REPLACE_EXISTING);
+					backedUpHistory.add(owner);
+					log.warn("{} held entries this build cannot keep - a copy of it was kept before rewriting it", file);
+				}
+				catch (IOException | RuntimeException e)
+				{
+					warnWriteOnce(owner, "could not copy {} aside, so it was not rewritten", file, e);
+					return false;
+				}
+			}
+			try
+			{
+				final Filepath parent = file.getParent();
+				if (!parent.isDirectory())
+				{
+					parent.createDirectories();
+				}
+				writeAtomicDurably(file, historyJson(merged));
+				return true;
+			}
+			catch (IOException | RuntimeException e)
+			{
+				warnWriteOnce(owner, "saving {} failed", file, e);
+				return false;
+			}
+		}
+	}
+
+	/** A history write that failed: WARN the first time for this owner this session, debug after (R5). */
+	private void warnWriteOnce(final String owner, final String message, final Filepath file, final Exception e)
+	{
+		if (warnedHistoryWrite.add(owner))
+		{
+			log.warn(message, file, e);
+		}
+		else
+		{
+			log.debug(message + " (again; it is retried with the next reading)", file, e);
+		}
+	}
+
+	/** The three-outcome read behind {@link #loadBankHistory} and {@link #recordBankHistory}. */
+	private BankHistoryLoad readHistory(@Nullable final Filepath file)
+	{
+		if (file == null)
+		{
+			// dir() has already warned once; nothing could be read, so nothing may be assumed missing either.
+			return BankHistoryLoad.failed();
+		}
+
+		// No exists() check first (review finding H2): Files.exists answers false when it cannot TELL - a transient
+		// error or a refused attribute read - and a file read as missing is a file the next record writes a one-point
+		// document over. Only the open's own "no such file" is MISSING; every other failure is FAILED.
+		final String json;
+		try
+		{
+			json = readAll(file);
+		}
+		catch (NoSuchFileException e)
+		{
+			return BankHistoryLoad.missing();
+		}
+		catch (IOException | RuntimeException e)
+		{
+			log.warn("could not read {} (keeping it, and writing nothing over it this session)", file, e);
+			return BankHistoryLoad.failed();
+		}
+
+		JsonObject root;
+		final int schema;
+		try
+		{
+			final JsonElement tree = gson.fromJson(json, JsonElement.class);
+			if (tree == null || !tree.isJsonObject())
+			{
+				throw new JsonParseException("not a history document");
+			}
+			root = tree.getAsJsonObject();
+			final JsonElement stamped = root.get(SCHEMA_KEY);
+			schema = stamped == null || stamped.isJsonNull() ? 0 : stamped.getAsInt();
+			final JsonElement points = root.get(POINTS_KEY);
+			if (points != null && !points.isJsonNull() && !points.isJsonArray())
+			{
+				throw new JsonParseException("points is not a list");
+			}
+		}
+		catch (RuntimeException e)
+		{
+			// JsonParseException, or a schema that is not a number: unusable as a whole. Moved aside rather than
+			// read as empty, because an empty read would let the next record write a one-point file over it.
+			log.warn("could not parse {} (keeping a backup, and writing nothing over it this session)", file, e);
+			quarantine(file);
+			return BankHistoryLoad.failed();
+		}
+
+		if (schema > HISTORY_SCHEMA)
+		{
+			log.warn("{} was written by a newer build (schema {}) - leaving it alone", file, schema);
+			return BankHistoryLoad.failed();
+		}
+		if (schema < HISTORY_SCHEMA)
+		{
+			log.debug("bank-portfolio-tracker: migrating {} from schema {}", file, schema);
+			root = migrateHistory(root, schema);
+		}
+
+		boolean unknownKeys = !HISTORY_ROOT_KEYS.containsAll(root.keySet());
+		final JsonElement points = root.get(POINTS_KEY);
+		if (points == null || points.isJsonNull())
+		{
+			return unknownKeys ? BankHistoryLoad.loadedLossy(BankHistorySeries.EMPTY)
+				: BankHistoryLoad.loaded(BankHistorySeries.EMPTY);
+		}
+		final List<BankHistoryPoint> read = new ArrayList<>();
+		int skipped = 0;
+		for (final JsonElement entry : points.getAsJsonArray())
+		{
+			final BankHistoryPoint point = historyEntry(entry);
+			if (point == null)
+			{
+				skipped++;
+			}
+			else
+			{
+				read.add(point);
+				unknownKeys |= !HISTORY_ENTRY_KEYS.containsAll(entry.getAsJsonObject().keySet());
+			}
+		}
+		if (skipped > 0)
+		{
+			log.debug("bank-portfolio-tracker: skipped {} unreadable entries of {}", skipped, file);
+		}
+		final BankHistorySeries series = BankHistorySeries.of(read);
+		// Anything the series does not hold - a skipped entry, a second entry for one day, a key this build does not
+		// know - would be gone after a rewrite; recordBankHistory copies such a file aside first (H7).
+		return skipped > 0 || unknownKeys || series.size() != read.size() ? BankHistoryLoad.loadedLossy(series)
+			: BankHistoryLoad.loaded(series);
+	}
+
+	/**
+	 * Brings a document written under an OLDER schema to this build's shape (plan 7.1 item 5: migrated, never read
+	 * as empty). Schema 0 is a document with no {@code schema} key - the same shape as schema 1, so there is nothing
+	 * to change yet. The next schema adds its step here.
+	 */
+	private static JsonObject migrateHistory(final JsonObject root, final int schema)
+	{
+		// 0 -> 1: the same shape; the number alone was missing.
+		return root;
+	}
+
+	/** One stored entry, or null when it does not parse - it is then skipped and the rest of the file kept. */
+	@Nullable
+	private static BankHistoryPoint historyEntry(@Nullable final JsonElement entry)
+	{
+		if (entry == null || !entry.isJsonObject())
+		{
+			return null;
+		}
+		try
+		{
+			final JsonObject o = entry.getAsJsonObject();
+			final LocalDate day = parseDay(o.get(DAY_KEY).getAsString());
+			final long[] card = cells(o.get(CARD_KEY));
+			if (day == null || card == null)
+			{
+				return null;
+			}
+			final JsonElement guideElement = o.get(GUIDE_KEY);
+			final long[] guide = guideElement == null || guideElement.isJsonNull() ? null : cells(guideElement);
+			if (guideElement != null && !guideElement.isJsonNull() && guide == null)
+			{
+				return null;
+			}
+			return new BankHistoryPoint(day, o.get(READ_AT_KEY).getAsLong(), o.get(BANK_AT_KEY).getAsLong(), card,
+				guide);
+		}
+		catch (RuntimeException e)
+		{
+			// A missing field (NullPointerException), a word where a number belongs, a wrong-length array.
+			return null;
+		}
+	}
+
+	/** Exactly {@link BankHistoryPoint#CELLS} numbers, or null. */
+	@Nullable
+	private static long[] cells(@Nullable final JsonElement element)
+	{
+		if (element == null || !element.isJsonArray())
+		{
+			return null;
+		}
+		final JsonArray array = element.getAsJsonArray();
+		if (array.size() != BankHistoryPoint.CELLS)
+		{
+			return null;
+		}
+		final long[] cells = new long[BankHistoryPoint.CELLS];
+		for (int i = 0; i < cells.length; i++)
+		{
+			cells[i] = array.get(i).getAsLong();
+		}
+		return cells;
+	}
+
+	/**
+	 * The file's text (contract section 4): {@code schema} first, then {@code points}, each entry
+	 * {@code day, readAtMillis, bankAtMillis, card, guide} in that order, {@code guide} left out when it equals
+	 * {@code card}. Built as a tree so the shape does not depend on how the injected Gson treats nulls.
+	 */
+	private String historyJson(final BankHistorySeries series)
+	{
+		final JsonObject root = new JsonObject();
+		root.addProperty(SCHEMA_KEY, HISTORY_SCHEMA);
+		final JsonArray points = new JsonArray();
+		for (final BankHistoryPoint point : series.points())
+		{
+			final JsonObject entry = new JsonObject();
+			entry.addProperty(DAY_KEY, point.day().toString());
+			entry.addProperty(READ_AT_KEY, point.readAtMillis());
+			entry.addProperty(BANK_AT_KEY, point.bankAtMillis());
+			final JsonArray card = new JsonArray();
+			final JsonArray guide = new JsonArray();
+			for (int i = 0; i < BankHistoryPoint.CELLS; i++)
+			{
+				card.add(point.card(i));
+				guide.add(point.guide(i));
+			}
+			entry.add(CARD_KEY, card);
+			if (point.hasGuide())
+			{
+				entry.add(GUIDE_KEY, guide);
+			}
+			points.add(entry);
+		}
+		root.add(POINTS_KEY, points);
+		return gson.toJson(root);
 	}
 
 	// ---- baselines
@@ -780,6 +1220,10 @@ public class PriceStore
 	 * {@value #TRADED_LATEST_FILE} is deliberately NOT judged by rule 5: it shares the prefix and is not a
 	 * window, and sweeping it away every launch would cost a {@code /latest} fetch at every start-up.
 	 *
+	 * <p>No rule matches a {@code history-*} file (addendum AU) - nor a bank file, a quarantined backup or a temp
+	 * file: the history is the one thing here that cannot be fetched again, and {@code PriceStoreHistoryTest} pins
+	 * that the sweep leaves it and its {@code .corrupt-} backups alone.
+	 *
 	 * <p>A file that cannot be deleted is logged and left; the next launch tries again, and a stale baseline is
 	 * refetched within six hours anyway (K5). Nothing here throws.
 	 */
@@ -1096,6 +1540,25 @@ public class PriceStore
 	static void writeAtomic(final Filepath target, final String text, final Supplier<Filepath> tempNames)
 		throws IOException
 	{
+		writeAtomic(target, text, tempNames, false);
+	}
+
+	/**
+	 * {@link #writeAtomic(Filepath, String)} with the temp file's bytes on the disk before the move (review finding
+	 * H6): {@code DSYNC} makes each write reach the device, so the rename that follows can never publish a file whose
+	 * data the file system had not yet stored - which after a power cut reads back as the right length of zeros.
+	 * Only the history is written this way; every other file here is a cache the next fetch writes again.
+	 */
+	private static void writeAtomicDurably(final Filepath target, final String text) throws IOException
+	{
+		final Filepath parent = target.getParent();
+		final String name = target.getFileName();
+		writeAtomic(target, text, () -> parent.joinSegment(name + "." + System.nanoTime() + TMP_SUFFIX), true);
+	}
+
+	private static void writeAtomic(final Filepath target, final String text, final Supplier<Filepath> tempNames,
+		final boolean durable) throws IOException
+	{
 		FileAlreadyExistsException taken = null;
 		for (int attempt = 0; attempt < TMP_ATTEMPTS; attempt++)
 		{
@@ -1105,7 +1568,14 @@ public class PriceStore
 				// Filepath.write opens a UTF-8 writer, writes the whole string and closes it - the same three
 				// steps the try-with-resources did before addendum AD, with the charset no longer a parameter
 				// because Filepath has no other.
-				tmp.write(text, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+				if (durable)
+				{
+					tmp.write(text, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, StandardOpenOption.DSYNC);
+				}
+				else
+				{
+					tmp.write(text, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+				}
 			}
 			catch (FileAlreadyExistsException e)
 			{
@@ -1355,6 +1825,116 @@ public class PriceStore
 		public String toString()
 		{
 			return "Stamped{fetchedAtMillis=" + fetchedAtMillis + ", value=" + value + '}';
+		}
+	}
+
+	/**
+	 * What {@link #loadBankHistory} answers: the outcome of the read and the series it found (addendum AU, contract
+	 * section 4). The series is never null - {@link BankHistorySeries#EMPTY} for MISSING and FAILED.
+	 */
+	public static final class BankHistoryLoad
+	{
+		/** The three outcomes of a history read. */
+		public enum State
+		{
+			/** No such file: start a series. */
+			MISSING,
+			/** Read and parsed; damaged entries skipped, an older schema migrated. */
+			LOADED,
+			/** Exists but could not be read or parsed, or a newer build wrote it: write nothing over it. */
+			FAILED
+		}
+
+		private static final BankHistoryLoad MISSING_LOAD = new BankHistoryLoad(State.MISSING, BankHistorySeries.EMPTY);
+		private static final BankHistoryLoad FAILED_LOAD = new BankHistoryLoad(State.FAILED, BankHistorySeries.EMPTY);
+
+		private final State state;
+		private final BankHistorySeries series;
+		/**
+		 * The file held something the series does not: an entry that did not parse, two entries for one day, or a
+		 * key this build does not know. Rewriting it from the series would lose that, so the first write of the
+		 * session copies the file aside first ({@link #recordBankHistory}, review finding H7).
+		 */
+		private final boolean lossy;
+
+		private BankHistoryLoad(final State state, final BankHistorySeries series)
+		{
+			this(state, series, false);
+		}
+
+		private BankHistoryLoad(final State state, final BankHistorySeries series, final boolean lossy)
+		{
+			this.state = state;
+			this.series = series;
+			this.lossy = lossy;
+		}
+
+		/** No such file. */
+		public static BankHistoryLoad missing()
+		{
+			return MISSING_LOAD;
+		}
+
+		/** The file could not be used; nothing may be written over it. */
+		public static BankHistoryLoad failed()
+		{
+			return FAILED_LOAD;
+		}
+
+		/** The file read as this series; null reads as {@link BankHistorySeries#EMPTY}. */
+		public static BankHistoryLoad loaded(@Nullable final BankHistorySeries series)
+		{
+			return new BankHistoryLoad(State.LOADED, series == null ? BankHistorySeries.EMPTY : series);
+		}
+
+		/** {@link #loaded} for a file the series does not hold whole (see {@link #lossy}). */
+		private static BankHistoryLoad loadedLossy(final BankHistorySeries series)
+		{
+			return new BankHistoryLoad(State.LOADED, series, true);
+		}
+
+		/** Whether rewriting this file from {@link #series()} would drop something it holds (see the field). */
+		boolean lossy()
+		{
+			return lossy;
+		}
+
+		public State state()
+		{
+			return state;
+		}
+
+		/** What was read; {@link BankHistorySeries#EMPTY} unless {@link #state()} is LOADED. */
+		public BankHistorySeries series()
+		{
+			return series;
+		}
+
+		@Override
+		public boolean equals(final Object o)
+		{
+			if (this == o)
+			{
+				return true;
+			}
+			if (!(o instanceof BankHistoryLoad))
+			{
+				return false;
+			}
+			final BankHistoryLoad other = (BankHistoryLoad) o;
+			return state == other.state && lossy == other.lossy && series.equals(other.series);
+		}
+
+		@Override
+		public int hashCode()
+		{
+			return Objects.hash(state, series, lossy);
+		}
+
+		@Override
+		public String toString()
+		{
+			return "BankHistoryLoad{" + state + ", " + series + (lossy ? ", lossy" : "") + '}';
 		}
 	}
 

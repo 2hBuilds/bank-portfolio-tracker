@@ -695,7 +695,7 @@ public class MovementRowPanelTest
 				MovementRowPanel.detail(whip(), MovementWindow.D1, THEN_DAY, ViewOptions.DEFAULT, false),
 				detail(p).getText());
 			assertTrue("wrapped to the cell, which Q4 widened by the two px it took off the left padding",
-				detail(p).getText().startsWith("<html><div width=\"" + MovementRowPanel.INNER_WIDTH + "\">"));
+				detail(p).getText().startsWith("<html><div width=\"" + (MovementRowPanel.INNER_WIDTH - MovementRowPanel.DETAIL_LEFT) + "\">"));
 			assertEquals("the open row is the 62 px face plus the block's own measurement",
 				MovementRowPanel.ROW_HEIGHT + detailHeight(p), p.getPreferredSize().height);
 			assertEquals("...which is 62 and not 48", 62 + detailHeight(p), p.getPreferredSize().height);
@@ -2020,7 +2020,7 @@ public class MovementRowPanelTest
 						!r.name().equals(p.nameText())),
 					detail(p).getText());
 				assertTrue(r.name() + ": wrapped to the cell", detail(p).getText()
-					.startsWith("<html><div width=\"" + MovementRowPanel.INNER_WIDTH + "\">"));
+					.startsWith("<html><div width=\"" + (MovementRowPanel.INNER_WIDTH - MovementRowPanel.DETAIL_LEFT) + "\">"));
 				assertTrue(r.name(), detail(p).getText().endsWith("</div></html>"));
 			}
 
@@ -3672,5 +3672,62 @@ public class MovementRowPanelTest
 		{
 			throw new RuntimeException(t);
 		}
+	}
+
+	/**
+	 * The opened block's text starts {@link MovementRowPanel#DETAIL_LEFT} (2) px in from its label's left edge, so
+	 * the first letter of "Worth now" and "Was" keeps its left stroke (the client cut it at the edge). Measured
+	 * from the component and from ink: the border, then the painted pixels of the block.
+	 */
+	@Test
+	public void anOpenedBlocksTextStartsTwoPxInAndItsFirstLetterKeepsItsStroke() throws Exception
+	{
+		onEdt(() ->
+		{
+			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY);
+			leftClick(p);
+			p.setSize(p.getPreferredSize());
+			p.doLayout();
+			final JLabel block = detail(p);
+			assertEquals("the row's text column and the block share one left edge", face(p).getX(), block.getX());
+			assertEquals("the block's text starts 2 px inside it", 2, block.getInsets().left);
+			assertEquals("...and the top gap did not move", 4, block.getInsets().top);
+			assertEquals("the block is as wide as the face's box", MovementRowPanel.INNER_WIDTH, block.getWidth());
+
+			final int leftmost = firstInkColumn(block);
+			// The reference: the same text with 8 px of air, where nothing can be cut. Its first ink shows how far the
+			// glyph reaches left of its origin (the W's slanted stroke reaches one px), so the real block's ink must
+			// sit exactly 6 px nearer the edge - all of the stroke drawn, none of it at a negative x.
+			final JLabel reference = new JLabel(block.getText());
+			reference.setFont(block.getFont());
+			reference.setForeground(block.getForeground());
+			reference.setVerticalAlignment(SwingConstants.TOP);
+			reference.setBorder(new javax.swing.border.EmptyBorder(4, 8, 0, 0));
+			reference.setSize(block.getWidth(), block.getHeight());
+			assertEquals("the whole of the first letter is inside the label", firstInkColumn(reference) - 6, leftmost);
+			assertTrue("and it does not touch the label's own edge at x = 0, first ink at " + leftmost, leftmost >= 1);
+		});
+	}
+
+	private static int firstInkColumn(JLabel label)
+	{
+		final BufferedImage img = new BufferedImage(label.getWidth(), label.getHeight(), BufferedImage.TYPE_INT_RGB);
+		final java.awt.Graphics2D g = img.createGraphics();
+		g.setColor(Color.BLACK);
+		g.fillRect(0, 0, img.getWidth(), img.getHeight());
+		label.paint(g);
+		g.dispose();
+		for (int x = 0; x < img.getWidth(); x++)
+		{
+			for (int y = 0; y < img.getHeight(); y++)
+			{
+				final int rgb = img.getRGB(x, y);
+				if (((rgb >> 16) & 0xFF) + ((rgb >> 8) & 0xFF) + (rgb & 0xFF) > 60)
+				{
+					return x;
+				}
+			}
+		}
+		return -1;
 	}
 }

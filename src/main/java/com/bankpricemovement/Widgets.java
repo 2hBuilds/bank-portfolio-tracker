@@ -22,6 +22,7 @@ import java.awt.geom.Line2D;
 import java.awt.geom.Path2D;
 import java.awt.geom.Rectangle2D;
 import java.awt.image.BufferedImage;
+import java.util.function.IntConsumer;
 import javax.annotation.Nullable;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
@@ -162,6 +163,9 @@ final class Widgets
 
 	/** Where {@link #chip} records whether a chip is lit, so {@link #isLit} and the hover can read it back. */
 	private static final String KEY_LIT = "bpm.chip.lit";
+
+	/** Where {@link #chip(JLabel, boolean, boolean)} records a DIMMED chip (addendum AU), for the hover to return to. */
+	private static final String KEY_DIM = "bpm.chip.dim";
 
 	/** Where {@link #linkLabel} records the colour to return to when the mouse leaves. */
 	private static final String KEY_LINK_BASE = "bpm.link.base";
@@ -562,16 +566,35 @@ final class Widgets
 	 */
 	static void chip(JLabel label, boolean lit)
 	{
-		final Color colour = lit ? ColorScheme.BRAND_ORANGE : ColorScheme.LIGHT_GRAY_COLOR;
+		chip(label, lit, false);
+	}
+
+	/**
+	 * {@link #chip(JLabel, boolean)} with the third state addendum AU gives a window chip on the History view's card
+	 * (plan 7.2 item 5, contract amendment 9.6): DIMMED - a window with no reading old enough behind it - drawn in
+	 * {@link ColorScheme#MEDIUM_GRAY_COLOR}, the grey the mock called "a chip with no history behind it", in the
+	 * unlit face and with the unlit border, so dimming a chip never moves the strip either.
+	 *
+	 * <p>A dimmed chip is still a chip: it answers a press like any unlit one ({@link #segment} gates on
+	 * {@link #isLit} alone) and the mouse still lights its text orange. LIT wins over dimmed - the window the reader
+	 * chose stays the orange one, and the card's footnote says when it fills.
+	 */
+	static void chip(JLabel label, boolean lit, boolean dim)
+	{
+		final boolean dimmed = dim && !lit;
+		final Color colour = lit ? ColorScheme.BRAND_ORANGE : dimmed ? ColorScheme.MEDIUM_GRAY_COLOR
+			: ColorScheme.LIGHT_GRAY_COLOR;
 		// Already painted exactly this way: setFont and setBorder each fire a property change and invalidate the
 		// label, and renderChips repaints all nine cells on every publish. The foreground is part of the test
 		// because hoverChip paints an UNLIT cell orange without changing what is recorded here - a repaint under
 		// the mouse must still put the resting colour back, as it always did.
-		if (Boolean.valueOf(lit).equals(label.getClientProperty(KEY_LIT)) && colour.equals(label.getForeground()))
+		if (Boolean.valueOf(lit).equals(label.getClientProperty(KEY_LIT)) && dimmed == isDim(label)
+			&& colour.equals(label.getForeground()))
 		{
 			return;
 		}
 		label.putClientProperty(KEY_LIT, lit);
+		label.putClientProperty(KEY_DIM, dimmed);
 		label.setOpaque(false);
 		label.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		label.setForeground(colour);
@@ -601,7 +624,204 @@ final class Widgets
 		{
 			return;
 		}
-		label.setForeground(entered ? ColorScheme.BRAND_ORANGE : ColorScheme.LIGHT_GRAY_COLOR);
+		// A dimmed chip (AU) goes back to its own grey when the mouse leaves, not to the unlit one.
+		label.setForeground(entered ? ColorScheme.BRAND_ORANGE
+			: isDim(label) ? ColorScheme.MEDIUM_GRAY_COLOR : ColorScheme.LIGHT_GRAY_COLOR);
+	}
+
+	/** Whether {@link #chip(JLabel, boolean, boolean)} last drew {@code label} dimmed (AU); never while it is lit. */
+	static boolean isDim(JLabel label)
+	{
+		final Object dim = label.getClientProperty(KEY_DIM);
+		return dim instanceof Boolean && (Boolean) dim;
+	}
+
+	// ------------------------------------------------ addendum AU: the Items | Net Worth History toggle
+
+	/**
+	 * The toggle's height, in px, its 1 px border included - the mock's segmented box (plan 7.2 item 12,
+	 * {@code mock-items-toggle-2x.png}): room for a face of up to {@link #TOGGLE_TEXT_MAX} px with air above and below it.
+	 */
+	static final int TOGGLE_HEIGHT = 20;
+
+	/**
+	 * The least air, in px, left and right of a half's word, lit or unlit (2026-09-29: the user asked for larger tab
+	 * names, so the words take the strip's largest size wherever they fit, and they are never cut).
+	 */
+	static final int TOGGLE_AIR = 2;
+
+	/**
+	 * The largest size, in px, the toggle's words are ever set in - the strip's first face, which "Items" and "Net worth"
+	 * fit at 213 px but "Net Worth History" does not.
+	 */
+	static final int TOGGLE_TEXT_MAX = 12;
+
+	/** The smallest size the toggle's words are ever set in, so a box far narrower than the sidebar still ends. */
+	private static final int TOGGLE_TEXT_MIN = 6;
+
+	/**
+	 * Two halves side by side in one bordered box, the LIT half filled {@link ColorScheme#BRAND_ORANGE} with its word
+	 * in dark bold and the other the card grey with its word in light grey (addendum AU, plan 7.2 items 1 and 12) -
+	 * deliberately unlike the underlined chips on the card above it, because it switches what the whole sidebar is
+	 * showing rather than a figure on it.
+	 *
+	 * <p>It behaves like a {@link #segment}: a LEFT press ({@link #isPress}) on the UNLIT half runs {@code onPress}
+	 * with that half's index, and a press on the lit half does nothing - it is already the answer. It carries NO hover
+	 * text (the contract's ruling 9.7: no hover is invented for it), and the mouse over the unlit half lights its word
+	 * orange as it does on a chip.
+	 *
+	 * <p>Nothing here decides which half is lit: the caller says so through {@link Toggle#setLit}, from its own state,
+	 * so the toggle can never show one view while the sidebar shows the other.
+	 *
+	 * @param onPress run with 0 or 1 on a left press of the unlit half; may be null for a toggle that is only a light
+	 */
+	static Toggle toggle(String first, String second, @Nullable IntConsumer onPress)
+	{
+		return new Toggle(first, second, onPress);
+	}
+
+	/**
+	 * The box {@link #toggle} builds: two opaque labels of EQUAL width in a 1 px {@link ColorScheme#MEDIUM_GRAY_COLOR}
+	 * frame, both words in the one size {@link Toggle#doLayout} fits them to.
+	 */
+	static final class Toggle extends JPanel
+	{
+		private final JLabel[] halves = new JLabel[2];
+		/** Which half is lit: 0, 1, or -1 before the caller first says. */
+		private int lit = -1;
+		/** The size both words are set in; {@link #doLayout} fits it to the halves. */
+		private int textSize = TOGGLE_TEXT_MAX;
+		private Font litFont = sansBold(TOGGLE_TEXT_MAX);
+		private Font unlitFont = sans(TOGGLE_TEXT_MAX);
+
+		private Toggle(String first, String second, @Nullable IntConsumer onPress)
+		{
+			super(null);
+			setBorder(new MatteBorder(1, 1, 1, 1, ColorScheme.MEDIUM_GRAY_COLOR));
+			setBackground(ColorScheme.DARKER_GRAY_COLOR);
+			final String[] words = {first, second};
+			for (int i = 0; i < halves.length; i++)
+			{
+				final int index = i;
+				final JLabel half = new JLabel(words[i] == null ? "" : words[i]);
+				half.setHorizontalAlignment(SwingConstants.CENTER);
+				half.setVerticalAlignment(SwingConstants.CENTER);
+				half.setOpaque(true);
+				half.addMouseListener(new MouseAdapter()
+				{
+					@Override
+					public void mousePressed(MouseEvent e)
+					{
+						if (onPress != null && isPress(e) && !isLit(index))
+						{
+							onPress.accept(index);
+						}
+					}
+
+					@Override
+					public void mouseEntered(MouseEvent e)
+					{
+						if (!isLit(index))
+						{
+							half.setForeground(ColorScheme.BRAND_ORANGE);
+						}
+					}
+
+					@Override
+					public void mouseExited(MouseEvent e)
+					{
+						paintHalf(index);
+					}
+				});
+				halves[i] = half;
+				add(half);
+			}
+			fixed(this, CONTENT_WIDTH, TOGGLE_HEIGHT);
+			setLit(0);
+		}
+
+		/** Lights half {@code index} (0 or 1) and unlights the other; the same half again repaints nothing. */
+		void setLit(int index)
+		{
+			final int want = index == 1 ? 1 : 0;
+			if (want == lit)
+			{
+				return;
+			}
+			lit = want;
+			for (int i = 0; i < halves.length; i++)
+			{
+				paintHalf(i);
+			}
+		}
+
+		/**
+		 * THE one rule for the toggle's halves and its words (2026-09-29, the user choosing look b from pictures,
+		 * "equal halves, smaller text"): the two halves are EQUAL - the second takes the odd pixel - and both words
+		 * are set in ONE size, the largest whole size up to {@link #TOGGLE_TEXT_MAX} at which each word, measured in the
+		 * bold lit face and the plain one and the wider taken, fits its half with {@link #TOGGLE_AIR} px on each side. So
+		 * "Net Worth History" in bold decides it, and neither half nor size moves when the light changes sides.
+		 */
+		@Override
+		public void doLayout()
+		{
+			final Insets in = getInsets();
+			final int inner = getWidth() - in.left - in.right;
+			final int height = getHeight() - in.top - in.bottom;
+			final int first = inner / 2;
+			final int[] widths = {first, inner - first};
+			int size = TOGGLE_TEXT_MAX;
+			while (size > TOGGLE_TEXT_MIN && !fits(size, widths))
+			{
+				size--;
+			}
+			if (size != textSize)
+			{
+				textSize = size;
+				litFont = sansBold(size);
+				unlitFont = sans(size);
+				for (int i = 0; i < halves.length; i++)
+				{
+					paintHalf(i);
+				}
+			}
+			halves[0].setBounds(in.left, in.top, widths[0], height);
+			halves[1].setBounds(in.left + widths[0], in.top, widths[1], height);
+		}
+
+		/** Whether both words, at {@code size} in the wider of their two faces, keep {@link #TOGGLE_AIR} a side. */
+		private boolean fits(int size, int[] widths)
+		{
+			final FontMetrics bold = getFontMetrics(sansBold(size));
+			final FontMetrics plain = getFontMetrics(sans(size));
+			for (int i = 0; i < halves.length; i++)
+			{
+				final String word = halves[i].getText();
+				final int text = Math.max(bold.stringWidth(word), plain.stringWidth(word));
+				if (text + 2 * TOGGLE_AIR > widths[i])
+				{
+					return false;
+				}
+			}
+			return true;
+		}
+
+		/** Whether half {@code index} is the lit one - the press gate: pressing the answer changes nothing. */
+		boolean isLit(int index)
+		{
+			return index == lit;
+		}
+
+		private void paintHalf(int index)
+		{
+			final JLabel half = halves[index];
+			final boolean on = isLit(index);
+			half.setBackground(on ? ColorScheme.BRAND_ORANGE : ColorScheme.DARKER_GRAY_COLOR);
+			half.setForeground(on ? ColorScheme.DARKER_GRAY_COLOR : ColorScheme.LIGHT_GRAY_COLOR);
+			half.setFont(on ? litFont : unlitFont);
+			// A hand only where a press does something.
+			half.setCursor(on ? Cursor.getDefaultCursor() : Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+		}
 	}
 
 	/**

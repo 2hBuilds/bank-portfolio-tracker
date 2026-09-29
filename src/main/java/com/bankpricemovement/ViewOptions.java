@@ -7,7 +7,8 @@ import java.util.Objects;
  * The five view switches, carried as one immutable value the way {@link HeroVisibility} carries the card's three
  * figures: the two addendum Q still has - whether coins and platinum tokens count in the bank value
  * ({@code countCash}, config item {@code countCash}, default on) and whether untradeable stacks are listed and
- * counted at their High Alchemy value ({@code countUntradeables}, default off) - addendum T's, whether an actively
+ * counted at their High Alchemy value when they have no tradeable parts ({@code countUntradeables}, default off;
+ * narrowed by addendum AV) - addendum T's, whether an actively
  * traded item is priced from the wiki's live traded series ({@code livePrices}, default ON) - addendum Y's,
  * whether the stacks the player is CARRYING and WEARING are counted and listed beside the bank's
  * ({@code countInventory}, default ON) - and addendum AH's, whether the sidebar's DATA hovers are shown at all

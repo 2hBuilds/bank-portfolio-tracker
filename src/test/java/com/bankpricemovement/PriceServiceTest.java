@@ -27,6 +27,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayDeque;
@@ -85,15 +86,15 @@ public class PriceServiceTest
 	// ---------------------------------------------------------------- the items
 
 	private static final int GREEN_HAT = 658;
-	private static final int WHIP = 4151;
+	static final int WHIP = 4151;
 	private static final int SHARK = 385;
 	private static final int BONES = 526;
 	/** "Varrock teleport" by composition; the wiki names it "Varrock teleport (tablet)" (calibration doc: the 29 misses). */
 	private static final int TABLET = 8007;
 	/** "Mystery box" - priced by RuneLite, named by no table and no mapping. */
-	private static final int BOX = 6199;
+	static final int BOX = 6199;
 	/** The unbaited vessel: the mapping's owner of the name "Karambwan vessel". */
-	private static final int VESSEL = 3157;
+	static final int VESSEL = 3157;
 	/**
 	 * The baited vessel (L-F: id 3159, in the user's own bank): its composition name is "Karambwan vessel", the
 	 * UNBAITED item's wiki name, and the mapping in this fixture does not list 3159 - so the L8 b fallback must
@@ -108,15 +109,15 @@ public class PriceServiceTest
 	 * L-F's own example, id 11980: {@code ItemMapping} folds it onto the plain Ring of wealth (2572), so
 	 * {@code ItemManager} answers 2572's price for it. It is in the user's captured bank.
 	 */
-	private static final int RING_OF_WEALTH_5 = 11_980;
+	static final int RING_OF_WEALTH_5 = 11_980;
 	/** Both Crystal 2h axe ids are mapped, and the guide table has no key for either (B001). */
 	private static final int CRYSTAL_2H_AXE = 28_220;
 	private static final String RING_NAME = "Ring of wealth (5)";
-	private static final long RING_GP = 13_260L;
+	static final long RING_GP = 13_260L;
 
-	private static final long ACCOUNT = 0x1234_5678_9abcL;
-	private static final long OTHER_ACCOUNT = 0x9999L;
-	private static final String PROFILE = "STANDARD";
+	static final long ACCOUNT = 0x1234_5678_9abcL;
+	static final long OTHER_ACCOUNT = 0x9999L;
+	static final String PROFILE = "STANDARD";
 	/** The bank's cash for the P1 tests - 200,000,000 gp, the figure the addendum's {@code bank=} example stages. */
 	private static final long CURRENCY = 200_000_000L;
 	private static final long SECOND = 1_000L;
@@ -140,12 +141,12 @@ public class PriceServiceTest
 	private static final LocalDate SEP_4 = LocalDate.of(2026, 9, 4);
 	private static final LocalDate SEP_5 = LocalDate.of(2026, 9, 5);
 	private static final LocalDate SEP_6 = LocalDate.of(2026, 9, 6);
-	private static final LocalDate SEP_7 = LocalDate.of(2026, 9, 7);
+	static final LocalDate SEP_7 = LocalDate.of(2026, 9, 7);
 	private static final LocalDate SEP_8 = LocalDate.of(2026, 9, 8);
 	private static final LocalDate SEP_9 = LocalDate.of(2026, 9, 9);
 
 	/** 2026-09-08T20:20:00Z - the evening of the first live session, RuneLite and the wiki both on 08 Sep. */
-	private static final long T0 = utcMillis(SEP_8, 20, 20, 0);
+	static final long T0 = utcMillis(SEP_8, 20, 20, 0);
 
 	// ---------------------------------------------------------------- the recorded index (newest first)
 
@@ -182,13 +183,13 @@ public class PriceServiceTest
 
 	// ---------------------------------------------------------------- the seams (C27)
 
-	private final AtomicLong clock = new AtomicLong(T0);
-	private final DirectScheduler scheduler = new DirectScheduler();
-	private final FakeClientThread clientThread = new FakeClientThread();
+	final AtomicLong clock = new AtomicLong(T0);
+	final DirectScheduler scheduler = new DirectScheduler();
+	final FakeClientThread clientThread = new FakeClientThread();
 	private final RecordingEdt edt = new RecordingEdt();
 	private final GuidePriceClient wiki = mock(GuidePriceClient.class);
-	private final PriceStore store = mock(PriceStore.class);
-	private final ItemManager itemManager = mock(ItemManager.class);
+	final PriceStore store = mock(PriceStore.class);
+	final ItemManager itemManager = mock(ItemManager.class);
 
 	/** Every future the mocked client handed out, in call order; the test completes them. */
 	private final List<CompletableFuture<List<RevisionRef>>> indexFutures = new ArrayList<>();
@@ -220,7 +221,7 @@ public class PriceServiceTest
 	private final List<List<MovementRow>> publishedRows = new ArrayList<>();
 	private final List<PriceService.Status> publishedStatus = new ArrayList<>();
 
-	private PriceService service;
+	PriceService service;
 
 	@Before
 	public void setUp()
@@ -1894,10 +1895,10 @@ public class PriceServiceTest
 	// ---------------------------------------------------------------- addendum Q: the three view switches
 
 	/** Two stacks the Grand Exchange does not list, worth 1,500 and 500 gp to alch (Q5). */
-	private static final int DRAMEN = 772;
-	private static final int GRACEFUL = 11_850;
+	static final int DRAMEN = 772;
+	static final int GRACEFUL = 11_850;
 
-	private static BankSnapshot bankWithUntradeables(final long capturedAt)
+	static BankSnapshot bankWithUntradeables(final long capturedAt)
 	{
 		final BankSnapshot snapshot = bank(capturedAt);
 		snapshot.items.add(new BankItem(DRAMEN, 2, "Dramen staff", false, true, 1_500));
@@ -2099,18 +2100,18 @@ public class PriceServiceTest
 	 * Crystal armour seeds. The bank stacks carry the parts the READER records, so nothing here depends on the
 	 * mapping's own iteration order.
 	 */
-	private static final int CRYSTAL_BODY = 23_975;
-	private static final int ARMOUR_SEED = 23_956;
-	private static final String SEED_NAME = "Crystal armour seed";
+	static final int CRYSTAL_BODY = 23_975;
+	static final int ARMOUR_SEED = 23_956;
+	static final String SEED_NAME = "Crystal armour seed";
 	/** The seed's guide price on the anchor day 08 Sep, and on every earlier day in the fixture. */
-	private static final long SEED_NOW = 5_564_922L;
+	static final long SEED_NOW = 5_564_922L;
 	private static final long SEED_THEN = 5_500_000L;
 	/** A graceful hood reverts to 28 marks of grace - and a mark of grace is ITSELF an id ItemMapping rewrites. */
 	private static final int MARK_OF_GRACE = 11_849;
 	private static final String MARK_NAME = "Mark of grace";
 
 	/** The captured bank plus one Crystal body, marked untradeable and carrying its three seeds (R1). */
-	private static BankSnapshot bankWithCrystalBody(final long capturedAt)
+	static BankSnapshot bankWithCrystalBody(final long capturedAt)
 	{
 		final BankSnapshot snapshot = bank(capturedAt);
 		snapshot.items.add(new BankItem(CRYSTAL_BODY, 1, "Crystal body", false, true, 900_000,
@@ -2251,28 +2252,37 @@ public class PriceServiceTest
 	}
 
 	/**
-	 * The pin for "with the switch off nothing of this runs". The SAME captured bank - one that now carries a stack
-	 * with parts, because the reader records them whatever the switch says - must publish the identical rows, counts
-	 * and bank value as a bank that never held it, down to the last field of the summary.
+	 * Addendum AV, inverted from the R-era pin "with the switch off nothing of this runs": an untradeable stack
+	 * RuneLite maps onto tradeable parts is listed and counted at those parts' prices with "Include alch-only
+	 * untradeables" OFF - its default - exactly as with it on, because this fixture has no alch-only stack for the
+	 * switch to add. The seed is priced on the one client-thread trip; the row, the counts and the bank value are
+	 * the switch-on ones to the field.
 	 */
 	@Test
-	public void withUntradeablesOffAStackWithPartsChangesNothing()
+	public void withUntradeablesOffAStackWithPartsIsStillListedAndCounted()
 	{
 		nameTheSeed();
 		warmUpWith(bankWithCrystalBody(T0));
-		final List<MovementRow> withIt = lastRows();
-		final PriceService.Status statusWithIt = lastStatus();
+		final List<MovementRow> off = lastRows();
+		final PriceService.Status statusOff = lastStatus();
+		assertFalse("the default is off", statusOff.options().countUntradeables());
 
-		service.setBank(bank(T0 + 1L));
+		final MovementRow body = rowFor(off, CRYSTAL_BODY);
+		assertNotNull("the parts stack is a row with the switch off", body);
+		assertEquals(MovementRow.PriceSource.PARTS, body.source());
+		assertEquals(Long.valueOf(3L * SEED_NOW), body.unitPrice());
+		assertEquals(32, statusOff.bankItems());
+		assertEquals("6,290,824 + 3 x 5,564,922", 6_290_824L + 3L * SEED_NOW, statusOff.portfolio().valueNow());
+		assertEquals(31, statusOff.portfolio().itemsPriced());
+		assertEquals(32, statusOff.portfolio().itemsTotal());
+		verify(itemManager, atLeastOnce()).getItemPriceWithSource(ARMOUR_SEED, false);
 
-		assertEquals("the same rows, in the same order", withIt, lastRows());
-		assertEquals(statusWithIt.portfolio(), lastStatus().portfolio());
-		assertEquals(statusWithIt.totalRows(), lastStatus().totalRows());
-		assertEquals("and the same stack count", statusWithIt.bankItems(), lastStatus().bankItems());
-		assertEquals(31, statusWithIt.bankItems());
-		assertEquals(6_290_824L, statusWithIt.portfolio().valueNow());
-		assertNull("no row of any kind was drawn for it", rowFor(withIt, CRYSTAL_BODY));
-		verify(itemManager, never()).getItemPriceWithSource(ARMOUR_SEED, false);
+		service.setOptions(ViewOptions.DEFAULT.withCountUntradeables(true));
+
+		assertEquals("the same rows, in the same order, as with the switch on", off, lastRows());
+		assertEquals(statusOff.portfolio(), lastStatus().portfolio());
+		assertEquals(statusOff.totalRows(), lastStatus().totalRows());
+		assertEquals("and the same stack count", statusOff.bankItems(), lastStatus().bankItems());
 	}
 
 	// ---------------------------------------------------------------- the client-thread hop and superseded work
@@ -2666,7 +2676,7 @@ public class PriceServiceTest
 	}
 
 	/** 07 Sep's traded bucket: the whip is liquid, the hat traded eight units all day. */
-	private static Map<Integer, TradedPriceClient.Bucket> tradedSep7()
+	static Map<Integer, TradedPriceClient.Bucket> tradedSep7()
 	{
 		final Map<Integer, TradedPriceClient.Bucket> buckets = new LinkedHashMap<>();
 		buckets.put(WHIP, new TradedPriceClient.Bucket(820_000L, 300L, 800_000L, 200L));
@@ -4108,7 +4118,7 @@ public class PriceServiceTest
 	 *
 	 * @param carriedGp the coins and platinum tokens in hand
 	 */
-	private static BankReader.Carried carried(final long carriedGp)
+	static BankReader.Carried carried(final long carriedGp)
 	{
 		return new BankReader.Carried(
 			Arrays.asList(new BankItem(item(3), 1, "Item 3", true)),
@@ -4117,7 +4127,7 @@ public class PriceServiceTest
 	}
 
 	/** The captured bank with that carried half hung on it, exactly as the plugin's bank-event pass publishes it. */
-	private static BankSnapshot bankWithCarried(final long capturedAt, final long carriedGp)
+	static BankSnapshot bankWithCarried(final long capturedAt, final long carriedGp)
 	{
 		return bank(capturedAt).withCarried(carried(carriedGp));
 	}
@@ -4346,7 +4356,7 @@ public class PriceServiceTest
 	}
 
 	/** Rebuilds {@link #service} WITH the traded client and re-registers the listener. */
-	private void liveService()
+	void liveService()
 	{
 		service = new PriceService(wiki, store, itemManager, clientThread, scheduler, clock::get, edt, traded);
 		listen();
@@ -4391,6 +4401,26 @@ public class PriceServiceTest
 		answerTables(); // the windows
 	}
 
+	/**
+	 * {@link #warmUpLive()} against a bank of the test's own making, with {@code extra} quotes in the
+	 * {@code /latest} snapshot beside {@link #latestQuotes()}'s (addendum AV's live parts test).
+	 */
+	void warmUpLiveWith(final BankSnapshot snapshot, final Map<Integer, TradedPriceClient.Quote> extra)
+	{
+		liveService();
+		service.start();
+		final Map<Integer, TradedPriceClient.Quote> quotes = new LinkedHashMap<>(latestQuotes());
+		quotes.putAll(extra);
+		answerLatest(quotes);
+		service.setBank(snapshot);
+		service.setLoggedIn(true, ACCOUNT, PROFILE);
+		service.setVisible(true);
+		fireTick();
+		answerIndex();
+		answerTables(); // R0
+		answerTables(); // the windows
+	}
+
 	/** Everything the two services share, so the second run starts where the first one did. */
 	private void resetFixture()
 	{
@@ -4412,7 +4442,7 @@ public class PriceServiceTest
 	 * that no longer existed - which is what decision 3 made of the warm-up tick's own request - and pass for the
 	 * wrong reason.
 	 */
-	private void answerLatest(final Map<Integer, TradedPriceClient.Quote> quotes)
+	void answerLatest(final Map<Integer, TradedPriceClient.Quote> quotes)
 	{
 		latestOut().complete(quotes);
 	}
@@ -4448,7 +4478,7 @@ public class PriceServiceTest
 	}
 
 	/** Completes the request for one DAY, wherever it sits in the call order. */
-	private void answerDay(final LocalDate day, final Map<Integer, TradedPriceClient.Bucket> buckets)
+	void answerDay(final LocalDate day, final Map<Integer, TradedPriceClient.Bucket> buckets)
 	{
 		final int at = dayRequests.indexOf(day);
 		assertTrue("no bucket request is out for " + day + " (asked: " + dayRequests + ")", at >= 0);
@@ -4485,7 +4515,7 @@ public class PriceServiceTest
 	}
 
 	/** {@link #warmUp()} against a bank of the test's own making. */
-	private void warmUpWith(final BankSnapshot snapshot)
+	void warmUpWith(final BankSnapshot snapshot)
 	{
 		service.start();
 		service.setBank(snapshot);
@@ -4501,23 +4531,59 @@ public class PriceServiceTest
 	 * Teaches the mapping and every revision body one extra name at a fixed price, for an id RuneLite would
 	 * answer another item's price for (B001).
 	 */
-	private void nameTheRing()
+	void nameTheRing()
 	{
-		final Map<Integer, String> names = new LinkedHashMap<>(mappingTable());
-		names.put(RING_OF_WEALTH_5, RING_NAME);
-		when(store.loadMapping()).thenReturn(storedMapping(names, T0 - DAY));
+		teach(RING_OF_WEALTH_5, RING_NAME, RING_GP, RING_GP);
+	}
+
+	/**
+	 * The names taught so far, on top of {@link #mappingTable()} - so that teaching a second id (the ring AND the seed,
+	 * addendum AU's invariant fixture) keeps the first instead of replacing it. Empty until the first lesson.
+	 */
+	private final Map<Integer, String> taughtNames = new LinkedHashMap<>();
+
+	/**
+	 * Teaches the mapping and every revision body one more name: {@code now} on the anchor day 08 Sep and
+	 * {@code earlier} on every other day, ON TOP of whatever was taught before.
+	 */
+	private void teach(final int id, final String name, final long now, final long earlier)
+	{
+		if (taughtNames.isEmpty())
+		{
+			taughtNames.putAll(mappingTable());
+		}
+		taughtNames.put(id, name);
+		when(store.loadMapping()).thenReturn(storedMapping(new LinkedHashMap<>(taughtNames), T0 - DAY));
 		for (final RevisionRef ref : HISTORY)
 		{
 			final LocalDate day = RevisionRef.dayOf(dataSecondsFor(ref));
-			final Map<String, Long> table = new LinkedHashMap<>(prices(day));
-			table.put(RING_NAME, RING_GP);
+			final GuideSnapshot taught = bodyOverrides.get(ref.revId());
+			final Map<String, Long> table = new LinkedHashMap<>(taught == null ? prices(day) : taught.pricesByName());
+			table.put(name, day.equals(SEP_8) ? now : earlier);
 			bodyOverrides.put(ref.revId(), new GuideSnapshot(ref.revId(), ref.editSeconds(), dataSecondsFor(ref),
 				clock.get(), table));
 		}
 	}
 
+	/** RuneLite's guide price for one id from here on (addendum AU: a price that moves while nothing else does). */
+	void runelitePrice(final int id, final int gp)
+	{
+		runelite.put(id, gp);
+	}
+
+	/**
+	 * Rebuilds {@link #service} in a FIXED time zone (addendum AU: a reading's local day) and re-registers the
+	 * listener; with {@code live} it carries the traded client, as {@link #liveService()} does.
+	 */
+	void zonedService(final ZoneId zone, final boolean live)
+	{
+		service = new PriceService(wiki, store, itemManager, clientThread, scheduler, clock::get, edt,
+			live ? traded : null, zone);
+		listen();
+	}
+
 	/** {@link #teachEveryTable} for the crystal armour seed, the part of the addendum R examples. */
-	private void nameTheSeed()
+	void nameTheSeed()
 	{
 		teachEveryTable(ARMOUR_SEED, SEED_NAME, SEED_NOW, SEED_THEN);
 	}
@@ -4530,17 +4596,7 @@ public class PriceServiceTest
 	 */
 	private void teachEveryTable(final int id, final String name, final long now, final long earlier)
 	{
-		final Map<Integer, String> names = new LinkedHashMap<>(mappingTable());
-		names.put(id, name);
-		when(store.loadMapping()).thenReturn(storedMapping(names, T0 - DAY));
-		for (final RevisionRef ref : HISTORY)
-		{
-			final LocalDate day = RevisionRef.dayOf(dataSecondsFor(ref));
-			final Map<String, Long> table = new LinkedHashMap<>(prices(day));
-			table.put(name, day.equals(SEP_8) ? now : earlier);
-			bodyOverrides.put(ref.revId(), new GuideSnapshot(ref.revId(), ref.editSeconds(), dataSecondsFor(ref),
-				clock.get(), table));
-		}
+		teach(id, name, now, earlier);
 		runelite.put(id, (int) now);
 	}
 
@@ -4557,7 +4613,7 @@ public class PriceServiceTest
 		throw new AssertionError("no live one-shot task scheduled " + delayMs + " ms out");
 	}
 
-	private void fireTick()
+	void fireTick()
 	{
 		scheduler.timerWithPeriod(PriceService.TICK_MS).fire();
 	}
@@ -4769,17 +4825,17 @@ public class PriceServiceTest
 		return new PriceStore.Stamped<>(index, fetchedAtMillis);
 	}
 
-	private static int item(final int n)
+	static int item(final int n)
 	{
 		return ITEM_BASE + n;
 	}
 
-	private static BankSnapshot bank(final long capturedAt)
+	static BankSnapshot bank(final long capturedAt)
 	{
 		return bank(capturedAt, ACCOUNT);
 	}
 
-	private static BankSnapshot bank(final long capturedAt, final long account)
+	static BankSnapshot bank(final long capturedAt, final long account)
 	{
 		final List<BankItem> items = new ArrayList<>();
 		for (int n = 1; n <= ITEMS; n++)
@@ -4826,19 +4882,19 @@ public class PriceServiceTest
 		return composition;
 	}
 
-	private PriceService.Status lastStatus()
+	PriceService.Status lastStatus()
 	{
 		assertFalse("nothing was published", publishedStatus.isEmpty());
 		return publishedStatus.get(publishedStatus.size() - 1);
 	}
 
-	private List<MovementRow> lastRows()
+	List<MovementRow> lastRows()
 	{
 		assertFalse("nothing was published", publishedRows.isEmpty());
 		return publishedRows.get(publishedRows.size() - 1);
 	}
 
-	private static MovementRow rowFor(final List<MovementRow> rows, final int id)
+	static MovementRow rowFor(final List<MovementRow> rows, final int id)
 	{
 		for (final MovementRow row : rows)
 		{

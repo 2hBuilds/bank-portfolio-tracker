@@ -11,8 +11,9 @@ import static org.junit.Assert.assertTrue;
 /**
  * {@link BankPriceMovementPanel.Prefs} - the seam between the sidebar and where its choices are kept (contract
  * C28; the hero pair is addendum O line O2, the options pair addendum Q line Q3, the presets pair addendum Z
- * line Z1 and the fold pair addendum AA line AA1,
- * {@code docs/bank-price-movement-addendum-AA-2026-09-13.md}).
+ * line Z1, the fold pair addendum AA line AA1,
+ * {@code docs/bank-price-movement-addendum-AA-2026-09-13.md}, and the view pair addendum AU, the phase-0 contract's
+ * amendment 9.15).
  *
  * <p>Only the FILTER pair is abstract. Every pair added since has a default, so a caller with nothing to
  * remember - the headless renderer, a throwaway test seam - need not care, and the panel draws exactly what it
@@ -52,6 +53,7 @@ public class PrefsTest
 		assertNull("Q3/T1/Y1: no stored view switches", prefs.loadOptions());
 		assertNull("Z1: no stored price presets", prefs.loadPresets());
 		assertNull("AA1: no stored fold state", prefs.loadFoldOpen());
+		assertNull("AU: no stored start tab", prefs.loadStartTab());
 	}
 
 	/**
@@ -77,6 +79,7 @@ public class PrefsTest
 		prefs.savePresets(BandPresets.DEFAULT);
 		prefs.saveFoldOpen(false);
 		prefs.saveFoldOpen(true);
+		prefs.saveStartTab(SidebarView.HISTORY);
 		assertTrue("the defaults write nothing anywhere", prefs.saved.isEmpty());
 
 		prefs.save(RowFilter.DEFAULT);

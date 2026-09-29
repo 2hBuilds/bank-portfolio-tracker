@@ -963,6 +963,125 @@ public class WidgetsTest
 		assertGlyph(Widgets.triangle(false), 7, 7);
 	}
 
+	// ---------------------------------------------------------------- the toggle: equal halves, smaller text (2026-09-29)
+
+	/**
+	 * The second live look (2026-09-29, the user choosing look b, "equal halves, smaller text": "I prefer whats in the
+	 * image"): laid out at the sidebar's 213 px and at 230, in both states, the two halves are EQUAL (the second takes
+	 * the odd pixel) and fill the box; both words are set in ONE size, pinned here per width; that size is the LARGEST
+	 * whole size at which the bold "Net Worth History" keeps {@link Widgets#TOGGLE_AIR} px a side in its half - one size
+	 * more and it would not; the lit half is bold and the unlit plain; each word has at least 2 px of air on each side
+	 * of it; and Swing's own label layout prints each word whole.
+	 */
+	@Test
+	public void theToggleHasEqualHalvesAndOneFittedSizeInEitherState() throws Exception
+	{
+		onEdt(() ->
+		{
+			assertEquals(2, Widgets.TOGGLE_AIR);
+			assertEquals(12, Widgets.TOGGLE_TEXT_MAX);
+			final int[][] widthAndSize = {{Widgets.CONTENT_WIDTH, 12}, {223, 12}, {230, 12}};
+			for (int[] pair : widthAndSize)
+			{
+				final int width = pair[0];
+				final Widgets.Toggle toggle = Widgets.toggle(SidebarView.ITEMS.toString(),
+					SidebarView.HISTORY.toString(), null);
+				assertEquals("Net Worth History", ((JLabel) toggle.getComponent(1)).getText());
+				toggle.setSize(width, Widgets.TOGGLE_HEIGHT);
+				for (int lit = 0; lit < 2; lit++)
+				{
+					toggle.setLit(lit);
+					toggle.doLayout();
+					final JLabel items = (JLabel) toggle.getComponent(0);
+					final JLabel tracker = (JLabel) toggle.getComponent(1);
+					final String at = "at " + width + ", lit " + lit;
+					final int inner = width - 2;
+					assertEquals(at + ": the box's border", 1, items.getX());
+					assertEquals(at + ": side by side", items.getX() + items.getWidth(), tracker.getX());
+					assertEquals(at + ": the two fill the box", width - 1, tracker.getX() + tracker.getWidth());
+					assertEquals(at + ": equal halves", inner / 2, items.getWidth());
+					assertEquals(at + ": the second takes the odd pixel", inner - inner / 2, tracker.getWidth());
+					assertEquals(at + ": the height inside the frame", Widgets.TOGGLE_HEIGHT - 2, items.getHeight());
+
+					final int size = items.getFont().getSize();
+					assertEquals(at + ": the size", pair[1], size);
+					assertEquals(at + ": one size for both words", size, tracker.getFont().getSize());
+					assertEquals(at + ": the lit half is bold", lit == 0, items.getFont().isBold());
+					assertEquals(at + ": the unlit half is plain", lit == 1, tracker.getFont().isBold());
+					if (size < Widgets.TOGGLE_TEXT_MAX)
+					{
+						final int larger = tracker.getFontMetrics(Widgets.sansBold(size + 1))
+							.stringWidth(tracker.getText());
+						assertTrue(at + ": the size is the largest that fits - at " + (size + 1) + " the bold word is "
+							+ larger + " px in " + tracker.getWidth(),
+							larger + 2 * Widgets.TOGGLE_AIR > tracker.getWidth());
+					}
+					for (JLabel half : new JLabel[]{items, tracker})
+					{
+						final String word = half.getText();
+						// The bold face whichever half is lit: the air holds in the wider of the word's two faces.
+						final int bold = half.getFontMetrics(Widgets.sansBold(size)).stringWidth(word);
+						final int text = half.getFontMetrics(half.getFont()).stringWidth(word);
+						assertTrue(at + ": '" + word + "' is widest bold", bold >= text);
+						for (int shown : new int[]{text, bold})
+						{
+							final int left = (half.getWidth() - shown) / 2;
+							final int right = half.getWidth() - shown - left;
+							final String what = at + ", '" + word + "' " + shown + " px in " + half.getWidth();
+							assertTrue(what + ": air left " + left, left >= Widgets.TOGGLE_AIR);
+							assertTrue(what + ": air right " + right, right >= Widgets.TOGGLE_AIR);
+						}
+						final java.awt.Rectangle icon = new java.awt.Rectangle();
+						final java.awt.Rectangle textRect = new java.awt.Rectangle();
+						final String laid = SwingUtilities.layoutCompoundLabel(half,
+							half.getFontMetrics(half.getFont()), word, null, half.getVerticalAlignment(),
+							half.getHorizontalAlignment(), half.getVerticalTextPosition(),
+							half.getHorizontalTextPosition(),
+							new java.awt.Rectangle(0, 0, half.getWidth(), half.getHeight()), icon, textRect,
+							half.getIconTextGap());
+						assertEquals(at + ", '" + word + "': never cut", word, laid);
+						// The ink, painted: whole inside the half's rows, and (the long word, with its ascender and
+						// its descender) centred as the 10 px word was (Swing centres the font box, so the ink sits 3 px high).
+						final BufferedImage ink = new BufferedImage(half.getWidth(), half.getHeight(),
+							BufferedImage.TYPE_INT_ARGB);
+						final java.awt.Graphics2D g = ink.createGraphics();
+						half.paint(g);
+						g.dispose();
+						int top = -1;
+						int bottom = -1;
+						for (int y = 0; y < ink.getHeight(); y++)
+						{
+							for (int x = 0; x < ink.getWidth(); x++)
+							{
+								if (ink.getRGB(x, y) != ink.getRGB(0, 0))
+								{
+									top = top < 0 ? y : top;
+									bottom = y;
+									break;
+								}
+							}
+						}
+						assertTrue(at + ", '" + word + "': some ink", top >= 0);
+						assertTrue(at + ", '" + word + "': ink whole inside the strip, top " + top, top >= 1);
+						assertTrue(at + ", '" + word + "': ink whole inside the strip, bottom " + bottom,
+							bottom <= half.getHeight() - 2);
+						if (half == tracker)
+						{
+							final int above = top;
+							final int below = half.getHeight() - 1 - bottom;
+							assertTrue(at + ": centred, " + above + " above and " + below + " below",
+								Math.abs(above - below) <= 3);
+						}
+						assertTrue(at + ", '" + word + "': drawn inside its half, left",
+							textRect.x >= Widgets.TOGGLE_AIR);
+						assertTrue(at + ", '" + word + "': drawn inside its half, right",
+							textRect.x + textRect.width <= half.getWidth() - Widgets.TOGGLE_AIR);
+					}
+				}
+			}
+		});
+	}
+
 	// ---------------------------------------------------------------- the older members are untouched
 
 	@Test

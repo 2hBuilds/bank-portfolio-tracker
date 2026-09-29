@@ -9,6 +9,7 @@ import java.awt.Component;
 import java.awt.Container;
 import java.awt.Cursor;
 import java.awt.FlowLayout;
+import java.awt.FontMetrics;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.GridLayout;
@@ -31,6 +32,7 @@ import java.util.Collections;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -41,6 +43,7 @@ import java.util.function.LongSupplier;
 import javax.annotation.Nullable;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
+import javax.swing.ButtonGroup;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JCheckBoxMenuItem;
@@ -49,6 +52,7 @@ import javax.swing.JLabel;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
+import javax.swing.JRadioButtonMenuItem;
 import javax.swing.JScrollBar;
 import javax.swing.JScrollPane;
 import javax.swing.ScrollPaneConstants;
@@ -97,6 +101,14 @@ import org.slf4j.LoggerFactory;
  * order. The four sort COLUMNS ({@link SortMode}) live in one {@link JPopupMenu}; the price fold carries
  * its presets; the "Show &lt;remainder&gt; more" row sits under the rows; the EMPTY card offers "Clear price
  * range" when a band hid everything.
+ *
+ * <p><b>Two views since addendum AU</b> ({@code docs/handoff/plan-AU-history-2026-09-27.md} section 7.2, the phase-0
+ * contract's sections 6-7 and amendments 9.6-9.15). An "Items | Net Worth History" toggle with one grey caption line
+ * sits under the card in both views ({@link #pressView}, for the session). Items is the
+ * sidebar every build before AU drew. History swaps the list for a {@link BankHistoryView} on a card of its own
+ * ({@link #CARD_HISTORY}), takes the control row and the price fold out of the header, and puts the card in its History
+ * state: the same total, its move against the reader's own RECORDED total of the window's day, a footnote naming that
+ * day and a line saying how long the record is. The switch never lifts the bank hold.
  *
  * <p><b>The hero card's three figures show or hide</b> (O2-O4). A {@link HeroVisibility} says which of the
  * bank TOTAL, its gp MOVE and its PERCENTAGE are drawn. The caption row, the chips, the footnote and the
@@ -199,8 +211,10 @@ import org.slf4j.LoggerFactory;
  * and this panel treats "the bank is open" exactly as it has always treated "the sidebar is hidden": {@link #onRows}
  * stores the publish and builds nothing, and the stored one is replayed when the hold ends. Two things lift it
  * early, because a hold that ignored them would be a sidebar ignoring its reader: the reader's own act - the Refresh
- * link, a window, a column, a band, a view switch ({@link #liftBankHold}) - and a publish carrying a bank the
- * sidebar has not drawn, which is a read and not a re-statement ({@link #carriesNewBank}). While a change is owed
+ * link, a window, a column, a band, a switch in the settings menu ({@link #applyOptions}) ({@link #liftBankHold}) -
+ * and a publish carrying a bank the sidebar has not drawn, which is a read and not a re-statement
+ * ({@link #carriesNewBank}). The Items | Net Worth History toggle is not one: {@link #pressView} never lifts the hold
+ * (addendum AU). While a change is owed
  * and the reader can see the link, a thin green ring breathes round "Refresh" - 3 s in, 3 s out, painted by the card
  * under the word ({@link HeroCard}, {@link #breath}). A click on the link refreshes EVERYTHING, whatever the bank is
  * doing (AS8, the user on the AS7 build: "manually clicking the refresh button should refresh everything for the
@@ -328,6 +342,25 @@ public class BankPriceMovementPanel extends PluginPanel
 		default void saveFoldOpen(boolean open)
 		{
 		}
+
+		/**
+		 * The tab the sidebar opens on - the config's {@code startTab} (addendum AU): the player's CHOICE, and never the
+		 * last tab used, which the toggle does not write. Null reads as {@link SidebarView#ITEMS}, the answer for a
+		 * fresh install and for the headless renderer.
+		 *
+		 * <p>Defaulted for the reason every pair since the filter is: a caller with nothing to remember gets the
+		 * shipped sidebar. The plugin overrides both halves over {@code ConfigManager}.
+		 */
+		@Nullable
+		default SidebarView loadStartTab()
+		{
+			return null;
+		}
+
+		/** Writes the tab the settings menu's dot chose, so the stored config follows (AU). */
+		default void saveStartTab(SidebarView tab)
+		{
+		}
 	}
 
 	/** Rows built per page (contract C32, design D11). */
@@ -337,6 +370,20 @@ public class BankPriceMovementPanel extends PluginPanel
 	public static final String CARD_NO_BANK = "NO_BANK";
 	public static final String CARD_EMPTY = "EMPTY";
 	public static final String CARD_LIST = "LIST";
+	/**
+	 * The History view's card (addendum AU; contract amendment 9.8): the {@link BankHistoryView} in a scroll pane of
+	 * its own, mounted exactly as the item list is. {@link #chooseCard} picks it whenever a bank is loaded and the view
+	 * is {@link SidebarView#HISTORY}, whatever the rows are.
+	 */
+	public static final String CARD_HISTORY = "HISTORY";
+
+	/**
+	 * The one grey line under the toggle while the Items view is showing (addendum AU; the user's final words,
+	 * 2026-09-28, plan section 1).
+	 */
+	public static final String ITEMS_CAPTION = "Item price changes";
+	/** ...and while the History view is (the user's final words, 2026-09-28). */
+	public static final String HISTORY_CAPTION = "Bank net worth history";
 
 	public static final String TITLE = "2h Bank Portfolio Tracker";
 	public static final String LOGIN_TEXT = "Log in to load your bank";
@@ -466,7 +513,8 @@ public class BankPriceMovementPanel extends PluginPanel
 	 * nothing drawn on the sidebar moved - these labels live in this popup and on the settings page.
 	 */
 	public static final String COUNT_CASH_TEXT = "Include coins and platinum tokens";
-	public static final String COUNT_UNTRADEABLES_TEXT = "Include untradeable items";
+	/** Addendum AV's name for the switch (the user's words): it reaches the untradeables with no tradeable parts only. */
+	public static final String COUNT_UNTRADEABLES_TEXT = "Include alch-only untradeables";
 	/**
 	 * The group's fourth item since addendum Y (line Y1), directly after the untradeables it reads as a sibling of:
 	 * whether what the player is CARRYING - the inventory and the worn gear - is counted in the bank value and
@@ -492,8 +540,7 @@ public class BankPriceMovementPanel extends PluginPanel
 	public static final String LIVE_PRICES_TIP = "Actively traded items use the wiki's live traded prices for every "
 		+ "figure; thin items keep the daily guide price";
 	public static final String COUNT_CASH_TIP = "Coins and platinum tokens (1,000 gp each) count in the bank value";
-	public static final String COUNT_UNTRADEABLES_TIP = "List untradeable stacks at their tradeable parts' value, or else their High Alchemy value,"
-		+ " and count them in the bank value";
+	public static final String COUNT_UNTRADEABLES_TIP = "Counts untradeables with no tradeable parts, at alch value.";
 	/**
 	 * The new item's hover (Y1). It says WHEN, because the answer is not "always": the two containers are read with
 	 * the bank and on Refresh and at no other moment (Y2), so a reader who drops something and watches the list sit
@@ -534,6 +581,10 @@ public class BankPriceMovementPanel extends PluginPanel
 	 */
 	public static final String SHOW_HOVER_TEXT_TIP = "Show hover text anywhere in the sidebar: the bank value "
 		+ "and the controls";
+	/** The menu's start-tab caption (AU), in the look of {@link #PRESETS_TEXT}. */
+	public static final String START_TAB_TEXT = "Tab to open on startup";
+	/** The hover of both dot items: the config item's own description, so both places say the same sentence. */
+	public static final String START_TAB_TIP = "Which tab the sidebar shows when the plugin starts.";
 	public static final String PRESETS_TEXT = "Preset price ranges";
 	/** The menu item under the boxes (Z2) - 100k / 1m / 10m back in one click, in the boxes, the fold and the config. */
 	public static final String RESET_PRESETS_TEXT = "Reset to default";
@@ -677,6 +728,9 @@ public class BankPriceMovementPanel extends PluginPanel
 	/** Each gp field's width (contract C29, N 3.5). */
 	static final int FIELD_WIDTH = 90;
 	/** The hero card's usable width: 213 minus the 3 px edge and the 9 + 10 px padding of {@link Widgets#card}. */
+	/** What the card's footnote says while the client is at the login screen (C21, and AU's History footnote). */
+	static final String LOGGED_OUT = "logged out";
+
 	static final int CARD_INNER = W - Widgets.EDGE_WIDTH - 9 - 10;
 	/** The window strip inside the card: five cells across its 191 px, no gaps (N 4.4 control 1). */
 	static final int CHIP_WIDTH = CARD_INNER / MovementWindow.values().length;
@@ -709,6 +763,8 @@ public class BankPriceMovementPanel extends PluginPanel
 	/** The sidebar margin each side of the content: (225 - 213) / 2. */
 	private static final int MARGIN = (PluginPanel.PANEL_WIDTH - W) / 2;
 	private static final int GAP = 4;
+	/** The air between the Items | Net Worth History toggle and its caption line (AU), in px. */
+	private static final int VIEW_CAPTION_GAP = 3;
 	/** The "x" in the fold (N 3.5). */
 	private static final int SMALL_ICON = 11;
 	/**
@@ -748,6 +804,10 @@ public class BankPriceMovementPanel extends PluginPanel
 	 * indistinguishable from a plain command, so nothing would say it is a switch at all.
 	 */
 	private JMenuItem showHoverTextItem;
+	/** AU: the two dots of the start-tab group, one per {@link SidebarView}, in one {@link ButtonGroup}. */
+	private final JRadioButtonMenuItem[] startTabItems = new JRadioButtonMenuItem[SidebarView.values().length];
+	/** AU: the tab the sidebar opens on next time - the settings menu's dot; never the tab showing now. */
+	private SidebarView startTab = SidebarView.ITEMS;
 	/** The menu's box row since addendum Z (Z2): the caption over the three preset boxes. */
 	private JPanel presetRow;
 	/** Those boxes, smallest first - the same style, and the same red rule, as the fold's Min / Max fields. */
@@ -788,6 +848,15 @@ public class BankPriceMovementPanel extends PluginPanel
 	private final Widgets.PlaceholderField minField;
 	private final Widgets.PlaceholderField maxField;
 	private JLabel problemLabel;
+	/**
+	 * Addendum AU's strip under the card, in both views while a bank is loaded: the {@link #viewToggle} over the
+	 * {@link #viewCaption}, with the gap above it that the control row has above IT.
+	 */
+	private JPanel viewStrip;
+	/** "Items | Net Worth History" (plan 7.2 items 1 and 12): lit on {@link #view}, pressing {@link #pressView}. */
+	private Widgets.Toggle viewToggle;
+	/** {@link #ITEMS_CAPTION} or {@link #HISTORY_CAPTION}, grey, one line. */
+	private JLabel viewCaption;
 	/** The sort menu that is open, if any - one at a time (the BeamPickerPopup idiom). */
 	@Nullable
 	private JPopupMenu sortMenu;
@@ -809,6 +878,17 @@ public class BankPriceMovementPanel extends PluginPanel
 	private final JPanel rowsColumn;
 	private final JPanel showMoreRow;
 	private final JLabel showMoreLabel;
+	/**
+	 * The History view (addendum AU), reached ONLY through its seam - {@code show}, {@code setRange},
+	 * {@code showMore}, {@code describe} (the contract's section 6) - because its inside is another builder's.
+	 */
+	private final BankHistoryView historyView;
+	/** Its column, laid out as {@link #listColumn} is (amendment 9.8): the view its only child. */
+	private final JPanel historyColumn;
+	/** {@link #historyColumn} anchored north - the History card's scroll view, and what a shot prints for it. */
+	private final JPanel historyHolder;
+	/** The History card: {@link #historyHolder} in a scroll pane set up as {@link #scroll} is. */
+	private final JScrollPane historyScroll;
 
 	// ---- state (EDT)
 	private RowFilter filter;
@@ -915,6 +995,8 @@ public class BankPriceMovementPanel extends PluginPanel
 	private int rebuilds;
 	private String card = CARD_LOGIN;
 	private boolean foldOpen;
+	/** Which of the two views is showing (addendum AU); never null. */
+	private SidebarView view = SidebarView.ITEMS;
 	/** Set while {@link #applyFilter} repaints the widgets, so the change is not saved a second time. */
 	private boolean updating;
 	private volatile boolean stopped;
@@ -945,6 +1027,12 @@ public class BankPriceMovementPanel extends PluginPanel
 		// painted once without it and then again with it. Null is "nothing stored", and that reads OPEN.
 		final Boolean savedFold = prefs.loadFoldOpen();
 		foldOpen = savedFold == null || savedFold;
+		// AU: the sidebar opens on the tab the player chose in the settings menu (the user, 2026-09-29), Items unless
+		// it says otherwise; before renderAll below, so the header is never laid out in one tab and then the other.
+		// The toggle writes nothing, so this is the ONLY thing that reads the choice.
+		final SidebarView savedStartTab = prefs.loadStartTab();
+		startTab = savedStartTab == null ? SidebarView.ITEMS : savedStartTab;
+		view = startTab;
 
 		// The two gp fields: applied on Enter and on focus lost; a text that does not parse turns the field red
 		// and changes nothing.
@@ -1002,7 +1090,7 @@ public class BankPriceMovementPanel extends PluginPanel
 		// The header is outside the scroll pane, so the bar appearing narrows the LIST and nothing else: without
 		// this the hero card and the control row would paint 7 px wider than the row cards under them, and the
 		// step would come and go as the list crossed the scroll threshold (see syncGutter).
-		scroll.getVerticalScrollBar().addComponentListener(new ComponentAdapter()
+		final ComponentAdapter gutterWatch = new ComponentAdapter()
 		{
 			@Override
 			public void componentShown(ComponentEvent e)
@@ -1021,7 +1109,27 @@ public class BankPriceMovementPanel extends PluginPanel
 			{
 				syncGutter();
 			}
-		});
+		};
+		scroll.getVerticalScrollBar().addComponentListener(gutterWatch);
+
+		// AU (amendments 9.1 and 9.8): the History view, mounted exactly as the list above is - a column with the
+		// list's margins, anchored north, in a scroll pane with the list pane's settings. Its clock is a lambda
+		// reading the FIELD, so a later setClock reaches it too; it reads no clock and starts no timer as it builds.
+		historyView = new BankHistoryView(() -> clock.getAsLong(), ZoneId.systemDefault());
+		// 9.10: once here, after the prefs are read, and again wherever the window changes by any road.
+		historyView.setRange(BankHistoryRange.forWindow(filter.window()));
+		historyColumn = Widgets.column(0);
+		historyColumn.setBorder(new EmptyBorder(0, MARGIN, MARGIN, MARGIN));
+		historyColumn.add(historyView);
+		historyHolder = Widgets.north(historyColumn);
+		historyScroll = new JScrollPane(historyHolder);
+		historyScroll.setBorder(null);
+		historyScroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+		historyScroll.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED);
+		historyScroll.getVerticalScrollBar().setUnitIncrement(16);
+		historyScroll.getViewport().setBackground(ColorScheme.DARK_GRAY_COLOR);
+		// The header keeps the SHOWING card's gutter (syncGutter), so this bar is watched exactly as the list's is.
+		historyScroll.getVerticalScrollBar().addComponentListener(gutterWatch);
 
 		cards = new JPanel(cardLayout);
 		cards.setBackground(ColorScheme.DARK_GRAY_COLOR);
@@ -1029,6 +1137,7 @@ public class BankPriceMovementPanel extends PluginPanel
 		cards.add(noBankCard, CARD_NO_BANK);
 		cards.add(emptyCard, CARD_EMPTY);
 		cards.add(scroll, CARD_LIST);
+		cards.add(historyScroll, CARD_HISTORY);
 		add(cards, BorderLayout.CENTER);
 
 		renderBounds();
@@ -1090,6 +1199,7 @@ public class BankPriceMovementPanel extends PluginPanel
 		// visible control. The gear opens the same JPopupMenu on a LEFT click (openGearMenu).
 		heroMenu = buildHeroMenu();
 
+		viewStrip = buildViewStrip();
 		controlRow = buildControlRow();
 		fold = buildFold();
 		problemLabel = buildProblemLabel();
@@ -1235,6 +1345,22 @@ public class BankPriceMovementPanel extends PluginPanel
 		menu.add(countCashItem);
 		menu.add(countUntradeablesItem);
 		menu.add(countInventoryItem);
+		// AU: a group of its own - the caption and two dots. Choosing one writes the setting for the NEXT start and
+		// does not switch the tab that is showing. Plain radio items, so the menu closes on a choice as the check
+		// switches above do.
+		menu.addSeparator();
+		menu.add(buildStartTabCaption());
+		final ButtonGroup startTabGroup = new ButtonGroup();
+		for (final SidebarView tab : SidebarView.values())
+		{
+			final JRadioButtonMenuItem dot = new JRadioButtonMenuItem(tab.toString());
+			dot.setFont(Widgets.sans(12));
+			setHover(dot, START_TAB_TIP);
+			dot.addActionListener(e -> pressStartTab(tab));
+			startTabGroup.add(dot);
+			startTabItems[tab.ordinal()] = dot;
+			menu.add(dot);
+		}
 		// Z2: a third group, and the only one that is not a list of switches - the three quick bands, in boxes,
 		// with the way back to 100k / 1m / 10m now a button in the bottom row (AH2).
 		menu.addSeparator();
@@ -1291,6 +1417,19 @@ public class BankPriceMovementPanel extends PluginPanel
 		});
 		syncHeroMenu();
 		return menu;
+	}
+
+	/** The start-tab group's caption (AU): {@link #PRESETS_TEXT}'s look - grey 12 px, the same inset. */
+	private JPanel buildStartTabCaption()
+	{
+		final JPanel row = Widgets.column(0);
+		row.setOpaque(false);
+		row.setBorder(new EmptyBorder(4, ROW_GAP, 2, ROW_GAP));
+		final JLabel caption = Widgets.label(START_TAB_TEXT, Widgets.sans(12), ColorScheme.LIGHT_GRAY_COLOR);
+		setHover(caption, START_TAB_TIP);
+		row.add(caption);
+		setHover(row, START_TAB_TIP);
+		return row;
 	}
 
 	/**
@@ -1605,6 +1744,27 @@ public class BankPriceMovementPanel extends PluginPanel
 	}
 
 	/**
+	 * Addendum AU's strip (plan 7.2 items 1 and 12; {@code mock-items-toggle-2x.png}): the "Items | Net Worth History"
+	 * toggle over one grey caption line, directly under the card in both views. The gap above it is the control row's
+	 * own {@link #ROW_GAP}, so the card stands the same distance from whatever follows it in either view; the caption
+	 * is the 11 px face of the card's own caption, indented like the problem row's sentence.
+	 *
+	 * <p>No hover anywhere on it (ruling 9.7): the two words say what they do, and a hover would be invented text.
+	 */
+	private JPanel buildViewStrip()
+	{
+		viewToggle = Widgets.toggle(SidebarView.ITEMS.toString(), SidebarView.HISTORY.toString(),
+			index -> pressView(SidebarView.values()[index]));
+		viewCaption = Widgets.label("", Widgets.sans(11), ColorScheme.LIGHT_GRAY_COLOR);
+		viewCaption.setBorder(new EmptyBorder(VIEW_CAPTION_GAP, GAP, 0, GAP));
+		final JPanel strip = Widgets.column(0);
+		strip.setBorder(new EmptyBorder(ROW_GAP, 0, 0, 0));
+		strip.add(viewToggle);
+		strip.add(viewCaption);
+		return strip;
+	}
+
+	/**
 	 * The problem row (N 3.6): one 12 px line, its height taken from a probe so it never collapses while
 	 * empty, fitted to the width with the whole sentence as its tooltip.
 	 */
@@ -1795,7 +1955,9 @@ public class BankPriceMovementPanel extends PluginPanel
 	 */
 	private void syncGutter()
 	{
-		final Component bar = scroll.getVerticalScrollBar();
+		// AU (amendment 9.8): the bar of the SHOWING card's pane - the History card has a scroll pane of its own, and
+		// the header must line up with whichever of the two lists is under it.
+		final Component bar = (CARD_HISTORY.equals(card) ? historyScroll : scroll).getVerticalScrollBar();
 		final int want = bar.isVisible() ? bar.getWidth() : 0;
 		if (want == gutter)
 		{
@@ -1956,7 +2118,11 @@ public class BankPriceMovementPanel extends PluginPanel
 	void setClock(LongSupplier now)
 	{
 		clock = now == null ? System::currentTimeMillis : now;
+		// AU: "today" moved, so the History card's chips, move and footnote are read again, and so is the view -
+		// whose clock is a lambda over this same field (amendment 9.1). In Items both calls repaint nothing new.
+		renderChips();
 		renderValue();
+		showHistory();
 	}
 
 	/**
@@ -2026,6 +2192,8 @@ public class BankPriceMovementPanel extends PluginPanel
 		// AH: not a check item, so it is the ICON that carries the state - redrawn here rather than toggled,
 		// which is what keeps it right when the switch is changed from RuneLite's settings page.
 		showHoverTextItem.setIcon(Widgets.checkBox(options.showHoverText()));
+		// AU: a radio item's setSelected fires no action either, and the group deselects the other dot.
+		startTabItems[startTab.ordinal()].setSelected(true);
 	}
 
 	// ---------------------------------------------------------------- the view switches (EDT, Q1-Q6)
@@ -2383,6 +2551,7 @@ public class BankPriceMovementPanel extends PluginPanel
 				// otherwise until the bank closed. The panel's own write echoing back is equal and lifts nothing.
 				liftBankHold();
 			}
+			followWindow(old);
 			renderChips();
 			renderBounds();
 			renderValue();
@@ -2854,9 +3023,10 @@ public class BankPriceMovementPanel extends PluginPanel
 	}
 
 	/**
-	 * The reader's own act while the bank is open - the Refresh link, a window, a column, a band, a view switch -
-	 * lifts the hold: every publish is built again until the plugin reports a new change or the bank closes
-	 * ({@link #setBankHold}).
+	 * The reader's own act while the bank is open - the Refresh link, a window, a column, a band, a switch in the
+	 * settings menu ({@link #applyOptions}) - lifts the hold: every publish is built again until the plugin reports a
+	 * new change or the bank closes ({@link #setBankHold}). The Items | Net Worth History toggle is not one:
+	 * {@link #pressView} never lifts the hold (addendum AU).
 	 *
 	 * <p>Why the hold may not simply stand for the whole visit, as section 7.2 first drew it: each of those acts is
 	 * ANSWERED by a publish - the service re-sorts, re-counts or re-prices, or the plugin re-reads the bank - and that
@@ -3175,6 +3345,7 @@ public class BankPriceMovementPanel extends PluginPanel
 	{
 		final RowFilter old = filter;
 		filter = next == null ? RowFilter.DEFAULT : next;
+		followWindow(old);
 		renderChips();
 		// The hero follows the lit chip at once (M6 step 3): the summary already holds every window.
 		renderValue();
@@ -3191,9 +3362,24 @@ public class BankPriceMovementPanel extends PluginPanel
 
 	// ---------------------------------------------------------------- painting the header (EDT)
 
+	/**
+	 * The History chart follows the card's window (amendment 9.10): 1d and 7d draw 7d, 30d and 90d themselves, 180d
+	 * all. Called by both roads a window arrives by - the reader's ({@link #changeFilter}: a chip, the bridge's
+	 * {@code window=}) and the settings page's ({@link #applyFilter}) - and a no-op when the window stayed, so a band
+	 * or a column never moves the chart off a range its own chips chose.
+	 */
+	private void followWindow(RowFilter old)
+	{
+		if (old == null || old.window() != filter.window())
+		{
+			historyView.setRange(BankHistoryRange.forWindow(filter.window()));
+		}
+	}
+
 	/** Every header repaint at once - after a build or a publish. */
 	private void renderAll()
 	{
+		renderView();
 		renderChips();
 		renderValue();
 		renderControl();
@@ -3208,14 +3394,20 @@ public class BankPriceMovementPanel extends PluginPanel
 	private void renderChips()
 	{
 		final PortfolioSummary summary = portfolio();
+		// AU (amendment 9.6): in History a chip is DIMMED exactly when its window has no reading old enough behind it,
+		// which is when the card's move for it is null. Read once for the five chips; never in Items.
+		final boolean history = view == SidebarView.HISTORY;
+		final LocalDate today = history ? today() : null;
+		final BankHistorySeries series = history ? drawnHistory(today) : null;
 		for (Map.Entry<MovementWindow, JLabel> e : windowChips.entrySet())
 		{
 			final MovementWindow w = e.getKey();
 			final WindowMove move = summary.move(w);
 			final LocalDate day = move == null ? null : move.thenDay();
+			// Ruling 9.7: the chips keep their Items hover in both views - no History hover is invented.
 			setHover(e.getValue(), "Guide-price change over the last " + w.label()
 				+ (day == null ? "" : " - baseline " + MovementMath.formatDay(day)));
-			Widgets.chip(e.getValue(), w == filter.window());
+			Widgets.chip(e.getValue(), w == filter.window(), history && historyMove(series, today, w, summary) == null);
 		}
 		for (int i = 0; i < presetCells.length; i++)
 		{
@@ -3292,11 +3484,21 @@ public class BankPriceMovementPanel extends PluginPanel
 		final PortfolioSummary summary = portfolio();
 		final MovementWindow window = filter.window();
 		final WindowMove move = summary.move(window);
+		// AU: in History the card compares the total NOW with the reader's own RECORDED total of the window's day
+		// (amendment 9.6) - the headline stays the portfolio's value in both views, so only the move line, the
+		// footnote and the line under it read the series. Everything below is the Items card to the pixel otherwise.
+		final boolean history = view == SidebarView.HISTORY;
+		final LocalDate today = history ? today() : null;
+		final BankHistorySeries series = history ? drawnHistory(today) : null;
+		final BankHistoryMath.Change change = history ? historyMove(series, today, window, summary) : null;
+		final int sign = history ? (change == null ? 0 : Long.signum(change.deltaGp())) : signum(move);
 		// The TRIANGLE keeps the constant and the two figures take the lifted red (see Widgets.MOVE_DOWN_TEXT):
 		// a 23 px solid glyph is not small text and needs no lift, while the figures beside it are 18 px.
-		final Color moveColour = moveColor(move);
-		final Color textColour = moveTextColor(move);
-		hero.setBorder(Widgets.card(edgeColor(move)));
+		// Items keeps the card's own colour rules (moveColor / moveTextColor / edgeColor, on the window's move); History
+		// colours by the sign of the recorded change through the same Widgets.move they wrap.
+		final Color moveColour = history ? Widgets.move(sign, Widgets.Kind.MARK) : moveColor(move);
+		final Color textColour = history ? Widgets.move(sign, Widgets.Kind.FIGURE) : moveTextColor(move);
+		hero.setBorder(Widgets.card(history ? Widgets.move(sign, Widgets.Kind.EDGE) : edgeColor(move)));
 
 		// The total shares its line with the gear (Q1), so what it may take is the card's inner width less the
 		// gear and the BorderLayout gap either side of the pair - measured off the gear rather than assumed, the
@@ -3304,7 +3506,7 @@ public class BankPriceMovementPanel extends PluginPanel
 		Widgets.setFitted(totalLabel, MovementMath.formatGp(summary.valueNow()),
 			CARD_INNER - gearLabel.getPreferredSize().width - 2 * ROW_GAP);
 		adoptFittedHover(totalLabel);
-		if (move == null)
+		if (history ? change == null : move == null)
 		{
 			triangleLabel.setIcon(null);
 			triangleLabel.setBorder(null);
@@ -3317,16 +3519,20 @@ public class BankPriceMovementPanel extends PluginPanel
 		}
 		else
 		{
-			final int sign = Long.signum(move.deltaGp());
+			final long deltaGp = history ? change.deltaGp() : move.deltaGp();
+			final Double deltaPct = history ? change.pct() : move.deltaPct();
 			triangleLabel.setIcon(sign > 0 ? Widgets.triangleUp(moveColour) : sign < 0 ? Widgets.triangleDown(moveColour) : null);
 			triangleLabel.setBorder(sign == 0 ? null : new EmptyBorder(0, 0, 0, ICON_GAP));
-			deltaLabel.setText(MovementMath.formatDelta(move.deltaGp()));
+			deltaLabel.setText(MovementMath.formatDelta(deltaGp));
 			deltaLabel.setForeground(textColour);
-			final boolean hasPct = move.deltaPct() != null;
-			pctLabel.setText(hasPct ? MovementMath.formatPct(move.deltaPct(), move.deltaGp()) : MovementMath.DASH);
+			final boolean hasPct = deltaPct != null;
+			pctLabel.setText(hasPct ? MovementMath.formatPct(deltaPct, deltaGp) : MovementMath.DASH);
 			pctLabel.setForeground(hasPct ? textColour : ColorScheme.LIGHT_GRAY_COLOR);
 		}
-		Widgets.setFitted(footnoteLabel, provenanceText(status, window, move, clock.getAsLong(), options), CARD_INNER);
+		Widgets.setFitted(footnoteLabel, history
+			? firstThatFits(footnoteLabel, historyFootnoteForms(series, today, window, change,
+				status != null && !status.loggedIn()), CARD_INNER)
+			: provenanceText(status, window, move, clock.getAsLong(), options), CARD_INNER);
 		adoptFittedHover(footnoteLabel);
 		// The service knows when it is running blind and says so in one sentence; until now nothing user-facing
 		// read either field, so the sidebar was pixel-identical whether the wiki answered five minutes ago or has
@@ -3349,8 +3555,11 @@ public class BankPriceMovementPanel extends PluginPanel
 		// the line says how often the figures step - which the live switch changes - and the hover says why, and
 		// when this client last looked. Both are written here, so the line can never say one thing while its hover
 		// explains the other.
-		updateLabel.setText(updateText(options));
-		setHover(updateLabel, updateTooltip(status == null ? 0L : status.pricesAtMillis(), options));
+		// AU: in History the same line says how long the record is ("37 days recorded since 18 Aug"), in the same face
+		// and place, so the card keeps its height; it carries no hover there (ruling 9.7), since the guide-price
+		// sentences behind the Items line are not what it says.
+		updateLabel.setText(history ? historyRecorded(series) : updateText(options));
+		setHover(updateLabel, history ? null : updateTooltip(status == null ? 0L : status.pricesAtMillis(), options));
 		hero.revalidate();
 		hero.repaint();
 	}
@@ -3420,7 +3629,7 @@ public class BankPriceMovementPanel extends PluginPanel
 		}
 		if (status != null && !status.loggedIn())
 		{
-			sb.append(" - logged out");
+			sb.append(" - ").append(LOGGED_OUT);
 		}
 		else
 		{
@@ -3545,21 +3754,28 @@ public class BankPriceMovementPanel extends PluginPanel
 
 	/**
 	 * Puts the right rows into the header column, in order, and nothing else: the hero card (the chips are
-	 * inside it), the control row, the fold while open and the problem row while there is a problem - all of
-	 * them only while a bank is loaded (N section 3 §3: LOGIN and NO_BANK empty the header). Rows are added
-	 * and removed, never hidden (playbook 7.5), and nothing is touched when the set is already right, so a
-	 * status-only publish causes no flicker (C30).
+	 * inside it), the Items | Net Worth History strip (AU), then - in Items only - the control row and the fold while
+	 * open, and the problem row while there is a problem in both views - all of them only while a bank is loaded (N
+	 * section 3 §3: LOGIN and NO_BANK empty the header). Rows are added and removed, never hidden (playbook 7.5), and
+	 * nothing is touched when the set is already right, so a status-only publish causes no flicker (C30).
 	 */
 	private void syncHeader()
 	{
-		final List<Component> want = new ArrayList<>(4);
+		final List<Component> want = new ArrayList<>(5);
 		if (bankLoaded())
 		{
 			want.add(hero);
-			want.add(controlRow);
-			if (foldOpen)
+			// AU (amendment 9.9): the toggle strip under the card in BOTH views; the control row and the price fold
+			// only in Items, where there is a list for them to order and band. foldOpen is kept, not written, so the
+			// fold comes back as the reader left it.
+			want.add(viewStrip);
+			if (view == SidebarView.ITEMS)
 			{
-				want.add(fold);
+				want.add(controlRow);
+				if (foldOpen)
+				{
+					want.add(fold);
+				}
 			}
 			if (!problemText().isEmpty())
 			{
@@ -3634,6 +3850,248 @@ public class BankPriceMovementPanel extends PluginPanel
 		}
 		foldOpen = open;
 		syncHeader();
+	}
+
+	// ---------------------------------------------------------------- the two views (EDT, addendum AU)
+
+	/**
+	 * A dot of the settings menu's start-tab group - and the bridge's {@code starttab=}: moves the dot AND writes the
+	 * choice through {@link Prefs#saveStartTab}, so the sidebar opens on it next time. It does NOT switch the tab that
+	 * is showing: the setting is about the next start. Nothing is written when nothing changed, and a stopped panel
+	 * writes nothing (contract C33).
+	 */
+	public void pressStartTab(@Nullable SidebarView next)
+	{
+		if (stopped)
+		{
+			return;
+		}
+		final SidebarView want = next == null ? SidebarView.ITEMS : next;
+		final boolean changed = want != startTab;
+		setStartTab(want);
+		if (changed)
+		{
+			prefs.saveStartTab(want);
+		}
+	}
+
+	/**
+	 * The start tab changed under us - the plugin's {@code ConfigChanged} for {@code startTab} (the settings page) or
+	 * startUp's seed - so the menu's dot moves and nothing else happens: no tab switch, no write back, no service
+	 * call. Null reads as {@link SidebarView#ITEMS}.
+	 */
+	public void setStartTab(@Nullable SidebarView next)
+	{
+		if (stopped)
+		{
+			return;
+		}
+		startTab = next == null ? SidebarView.ITEMS : next;
+		syncHeroMenu();
+	}
+
+	/** The tab the menu's dot stands on (AU): the bridge's {@code state.startTab}. Never null. */
+	SidebarView startTab()
+	{
+		return startTab;
+	}
+
+	/**
+	 * The toggle's press - and the bridge's {@code view=} (amendment 9.11): shows {@code next} for this session and
+	 * writes NOTHING - the sidebar opens on Items every time it is built (2026-09-29).
+	 *
+	 * <p><b>It never lifts the bank hold</b> (addendum AS; plan 7.2 item 8). Switching what the sidebar SHOWS is not
+	 * a request for a new list, so no publish answers it: both views are drawn from the last DRAWN status, and a
+	 * publish stored while the bank is open stays stored until the hold ends as it always has. The item rows keep
+	 * building as they do today while History shows, so switching back costs nothing.
+	 *
+	 * <p>A stopped panel writes nothing either: {@link #setView} would refuse the change (contract C33).
+	 */
+	public void pressView(@Nullable SidebarView next)
+	{
+		if (stopped)
+		{
+			return;
+		}
+		setView(next);
+	}
+
+	/**
+	 * Shows {@code next} - the toggle's press and the bridge's {@code view=} come here - so the sidebar redraws in it at once, from the last-DRAWN status (never a
+	 * stored one; amendment 9.9): the toggle and its caption, the card's chips and lines, the header's rows, the
+	 * History view, and the card under the header. Null reads as {@link SidebarView#ITEMS}.
+	 */
+	public void setView(@Nullable SidebarView next)
+	{
+		if (stopped)
+		{
+			return;
+		}
+		view = next == null ? SidebarView.ITEMS : next;
+		renderView();
+		renderChips();
+		renderValue();
+		syncHeader();
+		showHistory();
+		showCard(chooseCard());
+	}
+
+	/** Which view is showing (AU): the bridge's {@code state.view}. Never null. */
+	public SidebarView view()
+	{
+		return view;
+	}
+
+	/** The toggle lit on {@link #view} and the caption under it. */
+	private void renderView()
+	{
+		viewToggle.setLit(view.ordinal());
+		viewCaption.setText(view == SidebarView.HISTORY ? HISTORY_CAPTION : ITEMS_CAPTION);
+	}
+
+	/**
+	 * Hands the History view the last-drawn status's series under the switches its figures were computed under
+	 * (contract section 6), while that view is showing. The view reads a null series as empty and null options as the
+	 * defaults (amendment 9.2) - a mocked status answers both - and decides for itself whether anything changed.
+	 */
+	private void showHistory()
+	{
+		if (view == SidebarView.HISTORY && status != null)
+		{
+			historyView.show(status.bankHistory(), status.options());
+		}
+	}
+
+	/** What the History view says about itself, for the bridge's {@code state.bankHistory} (amendment 9.11). */
+	public LinkedHashMap<String, Object> bankHistoryState()
+	{
+		return historyView.describe();
+	}
+
+	/**
+	 * The bridge's {@code range=}: moves the History CHART alone, as its own range chips do - unsaved, and never sent
+	 * to the service (plan 7.2 item 6). The card's window keeps whatever it is, and its next change overrules this.
+	 */
+	public void setHistoryRange(@Nullable BankHistoryRange range)
+	{
+		if (stopped || range == null)
+		{
+			return;
+		}
+		historyView.setRange(range);
+	}
+
+	/** "Today" for the History card: the panel clock's LOCAL date, as the view reads it (contract section 3). */
+	private LocalDate today()
+	{
+		return BankHistoryMath.dayOf(clock.getAsLong(), ZoneId.systemDefault());
+	}
+
+	/**
+	 * The drawn status's series cut to {@code today} - the readings the card may count (amendment 9.10). A mocked
+	 * status answers null, which reads as empty (9.2).
+	 */
+	private BankHistorySeries drawnHistory(LocalDate today)
+	{
+		final BankHistorySeries s = status == null ? null : status.bankHistory();
+		return (s == null ? BankHistorySeries.EMPTY : s).upTo(today);
+	}
+
+	/**
+	 * The History card's move for window {@code w} (amendment 9.6): the portfolio's value now against the last reading
+	 * on or before the window's day, both under the switches the status was COMPUTED under. Null - the chip dimmed and
+	 * the move line a dash - when no reading is old enough.
+	 */
+	@Nullable
+	private BankHistoryMath.Change historyMove(BankHistorySeries series, LocalDate today, MovementWindow w,
+		PortfolioSummary summary)
+	{
+		final ViewOptions computed = status == null ? null : status.options();
+		return BankHistoryMath.sinceDay(series, today, w.days(), computed == null ? ViewOptions.DEFAULT : computed,
+			summary.valueNow());
+	}
+
+	/**
+	 * The History card's footnote (amendment 9.6; the contract's section 6 words): {@code "30d vs your 27 Aug total"}
+	 * against the reading the move used, with {@code " (3 days)"} after it exactly when that reading is older than the
+	 * window's own day - a gap in the record, said rather than hidden; {@code "30d from 17 Oct"} while the window has no
+	 * reading old enough, naming the day its chip stops being grey; and {@link MovementMath#DASH} with no reading at
+	 * all (ruling 9.7). No year: the card prints none (9.14). While the client is at the login screen the line ends
+	 * {@code " - logged out"}, as the Items footnote does ({@link #provenanceText}), and with no reading at all it
+	 * reads {@code "logged out"} alone. The forms are answered LONGEST FIRST and the card draws the first that fits
+	 * its line ({@link #firstThatFits}): the words "your" and "total" give way first, then - logged out only - the
+	 * span, so neither the span nor "logged out" is ever lost to an ellipsis.
+	 *
+	 * @param series the readings cut to {@code today}
+	 * @param change {@link BankHistoryMath#sinceDay} for {@code window}, or null
+	 * @param loggedOut whether the client is at the login screen
+	 */
+	static List<String> historyFootnoteForms(BankHistorySeries series, LocalDate today, MovementWindow window,
+		@Nullable BankHistoryMath.Change change, boolean loggedOut)
+	{
+		final String tail = loggedOut ? " - " + LOGGED_OUT : "";
+		final List<String> forms = new ArrayList<>();
+		if (series == null || series.isEmpty())
+		{
+			forms.add(loggedOut ? LOGGED_OUT : MovementMath.DASH);
+			return forms;
+		}
+		final MovementWindow w = window == null ? MovementWindow.DEFAULT : window;
+		if (change == null)
+		{
+			forms.add(w.label() + " from " + MovementMath.formatDay(BankHistoryMath.fillsOn(series, w.days())) + tail);
+			return forms;
+		}
+		final String day = MovementMath.formatDay(change.fromDay());
+		final String span = change.fromDay().isBefore(today.minusDays(w.days()))
+			? " (" + change.spanDays() + " days)" : "";
+		forms.add(w.label() + " vs your " + day + " total" + span + tail);
+		forms.add(w.label() + " vs " + day + span + tail);
+		if (loggedOut && !span.isEmpty())
+		{
+			forms.add(w.label() + " vs " + day + tail);
+		}
+		return forms;
+	}
+
+	/**
+	 * The first of {@code forms} that fits {@code width} in the label's own font, or the last of them when none
+	 * does (the caller's fitter then cuts it). This is how a footnote too long for the card's line gives up WORDS
+	 * rather than letters: a line cut to an ellipsis loses its end, which in the History footnote is the span or
+	 * "logged out" - the part that says the most.
+	 */
+	static String firstThatFits(JLabel label, List<String> forms, int width)
+	{
+		final FontMetrics fm = label.getFontMetrics(label.getFont());
+		for (final String form : forms)
+		{
+			if (fm.stringWidth(form) <= width)
+			{
+				return form;
+			}
+		}
+		return forms.get(forms.size() - 1);
+	}
+
+	/**
+	 * The History card's second line, where the update line stands in Items (plan 7.2 item 5): {@code "37 days
+	 * recorded since 18 Aug"}, {@code "1 day recorded"} for the first, and {@link MovementMath#DASH} with none. The
+	 * count is READINGS - a carried day is drawn but was never recorded, so it is not counted.
+	 *
+	 * @param series the readings cut to today
+	 */
+	static String historyRecorded(BankHistorySeries series)
+	{
+		final int n = series == null ? 0 : series.size();
+		if (n == 0)
+		{
+			return MovementMath.DASH;
+		}
+		if (n == 1)
+		{
+			return "1 day recorded";
+		}
+		return n + " days recorded since " + MovementMath.formatDay(series.first().day());
 	}
 
 	// ---------------------------------------------------------------- the column menu (W3)
@@ -3843,6 +4301,9 @@ public class BankPriceMovementPanel extends PluginPanel
 		renderControl();
 		renderProblem();
 		syncHeader();
+		// AU (amendment 9.9): every status DRAWN reaches the History view while it shows - before the card is chosen,
+		// so the card never comes up over a view still holding the last publish.
+		showHistory();
 		showCard(chooseCard());
 	}
 
@@ -4023,10 +4484,22 @@ public class BankPriceMovementPanel extends PluginPanel
 		liveKeys.clear();
 	}
 
-	/** The next page (contract C32); the bridge's {@code more}. Nothing to add is not an error. */
+	/**
+	 * The next page (contract C32); the bridge's {@code more}. Nothing to add is not an error. While History shows it
+	 * pages the History view's day list instead (amendment 9.11) - the list the reader is looking at.
+	 */
 	public void showMore()
 	{
-		if (stopped || shown >= rows.size())
+		if (stopped)
+		{
+			return;
+		}
+		if (view == SidebarView.HISTORY)
+		{
+			historyView.showMore();
+			return;
+		}
+		if (shown >= rows.size())
 		{
 			return;
 		}
@@ -4403,6 +4876,11 @@ public class BankPriceMovementPanel extends PluginPanel
 		{
 			return CARD_NO_BANK;
 		}
+		// AU (amendment 9.9): History whatever the rows are - an empty or banded-away list is an Items matter.
+		if (view == SidebarView.HISTORY)
+		{
+			return CARD_HISTORY;
+		}
 		return rows.isEmpty() ? CARD_EMPTY : CARD_LIST;
 	}
 
@@ -4416,6 +4894,9 @@ public class BankPriceMovementPanel extends PluginPanel
 		{
 			card = name;
 			cardLayout.show(cards, name);
+			// AU (amendment 9.8): the header reserves the gutter of the pane now under it, which is a different bar
+			// when the card moved between the list and History.
+			syncGutter();
 		}
 	}
 
@@ -4456,7 +4937,10 @@ public class BankPriceMovementPanel extends PluginPanel
 		}
 	}
 
-	/** Which card is showing: {@link #CARD_LOGIN}, {@link #CARD_NO_BANK}, {@link #CARD_EMPTY} or {@link #CARD_LIST}. */
+	/**
+	 * Which card is showing: {@link #CARD_LOGIN}, {@link #CARD_NO_BANK}, {@link #CARD_EMPTY}, {@link #CARD_LIST} or,
+	 * since addendum AU, {@link #CARD_HISTORY}.
+	 */
 	public String card()
 	{
 		return card;
@@ -4483,6 +4967,10 @@ public class BankPriceMovementPanel extends PluginPanel
 				break;
 			case CARD_EMPTY:
 				body = emptyCard;
+				break;
+			case CARD_HISTORY:
+				// AU (amendment 9.9): the History column's north holder, however tall - the whole view, not its window.
+				body = historyHolder;
 				break;
 			default:
 				body = listView;
@@ -4823,7 +5311,7 @@ public class BankPriceMovementPanel extends PluginPanel
 		return countCashItem;
 	}
 
-	/** The menu's "Include untradeable items" check item (Q2, renamed by Y4). */
+	/** The menu's "Include alch-only untradeables" check item (Q2, renamed by Y4 and again by AV). */
 	JCheckBoxMenuItem countUntradeablesItem()
 	{
 		return countUntradeablesItem;

@@ -747,6 +747,29 @@ public class BankPriceMovementPanelTest
 
 	// ---- the header's anatomy
 
+	/**
+	 * Addendum AU's Items | Net Worth History strip, found as the header row that holds the {@link Widgets.Toggle} -
+	 * the panel has no accessor for it (AU adds no member only a test would call). It sits directly under the card
+	 * while a bank is loaded, so every header list below carries it second.
+	 */
+	private Component viewStrip()
+	{
+		for (Component row : panel.header().getComponents())
+		{
+			if (row instanceof Container)
+			{
+				for (Component child : ((Container) row).getComponents())
+				{
+					if (child instanceof Widgets.Toggle)
+					{
+						return row;
+					}
+				}
+			}
+		}
+		throw new AssertionError("no Items | Net Worth History strip in the header");
+	}
+
 	/** N section 3 §3 / section 4: LOGIN and NO_BANK empty the header; EMPTY and LIST carry the card and the control row. */
 	@Test
 	public void headerIsEmptiedWithoutABankAndWholeWithOne() throws Exception
@@ -760,28 +783,30 @@ public class BankPriceMovementPanelTest
 
 		publish(Collections.emptyList(), listed(10, 0));
 		assertEquals(BankPriceMovementPanel.CARD_EMPTY, panel.card());
-		assertEquals(Arrays.asList(panel.hero(), panel.controlRow()), Arrays.asList(panel.header().getComponents()));
+		// AU: the Items | Net Worth History strip sits between the card and the control row whenever a bank is loaded.
+		assertEquals(Arrays.asList(panel.hero(), viewStrip(), panel.controlRow()),
+			Arrays.asList(panel.header().getComponents()));
 		assertTrue(panel.heroShowing());
 
 		final JPanel hero = panel.hero();
 		publish(rows(3), listed(3, 3));
 		assertSame("the same card, not a new one per publish", hero, panel.hero());
-		assertEquals(2, panel.header().getComponentCount());
+		assertEquals(3, panel.header().getComponentCount());
 
 		publish(rows(3), listedWithProblem(COOLDOWN, MovementWindow.D1, THEN_DAY));
-		assertEquals(Arrays.asList(panel.hero(), panel.controlRow(), panel.problemLabel()),
+		assertEquals(Arrays.asList(panel.hero(), viewStrip(), panel.controlRow(), panel.problemLabel()),
 			Arrays.asList(panel.header().getComponents()));
 
 		onEdt(() -> panel.toggleFold());
 		assertEquals("the fold sits between the control row and the problem row",
-			Arrays.asList(panel.hero(), panel.controlRow(), panel.fold(), panel.problemLabel()),
+			Arrays.asList(panel.hero(), viewStrip(), panel.controlRow(), panel.fold(), panel.problemLabel()),
 			Arrays.asList(panel.header().getComponents()));
 
 		publish(Collections.emptyList(), status(true, false, 0, 0, MovementWindow.D1, null, "No bank yet", 0L));
 		assertEquals("the bank went away: everything goes with it", 0, panel.header().getComponentCount());
 		assertTrue("...but the fold remembers it was open", panel.foldOpen());
 		publish(rows(3), listed(3, 3));
-		assertEquals(Arrays.asList(panel.hero(), panel.controlRow(), panel.fold()),
+		assertEquals(Arrays.asList(panel.hero(), viewStrip(), panel.controlRow(), panel.fold()),
 			Arrays.asList(panel.header().getComponents()));
 	}
 
@@ -805,7 +830,8 @@ public class BankPriceMovementPanelTest
 				assertFalse("a chip is transparent so the card shows through", chip.isOpaque());
 			}
 			panel.toggleFold();
-			assertEquals(Arrays.asList(panel.hero(), panel.controlRow(), panel.fold()), Arrays.asList(panel.header().getComponents()));
+			assertEquals(Arrays.asList(panel.hero(), viewStrip(), panel.controlRow(), panel.fold()),
+				Arrays.asList(panel.header().getComponents()));
 		});
 	}
 
@@ -1740,13 +1766,16 @@ public class BankPriceMovementPanelTest
 			BankPriceMovementPanel.SHOW_GP_TEXT, BankPriceMovementPanel.SHOW_PCT_TEXT,
 			BankPriceMovementPanel.LIVE_PRICES_TEXT, BankPriceMovementPanel.COUNT_CASH_TEXT,
 			BankPriceMovementPanel.COUNT_UNTRADEABLES_TEXT, BankPriceMovementPanel.COUNT_INVENTORY_TEXT,
+			// AU: the start-tab group's two dots, between the four switches and the preset row.
+			SidebarView.ITEMS.toString(), SidebarView.HISTORY.toString(),
 			// AH: the ninth and last ITEM, under the preset row. "Reset to default" is no longer among them -
 			// AH2 made it a button in the bottom row beside OK, so it is a child of that row and not an entry.
 			// It was the tenth until addendum AO deleted "Show stack value on rows" from the group above it.
 			BankPriceMovementPanel.SHOW_HOVER_TEXT_TEXT), itemTexts(menu));
 		// Z2: nine items - the eight switches and addendum AH's hover switch - with the preset row among them and,
 		// under everything, addendum AB's OK row carrying AH2's "Reset to default" button at its left end.
-		assertEquals("nine items, the preset row, the OK row and three separators", 14, menu.getComponentCount());
+		assertEquals("eleven items (two of them AU's dots), the caption, the preset row, the OK row and four separators",
+			18, menu.getComponentCount());
 		assertTrue("the first separator is under Refresh", menu.getComponent(1) instanceof JSeparator);
 		assertTrue("the second is between the card's three and the view's four", menu.getComponent(5) instanceof JSeparator);
 		// T1: the price series leads the group - what a stack is worth is answered before whether it is counted.
@@ -2018,8 +2047,12 @@ public class BankPriceMovementPanelTest
 			"Show change in %",
 			"Use live prices",
 			"Include coins and platinum tokens",
-			"Include untradeable items",
+			// AV: the untradeables switch in the user's words since it reaches the alch-only ones alone.
+			"Include alch-only untradeables",
 			"Include inventory and worn gear",
+			// AU: the two dots of "Tab to open on startup".
+			"Items",
+			"Net Worth History",
 			// AH: the ninth and last entry, under the preset row and its rule - the only switch carrying a box
 			// it draws itself. "Reset to default" was an entry until AH2 moved it into the bottom row beside
 			// OK, so it is pinned by the bottom-row test instead.
@@ -2033,13 +2066,14 @@ public class BankPriceMovementPanelTest
 		// this is the file that pins the WORDS, so a deleted item left drawn on the settings page would show
 		// up here or nowhere.
 		assertFalse("AO1: the row switch is deleted, label and all", texts.contains("Show stack value on rows"));
+		assertFalse("AV: the untradeables switch's Y4 name is gone", texts.contains("Include untradeable items"));
 		// The two switch groups are unmoved: the card's three say what is DRAWN, the four under them what the
 		// figures MEAN, addendum Z's bands come after both, addendum AH's hover switch after those and
 		// addendum AB's OK row - now carrying "Reset to default" as well (AH2) - after everything.
 		assertFalse("AH2: the way back to the default bands is a button in that row, not an entry",
 			texts.contains(BankPriceMovementPanel.RESET_PRESETS_TEXT));
-		assertEquals("nine items, the preset row, the OK row and three separators", 14,
-			panel.heroMenu().getComponentCount());
+		assertEquals("eleven items (AU's two dots among them), the caption, the preset row, the OK row and four separators",
+			18, panel.heroMenu().getComponentCount());
 	}
 
 	/**
@@ -2644,10 +2678,11 @@ public class BankPriceMovementPanelTest
 		onEdt(() ->
 		{
 			assertFalse(panel.foldOpen());
-			assertEquals(2, panel.header().getComponentCount());
+			// AU: hero, the Items | Net Worth History strip, the control row.
+			assertEquals(3, panel.header().getComponentCount());
 			press(panel.bandTarget());
 			assertTrue(panel.foldOpen());
-			assertSame(panel.fold(), panel.header().getComponent(2));
+			assertSame(panel.fold(), panel.header().getComponent(3));
 			assertEquals(ColorScheme.DARKER_GRAY_COLOR, panel.fold().getBackground());
 			assertTrue("the fields live in the fold", SwingUtilities.isDescendingFrom(panel.minField(), panel.fold()));
 			assertTrue(SwingUtilities.isDescendingFrom(panel.maxField(), panel.fold()));
@@ -2660,7 +2695,7 @@ public class BankPriceMovementPanelTest
 
 			press(panel.bandTarget());
 			assertFalse(panel.foldOpen());
-			assertEquals("the fold is removed, not hidden", 2, panel.header().getComponentCount());
+			assertEquals("the fold is removed, not hidden", 3, panel.header().getComponentCount());
 			assertEquals("the band survives the close", 1_000_000L, panel.filter().gpMin());
 			assertEquals("1m+", panel.bandTarget().getText());
 
@@ -2688,9 +2723,9 @@ public class BankPriceMovementPanelTest
 		onEdt(() ->
 		{
 			assertTrue("a fresh install opens on the fold", panel.foldOpen());
-			assertEquals(Arrays.asList(panel.hero(), panel.controlRow(), panel.fold()),
+			assertEquals(Arrays.asList(panel.hero(), viewStrip(), panel.controlRow(), panel.fold()),
 				Arrays.asList(panel.header().getComponents()));
-			assertSame("directly under the control row", panel.fold(), panel.header().getComponent(2));
+			assertSame("directly under the control row", panel.fold(), panel.header().getComponent(3));
 			assertTrue("construction writes nothing back", prefs.foldSaves.isEmpty());
 		});
 		assertTrue(panel.describe(), panel.describe().contains("\"foldOpen\":true"));
@@ -2766,10 +2801,11 @@ public class BankPriceMovementPanelTest
 		{
 			panel.setFoldOpen(true);
 			assertTrue(panel.foldOpen());
-			assertSame(panel.fold(), panel.header().getComponent(2));
+			// AU: under the Items | Net Worth History strip and the control row.
+			assertSame(panel.fold(), panel.header().getComponent(3));
 			panel.setFoldOpen(false);
 			assertFalse(panel.foldOpen());
-			assertEquals("the fold is removed, not hidden", 2, panel.header().getComponentCount());
+			assertEquals("the fold is removed, not hidden", 3, panel.header().getComponentCount());
 			assertTrue("the road never writes", prefs.foldSaves.isEmpty());
 
 			assertTrue(panel.applyMin("1m"));
@@ -2816,7 +2852,7 @@ public class BankPriceMovementPanelTest
 	public void theRendererDrawsTheOpenFoldAndCanStillDrawTheClosedOne() throws Exception
 	{
 		assertTrue("the fixture ships open", LookRenderer.FOLD_OPEN);
-		assertEquals("the 900 px pictures are one size, fold or no fold - the fold eats their bare ground",
+		assertEquals("the three twelve-row pictures are one size, fold or no fold - the fold eats their bare ground",
 			LookRenderer.HEIGHT, LookRenderer.height(LookRenderer.GUIDE_ONLY, false));
 		assertEquals(LookRenderer.HEIGHT, LookRenderer.height(LookRenderer.GUIDE_ONLY, true));
 		assertEquals("the options picture comes back at the size addendum W took it",
@@ -2831,7 +2867,8 @@ public class BankPriceMovementPanelTest
 			try
 			{
 				assertTrue("the default is the shipped sidebar", open.foldOpen());
-				assertSame(open.fold(), open.header().getComponent(2));
+				// AU: under the card, the Items | Net Worth History strip, and the control row.
+				assertSame(open.fold(), open.header().getComponent(3));
 			}
 			finally
 			{
@@ -2842,7 +2879,7 @@ public class BankPriceMovementPanelTest
 			try
 			{
 				assertFalse("...and false is the sidebar of addenda N to W", closed.foldOpen());
-				assertEquals(2, closed.header().getComponentCount());
+				assertEquals(3, closed.header().getComponentCount());
 			}
 			finally
 			{
@@ -2927,8 +2964,10 @@ public class BankPriceMovementPanelTest
 	 * AA3: every picture is drawn with room for its whole list under the OPEN fold. The header grew by
 	 * {@link LookRenderer#FOLD_HEIGHT} and the list under it lost exactly that; a list that no longer fits brings
 	 * a scroll bar, which narrows every row card and is the failure {@link LookRenderer#OPTIONS_HEIGHT} was sized
-	 * to avoid in the first place (R5). Three of the four pictures had 106 px or more of bare ground under their
-	 * last row and simply gave 57 of it up; the options picture had 7, which is why it alone is taller again.
+	 * to avoid in the first place (R5). When AA3 landed, three of the four pictures had 106 px or more of bare ground
+	 * under their last row and simply gave 57 of it up; the options picture had 7, which is why it alone is taller
+	 * again. (The heights have grown since - addendum AV's row and addendum AU's strip - and {@link LookRenderer#HEIGHT}
+	 * is the one figure; this test is what holds each picture to its list.)
 	 */
 	@Test
 	public void everyPictureIsTallEnoughForItsListWithTheFoldOpen() throws Exception
@@ -3075,16 +3114,16 @@ public class BankPriceMovementPanelTest
 	{
 		buildWithHovers();
 		final JPopupMenu menu = panel.heroMenu();
-		assertEquals("eight items, the preset row, the hover switch, the OK row and three separators", 14,
+		assertEquals("ten items, AU's caption, the preset row, the hover switch, the OK row and four separators", 18,
 			menu.getComponentCount());
-		assertTrue("a rule under the last switch", menu.getComponent(10) instanceof JSeparator);
-		assertSame("then the row", panel.presetRow(), menu.getComponent(11));
+		assertTrue("a rule under the start-tab dots (AU)", menu.getComponent(14) instanceof JSeparator);
+		assertSame("then the row", panel.presetRow(), menu.getComponent(15));
 		// AH: and in the space under it, where the user drew the box - the group's rule is the one above, so the
 		// hover switch joins this last group rather than starting another. AH2 took "Reset to default" out from
 		// between the two and put it in the bottom row.
-		assertSame(panel.showHoverTextItem(), menu.getComponent(12));
-		assertEquals(BankPriceMovementPanel.SHOW_HOVER_TEXT_TEXT, ((JMenuItem) menu.getComponent(12)).getText());
-		assertSame("and the OK row under everything (AB2)", panel.okRow(), menu.getComponent(13));
+		assertSame(panel.showHoverTextItem(), menu.getComponent(16));
+		assertEquals(BankPriceMovementPanel.SHOW_HOVER_TEXT_TEXT, ((JMenuItem) menu.getComponent(16)).getText());
+		assertSame("and the OK row under everything (AB2)", panel.okRow(), menu.getComponent(17));
 		assertFalse("the row is no menu element - which is what makes the popup window focusable",
 			panel.presetRow() instanceof MenuElement);
 		assertEquals("the caption addendum AB line AB3 asks for, pinned", "Preset price ranges",
@@ -3921,7 +3960,8 @@ public class BankPriceMovementPanelTest
 		publish(rows(1), listedWithProblem(COOLDOWN, MovementWindow.D1, THEN_DAY));
 		assertTrue(panel.problemShowing());
 		assertSame("the last row of the header", panel.problemLabel(), panel.header().getComponent(panel.header().getComponentCount() - 1));
-		assertEquals(Arrays.asList(panel.hero(), panel.controlRow(), panel.problemLabel()), Arrays.asList(panel.header().getComponents()));
+		assertEquals(Arrays.asList(panel.hero(), viewStrip(), panel.controlRow(), panel.problemLabel()),
+			Arrays.asList(panel.header().getComponents()));
 		assertEquals(COOLDOWN, panel.problemLabel().getText());
 		assertEquals("the whole sentence is the tooltip", COOLDOWN, panel.problemLabel().getToolTipText());
 		assertEquals(ColorScheme.PROGRESS_ERROR_COLOR, panel.problemLabel().getForeground());
@@ -5384,11 +5424,12 @@ public class BankPriceMovementPanelTest
 	}
 
 	/**
-	 * N5 / O7: the headless proof - the Ticker sidebar painted to build/ at 225 x 900 with every figure shown, and
-	 * again with all three hidden; both carry the orange accent and the fixture's red falls, and they differ.
+	 * N5 / O7: the headless proof - the Ticker sidebar painted to build/ at 225 x {@link LookRenderer#HEIGHT} with
+	 * every figure shown, and again with all three hidden; both carry the orange accent and the fixture's red falls,
+	 * and they differ.
 	 *
-	 * <p>Q7 / R5 add a third picture with the view switches on, which is the only one that is NOT 900 px tall: its
-	 * fixture has three rows the other two do not, and 900 px hold fourteen ({@link LookRenderer#height}). Since
+	 * <p>Q7 / R5 add a third picture with the view switches on, which is the only one that is NOT
+	 * {@link LookRenderer#HEIGHT} tall: its fixture has rows the other two do not ({@link LookRenderer#height}). Since
 	 * AA3 it is taller again by the open fold's own height, which is what the header took from the list.
 	 *
 	 * <p>All four open on the price fold (AA3), so all four differ from the addendum W pictures by the fold's band
@@ -5420,10 +5461,10 @@ public class BankPriceMovementPanelTest
 			assertTrue(png.getAbsolutePath(), png.isFile() && png.length() > 1_000L);
 			final BufferedImage image = ImageIO.read(png);
 			assertEquals(LookRenderer.WIDTH, image.getWidth());
-			// The two acceptance shots keep the 900 px they are compared at - the open fold (AA3) eats 57 px of
-			// the bare ground under their last row and no more; the options picture is a row pitch taller for
-			// addendum R's fifteenth row (R5) and the fold's height taller again, because it is the one whose
-			// list had no ground to give.
+			// The two acceptance shots keep LookRenderer.HEIGHT, the height they are compared at - the open fold
+			// (AA3) ate 57 px of the bare ground under their last row and no more; the options picture is taller
+			// for the rows only its switches bring (R5) and the fold's height taller again, because it is the one
+			// whose list had no ground to give.
 			assertEquals(e.getKey(), LookRenderer.height(options), image.getHeight());
 			final int orange = count(image, ColorScheme.BRAND_ORANGE);
 			final int cardGrey = count(image, ColorScheme.DARKER_GRAY_COLOR);
@@ -5445,7 +5486,8 @@ public class BankPriceMovementPanelTest
 
 		// Q7 / R5: the third picture is the twelve rows plus three untradeable stacks - two at their alch value
 		// and the Crystal body at what its three seeds are worth - and all three are in the sums.
-		assertEquals(12, LookRenderer.rows(LookRenderer.GUIDE_ONLY).size());
+		// AV: the Crystal body is in the guide-only list too - a parts stack counts with the switch off.
+		assertEquals(13, LookRenderer.rows(LookRenderer.GUIDE_ONLY).size());
 		assertEquals(15, LookRenderer.rows(LookRenderer.OPTIONS).size());
 		final PortfolioSummary counted = LookRenderer.summary(LookRenderer.OPTIONS);
 		assertEquals(LookRenderer.VALUE_NOW + 62_000L + LookRenderer.CRYSTAL_BODY_NOW, counted.valueNow());
@@ -5473,7 +5515,7 @@ public class BankPriceMovementPanelTest
 		// traded series (one of which fell back to the guide for its 1 d window, T4) and one left on the guide with
 		// the check that refused it - and the switch OFF leaves the list exactly as it was.
 		final List<MovementRow> live = LookRenderer.rows(LookRenderer.LIVE);
-		assertEquals(12, live.size());
+		assertEquals("the twelve and, since AV, the Crystal body", 13, live.size());
 		int liveCount = 0;
 		for (MovementRow r : live)
 		{
@@ -5491,8 +5533,10 @@ public class BankPriceMovementPanelTest
 		assertEquals("Green hat", live.get(5).name());
 		assertEquals("Guide price - live not used: 12 traded yesterday", MovementRowPanel.liveRefusalLine(live.get(5)));
 		assertEquals(LookRenderer.LIVE_STACKS, LookRenderer.summary(LookRenderer.LIVE).liveRows());
-		assertEquals("the guide-only list is untouched by any of it", LookRenderer.rows(),
-			LookRenderer.rows(LookRenderer.GUIDE_ONLY));
+		assertEquals("the guide-only list is untouched by any of it: the twelve and, since AV, the Crystal body",
+			LookRenderer.rows().subList(0, 11), LookRenderer.rows(LookRenderer.GUIDE_ONLY).subList(0, 11));
+		assertEquals(LookRenderer.crystalBody(), LookRenderer.rows(LookRenderer.GUIDE_ONLY).get(11));
+		assertEquals(LookRenderer.rows().get(11), LookRenderer.rows(LookRenderer.GUIDE_ONLY).get(12));
 		assertEquals(0, LookRenderer.summary(LookRenderer.GUIDE_ONLY).liveRows());
 
 		// U3: the fourth picture is drawn down the LIVE path with a real live calendar behind it - three live stacks
@@ -5616,10 +5660,10 @@ public class BankPriceMovementPanelTest
 		}));
 
 		publish(rows(3), listedWithProblem(COOLDOWN, MovementWindow.D1, THEN_DAY));
-		assertEquals(Arrays.asList(panel.hero(), panel.controlRow(), panel.fold(), panel.problemLabel()),
+		assertEquals(Arrays.asList(panel.hero(), viewStrip(), panel.controlRow(), panel.fold(), panel.problemLabel()),
 			Arrays.asList(panel.header().getComponents()));
 		publish(rows(3), listed(3, 3));
-		assertEquals(Arrays.asList(panel.hero(), panel.controlRow(), panel.fold()),
+		assertEquals(Arrays.asList(panel.hero(), viewStrip(), panel.controlRow(), panel.fold()),
 			Arrays.asList(panel.header().getComponents()));
 
 		assertEquals("only the problem row moved: " + removed, Arrays.asList(panel.problemLabel()), removed);
