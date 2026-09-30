@@ -15,6 +15,9 @@ import java.awt.Graphics2D;
 import java.awt.GridLayout;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
+import java.awt.Toolkit;
+import java.awt.Window;
+import java.awt.datatransfer.StringSelection;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 import java.awt.event.FocusAdapter;
@@ -26,6 +29,7 @@ import java.text.ParseException;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -34,6 +38,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -608,6 +613,32 @@ public class BankPriceMovementPanel extends PluginPanel
 	/** Its hover: the two things the press does, in the order it does them (AB2). */
 	public static final String OK_TIP = "Close this menu; the price ranges above are saved first";
 	/**
+	 * The menu's header (1.0.8): which plugin and which build, two grey lines over a rule of their own at the top of
+	 * the menu - the lines a player reads out when they report a problem. Plain text: not clickable, no hover.
+	 * {@link Version#CURRENT} is the one place the number is written. (One line at the bottom, "2h Bank Portfolio
+	 * Tracker 1.0.8", until the user split it and moved it to the top on the third local look, 2026-09-30.)
+	 */
+	public static final String VERSION_NAME_TEXT = "2h Bank Portfolio Tracker";
+	/** The part of {@link #VERSION_NAME_TEXT} drawn in the brand orange: the 2hBuilds mark, as on the sidebar icon. */
+	public static final String VERSION_MARK_TEXT = "2h";
+	public static final String VERSION_TEXT = "Version " + Version.CURRENT;
+	/**
+	 * The version line's grey: a shade darker than the captions' {@link ColorScheme#LIGHT_GRAY_COLOR} (165), still
+	 * about 4.6 : 1 against the menu's ground - "slightly darker gray, still legible" (the user, 2026-09-30).
+	 */
+	static final Color HEADER_GREY = new Color(135, 135, 135);
+	/** The header's title face: bold, one size up from the menu's 12 px (the user's pick from six drawn choices). */
+	static final int HEADER_TITLE_SIZE = 13;
+	private static final DateTimeFormatter CLOCK_SECONDS = DateTimeFormatter.ofPattern("HH:mm:ss", Locale.ROOT);
+	/**
+	 * The menu item that opens the troubleshooting window (1.0.8), after the start-tab dots: it runs a few checks, says
+	 * what is wrong in plain words and offers a report to paste into a bug report.
+	 */
+	public static final String TROUBLESHOOT_TEXT = "Troubleshoot...";
+	/** Its hover, behind "Show hover text" like every other: what it does, and what its report does not hold. */
+	public static final String TROUBLESHOOT_TIP = "Check the plugin's connections and state, say what is wrong in plain "
+		+ "words, and give you a report to paste into a bug report. It holds no account or bank data.";
+	/**
 	 * The tooltip of the refresh link (addendum S, line S2;
 	 * {@code docs/bank-price-movement-addendum-S-2026-09-11.md}): what the control does, and the fact that decides
 	 * whether a second tap is worth making - Jagex publishes the guide prices once a day, so a re-check almost
@@ -819,6 +850,31 @@ public class BankPriceMovementPanel extends PluginPanel
 	private JPanel okRow;
 	/** The way out of the menu (AB2). */
 	private JButton okButton;
+	/** The menu's item that opens the troubleshooting window (1.0.8). */
+	private JMenuItem troubleshootItem;
+	/**
+	 * The plugin's short memory (1.0.8): handed over by {@link #setDiagnostics}. Never null - a panel built without
+	 * one (every headless test) keeps a private memory of its own, so the clipboard's one warning needs no guard.
+	 */
+	private volatile Diagnostics diagnostics = new Diagnostics();
+	/**
+	 * What the menu item does when clicked (1.0.8): the plugin's routine, handed the window the dialog should belong to
+	 * (this panel's ancestor, null while it has none). Null while there is none - a panel built without a plugin, or
+	 * one whose plugin has shut down - and the click then does nothing. Volatile because the plugin hands it over from
+	 * startUp and takes it back in shutDown, and the only reader is the click on the EDT.
+	 */
+	@Nullable
+	private volatile Consumer<Window> troubleshoot;
+	/**
+	 * Where the troubleshooting window's <i>Copy report</i> puts the report: the system clipboard, as RuneLite's own
+	 * chat history plugin puts text on it. A field and not a constructor argument because the panel has a dozen
+	 * callers that know nothing of it; a test replaces it to read what would have been copied. The default is the
+	 * production one - it catches what a machine without a clipboard throws (a headless one, or another program
+	 * holding it) and says so once in the client log, so a click is never the reason an exception reaches the EDT.
+	 */
+	Consumer<String> clipboard = this::toSystemClipboard;
+	/** When the last publish ARRIVED, by {@link #clock}, stored or drawn; 0 before the first. For the report. */
+	private long lastPublishAtMillis;
 	private JPanel captionRow;
 	private JLabel captionLabel;
 	private JLabel refreshLabel;
@@ -866,6 +922,14 @@ public class BankPriceMovementPanel extends PluginPanel
 	private final JPanel cards;
 	private final JPanel loginCard;
 	private final JPanel noBankCard;
+	/**
+	 * The settings gear on {@link #loginCard} and on {@link #noBankCard}, one each because a label can sit in only
+	 * one container. The hero card is not on screen at these two cards, so without them a player who goes no
+	 * further than "Log in to load your bank" or "Open your bank once to load your items" could not reach the
+	 * settings menu, and with it Troubleshoot, which is the place to find out why the plugin got no further.
+	 */
+	private final JLabel loginGearLabel;
+	private final JLabel noBankGearLabel;
 	private final JPanel emptyCard;
 	private final JPanel emptyColumn;
 	private final PluginErrorPanel emptyMessage;
@@ -1047,12 +1111,14 @@ public class BankPriceMovementPanel extends PluginPanel
 		// The cards. Each message is a PluginErrorPanel inside its own holder: the holder is what CardLayout
 		// shows and hides, so PluginErrorPanel.setContent (which calls setVisible(true), :73) can rewrite the
 		// EMPTY card's description later without un-hiding it.
-		loginCard = messageCard(LOGIN_TEXT, "Your last bank is remembered once you have opened it");
+		loginGearLabel = settingsGear();
+		loginCard = messageCard(LOGIN_TEXT, "Your last bank is remembered once you have opened it", loginGearLabel);
 		// The capture is driven by ItemContainerChanged on the bank container, which the server sends when the
 		// bank interface OPENS and again on every deposit and withdrawal (ItemContainerChanged.java:30-38) - so
 		// the list fills while the bank is on screen, and the old wording described something the plugin does not
 		// do. The sidebar sits outside the game canvas, so the reader watches it happen.
-		noBankCard = messageCard(NO_BANK_TEXT, "The list fills as soon as you open your bank");
+		noBankGearLabel = settingsGear();
+		noBankCard = messageCard(NO_BANK_TEXT, "The list fills as soon as you open your bank", noBankGearLabel);
 		emptyMessage = new PluginErrorPanel();
 		typeMessage(emptyMessage);
 		emptyMessage.setContent(EMPTY_TEXT, "");
@@ -1241,11 +1307,7 @@ public class BankPriceMovementPanel extends PluginPanel
 		captionRow = transparentBar(ROW_GAP, captionLabel, null, refreshLabel);
 
 		totalLabel = Widgets.label("0", Widgets.sansBold(28), Color.WHITE);
-		gearLabel = iconButton(Widgets.gearIcon(Widgets.GEAR_SIZE, ColorScheme.LIGHT_GRAY_COLOR),
-			Widgets.gearIcon(Widgets.GEAR_SIZE, ColorScheme.BRAND_ORANGE), OPTIONS_TIP, this::openGearMenu);
-		// The same 6 px of hit area the Refresh link above it buys, on the side the pointer arrives from: a 12 px
-		// glyph is a 12 px target otherwise, and this one is a settings button and not a decoration.
-		gearLabel.setBorder(new EmptyBorder(2, ROW_GAP, 2, 0));
+		gearLabel = settingsGear();
 		totalRow = transparentBar(ROW_GAP, totalLabel, null, gearLabel);
 
 		triangleLabel = new JLabel();
@@ -1318,6 +1380,11 @@ public class BankPriceMovementPanel extends PluginPanel
 	{
 		final JPopupMenu menu = new JPopupMenu();
 		menu.setBorder(new EmptyBorder(5, 5, 5, 5));
+		// 1.0.8: the header - which plugin and which build - behind a rule of its own, so the OK row stays the menu's
+		// last thing (the user, on the third local look, 2026-09-30: "makes sense for the reset to default and ok
+		// buttons to be the bottom most things").
+		menu.add(buildVersionRow());
+		menu.addSeparator();
 		final JMenuItem refresh = new JMenuItem(REFRESH_MENU_TEXT);
 		refresh.setFont(Widgets.sans(12));
 		// AS 7.1 decision 2, kept by AS8: its name says PRICES, so it stays the price re-check ALONE with the bank open
@@ -1361,6 +1428,15 @@ public class BankPriceMovementPanel extends PluginPanel
 			startTabItems[tab.ordinal()] = dot;
 			menu.add(dot);
 		}
+		// 1.0.8: the troubleshooting window, in its own group after the start-tab dots - the user, on the first look:
+		// without a line above it, it read as one more start-tab choice. A plain item: the click closes the menu
+		// and opens the window.
+		menu.addSeparator();
+		troubleshootItem = new JMenuItem(TROUBLESHOOT_TEXT);
+		troubleshootItem.setFont(Widgets.sans(12));
+		setHover(troubleshootItem, TROUBLESHOOT_TIP);
+		troubleshootItem.addActionListener(e -> openTroubleshoot());
+		menu.add(troubleshootItem);
 		// Z2: a third group, and the only one that is not a list of switches - the three quick bands, in boxes,
 		// with the way back to 100k / 1m / 10m now a button in the bottom row (AH2).
 		menu.addSeparator();
@@ -1525,6 +1601,114 @@ public class BankPriceMovementPanel extends PluginPanel
 	}
 
 	/**
+	 * The plugin's diagnostics memory (1.0.8), which the clipboard's one warning goes through. Any thread.
+	 *
+	 * @param diagnostics the plugin's; null keeps the panel's own private one
+	 */
+	public void setDiagnostics(@Nullable final Diagnostics diagnostics)
+	{
+		this.diagnostics = diagnostics == null ? new Diagnostics() : diagnostics;
+	}
+
+	/**
+	 * The routine the menu's <i>Troubleshoot...</i> runs (1.0.8). Any thread.
+	 *
+	 * @param troubleshoot given the window the dialog should belong to; null unregisters it, which is what
+	 *                     {@code shutDown} does
+	 */
+	public void setTroubleshoot(@Nullable final Consumer<Window> troubleshoot)
+	{
+		this.troubleshoot = troubleshoot;
+	}
+
+	/**
+	 * The menu item's click (1.0.8): hands the plugin's routine this panel's window, the RuneLite frame, for the dialog
+	 * to be owned by. The window may be null - a panel not yet in one - and the dialog then simply has no owner.
+	 */
+	private void openTroubleshoot()
+	{
+		final Consumer<Window> hook = troubleshoot;
+		if (hook != null)
+		{
+			hook.accept(SwingUtilities.getWindowAncestor(this));
+		}
+	}
+
+	/** The system clipboard as {@link #clipboard}'s default: never throws, and the first failure is a WARN. */
+	private void toSystemClipboard(final String text)
+	{
+		try
+		{
+			Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(text), null);
+		}
+		catch (final RuntimeException e)
+		{
+			// HeadlessException (a machine with no display) and IllegalStateException (the clipboard is busy) both land
+			// here; a report that cannot be copied is not worth an exception on the EDT.
+			diagnostics.warn(log, "clipboard", "bank-portfolio-tracker: could not put the diagnostics on the clipboard",
+				e);
+		}
+	}
+
+	/**
+	 * What the panel is showing, added to the Troubleshoot report's Sidebar section (1.0.8): the card, the tab, the
+	 * window, the sort, the band, the four flags of whether it is drawing, how long ago the last publish came and
+	 * how many rows it lists. Counts, times and states only: never a row, and never an account, a name or an item.
+	 * EDT.
+	 */
+	public void describeInto(final Diagnostics.Facts.Builder facts)
+	{
+		final RowFilter f = filter;
+		facts.card(chooseCard());
+		facts.line(Diagnostics.SIDEBAR, "tab", view.name());
+		facts.line(Diagnostics.SIDEBAR, "window", f.window().name());
+		facts.line(Diagnostics.SIDEBAR, "sort", f.sort().name() + (f.descending() ? " descending" : " ascending"));
+		facts.line(Diagnostics.SIDEBAR, "band", f.gpMin() <= 0L && f.gpMax() <= 0L ? "all"
+			: (f.gpMin() > 0L ? MovementMath.formatGp(f.gpMin()) : "0") + " to "
+			+ (f.gpMax() > 0L ? MovementMath.formatGp(f.gpMax()) : "max"));
+		facts.line(Diagnostics.SIDEBAR, "active", yesNo(active));
+		facts.line(Diagnostics.SIDEBAR, "holding publishes", yesNo(holding()));
+		facts.line(Diagnostics.SIDEBAR, "a publish waiting", yesNo(pendingPublish));
+		facts.line(Diagnostics.SIDEBAR, "last publish at", lastPublishAtMillis <= 0L ? "never"
+			: CLOCK_SECONDS.format(Instant.ofEpochMilli(lastPublishAtMillis).atZone(ZoneId.systemDefault())));
+		facts.line(Diagnostics.SIDEBAR, "rows", String.valueOf(rows.size()));
+	}
+
+	private static String yesNo(final boolean on)
+	{
+		return on ? "yes" : "no";
+	}
+
+	/**
+	 * The menu's header (1.0.8): the title line - {@link #VERSION_MARK_TEXT} in the brand orange and the rest of
+	 * {@link #VERSION_NAME_TEXT} in white, both bold at {@link #HEADER_TITLE_SIZE} px, two labels side by side because
+	 * one label has one colour - over {@link #VERSION_TEXT} in {@link #HEADER_GREY} at the menu's own 12 px; every
+	 * line's text at its left edge like the captions below (the same column layout and the same inset), no hover, no
+	 * click. The user's pick from six drawn choices (2026-09-30), after the block had been one grey 10 px line at the
+	 * bottom, then two grey lines, then the header.
+	 */
+	private JPanel buildVersionRow()
+	{
+		final JPanel row = Widgets.column(0);
+		row.setOpaque(false);
+		row.setBorder(new EmptyBorder(2, ROW_GAP, 2, ROW_GAP));
+		final JPanel title = new JPanel();
+		title.setLayout(new BoxLayout(title, BoxLayout.X_AXIS));
+		title.setOpaque(false);
+		title.setAlignmentX(Component.LEFT_ALIGNMENT);
+		title.add(Widgets.label(VERSION_MARK_TEXT, Widgets.sansBold(HEADER_TITLE_SIZE), ColorScheme.BRAND_ORANGE));
+		title.add(Widgets.label(VERSION_NAME_TEXT.substring(VERSION_MARK_TEXT.length()),
+			Widgets.sansBold(HEADER_TITLE_SIZE), Color.WHITE));
+		title.add(Box.createHorizontalGlue());
+		row.add(title);
+		final JLabel version = Widgets.label(VERSION_TEXT, Widgets.sans(12), HEADER_GREY);
+		version.setHorizontalAlignment(SwingConstants.LEFT);
+		version.setAlignmentX(Component.LEFT_ALIGNMENT);
+		row.add(version);
+		return row;
+	}
+
+	/**
 	 * The gear menu's last row (addendum AB, line AB2): a horizontal glue and, pushed to the right end of the menu
 	 * by it, one small button reading {@link #OK_TEXT}.
 	 *
@@ -1591,9 +1775,11 @@ public class BankPriceMovementPanel extends PluginPanel
 	}
 
 	/**
-	 * Opens the gear menu under the gear (Q1) - {@code menu.show(anchor, x, y)} behind an {@code isShowing()}
-	 * guard, the same rule {@link #openSortMenu} follows: RuneLite disables lightweight popups, and a menu can
-	 * only be placed against something that is on the screen.
+	 * Opens the gear menu under {@code anchor}, the gear that was pressed (Q1) - {@code menu.show(anchor, x, y)}
+	 * behind an {@code isShowing()} guard, the same rule {@link #openSortMenu} follows: RuneLite disables
+	 * lightweight popups, and a menu can only be placed against something that is on the screen. There are three
+	 * gears, the hero card's and one on each of the login and no-bank cards (a player who gets no further than
+	 * those has no hero card), and one menu that belongs to them all, so the caller says which it is.
 	 *
 	 * <p><b>A press while the menu stands opens nothing</b> (addendum AB, line AB1), which is what makes the gear a
 	 * toggle. The press arrives here in one of two orders, and both are answered: in this client the popup has
@@ -1602,7 +1788,7 @@ public class BankPriceMovementPanel extends PluginPanel
 	 * should a popup ever survive the press that reached the gear, it is taken down here instead. Either way the
 	 * second click closes and opens nothing.
 	 */
-	void openGearMenu()
+	void openGearMenu(final JComponent anchor)
 	{
 		if (stopped)
 		{
@@ -1613,11 +1799,11 @@ public class BankPriceMovementPanel extends PluginPanel
 			closeGearMenu();
 			return;
 		}
-		if (!gearPressOpens() || !gearLabel.isShowing())
+		if (!gearPressOpens() || !anchor.isShowing())
 		{
 			return;
 		}
-		heroMenu.show(gearLabel, 0, gearLabel.getHeight());
+		heroMenu.show(anchor, 0, anchor.getHeight());
 	}
 
 	/**
@@ -1840,6 +2026,25 @@ public class BankPriceMovementPanel extends PluginPanel
 		return label;
 	}
 
+	/**
+	 * One settings gear: the drawn gear, grey at rest and orange under the mouse, "Options" for a hover, and a LEFT
+	 * press opens {@link #heroMenu} under IT ({@link #openGearMenu}) - the hero card's, and the one on each message
+	 * card, which is why every gear is built here and each passes itself as the menu's anchor.
+	 *
+	 * <p>The inset on its left and above and below is the same 6 px of hit area the Refresh link above it buys, on
+	 * the side the pointer arrives from: a 12 px glyph is a 12 px target otherwise, and this one is a settings
+	 * button and not a decoration.
+	 */
+	private JLabel settingsGear()
+	{
+		// The press needs the label it belongs to, which does not exist until iconButton has returned it.
+		final JLabel[] self = new JLabel[1];
+		self[0] = iconButton(Widgets.gearIcon(Widgets.GEAR_SIZE, ColorScheme.LIGHT_GRAY_COLOR),
+			Widgets.gearIcon(Widgets.GEAR_SIZE, ColorScheme.BRAND_ORANGE), OPTIONS_TIP, () -> openGearMenu(self[0]));
+		self[0].setBorder(new EmptyBorder(2, ROW_GAP, 2, 0));
+		return self[0];
+	}
+
 	/** {@link Widgets#bar} on a see-through ground, for the rows inside the hero card. */
 	private static JPanel transparentBar(int gap, @Nullable JComponent west, @Nullable JComponent centre,
 		@Nullable JComponent east)
@@ -1849,12 +2054,24 @@ public class BankPriceMovementPanel extends PluginPanel
 		return bar;
 	}
 
-	private static JPanel messageCard(String title, String description)
+	/**
+	 * A message card: the message in the middle as it always was, and {@code gear} at the right end of a bar of its
+	 * own above it. The hero card, which carries the settings gear, is not drawn at the login and no-bank cards, and
+	 * the user's reason for this bar was that a player who gets no further into the plugin than one of them has
+	 * otherwise no way to "troubleshoot if this is as far as they load into the plugin".
+	 */
+	private static JPanel messageCard(String title, String description, JLabel gear)
 	{
 		final PluginErrorPanel message = new PluginErrorPanel();
 		typeMessage(message);
 		message.setContent(title, description);
-		return Widgets.north(message);
+		final JPanel bar = transparentBar(ROW_GAP, null, null, gear);
+		bar.setBorder(new EmptyBorder(MARGIN, 0, 0, MARGIN));
+		final JPanel card = new JPanel(new BorderLayout());
+		card.setOpaque(false);
+		card.add(bar, BorderLayout.NORTH);
+		card.add(message, BorderLayout.CENTER);
+		return Widgets.north(card);
 	}
 
 	/**
@@ -4263,6 +4480,7 @@ public class BankPriceMovementPanel extends PluginPanel
 			SwingUtilities.invokeLater(() -> onRows(newRows, newStatus));
 			return;
 		}
+		lastPublishAtMillis = clock.getAsLong();
 		if (carriesNewBank(newStatus))
 		{
 			// A read, not a re-statement: the hold is lifted for it (AS; see carriesNewBank). A no-op with the bank

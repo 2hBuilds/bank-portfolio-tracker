@@ -5,9 +5,11 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.AppenderBase;
 import com.google.gson.Gson;
 import com.google.inject.Guice;
+import java.awt.Component;
 import java.io.File;
 import java.io.InputStream;
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -34,6 +36,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import javax.inject.Inject;
 import javax.inject.Named;
+import javax.swing.JMenuItem;
 import javax.swing.SwingUtilities;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
@@ -208,7 +211,8 @@ public class BankPriceMovementWiringTest
 		// Addendum W made the sort four columns and addendum T added live prices; this is the wording that
 		// says so, and it is the line the client prints under the plugin's name in its list.
 		assertEquals("Your bank's value and price movement over 1 to 180 days: live prices, your inventory and"
-			+ " worn gear, gp filters, and sorting by percent, gp, item or stack price", d.description());
+			+ " worn gear, gp filters, and sorting by percent, gp, item or stack price (v" + Version.CURRENT + ")",
+			d.description());
 		assertTrue("the Hub search wants the obvious words", Arrays.asList(d.tags()).contains("bank"));
 		assertTrue(Arrays.asList(d.tags()).contains("grand exchange"));
 		// The loader checks the DIRECT superclass; an intermediate base class makes it skip the plugin silently.
@@ -4677,6 +4681,468 @@ public class BankPriceMovementWiringTest
 		e.setGroup(group);
 		e.setKey(key);
 		return e;
+	}
+
+	// ------------------------------------------- 1.0.8: no silent drop, a read that cannot fail the sidebar
+
+	/**
+	 * 1.0.8 part 4: a bank event that arrives while the client answers -1 for the account hash - LOGGED_IN, but not
+	 * yet named - is not read (it could be filed under nobody), and it is no longer silent: it leaves a note in the
+	 * diagnostics, and the first also a WARN's worth of key. The next event with a real account is read as always.
+	 */
+	@Test
+	public void aBankEventBeforeTheClientNamesTheAccountLeavesANoteAndReadsNothing() throws Exception
+	{
+		final BankRig r = new BankRig();
+		final Diagnostics diag = new Diagnostics();
+		set(r.plugin, "diagnostics", diag);
+		when(r.client.getAccountHash()).thenReturn(-1L);
+
+		r.bankEvent(bank());
+		r.bankEvent(withdrew28Sharks());
+
+		assertEquals("nothing was read", 0, r.reads());
+		verify(r.service, never()).setBank(any(BankSnapshot.class));
+		final String report = DiagnosticsReports.report(diag);
+		assertEquals("one note per dropped event", 2, occurrences(report, "bank event: dropped - no account hash"));
+		assertEquals("but the warning is raised once", 1, occurrences(report, "warning: no-hash"));
+
+		when(r.client.getAccountHash()).thenReturn(ACCOUNT);
+		r.bankEvent(bank());
+		assertEquals("a named account is read as ever", 1, r.reads());
+		assertTrue(DiagnosticsReports.report(diag).contains("bank event: read (0 stacks, 0 carried)"));
+	}
+
+	/**
+	 * 1.0.8 part 3: a read that throws is kept as the last error, raised once, stamps NOTHING - no fingerprint, no
+	 * counter, no snapshot, no setBank - so the next bank event (the same slots) tries again and lands.
+	 */
+	@Test
+	public void aBankReadThatThrowsStampsNothingAndTheNextEventTriesAgain() throws Exception
+	{
+		final BankRig r = new BankRig();
+		final Diagnostics diag = new Diagnostics();
+		set(r.plugin, "diagnostics", diag);
+		when(r.reader.read(any(), anyLong(), anyString(), anyLong()))
+			.thenThrow(new IllegalStateException("planted"))
+			.thenAnswer(invocation -> new BankSnapshot());
+
+		r.bankEvent(bank());
+
+		verify(r.service, never()).setBank(any(BankSnapshot.class));
+		assertEquals("a failed read is not counted as a read", 0, field(r.plugin, "bankReads"));
+		final String failed = DiagnosticsReports.report(diag);
+		assertTrue(failed, failed.contains("bank read failed"));
+		assertTrue(failed, failed.contains("warning: bank-read"));
+		assertFalse(failed, failed.contains("Errors\nnone\n"));
+		assertTrue("the kept error names the exception", failed.contains("java.lang.IllegalStateException: planted"));
+
+		r.bankEvent(bank());
+
+		assertEquals("the very same slots go to the reader again at the next event: no fingerprint was stamped", 2,
+			r.reads());
+		assertEquals(1, field(r.plugin, "bankReads"));
+		verify(r.service, times(1)).setBank(any(BankSnapshot.class));
+	}
+
+	/** 1.0.8 part 2: the notes a bank visit leaves are counts and states - no account, no item. */
+	@Test
+	public void aBankVisitLeavesNotesWithNoAccountAndNoItemInThem() throws Exception
+	{
+		final BankRig r = new BankRig();
+		final Diagnostics diag = new Diagnostics();
+		set(r.plugin, "diagnostics", diag);
+
+		r.openBank();
+		r.bankEvent(bank());
+		r.bankEvent(bank());
+		r.bankEvent(withdrew28Sharks());
+		r.closeBank(true);
+
+		final String report = DiagnosticsReports.report(diag);
+		assertTrue(report, report.contains("bank interface opened"));
+		assertTrue(report, report.contains("bank event: read (0 stacks, 0 carried)"));
+		assertTrue(report, report.contains("bank event: unchanged, not re-read"));
+		assertTrue(report, report.contains("bank event: held (1 events so far)"));
+		assertTrue(report, report.contains("bank interface closed, a change was held"));
+		assertFalse("no account hash", report.contains(Long.toString(ACCOUNT)));
+	}
+
+	/**
+	 * 1.0.8 part 1: start-up writes ONE line at INFO naming the build and the client it runs on, makes the diagnostics
+	 * memory (first note: the version), and shut-down drops it again.
+	 */
+	@Test
+	public void startUpLogsOneInfoLineWithTheVersionAndMakesTheDiagnostics() throws Exception
+	{
+		final Fixture f = new Fixture(false);
+		final List<String> info = infoLinesOf(() ->
+		{
+			try
+			{
+				onEdt(f.plugin::startUp);
+			}
+			catch (final Exception e)
+			{
+				throw new AssertionError(e);
+			}
+		});
+
+		assertEquals(info.toString(), 1, info.size());
+		assertTrue(info.get(0), info.get(0).startsWith("bank-portfolio-tracker: 2h Bank Portfolio Tracker "
+			+ Version.CURRENT + " starting on RuneLite "));
+		final Diagnostics diagnostics = (Diagnostics) field(f.plugin, "diagnostics");
+		assertNotNull(diagnostics);
+		assertTrue(DiagnosticsReports.report(diagnostics).contains("plugin started, version " + Version.CURRENT));
+
+		onEdt(f.plugin::shutDown);
+
+		assertNull("dropped with the run", field(f.plugin, "diagnostics"));
+	}
+
+	// ------------------------------------------- 1.0.8 second half: Troubleshoot...
+
+	/** The bank-event totals the report carries: every bank event seen, and those dropped for want of an account. */
+	@Test
+	public void theBankEventTotalsCountEverySeenEventAndEveryDroppedOne() throws Exception
+	{
+		final BankRig r = new BankRig();
+		set(r.plugin, "diagnostics", new Diagnostics());
+
+		r.bankEvent(bank());
+		r.bankEvent(bank());
+		when(r.client.getAccountHash()).thenReturn(-1L);
+		r.bankEvent(withdrew28Sharks());
+
+		assertEquals("three bank events arrived", 3, field(r.plugin, "bankEventsSeen"));
+		assertEquals("one of them could not be filed under anyone", 1, field(r.plugin, "bankEventsDropped"));
+		assertEquals("and one was read", 1, field(r.plugin, "bankReads"));
+	}
+
+	@Test
+	public void anEventThatIsNotTheBankIsNotCounted() throws Exception
+	{
+		final BankRig r = new BankRig();
+
+		r.plugin.onItemContainerChanged(new ItemContainerChanged(InventoryID.INV, BankRig.container(bank())));
+
+		assertEquals(0, field(r.plugin, "bankEventsSeen"));
+	}
+
+	@Test
+	public void theTotalsStartAtZeroAgainWhenTheHoldIsReset() throws Exception
+	{
+		final BankRig r = new BankRig();
+		set(r.plugin, "diagnostics", new Diagnostics());
+		r.bankEvent(bank());
+		assertEquals(1, field(r.plugin, "bankEventsSeen"));
+
+		final Method reset = BankPriceMovementPlugin.class.getDeclaredMethod("resetBankHold");
+		reset.setAccessible(true);
+		reset.invoke(r.plugin);
+
+		assertEquals(0, field(r.plugin, "bankEventsSeen"));
+		assertEquals(0, field(r.plugin, "bankEventsDropped"));
+	}
+
+	/** The Player and Bank lines come off the client thread, as yes and no, counts and times - never the account. */
+	@Test
+	public void thePlayerFactsSayLoggedInAccountKnownWorldAndTypesWithoutNamingAnyone() throws Exception
+	{
+		final BankRig r = new BankRig();
+		set(r.plugin, "diagnostics", new Diagnostics());
+		when(r.client.getWorld()).thenReturn(402);
+		when(r.client.getWorldType()).thenReturn(EnumSet.of(WorldType.MEMBERS, WorldType.PVP));
+		r.bankEvent(bank());
+		final Diagnostics.Facts.Builder builder = Diagnostics.Facts.builder();
+
+		r.plugin.describePlayer(builder);
+		final Diagnostics.Facts facts = builder.build();
+		final List<String> player = facts.lines(Diagnostics.PLAYER);
+		final List<String> bankLines = facts.lines(Diagnostics.BANK);
+
+		assertTrue(facts.loggedIn);
+		assertTrue(facts.accountKnown);
+		assertEquals(1, facts.eventsSeen);
+		assertEquals(1, facts.bankReads);
+		assertEquals(0, facts.eventsDropped);
+		assertTrue(player.toString(), player.contains("logged in: yes"));
+		assertTrue(player.toString(), player.contains("account known: yes"));
+		assertTrue(player.toString(), player.contains("profile: STANDARD"));
+		assertTrue(player.toString(), player.contains("world: 402"));
+		assertTrue(player.toString(), player.contains("world types: MEMBERS, PVP"));
+		assertTrue(player.toString(), player.contains("bank window open now: no"));
+		assertTrue(bankLines.toString(), bankLines.contains("bank events seen: 1"));
+		assertTrue(bankLines.toString(), bankLines.contains("bank reads made: 1"));
+		assertTrue(bankLines.toString(), bankLines.stream().anyMatch(line -> line.startsWith("last read at: ")));
+		assertTrue(bankLines.toString(), bankLines.stream().anyMatch(line -> line.startsWith("stacks read: bank ")));
+		verify(r.service).describeBankInto(builder);
+		for (final String line : facts.lines(Diagnostics.PLAYER))
+		{
+			assertFalse("no hash: " + line, line.contains(Long.toString(ACCOUNT)));
+		}
+	}
+
+	@Test
+	public void theWorldWithNoSpecialTypeSaysNoneAndALoggedOutClientSaysSo() throws Exception
+	{
+		final BankRig r = new BankRig();
+		when(r.client.getGameState()).thenReturn(GameState.LOGIN_SCREEN);
+		when(r.client.getAccountHash()).thenReturn(-1L);
+		final Diagnostics.Facts.Builder builder = Diagnostics.Facts.builder();
+
+		r.plugin.describePlayer(builder);
+		final Diagnostics.Facts facts = builder.build();
+
+		assertFalse(facts.loggedIn);
+		assertFalse(facts.accountKnown);
+		assertTrue(facts.lines(Diagnostics.PLAYER).contains("world types: none"));
+		assertTrue(facts.lines(Diagnostics.BANK).contains("last read at: never"));
+		assertTrue(facts.lines(Diagnostics.BANK).contains("stacks read: bank 0, inventory 0, worn 0"));
+	}
+
+	@Test
+	public void theBankWindowLineFollowsTheHold() throws Exception
+	{
+		final BankRig r = new BankRig();
+		set(r.plugin, "diagnostics", new Diagnostics());
+		r.openBank();
+		final Diagnostics.Facts.Builder builder = Diagnostics.Facts.builder();
+
+		r.plugin.describePlayer(builder);
+
+		assertTrue(builder.build().lines(Diagnostics.PLAYER).contains("bank window open now: yes"));
+	}
+
+	/** The Settings section: the sixteen stored values by key, in the config's order. */
+	@Test
+	public void theSettingsFactsListTheSixteenKeysWithTheirValues() throws Exception
+	{
+		final Fixture f = new Fixture(false);
+		when(f.config.gpMin()).thenReturn(100_000);
+		when(f.config.bandPresets()).thenReturn("100k, 1m, 10m");
+		when(f.config.livePrices()).thenReturn(true);
+		when(f.config.startTab()).thenReturn(SidebarView.HISTORY);
+		final Diagnostics.Facts.Builder builder = Diagnostics.Facts.builder();
+
+		f.plugin.describeSettings(builder);
+		final List<String> lines = builder.build().lines(Diagnostics.SETTINGS);
+
+		final List<String> keys = new ArrayList<>();
+		for (final String line : lines)
+		{
+			keys.add(line.substring(0, line.indexOf(':')));
+		}
+		assertEquals(Arrays.asList("gpMin", "gpMax", "bandPresets", "foldOpen", "sortMode", "sortDescending", "window",
+			"showBankValue", "showBankMoveGp", "showBankMovePct", "countCash", "countUntradeables", "countInventory",
+			"showHoverText", "livePrices", "startTab"), keys);
+		assertEquals(16, lines.size());
+		assertTrue(lines.toString(), lines.contains("gpMin: 100000"));
+		assertTrue(lines.toString(), lines.contains("bandPresets: 100k, 1m, 10m"));
+		assertTrue(lines.toString(), lines.contains("livePrices: true"));
+		assertTrue(lines.toString(), lines.contains("startTab: HISTORY"));
+		assertTrue(lines.toString(), lines.contains("window: " + MovementWindow.DEFAULT.name()));
+		assertTrue(lines.toString(), lines.contains("sortMode: " + SortMode.PERCENT_MOVE.name()));
+	}
+
+	/**
+	 * One press, end to end with the collaborators mocked: the window opens, the panel, the service, the config and the
+	 * client thread each add their part, the checks run, and the verdict and the report land in the window.
+	 */
+	@Test
+	public void pressingTroubleshootOpensTheWindowGathersEveryPartAndShowsTheVerdict() throws Exception
+	{
+		final BankRig r = new BankRig();
+		final Diagnostics diag = new Diagnostics();
+		set(r.plugin, "diagnostics", diag);
+		set(r.plugin, "config", mock(BankPriceMovementConfig.class));
+		doAnswer(invocation ->
+		{
+			((Runnable) invocation.getArgument(0)).run();
+			return null;
+		}).when(r.clientThread).invoke(any(Runnable.class));
+		final List<String> threads = new ArrayList<>();
+		doAnswer(invocation ->
+		{
+			threads.add(SwingUtilities.isEventDispatchThread() ? "panel on the EDT" : "panel OFF the EDT");
+			final Diagnostics.Facts.Builder b = invocation.getArgument(0);
+			b.card(BankPriceMovementPanel.CARD_LIST);
+			b.line(Diagnostics.SIDEBAR, "rows", "3");
+			return null;
+		}).when(r.panel).describeInto(any(Diagnostics.Facts.Builder.class));
+		doAnswer(invocation ->
+		{
+			final Diagnostics.Facts.Builder b = invocation.getArgument(0);
+			b.line(Diagnostics.PRICING, "anchor day", "2026-09-30");
+			return null;
+		}).when(r.service).describeInto(any(Diagnostics.Facts.Builder.class));
+		final ScheduledExecutorService executor = mock(ScheduledExecutorService.class);
+		when(executor.submit(any(Runnable.class))).thenAnswer(invocation ->
+		{
+			((Runnable) invocation.getArgument(0)).run();
+			return null;
+		});
+		final java.nio.file.Path dir = java.nio.file.Files.createTempDirectory("bpm-troubleshoot-test");
+		try
+		{
+			set(r.plugin, "troubleshooter", new Troubleshooter(OkHttpFakes.answeringEverything(), executor,
+				() -> TestFilepaths.rooted(dir.toFile()), diag, Runnable::run, new Gson(), "1.13.0"));
+			final List<TroubleshootDialog> opened = new ArrayList<>();
+			final List<Object> owners = new ArrayList<>();
+			r.plugin.dialogOpener = (owner, clipboard) ->
+			{
+				owners.add(owner);
+				final TroubleshootDialog window = new TroubleshootDialog(clipboard == null ? text -> { } : clipboard);
+				opened.add(window);
+				return window;
+			};
+			r.bankEvent(bank());
+
+			onEdt(() -> r.plugin.troubleshoot(null));
+
+			assertEquals("one window was opened", 1, opened.size());
+			assertEquals("the panel's part was read on the EDT", Arrays.asList("panel on the EDT"), threads);
+			final TroubleshootDialog window = opened.get(0);
+			assertEquals(Troubleshooter.VERDICT_FINE, window.verdictArea.getText());
+			final String report = window.reportArea.getText();
+			assertTrue(report, report.startsWith("2h Bank Portfolio Tracker " + Version.CURRENT
+				+ " - diagnostics\nVerdict: " + Troubleshooter.VERDICT_FINE + "\n"));
+			assertTrue(report, report.contains("\nPlayer\nlogged in: yes\naccount known: yes\n"));
+			assertTrue(report, report.contains("\nBank\nbank events seen: 1\n"));
+			assertTrue(report, report.contains("\nPricing\nanchor day: 2026-09-30\n"));
+			assertTrue(report, report.contains("\nSidebar\ncard: LIST\nrows: 3\n"));
+			assertTrue(report, report.contains("\nSettings\ngpMin: 0\n"));
+			assertTrue(report, report.contains("\nChecks\nplugin version: "));
+			assertTrue(report, report.contains("wiki mapping: ok, HTTP 200,"));
+			assertTrue(report, report.contains("data folder: ok,"));
+			assertEquals("the press left exactly one note, the verdict", 1, report.split(" troubleshoot: ", -1).length - 1);
+			assertFalse("no run of digits as long as an account hash", Pattern.compile("\\d{15,}").matcher(report).find());
+			assertTrue(window.copyButton.isEnabled());
+		}
+		finally
+		{
+			java.nio.file.Files.deleteIfExists(dir);
+		}
+	}
+
+	@Test
+	public void pressingTroubleshootWithNoRunDoesNothing() throws Exception
+	{
+		final BankRig r = new BankRig();
+		final List<Object> opened = new ArrayList<>();
+		r.plugin.dialogOpener = (owner, clipboard) ->
+		{
+			opened.add(owner);
+			return new TroubleshootDialog(text -> { });
+		};
+
+		onEdt(() -> r.plugin.troubleshoot(null));
+
+		assertTrue("no troubleshooter, diagnostics or config: nothing opens", opened.isEmpty());
+	}
+
+	/** Start-up wires the log into both clients, builds the checker and gives the panel its routine; shut-down undoes it. */
+	@Test
+	public void startUpWiresTheFetchLogTheCheckerAndThePanelsRoutineAndShutDownUndoesThem() throws Exception
+	{
+		final Fixture f = new Fixture(false);
+		final List<Object> opened = new ArrayList<>();
+		f.plugin.dialogOpener = (owner, clipboard) ->
+		{
+			opened.add(owner);
+			return new TroubleshootDialog(text -> { });
+		};
+
+		onEdt(f.plugin::startUp);
+
+		final Diagnostics diag = (Diagnostics) field(f.plugin, "diagnostics");
+		assertNotNull(field(f.plugin, "troubleshooter"));
+		assertSame("the guide client notes into the plugin's own log", diag.fetchLog(),
+			privateField(field(f.plugin, "guide"), GuidePriceClient.class, "fetchLog"));
+		assertSame("and so does the traded client", diag.fetchLog(),
+			privateField(field(f.plugin, "traded"), TradedPriceClient.class, "fetchLog"));
+		final BankPriceMovementPanel panel = (BankPriceMovementPanel) field(f.plugin, "panel");
+		assertNotNull(panel);
+
+		onEdt(f.plugin::shutDown);
+
+		assertNull(field(f.plugin, "troubleshooter"));
+		final JMenuItem item = troubleshootItem(panel);
+		onEdt(item::doClick);
+		assertTrue("a panel that was shut down has no routine to run", opened.isEmpty());
+	}
+
+	private static JMenuItem troubleshootItem(final BankPriceMovementPanel panel)
+	{
+		for (final Component c : panel.heroMenu().getComponents())
+		{
+			if (c instanceof JMenuItem && BankPriceMovementPanel.TROUBLESHOOT_TEXT.equals(((JMenuItem) c).getText()))
+			{
+				return (JMenuItem) c;
+			}
+		}
+		throw new AssertionError("no Troubleshoot... item in the settings menu");
+	}
+
+	private static Object privateField(final Object owner, final Class<?> type, final String name) throws Exception
+	{
+		final Field f = type.getDeclaredField(name);
+		f.setAccessible(true);
+		return f.get(owner);
+	}
+
+
+	/** Every INFO line the plugin's logger writes, on any thread, while {@code action} runs. */
+	private static List<String> infoLinesOf(final Runnable action)
+	{
+		final org.slf4j.Logger slf4j = LoggerFactory.getLogger(BankPriceMovementPlugin.class);
+		assertTrue("logback must be the slf4j binding here: " + slf4j.getClass(),
+			slf4j instanceof ch.qos.logback.classic.Logger);
+		final ch.qos.logback.classic.Logger logger = (ch.qos.logback.classic.Logger) slf4j;
+		final List<String> lines = Collections.synchronizedList(new ArrayList<>());
+		final AppenderBase<ILoggingEvent> capture = new AppenderBase<ILoggingEvent>()
+		{
+			@Override
+			protected void append(ILoggingEvent event)
+			{
+				if (Level.INFO.equals(event.getLevel()))
+				{
+					lines.add(event.getFormattedMessage());
+				}
+			}
+		};
+		capture.setName("start-up-info-wiring-test");
+		capture.start();
+		final Level before = logger.getLevel();
+		final boolean additive = logger.isAdditive();
+		logger.setLevel(Level.INFO);
+		logger.setAdditive(false);
+		logger.addAppender(capture);
+		try
+		{
+			action.run();
+		}
+		finally
+		{
+			logger.detachAppender(capture);
+			capture.stop();
+			logger.setAdditive(additive);
+			logger.setLevel(before);
+		}
+		synchronized (lines)
+		{
+			return new ArrayList<>(lines);
+		}
+	}
+
+	private static int occurrences(final String text, final String needle)
+	{
+		int count = 0;
+		for (int at = text.indexOf(needle); at >= 0; at = text.indexOf(needle, at + needle.length()))
+		{
+			count++;
+		}
+		return count;
 	}
 
 	private static void set(BankPriceMovementPlugin plugin, String field, Object value) throws Exception

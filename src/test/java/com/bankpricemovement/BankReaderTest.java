@@ -564,6 +564,41 @@ public class BankReaderTest
 		assertEquals(BONES, snapshot.items.get(0).id);
 	}
 
+	/**
+	 * 1.0.8: a client that THROWS for one item's composition (not one that answers null) skips that item, keeps every
+	 * other and does not propagate - the read used to abandon the whole capture, and with it the sidebar's first sight
+	 * of the bank.
+	 */
+	@Test
+	public void aThrowForOneItemSkipsThatItemAndKeepsTheRest()
+	{
+		final int poisoned = 88_888;
+		when(itemManager.getItemComposition(poisoned)).thenThrow(new IllegalStateException("planted: no cache entry"));
+
+		final BankSnapshot snapshot = reader.read(
+			new Item[]{item(WHIP, 1), item(poisoned, 5), item(BONES, 3), item(SHARK, 9)}, ACCOUNT, PROFILE, NOW);
+
+		assertEquals("every other item is read", 3, snapshot.items.size());
+		assertEquals(3L, snapshot.items.stream().filter(i -> i.id != poisoned).count());
+		assertEquals(9, rowFor(snapshot, SHARK).quantity);
+		assertEquals(3, rowFor(snapshot, BONES).quantity);
+		assertEquals(1, rowFor(snapshot, WHIP).quantity);
+	}
+
+	@Test
+	public void theCarriedContainersSurviveAThrowForOneItemToo()
+	{
+		final int poisoned = 88_889;
+		when(itemManager.getItemComposition(poisoned)).thenThrow(new IllegalStateException("planted"));
+
+		final BankReader.Carried carried = reader.readContainers(
+			new Item[]{item(poisoned, 1), item(SHARK, 4)}, new Item[]{item(WHIP, 1)}, NOW);
+
+		assertEquals(1, carried.inventory.size());
+		assertEquals(SHARK, carried.inventory.get(0).id);
+		assertEquals(1, carried.worn.size());
+	}
+
 	// ---------------------------------------------------------------- C11: canonicalisation and folding
 
 	@Test

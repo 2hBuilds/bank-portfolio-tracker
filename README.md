@@ -29,6 +29,7 @@
 - **Prices** are the Grand Exchange guide price, updated daily, plus live prices for actively traded items.
 - **Untradeables** made from tradeable items, like a charged bow or crystal armour, count at their parts' prices.
 - **Privacy.** No account or bank data is ever uploaded. The plugin only fetches prices.
+- **Something wrong?** Click the settings icon, then Troubleshoot..., and paste the report in the Discord.
 
 </td>
 <td width="28"></td>

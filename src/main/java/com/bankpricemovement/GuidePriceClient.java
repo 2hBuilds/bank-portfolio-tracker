@@ -17,6 +17,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
+import javax.annotation.Nullable;
 import okhttp3.Call;
 import okhttp3.Callback;
 import okhttp3.OkHttpClient;
@@ -191,6 +192,13 @@ public class GuidePriceClient
 	/** Whether {@link #report} has already logged a failure loudly this session (B010). */
 	private volatile boolean reported;
 
+	/**
+	 * Where every fetch's outcome is noted for the Troubleshoot report (1.0.8): null is a no-op, which is what every
+	 * client built without one (a test, the headless renderer) gets.
+	 */
+	@Nullable
+	private volatile FetchLog fetchLog;
+
 	public GuidePriceClient(final OkHttpClient client, final Gson gson)
 	{
 		if (client == null)
@@ -203,6 +211,18 @@ public class GuidePriceClient
 		}
 		this.client = client;
 		this.gson = gson;
+	}
+
+	/**
+	 * Hands over the log this client notes each fetch into (1.0.8): the source, the HTTP status, the time taken, the
+	 * size of the body, how many entries it parsed into, and the wiki's own {@code Date}. Counts only - never a URL
+	 * with an id in it, never an item.
+	 *
+	 * @param fetchLog the plugin's; null stops the noting
+	 */
+	public void setFetchLog(@Nullable final FetchLog fetchLog)
+	{
+		this.fetchLog = fetchLog;
 	}
 
 	// ---------------------------------------------------------------- L4: the revision index
@@ -222,7 +242,7 @@ public class GuidePriceClient
 	public CompletableFuture<List<RevisionRef>> fetchRevisionIndex(final long nowMillis)
 	{
 		log.debug("bank-portfolio-tracker: fetching the guide-table revision index at {}", nowMillis);
-		return request(revisionIndexUrl(), this::parseRevisionIndex);
+		return request(FetchLog.PRICE_INDEX, revisionIndexUrl(), this::parseRevisionIndex);
 	}
 
 	// ---------------------------------------------------------------- L6: the batched bodies
@@ -266,7 +286,7 @@ public class GuidePriceClient
 		}
 
 		log.debug("bank-portfolio-tracker: fetching {} guide table(s) in one call: {}", ids.size(), ids);
-		return request(tablesUrl(ids), body -> parseTables(body, nowMillis));
+		return request(FetchLog.GUIDE_TABLES, tablesUrl(ids), body -> parseTables(body, nowMillis));
 	}
 
 	/**
@@ -279,7 +299,7 @@ public class GuidePriceClient
 	public CompletableFuture<Map<Integer, String>> fetchMapping(final long nowMillis)
 	{
 		log.debug("bank-portfolio-tracker: fetching the id/name mapping at {}", nowMillis);
-		return request(MAPPING_URL, this::parseMapping);
+		return request(FetchLog.MAPPING, MAPPING_URL, this::parseMapping);
 	}
 
 	/**
@@ -314,11 +334,20 @@ public class GuidePriceClient
 	 */
 	static String revisionIndexUrl()
 	{
+		return revisionIndexUrl(INDEX_LIMIT);
+	}
+
+	/**
+	 * {@link #revisionIndexUrl()} asking for {@code limit} revisions instead of {@value #INDEX_LIMIT} - the smallest
+	 * request this client can make, which is what the Troubleshoot check for the price index sends (1.0.8).
+	 */
+	static String revisionIndexUrl(final int limit)
+	{
 		return API_URL
 			+ "?action=query"
 			+ "&prop=revisions"
 			+ "&titles=" + PAGE
-			+ "&rvlimit=" + INDEX_LIMIT
+			+ "&rvlimit=" + limit
 			+ "&rvdir=older"
 			+ "&rvprop=ids|timestamp|user|comment"
 			+ "&format=json"
@@ -572,7 +601,7 @@ public class GuidePriceClient
 	 *
 	 * <p>The call is remembered for {@link #cancelInFlight()} until it answers.
 	 */
-	private <T> CompletableFuture<T> request(final String url, final BodyParser<T> parser)
+	private <T> CompletableFuture<T> request(final String source, final String url, final BodyParser<T> parser)
 	{
 		final CompletableFuture<T> future = new CompletableFuture<>();
 
@@ -599,6 +628,7 @@ public class GuidePriceClient
 			return future;
 		}
 
+		final long started = System.nanoTime();
 		try
 		{
 			final Call call = client.newCall(request);
@@ -611,35 +641,57 @@ public class GuidePriceClient
 				{
 					// Everything the injected client refuses lands here: no network, DNS, TLS, and the three
 					// RuneLiteModule interceptor throws (client thread, EDT, non-LIVE environment domain block).
-					fail(future, url, new WikiPriceException("wiki request failed: " + messageOf(e), e));
+					final WikiPriceException failure = new WikiPriceException("wiki request failed: " + messageOf(e), e);
+					noteFailed(source, started, 0, 0L, failure);
+					fail(future, url, failure);
 				}
 
 				@Override
 				public void onResponse(final Call call, final Response response)
 				{
 					final T value;
+					int code = 0;
+					long bytes = 0L;
 					try (Response closing = response)
 					{
+						code = closing.code();
+						final FetchLog fetches = fetchLog;
+						if (fetches != null)
+						{
+							fetches.serverDate(closing.header("Date"));
+						}
 						final String body = bodyText(closing);
+						bytes = body.length();
 						if (!closing.isSuccessful())
 						{
-							fail(future, url, httpFailure(closing.code(), body));
+							final WikiPriceException failure = httpFailure(code, body);
+							noteFailed(source, started, code, bytes, failure);
+							fail(future, url, failure);
 							return;
 						}
 						value = parser.parse(body);
 					}
 					catch (final IOException e)
 					{
-						fail(future, url, e instanceof WikiPriceException
+						final WikiPriceException failure = e instanceof WikiPriceException
 							? (WikiPriceException) e
-							: new WikiPriceException("could not read the wiki response: " + messageOf(e), e));
+							: new WikiPriceException("could not read the wiki response: " + messageOf(e), e);
+						noteFailed(source, started, code, bytes, failure);
+						fail(future, url, failure);
 						return;
 					}
 					catch (final Throwable t)
 					{
-						failAndRethrow(future, url, new WikiPriceException(
-							"could not parse the wiki response: " + messageOf(t), t), t);
+						final WikiPriceException failure = new WikiPriceException(
+							"could not parse the wiki response: " + messageOf(t), t);
+						noteFailed(source, started, code, bytes, failure);
+						failAndRethrow(future, url, failure, t);
 						return;
+					}
+					final FetchLog fetches = fetchLog;
+					if (fetches != null)
+					{
+						fetches.ok(source, code, elapsedMillis(started), bytes, sizeOf(value));
 					}
 					future.complete(value);
 				}
@@ -649,10 +701,38 @@ public class GuidePriceClient
 		{
 			// Throwable for the same reason: this runs on the service's executor, whose own guard used to stop at
 			// RuntimeException, and an unanswered future is a flag claimed for the session.
-			failAndRethrow(future, url, new WikiPriceException("could not queue the wiki request: " + messageOf(t), t), t);
+			final WikiPriceException failure = new WikiPriceException("could not queue the wiki request: " + messageOf(t), t);
+			noteFailed(source, started, 0, 0L, failure);
+			failAndRethrow(future, url, failure, t);
 		}
 
 		return future;
+	}
+
+	/** Notes a failed fetch in the log, if there is one (1.0.8). */
+	private void noteFailed(final String source, final long startedNanos, final int status, final long bytes,
+		final WikiPriceException failure)
+	{
+		final FetchLog fetches = fetchLog;
+		if (fetches != null)
+		{
+			fetches.failed(source, status, elapsedMillis(startedNanos), bytes, failure.getMessage());
+		}
+	}
+
+	private static long elapsedMillis(final long startedNanos)
+	{
+		return (System.nanoTime() - startedNanos) / 1_000_000L;
+	}
+
+	/** How many entries a parsed answer holds, for the log: a table's or a list's size. */
+	private static int sizeOf(final Object value)
+	{
+		if (value instanceof Map)
+		{
+			return ((Map<?, ?>) value).size();
+		}
+		return value instanceof Collection ? ((Collection<?>) value).size() : 0;
 	}
 
 	/**

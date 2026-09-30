@@ -8,6 +8,7 @@ import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.FontMetrics;
 import java.awt.Graphics2D;
+import java.awt.GraphicsEnvironment;
 import java.awt.Insets;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
@@ -34,6 +35,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Pattern;
 import javax.annotation.Nullable;
 import javax.imageio.ImageIO;
 import javax.swing.AbstractButton;
@@ -41,10 +43,12 @@ import javax.swing.Icon;
 import javax.swing.JButton;
 import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JComponent;
+import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
+import javax.swing.JRadioButtonMenuItem;
 import javax.swing.JScrollBar;
 import javax.swing.JSeparator;
 import javax.swing.JTextField;
@@ -1768,18 +1772,21 @@ public class BankPriceMovementPanelTest
 			BankPriceMovementPanel.COUNT_UNTRADEABLES_TEXT, BankPriceMovementPanel.COUNT_INVENTORY_TEXT,
 			// AU: the start-tab group's two dots, between the four switches and the preset row.
 			SidebarView.ITEMS.toString(), SidebarView.HISTORY.toString(),
+			// 1.0.8: and the troubleshooting item under them.
+			BankPriceMovementPanel.TROUBLESHOOT_TEXT,
 			// AH: the ninth and last ITEM, under the preset row. "Reset to default" is no longer among them -
 			// AH2 made it a button in the bottom row beside OK, so it is a child of that row and not an entry.
 			// It was the tenth until addendum AO deleted "Show stack value on rows" from the group above it.
 			BankPriceMovementPanel.SHOW_HOVER_TEXT_TEXT), itemTexts(menu));
 		// Z2: nine items - the eight switches and addendum AH's hover switch - with the preset row among them and,
 		// under everything, addendum AB's OK row carrying AH2's "Reset to default" button at its left end.
-		assertEquals("eleven items (two of them AU's dots), the caption, the preset row, the OK row and four separators",
-			18, menu.getComponentCount());
-		assertTrue("the first separator is under Refresh", menu.getComponent(1) instanceof JSeparator);
-		assertTrue("the second is between the card's three and the view's four", menu.getComponent(5) instanceof JSeparator);
+		assertEquals("twelve items (two of them AU's dots, one 1.0.8's troubleshooting), the caption, the preset row, the OK row,"
+			+ " the version row and six separators", 22, menu.getComponentCount());
+		assertTrue("1.0.8: the header's rule first, under the name and the version", menu.getComponent(1) instanceof JSeparator);
+		assertTrue("then the rule under Refresh", menu.getComponent(3) instanceof JSeparator);
+		assertTrue("the third is between the card's three and the view's four", menu.getComponent(7) instanceof JSeparator);
 		// T1: the price series leads the group - what a stack is worth is answered before whether it is counted.
-		assertSame(panel.livePricesItem(), menu.getComponent(6));
+		assertSame(panel.livePricesItem(), menu.getComponent(8));
 		final List<JComponent> children = new ArrayList<>();
 		descendants(panel.hero(), children);
 		assertFalse(children.isEmpty());
@@ -1932,10 +1939,176 @@ public class BankPriceMovementPanelTest
 			// A press off the screen opens nothing rather than throwing: a popup can only be placed against a
 			// component that is showing, which is the guard the order menu one row down carries too.
 			press(panel.gearLabel());
-			panel.openGearMenu();
+			panel.openGearMenu(panel.gearLabel());
 			assertFalse("nothing was shown from an off-screen gear", panel.heroMenu().isVisible());
 		});
 		verifyNoPriceCheck();
+	}
+
+	/**
+	 * 1.0.8: the login card and the no-bank card each carry a settings gear of their own. The user: "even when
+	 * logged out I would like the user to always be able to see the settings gear icon and by clicking it, the
+	 * settings menu, or else they won't be able to troubleshoot if this is as far as they load into the plugin" -
+	 * the hero card, which holds the gear, is not drawn at either card, and a label can sit in only one container,
+	 * so each card has its own. Each says "Options", is the same drawn gear, brightens under the mouse, and is a
+	 * different label from the hero's and from the other card's.
+	 */
+	@Test
+	public void theLoginCardAndTheNoBankCardEachCarryTheSettingsGear() throws Exception
+	{
+		buildWithHovers();
+		onEdt(() ->
+		{
+			assertEquals(BankPriceMovementPanel.CARD_LOGIN, panel.card());
+			final JLabel gear = gearIn(panel.shotComponents().get(1));
+			assertEquals(BankPriceMovementPanel.OPTIONS_TIP, gear.getToolTipText());
+			assertEquals("a 12 px glyph", Widgets.GEAR_SIZE, gear.getIcon().getIconWidth());
+			assertTrue("the drawn gear at rest",
+				sameIcon(Widgets.gearIcon(Widgets.GEAR_SIZE, ColorScheme.LIGHT_GRAY_COLOR), gear.getIcon()));
+			hover(gear, true);
+			assertTrue("brightening under the mouse",
+				sameIcon(Widgets.gearIcon(Widgets.GEAR_SIZE, ColorScheme.BRAND_ORANGE), gear.getIcon()));
+			hover(gear, false);
+			assertNotSame("not the hero card's gear", panel.gearLabel(), gear);
+			assertFalse("and not on the hero card", panel.shows(gear));
+		});
+		final AtomicReference<JLabel> loginGear = new AtomicReference<>();
+		onEdt(() -> loginGear.set(gearIn(panel.shotComponents().get(1))));
+
+		publish(Collections.emptyList(), status(true, false, 0, 0, MovementWindow.D1, null, "No bank yet", 0L));
+		onEdt(() ->
+		{
+			assertEquals(BankPriceMovementPanel.CARD_NO_BANK, panel.card());
+			final JLabel gear = gearIn(panel.shotComponents().get(1));
+			assertEquals(BankPriceMovementPanel.OPTIONS_TIP, gear.getToolTipText());
+			assertTrue("the drawn gear at rest",
+				sameIcon(Widgets.gearIcon(Widgets.GEAR_SIZE, ColorScheme.LIGHT_GRAY_COLOR), gear.getIcon()));
+			assertNotSame("one label cannot sit in two cards", loginGear.get(), gear);
+			assertNotSame(panel.gearLabel(), gear);
+		});
+	}
+
+	/**
+	 * 1.0.8: a press on the login card's gear opens THE settings menu under that gear - the menu's invoker is the
+	 * gear that was pressed - and the same on the no-bank card. This needs a component that is really showing (a
+	 * popup can only be placed against one), so it runs only where there is a display, like
+	 * {@link TroubleshootDialogTest}'s window test.
+	 */
+	@Test
+	public void aPressOnAMessageCardsGearOpensTheSettingsMenuUnderIt() throws Exception
+	{
+		if (GraphicsEnvironment.isHeadless())
+		{
+			return;
+		}
+		buildWithHovers();
+		final AtomicLong now = new AtomicLong(PRICES_AT);
+		onEdt(() -> panel.setClock(now::get));
+		final JFrame frame = hostInFrame();
+		try
+		{
+			onEdt(() ->
+			{
+				final JLabel gear = gearIn(panel.shotComponents().get(1));
+				assertTrue("the login card is on screen", gear.isShowing());
+				press(gear);
+				assertTrue("the menu is showing", panel.heroMenu().isVisible());
+				assertSame("under the login card's gear", gear, panel.heroMenu().getInvoker());
+				panel.heroMenu().setVisible(false);
+			});
+			now.set(PRICES_AT + 1_000L);
+
+			publish(Collections.emptyList(), status(true, false, 0, 0, MovementWindow.D1, null, "No bank yet", 0L));
+			onEdt(() ->
+			{
+				final JLabel gear = gearIn(panel.shotComponents().get(1));
+				assertTrue("the no-bank card is on screen", gear.isShowing());
+				press(gear);
+				assertTrue("the menu is showing", panel.heroMenu().isVisible());
+				assertSame("under the no-bank card's gear", gear, panel.heroMenu().getInvoker());
+				panel.heroMenu().setVisible(false);
+			});
+		}
+		finally
+		{
+			onEdt(() ->
+			{
+				panel.heroMenu().setVisible(false);
+				frame.dispose();
+			});
+		}
+	}
+
+	/**
+	 * 1.0.8: the hero card's own gear still opens the menu under itself, now that the menu has three gears to
+	 * answer to.
+	 */
+	@Test
+	public void theHeroCardsGearStillOpensTheSettingsMenuUnderItself() throws Exception
+	{
+		if (GraphicsEnvironment.isHeadless())
+		{
+			return;
+		}
+		buildWithHovers();
+		publish(rows(3), listedWith(summary()));
+		final JFrame frame = hostInFrame();
+		try
+		{
+			onEdt(() ->
+			{
+				assertTrue("the hero card's gear is on screen", panel.gearLabel().isShowing());
+				press(panel.gearLabel());
+				assertTrue("the menu is showing", panel.heroMenu().isVisible());
+				assertSame(panel.gearLabel(), panel.heroMenu().getInvoker());
+				panel.heroMenu().setVisible(false);
+			});
+		}
+		finally
+		{
+			onEdt(() ->
+			{
+				panel.heroMenu().setVisible(false);
+				frame.dispose();
+			});
+		}
+	}
+
+	/**
+	 * 1.0.8: the gear is a toggle from a message card too (addendum AB1): a second press while the menu stands
+	 * takes it down and opens nothing, and the menu closed that way is the one the reopen guard remembers.
+	 */
+	@Test
+	public void aSecondPressOnAMessageCardsGearClosesTheMenu() throws Exception
+	{
+		if (GraphicsEnvironment.isHeadless())
+		{
+			return;
+		}
+		buildWithHovers();
+		final JFrame frame = hostInFrame();
+		try
+		{
+			onEdt(() ->
+			{
+				final JLabel gear = gearIn(panel.shotComponents().get(1));
+				press(gear);
+				assertTrue("the first press opens it", panel.heroMenu().isVisible());
+				assertSame(gear, panel.heroMenu().getInvoker());
+
+				press(gear);
+				assertFalse("the second press closes it", panel.heroMenu().isVisible());
+				assertFalse("and is the close the reopen guard remembers", panel.gearPressOpens());
+			});
+		}
+		finally
+		{
+			onEdt(() ->
+			{
+				panel.heroMenu().setVisible(false);
+				frame.dispose();
+			});
+		}
 	}
 
 	/** Q3: the initial view switches come from the config, through the prefs seam; the menu ticks agree. */
@@ -2053,6 +2226,8 @@ public class BankPriceMovementPanelTest
 			// AU: the two dots of "Tab to open on startup".
 			"Items",
 			"Net Worth History",
+			// 1.0.8: the troubleshooting item, right under the dots and above the rule that opens the preset group.
+			"Troubleshoot...",
 			// AH: the ninth and last entry, under the preset row and its rule - the only switch carrying a box
 			// it draws itself. "Reset to default" was an entry until AH2 moved it into the bottom row beside
 			// OK, so it is pinned by the bottom-row test instead.
@@ -2072,8 +2247,8 @@ public class BankPriceMovementPanelTest
 		// addendum AB's OK row - now carrying "Reset to default" as well (AH2) - after everything.
 		assertFalse("AH2: the way back to the default bands is a button in that row, not an entry",
 			texts.contains(BankPriceMovementPanel.RESET_PRESETS_TEXT));
-		assertEquals("eleven items (AU's two dots among them), the caption, the preset row, the OK row and four separators",
-			18, panel.heroMenu().getComponentCount());
+		assertEquals("twelve items (AU's two dots and 1.0.8's troubleshooting among them), the caption, the preset row, the OK"
+			+ " row, the version row and six separators", 22, panel.heroMenu().getComponentCount());
 	}
 
 	/**
@@ -2090,9 +2265,9 @@ public class BankPriceMovementPanelTest
 		publish(rows(3), listedWith(summary()));
 		final JPopupMenu menu = panel.heroMenu();
 		assertSame(panel.countInventoryItem(), item(menu, BankPriceMovementPanel.COUNT_INVENTORY_TEXT));
-		assertSame("directly after the untradeables", panel.countInventoryItem(), menu.getComponent(9));
+		assertSame("directly after the untradeables", panel.countInventoryItem(), menu.getComponent(11));
 		assertTrue("AO1: and last of its group now, with the separator under it",
-			menu.getComponent(10) instanceof JSeparator);
+			menu.getComponent(12) instanceof JSeparator);
 		assertEquals("the name addendum Y asks for, pinned", "Include inventory and worn gear",
 			BankPriceMovementPanel.COUNT_INVENTORY_TEXT);
 		assertEquals("the description addendum Y asks for, its moment the close since addendum AS, pinned",
@@ -3114,16 +3289,25 @@ public class BankPriceMovementPanelTest
 	{
 		buildWithHovers();
 		final JPopupMenu menu = panel.heroMenu();
-		assertEquals("ten items, AU's caption, the preset row, the hover switch, the OK row and four separators", 18,
-			menu.getComponentCount());
-		assertTrue("a rule under the start-tab dots (AU)", menu.getComponent(14) instanceof JSeparator);
-		assertSame("then the row", panel.presetRow(), menu.getComponent(15));
+		assertEquals("ten items, AU's caption, the troubleshooting item, the preset row, the hover switch, the OK row, the version"
+			+ " row and six separators", 22, menu.getComponentCount());
+		// 1.0.8: the header (the name over the version) and its rule come first, so everything else sits two places
+		// lower than before it.
+		assertTrue("the header's rule", menu.getComponent(1) instanceof JSeparator);
+		assertTrue("1.0.8: a rule above the troubleshooting item - the user, on the first look: without it the item"
+			+ " read as one more start-tab choice", menu.getComponent(16) instanceof JSeparator);
+		assertEquals("1.0.8: the troubleshooting item in its own group under the start-tab dots",
+			BankPriceMovementPanel.TROUBLESHOOT_TEXT, ((JMenuItem) menu.getComponent(17)).getText());
+		assertTrue("a rule under it (AU's, moved down two places by 1.0.8)", menu.getComponent(18) instanceof JSeparator);
+		assertSame("then the row", panel.presetRow(), menu.getComponent(19));
 		// AH: and in the space under it, where the user drew the box - the group's rule is the one above, so the
 		// hover switch joins this last group rather than starting another. AH2 took "Reset to default" out from
 		// between the two and put it in the bottom row.
-		assertSame(panel.showHoverTextItem(), menu.getComponent(16));
-		assertEquals(BankPriceMovementPanel.SHOW_HOVER_TEXT_TEXT, ((JMenuItem) menu.getComponent(16)).getText());
-		assertSame("and the OK row under everything (AB2)", panel.okRow(), menu.getComponent(17));
+		assertSame(panel.showHoverTextItem(), menu.getComponent(20));
+		assertEquals(BankPriceMovementPanel.SHOW_HOVER_TEXT_TEXT, ((JMenuItem) menu.getComponent(20)).getText());
+		assertSame("and the OK row under all of those (AB2), the menu's last thing again - the user moved the version"
+			+ " lines to the top (2026-09-30)", panel.okRow(), menu.getComponent(21));
+		assertEquals(21, menu.getComponentCount() - 1);
 		assertFalse("the row is no menu element - which is what makes the popup window focusable",
 			panel.presetRow() instanceof MenuElement);
 		assertEquals("the caption addendum AB line AB3 asks for, pinned", "Preset price ranges",
@@ -3562,6 +3746,151 @@ public class BankPriceMovementPanelTest
 		}
 	}
 
+	// ---- 1.0.8: Troubleshoot... and the version row
+
+	/**
+	 * 1.0.8: the settings menu's troubleshooting item - its words, its place (right under the start-tab dots, above the
+	 * rule that opens the preset group) and its hover, which is behind "Show hover text" like every other.
+	 */
+	@Test
+	public void theGearMenuHasATroubleshootItemUnderTheDotsWithAHover() throws Exception
+	{
+		buildWithHovers();
+		final JPopupMenu menu = panel.heroMenu();
+		final JMenuItem item = item(menu, BankPriceMovementPanel.TROUBLESHOOT_TEXT);
+
+		assertEquals("Troubleshoot...", BankPriceMovementPanel.TROUBLESHOOT_TEXT);
+		assertEquals("Check the plugin's connections and state, say what is wrong in plain words, and give you a report "
+			+ "to paste into a bug report. It holds no account or bank data.", BankPriceMovementPanel.TROUBLESHOOT_TIP);
+		assertEquals(BankPriceMovementPanel.TROUBLESHOOT_TIP, item.getToolTipText());
+		assertEquals(Widgets.sans(12), item.getFont());
+		final int at = Arrays.asList(menu.getComponents()).indexOf(item);
+		assertTrue("the item is in the menu", at > 0);
+		assertTrue("a rule above it, so it does not read as a start-tab choice (the user's ask on the first look)",
+			menu.getComponent(at - 1) instanceof JSeparator);
+		assertTrue("and the last start-tab dot above that", menu.getComponent(at - 2) instanceof JRadioButtonMenuItem);
+		assertTrue("and above the rule that opens the preset group", menu.getComponent(at + 1) instanceof JSeparator);
+		assertSame(panel.presetRow(), menu.getComponent(at + 2));
+	}
+
+	@Test
+	public void withTheHoversOffTheTroubleshootItemCarriesNone() throws Exception
+	{
+		build();
+
+		assertNull(item(panel.heroMenu(), BankPriceMovementPanel.TROUBLESHOOT_TEXT).getToolTipText());
+	}
+
+	/**
+	 * 1.0.8: the click hands the plugin's routine the window the panel is in - null here, the panel being in none -
+	 * once per click, and the item keeps its words: the window it opens carries the feedback now.
+	 */
+	@Test
+	public void clickingTroubleshootRunsThePluginsRoutineWithThePanelsWindow() throws Exception
+	{
+		build();
+		final List<java.awt.Window> owners = new ArrayList<>();
+		final AtomicInteger calls = new AtomicInteger();
+		panel.setTroubleshoot(owner ->
+		{
+			calls.incrementAndGet();
+			owners.add(owner);
+		});
+		final JMenuItem item = item(panel.heroMenu(), BankPriceMovementPanel.TROUBLESHOOT_TEXT);
+
+		onEdt(item::doClick);
+
+		assertEquals(1, calls.get());
+		assertNull("a panel in no window has no owner for the dialog, and the routine is told so", owners.get(0));
+		assertEquals("the item still says what it does", BankPriceMovementPanel.TROUBLESHOOT_TEXT, item.getText());
+		onEdt(item::doClick);
+		assertEquals("every click opens it again", 2, calls.get());
+	}
+
+	@Test
+	public void clickingTroubleshootWithNoRoutineDoesNothingAndThrowsNothing() throws Exception
+	{
+		build();
+		final JMenuItem item = item(panel.heroMenu(), BankPriceMovementPanel.TROUBLESHOOT_TEXT);
+
+		onEdt(item::doClick);
+
+		panel.setTroubleshoot(owner -> fail("unregistered"));
+		panel.setTroubleshoot(null);
+		onEdt(item::doClick);
+	}
+
+	/** The Sidebar section for the LIST card: the row count, the card, and no account in any spelling. */
+	@Test
+	public void theSidebarFactsNameTheRowCountAndTheCardAndNoAccount() throws Exception
+	{
+		build();
+		publish(rows(3), listedWith(summary()));
+
+		final Diagnostics.Facts.Builder builder = Diagnostics.Facts.builder();
+		onEdt(() -> panel.describeInto(builder));
+		final Diagnostics.Facts facts = builder.build();
+		final List<String> lines = facts.lines(Diagnostics.SIDEBAR);
+
+		assertEquals("the verdict reads the card off the facts", BankPriceMovementPanel.CARD_LIST, facts.card);
+		assertTrue(lines.toString(), lines.contains("card: LIST"));
+		assertTrue(lines.toString(), lines.contains("rows: 3"));
+		assertTrue(lines.toString(), lines.contains("tab: ITEMS"));
+		assertTrue(lines.toString(), lines.contains("band: all"));
+		assertTrue(lines.toString(), lines.contains("active: yes"));
+		assertTrue(lines.toString(), lines.contains("holding publishes: no"));
+		assertTrue(lines.toString(), lines.contains("a publish waiting: no"));
+		boolean stamped = false;
+		boolean windowed = false;
+		for (final String line : lines)
+		{
+			stamped |= Pattern.compile("last publish at: \\d\\d:\\d\\d:\\d\\d").matcher(line).matches();
+			windowed |= line.startsWith("window: ");
+			assertFalse("nothing that looks like a hash: " + line, Pattern.compile("\\d{15,}").matcher(line).find());
+		}
+		assertTrue("the last publish is stamped with a time of day: " + lines, stamped);
+		assertTrue(windowed);
+	}
+
+	@Test
+	public void theSidebarFactsBeforeAnyPublishSayLoginAndNever() throws Exception
+	{
+		build();
+
+		final Diagnostics.Facts.Builder builder = Diagnostics.Facts.builder();
+		onEdt(() -> panel.describeInto(builder));
+		final Diagnostics.Facts facts = builder.build();
+
+		assertEquals(BankPriceMovementPanel.CARD_LOGIN, facts.card);
+		assertTrue(facts.lines(Diagnostics.SIDEBAR).contains("last publish at: never"));
+		assertTrue(facts.lines(Diagnostics.SIDEBAR).contains("rows: 0"));
+	}
+
+	@Test
+	public void aPublishThatArrivedWhileTheSidebarWasElsewhereIsReportedAsWaiting() throws Exception
+	{
+		build();
+		onEdt(() -> panel.onDeactivate());
+		publish(rows(3), listedWith(summary()));
+
+		final Diagnostics.Facts.Builder builder = Diagnostics.Facts.builder();
+		onEdt(() -> panel.describeInto(builder));
+		final List<String> lines = builder.build().lines(Diagnostics.SIDEBAR);
+
+		assertTrue(lines.toString(), lines.contains("active: no"));
+		assertTrue(lines.toString(), lines.contains("holding publishes: yes"));
+		assertTrue(lines.toString(), lines.contains("a publish waiting: yes"));
+		assertTrue("it was stored, not drawn", lines.contains("rows: 0"));
+	}
+
+	@Test
+	public void theDefaultClipboardIsTheSystemsAndItsSeamIsAField() throws Exception
+	{
+		build();
+
+		assertNotNull(panel.clipboard);
+	}
+
 	// ---- addendum AB: the gear toggles (AB1) and the menu's OK button (AB2)
 
 	/**
@@ -3638,10 +3967,13 @@ public class BankPriceMovementPanelTest
 		final JPopupMenu menu = panel.heroMenu();
 		onEdt(() ->
 		{
-			assertSame("the last thing in the menu", panel.okRow(), menu.getComponent(menu.getComponentCount() - 1));
-			// AH slid one item in between: the row is still the last thing in the menu, and what it now sits
-			// directly under is the hover switch. "Reset to default" is no longer above it at all - AH2 brought
-			// it INTO this row, which is what theBottomRowHoldsResetOnTheLeftAndOkOnTheRight pins.
+			// 1.0.8 first put the version row under it, then the user moved that to the top of the menu as a header,
+			// so the OK row is the last thing again - and the last thing that can be pressed.
+			assertSame("the last thing in the menu", panel.okRow(),
+				menu.getComponent(menu.getComponentCount() - 1));
+			// AH slid one item in between: what the row now sits directly under is the hover switch. "Reset to
+			// default" is no longer above it at all - AH2 brought it INTO this row, which is what
+			// theBottomRowHoldsResetOnTheLeftAndOkOnTheRight pins.
 			assertEquals("directly under 'Show hover text'", BankPriceMovementPanel.SHOW_HOVER_TEXT_TEXT,
 				((JMenuItem) menu.getComponent(menu.getComponentCount() - 2)).getText());
 			assertSame("...with the preset row above that", panel.presetRow(),
@@ -3722,8 +4054,8 @@ public class BankPriceMovementPanelTest
 		onEdt(() ->
 		{
 			final JPanel row = panel.okRow();
-			assertSame("the row is the last thing in the menu (AB2)", row,
-				menu.getComponent(menu.getComponentCount() - 1));
+			assertSame("the row is the last thing in the menu (AB2; 1.0.8's version lines are the header now)",
+				row, menu.getComponent(menu.getComponentCount() - 1));
 			assertEquals("reset, a glue, then OK", 3, row.getComponentCount());
 			assertSame("'Reset to default' first", panel.resetPresetsButton(), row.getComponent(0));
 			assertEquals("the glue asks for no width of its own", 0, row.getComponent(1).getPreferredSize().width);
@@ -4535,7 +4867,7 @@ public class BankPriceMovementPanelTest
 			menu.getComponent(menu.getComponentCount() - 1));
 		assertTrue("that row is where the way back to the default bands lives now",
 			SwingUtilities.isDescendingFrom(panel.resetPresetsButton(), panel.okRow()));
-		assertFalse("no rule between: it is in the last group, not a group of its own",
+		assertFalse("no rule between: it is in the last group, not a group of its own - the thing above it is the preset row",
 			menu.getComponent(menu.getComponentCount() - 3) instanceof JSeparator);
 
 		assertFalse("AH: a check item would be BLANK while this switch is off, which is most of the time",
@@ -8451,6 +8783,49 @@ public class BankPriceMovementPanelTest
 	}
 
 	/** Every label of a message card is in the sidebar's own family, and its description is the readable grey. */
+	/**
+	 * The one settings gear inside {@code card}, found by its hover text ("Options"), so a test reaches a message
+	 * card's gear without an accessor on the panel that only tests would call. The panel must have been built with
+	 * hover text on ({@link #buildWithHovers()}).
+	 */
+	private static JLabel gearIn(Component card)
+	{
+		final List<JComponent> all = new ArrayList<>();
+		descendants((Container) card, all);
+		JLabel found = null;
+		for (JComponent c : all)
+		{
+			if (c instanceof JLabel && BankPriceMovementPanel.OPTIONS_TIP.equals(c.getToolTipText()))
+			{
+				assertNull("one gear on the card", found);
+				found = (JLabel) c;
+			}
+		}
+		assertNotNull("a settings gear on the card", found);
+		return found;
+	}
+
+	/**
+	 * The panel in a real frame that is on screen, off to one side and never taking the focus: a popup menu can
+	 * only be placed against a component that is showing, and the gear tests that ask which gear a menu opened
+	 * under need one. Callers dispose it.
+	 */
+	private JFrame hostInFrame() throws Exception
+	{
+		final AtomicReference<JFrame> made = new AtomicReference<>();
+		onEdt(() ->
+		{
+			final JFrame frame = new JFrame();
+			frame.setFocusableWindowState(false);
+			frame.add(panel);
+			frame.setSize(400, 900);
+			frame.setLocation(-2000, -2000);
+			frame.setVisible(true);
+			made.set(frame);
+		});
+		return made.get();
+	}
+
 	private static void assertMessageCardType(Component card, String title)
 	{
 		final List<JComponent> all = new ArrayList<>();
@@ -8459,7 +8834,9 @@ public class BankPriceMovementPanelTest
 		int labels = 0;
 		for (JComponent c : all)
 		{
-			if (!(c instanceof JLabel) || ((JLabel) c).getText().isEmpty())
+			// An icon-only label - the settings gear each message card carries since 1.0.8 - has no text and no
+			// type to check; the card's two TEXT labels are what this pins.
+			if (!(c instanceof JLabel) || ((JLabel) c).getText() == null || ((JLabel) c).getText().isEmpty())
 			{
 				continue;
 			}

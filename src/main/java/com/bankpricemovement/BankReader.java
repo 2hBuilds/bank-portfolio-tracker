@@ -233,6 +233,13 @@ public class BankReader
 	private final ItemManager itemManager;
 
 	/**
+	 * Whether a slot the reader had to skip has been logged at WARN this session (1.0.8): the first failure is loud,
+	 * so a bug report carries the item and the cause, and every later one is debug. The reader lives for the
+	 * plugin's whole life, so this is per session. Written only on the client thread, where every read happens.
+	 */
+	private boolean warnedRead;
+
+	/**
 	 * @param itemManager RuneLite's item manager, used for {@code canonicalize} and {@code getItemComposition}
 	 *                    only - never for prices, which come from the wiki client
 	 */
@@ -416,6 +423,12 @@ public class BankReader
 	 * this is called, so the only currency slot that can reach this method is one with no quantity, which the
 	 * quantity rule below drops like any other empty slot.
 	 *
+	 * <p><b>One odd slot never costs the bank (1.0.8).</b> Everything from the canonical-id lookup on runs inside a
+	 * {@code try}: a client that throws for one item's composition skips that item, logs the first such failure of
+	 * the session at WARN and the rest at DEBUG, and the read goes on with the next slot. {@link #read} therefore
+	 * never throws for one item - it used to abandon the whole capture, and with it the sidebar's first sight of the
+	 * bank.
+	 *
 	 * @param folded the fold map, mutated in place
 	 * @param item   one container slot, never null
 	 */
@@ -438,6 +451,30 @@ public class BankReader
 			return;
 		}
 
+		try
+		{
+			foldSlot(folded, id, quantity);
+		}
+		catch (final RuntimeException e)
+		{
+			if (!warnedRead)
+			{
+				warnedRead = true;
+				log.warn("bank-portfolio-tracker: could not read item {} - skipped", id, e);
+			}
+			else
+			{
+				log.debug("bank-portfolio-tracker: could not read item {} - skipped", id, e);
+			}
+		}
+	}
+
+	/**
+	 * The part of {@link #accept} that asks the client about an item: the canonical id, the composition and what is
+	 * built from them. Split out so that one {@code try} in {@link #accept} covers every client read of a slot.
+	 */
+	private void foldSlot(final Map<Integer, BankItem> folded, final int id, final int quantity)
+	{
 		final int canonical = itemManager.canonicalize(id);
 		final ItemComposition composition = itemManager.getItemComposition(canonical);
 		if (composition == null)

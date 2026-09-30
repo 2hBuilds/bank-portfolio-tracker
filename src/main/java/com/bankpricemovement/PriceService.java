@@ -649,6 +649,30 @@ public class PriceService
 	private volatile boolean stopped;
 
 	/**
+	 * The plugin's short memory for the settings menu's <i>Troubleshoot...</i> (1.0.8), handed over by
+	 * {@link #setDiagnostics}. Never null: a service built without one - every headless test - keeps a private
+	 * memory of its own, so no note, no warning key and no kept error needs a guard at its call site.
+	 */
+	private volatile Diagnostics diagnostics = new Diagnostics();
+
+	/** The last publish note, so a run of identical publishes is one line in the report and not fifty. */
+	private volatile String lastPublishNote = "";
+
+	/** Whether the bank in memory was read from the saved file at login, for the Troubleshoot report (1.0.8). */
+	private boolean bankFromDisk;
+	/** How the owner's history file loaded, for the report (1.0.8); null while none has been loaded. */
+	@Nullable
+	private PriceStore.BankHistoryLoad.State historyLoadState;
+	/** Why the last computation did or did not record a reading of today, in words, for the report (1.0.8). */
+	private String historyFoldNote = "no computation yet";
+	/** Whether the store took the last history write; null while none has been made (1.0.8, for the report). */
+	@Nullable
+	private Boolean historyWriteOk;
+
+	/** Whether the once-a-session "guide prices loaded" INFO line has been written. Executor only. */
+	private boolean guideLoadLogged;
+
+	/**
 	 * @param wiki         the revision index, the batched bodies and the mapping (L4, L6, K3); mocked in tests
 	 *                     with completed or pending futures
 	 * @param store        the JSON files (C17-C19, K11, L4); only ever called on {@code executor}
@@ -713,6 +737,18 @@ public class PriceService
 	}
 
 	/**
+	 * The plugin's diagnostics memory (1.0.8): the service notes what it does into it - a bank handed over, a
+	 * computation, a publish, each fetch's result - and raises its one-per-kind warnings through it. Counts, times
+	 * and states only; never an account hash, an item name or an id (see {@link Diagnostics}).
+	 *
+	 * @param diagnostics the plugin's; null keeps the service's own private one
+	 */
+	public void setDiagnostics(@Nullable final Diagnostics diagnostics)
+	{
+		this.diagnostics = diagnostics == null ? new Diagnostics() : diagnostics;
+	}
+
+	/**
 	 * The traded feeds of addendum T, handed over after construction (seam S2) - the plugin builds the client
 	 * with the injected OkHttp and Gson and gives it to the service it already made. Must be called before
 	 * {@link #start()}; a null client is "guide prices only".
@@ -722,6 +758,104 @@ public class PriceService
 		synchronized (lock)
 		{
 			traded = client;
+		}
+	}
+
+	/**
+	 * The Pricing and History sections of the Troubleshoot report (1.0.8), added to {@code facts} from what this
+	 * service holds now - counts, days and states, never a row, an item or an account. Any thread; one short pass
+	 * under the lock.
+	 */
+	public void describeInto(final Diagnostics.Facts.Builder facts)
+	{
+		synchronized (lock)
+		{
+			int live = 0;
+			int guide = 0;
+			int parts = 0;
+			int alch = 0;
+			int unpriced = 0;
+			for (final MovementRow row : rows)
+			{
+				if (row.unitPrice() == null)
+				{
+					unpriced++;
+					continue;
+				}
+				switch (row.source())
+				{
+					case LIVE:
+						live++;
+						break;
+					case PARTS:
+						parts++;
+						break;
+					case ALCH:
+						alch++;
+						break;
+					default:
+						guide++;
+						break;
+				}
+			}
+			facts.line(Diagnostics.PRICING, "rows by source", "live " + live + ", guide " + guide + ", parts " + parts
+				+ ", alch " + alch + ", unpriced " + unpriced + " (of " + rows.size() + " listed)");
+			facts.line(Diagnostics.PRICING, "anchor day", anchorDay == null ? "none yet" : anchorDay.toString());
+			final String reason = status == null ? null : status.degradedReason();
+			facts.line(Diagnostics.PRICING, "degraded", reason == null || reason.isEmpty() ? "-" : reason);
+			facts.line(Diagnostics.PRICING, "agreement with RuneLite's price table", agreeSamples <= 0 ? "not measured"
+				: Math.round(agree * agreeSamples) + " of " + agreeSamples + " samples match");
+			for (final MovementWindow window : MovementWindow.values())
+			{
+				final PriceMap baseline = baselines.get(window);
+				final LocalDate guideDay = hasRevision(baseline) ? baseline.dataDay() : null;
+				final LocalDate liveDay = windowDaysUsed.get(window);
+				facts.line(Diagnostics.PRICING, window.label() + " compares against", "guide "
+					+ (guideDay == null ? "-" : guideDay.toString()) + ", live "
+					+ (liveDay == null ? "-" : liveDay.toString()));
+			}
+			facts.line(Diagnostics.PRICING, "prices at", MovementMath.formatTime(guideReadAtMillis));
+
+			final LocalDate today = BankHistoryMath.dayOf(clockMillis.getAsLong(), zone);
+			final String loadState;
+			if (historyLoadState == null)
+			{
+				loadState = "not loaded yet";
+			}
+			else if (historyLoadState == PriceStore.BankHistoryLoad.State.LOADED)
+			{
+				loadState = "LOADED, " + bankHistory.size() + " readings";
+			}
+			else if (historyLoadState == PriceStore.BankHistoryLoad.State.FAILED)
+			{
+				loadState = "FAILED (the store logged the cause at WARN in the client log)";
+			}
+			else
+			{
+				loadState = "MISSING (no file yet)";
+			}
+			facts.line(Diagnostics.HISTORY, "state", loadState);
+			facts.line(Diagnostics.HISTORY, "first day", bankHistory.isEmpty() ? "-" : bankHistory.first().day().toString());
+			facts.line(Diagnostics.HISTORY, "last day", bankHistory.isEmpty() ? "-" : bankHistory.last().day().toString());
+			facts.line(Diagnostics.HISTORY, "today's reading recorded", bankHistory.on(today) != null ? "yes"
+				: "no - " + historyFoldNote);
+			facts.line(Diagnostics.HISTORY, "last fold", historyFoldNote);
+			facts.line(Diagnostics.HISTORY, "last write", historyWriteOk == null ? "none yet"
+				: (historyWriteOk ? "ok" : "failed"));
+		}
+	}
+
+	/**
+	 * The last two lines of the Troubleshoot report's Bank section (1.0.8): whether the bank in memory was read from the
+	 * saved file at login, and whether the status says a bank is loaded. Separate from {@link #describeInto} only so the
+	 * plugin can put them after its own counters. Any thread.
+	 */
+	public void describeBankInto(final Diagnostics.Facts.Builder facts)
+	{
+		synchronized (lock)
+		{
+			facts.line(Diagnostics.BANK, "bank loaded from disk at login", bankFromDisk ? "yes" : "no");
+			facts.line(Diagnostics.BANK, "bank loaded (as the status says)", status != null && status.bankLoaded() ? "yes" : "no");
 		}
 	}
 
@@ -2324,7 +2458,7 @@ public class PriceService
 		}
 
 		/** This computation with its bank-history cells on it. */
-		Computed withBankHistoryCells(final BankHistoryCells cells)
+		Computed withBankHistoryCells(@Nullable final BankHistoryCells cells)
 		{
 			return new Computed(rows, summary, priced, live, alch, leftOut, cells);
 		}
@@ -2716,7 +2850,7 @@ public class PriceService
 			}
 			started = true;
 		}
-		execute(() ->
+		execute("loading the saved prices", () ->
 		{
 			// One read of each file answers the content AND its stamp: the staleness rule needs both, and a
 			// second whole parse for one long is 150 KB of JSON at every start-up.
@@ -2892,7 +3026,7 @@ public class PriceService
 			}
 			return;
 		}
-		execute(() ->
+		execute("loading the saved bank", () ->
 		{
 			final BankSnapshot loadedRaw = store.loadBank(accountHash, profile);
 			final BankSnapshot loaded = loadedRaw == null ? BankSnapshot.EMPTY : loadedRaw;
@@ -2910,6 +3044,7 @@ public class PriceService
 				}
 				bank = loaded;
 				bankPersist = true;
+				bankFromDisk = loaded.capturedAtMillis > 0L;
 			}
 			log.debug("bank-portfolio-tracker: loaded the persisted bank for {}/{} ({} stacks)", accountHash, profile, itemCount(loaded));
 			scheduleRecompute();
@@ -3006,6 +3141,7 @@ public class PriceService
 			return;
 		}
 		final boolean save;
+		diagnostics.note("bank handed to the service (" + snapshot.items.size() + " stacks)");
 		synchronized (lock)
 		{
 			if (stopped)
@@ -3063,7 +3199,7 @@ public class PriceService
 		scheduleRecompute();
 		if (reconcile)
 		{
-			execute(() -> reconcile(now, "window changed", false));
+			execute("choosing a window's prices", () -> reconcile(now, "window changed", false));
 		}
 	}
 
@@ -3102,7 +3238,7 @@ public class PriceService
 		}
 		if (liveTurnedOn)
 		{
-			execute(() ->
+			execute("fetching live prices", () ->
 			{
 				requestLatestIfLive(now, "live prices switched on");
 				reconcileTraded(now, "live prices switched on", false);
@@ -3309,12 +3445,12 @@ public class PriceService
 			publishStatusOnly(Problem.of(problemCooldown(secondsAgo), ProblemKind.COOLDOWN));
 			return;
 		}
-		execute(() -> startIndex(now, "manual refresh", true));
+		execute("refreshing the price index", () -> startIndex(now, "manual refresh", true));
 		requestMappingIfStale(now, "manual refresh");
 		// T2: "on every accepted Refresh". The window buckets are offered again too - since addendum U a bucket is
 		// asked for once per LIVE day per window (never the guide's anchor day, which is U1's whole point), and
 		// Refresh is the user's one lever after a day's fetch failed or U2's fallback stood in for it.
-		execute(() ->
+		execute("refreshing the live prices", () ->
 		{
 			synchronized (lock)
 			{
@@ -3516,7 +3652,7 @@ public class PriceService
 		{
 			future = failed(new IllegalStateException(what + " answered null"));
 		}
-		future.whenComplete((value, error) -> execute(() -> finish.accept(value, error)));
+		future.whenComplete((value, error) -> execute("finishing " + what, () -> finish.accept(value, error)));
 	}
 
 	/**
@@ -3566,11 +3702,13 @@ public class PriceService
 		if (ok)
 		{
 			log.debug("bank-portfolio-tracker: the revision index holds {} revisions, newest {}", adopted.size(), adopted.get(0));
+			diagnostics.note("revision index: ok (" + adopted.size() + ")");
 			submitWrite("saving " + PriceStore.REVINDEX_FILE, () -> store.saveRevisionIndex(adopted, fetchedAt));
 		}
 		else
 		{
 			log.debug("bank-portfolio-tracker: the revision index failed, keeping the stored one: {}", describe(error));
+			fetchFailed("revision-index", "revision index", error);
 		}
 		reconcile(fetchedAt, ok ? "revision index" : "revision index failed", manualNow);
 		scheduleRecompute();
@@ -3855,12 +3993,30 @@ public class PriceService
 		if (ok)
 		{
 			log.debug("bank-portfolio-tracker: {} of {} guide table(s) arrived{}", arrived, requested.size(), r0Wanted ? " (R0 among them)" : "");
+			GuideSnapshot newest = null;
+			for (final GuideSnapshot table : tables.values())
+			{
+				if (table != null && !table.isEmpty() && table.dataDay() != null
+					&& (newest == null || table.dataDay().isAfter(newest.dataDay())))
+				{
+					newest = table;
+				}
+			}
+			diagnostics.note("guide tables: ok (" + arrived + " of " + requested.size() + ")"
+				+ (newest == null ? "" : ", newest day " + newest.dataDay()));
+			if (newest != null && !guideLoadLogged)
+			{
+				guideLoadLogged = true;
+				log.info("bank-portfolio-tracker: guide prices loaded: {} items for {}", newest.pricesByName().size(),
+					newest.dataDay());
+			}
 			reconcile(now, "guide tables", manual);
 		}
 		else
 		{
 			log.debug("bank-portfolio-tracker: the guide tables failed, keeping the stored baselines: {}; retrying in {} ms",
 				describe(error), retryIn);
+			fetchFailed("guide-table", "guide tables", error);
 			scheduleRetry(retryIn);
 		}
 		scheduleRecompute();
@@ -3981,7 +4137,7 @@ public class PriceService
 	/** Any thread: the age test runs on the executor, where the mapping is settled. */
 	private void requestMappingIfStale(final long now, final String reason)
 	{
-		execute(() ->
+		execute("checking the item names", () ->
 		{
 			synchronized (lock)
 			{
@@ -4048,6 +4204,7 @@ public class PriceService
 		if (ok)
 		{
 			log.debug("bank-portfolio-tracker: the mapping answered {} names; {} baselines re-projected", adopted.size(), reprojected.size());
+			diagnostics.note("mapping: ok (" + adopted.size() + ")");
 			submitWrite("saving " + PriceStore.MAPPING_FILE, () -> store.saveMapping(adopted, fetchedAt));
 			for (final Map.Entry<MovementWindow, PriceMap> entry : reprojected.entrySet())
 			{
@@ -4057,6 +4214,7 @@ public class PriceService
 		else
 		{
 			log.debug("bank-portfolio-tracker: the mapping failed, keeping the previous table: {}", describe(error));
+			fetchFailed("mapping", "mapping", error);
 		}
 		scheduleRecompute();
 	}
@@ -4128,7 +4286,7 @@ public class PriceService
 	 */
 	private void requestLatestIfLive(final long now, final String reason)
 	{
-		execute(() ->
+		execute("checking the live prices", () ->
 		{
 			synchronized (lock)
 			{
@@ -4178,6 +4336,7 @@ public class PriceService
 		if (ok)
 		{
 			log.debug("bank-portfolio-tracker: the traded /latest snapshot holds {} items", adopted.size());
+			diagnostics.note("traded latest: ok (" + adopted.size() + ")");
 			submitWrite("saving " + PriceStore.TRADED_LATEST_FILE, () -> store.saveTradedLatest(adopted, fetchedAt));
 			// U1: this snapshot's own UTC date IS the live day, so the buckets every window counts back to are
 			// decided here - not after the guide baselines, which is where addendum T asked for them and where the
@@ -4188,6 +4347,7 @@ public class PriceService
 		{
 			log.debug("bank-portfolio-tracker: the traded /latest fetch failed, keeping the stored snapshot: {}",
 				describe(error));
+			fetchFailed("traded-latest", "traded latest", error);
 		}
 		scheduleRecompute();
 	}
@@ -4334,6 +4494,7 @@ public class PriceService
 		{
 			log.debug("bank-portfolio-tracker: the {} traded bucket of {} holds {} items", window.name(), day,
 				adopted.buckets().size());
+			diagnostics.note("traded bucket " + window.name() + ": ok (" + adopted.buckets().size() + ")");
 			submitWrite("saving the " + window.name() + " traded bucket",
 				() -> store.saveTradedDay(window, day, adopted.buckets(), fetchedAt));
 		}
@@ -4353,6 +4514,7 @@ public class PriceService
 		{
 			log.debug("bank-portfolio-tracker: the {} traded bucket of {} failed, that window stays on the guide: {}",
 				window.name(), day, describe(error));
+			fetchFailed("traded-bucket", "traded bucket " + window.name(), error);
 		}
 		scheduleRecompute();
 	}
@@ -4542,6 +4704,21 @@ public class PriceService
 
 	// ---------------------------------------------------------------- row computation (L1, L3, L8)
 
+	/**
+	 * One fetch came back empty-handed (1.0.8): a note for the diagnostics report, and a WARN the first time that KIND
+	 * of fetch fails this session (later ones are debug - an outage outlasts many ticks). The client that made the
+	 * request has already written its own single line naming the address; this one says which of the plugin's feeds
+	 * it was.
+	 *
+	 * @param key  the kind of fetch, as {@link Diagnostics#warnOnce} keys it
+	 * @param what the kind in words
+	 */
+	private void fetchFailed(final String key, final String what, @Nullable final Throwable error)
+	{
+		diagnostics.note(what + ": failed: " + describe(error));
+		diagnostics.warn(log, "fetch-" + key, "bank-portfolio-tracker: the {} fetch failed - {}", what, describe(error));
+	}
+
 	/** Any thread: take a generation number and compute on the executor. */
 	private void scheduleRecompute()
 	{
@@ -4554,7 +4731,7 @@ public class PriceService
 			}
 			generation = ++computeGeneration;
 		}
-		execute(() -> compute(generation));
+		execute("pricing the bank", () -> compute(generation));
 	}
 
 	/**
@@ -4564,6 +4741,50 @@ public class PriceService
 	 * case the L8 b fallback can still change, and it keeps the hop to one definition lookup per such item.
 	 */
 	private void compute(final long generation)
+	{
+		// 1.0.8, the last resort: whatever a computation throws - taking its inputs, the client-thread trip, the
+		// pricing - the sidebar still hears that a bank is held (computeFailed), because a bank that was read must
+		// never stay hidden behind "Open your bank once".
+		guarded(generation, () -> computeUnguarded(generation));
+	}
+
+	/**
+	 * Runs one step of a computation, and answers a {@link RuntimeException} out of it with {@link #computeFailed}
+	 * (1.0.8) instead of letting it end the computation unseen.
+	 */
+	private void guarded(final long generation, final Runnable step)
+	{
+		try
+		{
+			step.run();
+		}
+		catch (final RuntimeException e)
+		{
+			computeFailed(generation, e);
+		}
+	}
+
+	/**
+	 * A computation threw (1.0.8). The failure is kept for the diagnostics report and raised once at WARN, and then
+	 * the service publishes the status it has: the one built from the bank in memory, whose {@code bankLoaded()} is
+	 * true as soon as a bank is held. The rows are whatever the last computation left (none, for a first bank), so
+	 * the sidebar leaves its "Open your bank once" card and says the list fills when prices arrive - the true answer -
+	 * rather than staying on a card that claims no bank was read.
+	 */
+	private void computeFailed(final long generation, final RuntimeException e)
+	{
+		final Diagnostics diag = diagnostics;
+		diag.error(Diagnostics.COMPUTATION_FAILED, e);
+		diag.warn(log, "compute", "bank-portfolio-tracker: the prices could not be worked out - the bank is shown"
+			+ " without them", e);
+		if (!superseded(generation))
+		{
+			publishStatusOnly(null);
+		}
+	}
+
+	/** Executor: the body of {@link #compute}, which wraps it in {@link #guarded}. */
+	private void computeUnguarded(final long generation)
 	{
 		final Inputs in;
 		// Read before the lock, and used for T3's freshness half and T7's staleness alike, so one computation
@@ -4649,7 +4870,7 @@ public class PriceService
 		{
 			parts.rewritten[i] = rewrittenByItemMapping(parts.ids[i]);
 		}
-		clientThread.invoke(() ->
+		clientThread.invoke(() -> guarded(generation, () ->
 		{
 			if (superseded(generation))
 			{
@@ -4675,8 +4896,8 @@ public class PriceService
 			{
 				parts.guide[i] = parts.rewritten[i] ? 0 : guidePrice(parts.ids[i]);
 			}
-			execute(() -> finish(generation, in, new Lookups(all, rewritten, guide, names, parts)));
-		});
+			execute("finishing the prices", () -> guarded(generation, () -> finish(generation, in, new Lookups(all, rewritten, guide, names, parts))));
+		}));
 	}
 
 	/**
@@ -4795,8 +5016,22 @@ public class PriceService
 
 		// AU: the bank-history cells beside the rows, over EVERY stack, by the same rule and the same degraded flag -
 		// so the parts the switches pick add up to the card's figure to the gp (contract section 2, the invariant).
-		commit(generation, in, rowsAndPortfolio(in, lookups, against.values, degraded, partPrices)
-			.withBankHistoryCells(bankHistoryCells(in, lookups, degraded, partPrices)), anchor, against, degraded, behind);
+		final Diagnostics diag = diagnostics;
+		final Computed computed = rowsAndPortfolio(in, lookups, against.values, degraded, partPrices, diag);
+		// 1.0.8: the history's cells are a side dish of the computation. If pricing the whole snapshot for them
+		// throws, that reading is not recorded this time and the rows and the card are published all the same.
+		BankHistoryCells cells = null;
+		try
+		{
+			cells = bankHistoryCells(in, lookups, degraded, partPrices, diag);
+		}
+		catch (final RuntimeException e)
+		{
+			diag.error(Diagnostics.HISTORY_CELLS_FAILED, e);
+			diag.warn(log, "history-cells", "bank-portfolio-tracker: the net worth reading could not be worked out"
+				+ " - not recorded this time", e);
+		}
+		commit(generation, in, computed.withBankHistoryCells(cells), anchor, against, degraded, behind);
 	}
 
 	/**
@@ -4817,10 +5052,10 @@ public class PriceService
 	 * no counting switch is read, so flipping one changes no cell.
 	 */
 	private static BankHistoryCells bankHistoryCells(final Inputs in, final Lookups lookups, final boolean degraded,
-		final PartPrices partPrices)
+		final PartPrices partPrices, final Diagnostics diag)
 	{
 		final List<BankItem> items = in.everything.items;
-		final StackPrice[] prices = priceStacks(in, items, lookups, null, degraded, partPrices);
+		final StackPrice[] prices = priceStacks(in, items, lookups, null, degraded, partPrices, diag);
 		final long[] card = new long[BankHistoryPoint.CELLS];
 		final long[] guide = new long[BankHistoryPoint.CELLS];
 		boolean anyTradeable = false;
@@ -4940,9 +5175,10 @@ public class PriceService
 	 * @param r0Values R0's value per stack of {@code items}, parallel to it (the agreement's own array for
 	 *                 {@link Inputs#items}); null to have it read here, where the rule needs it
 	 * @param degraded the computation's L3 flag, as {@link #finish} decided it
+	 * @param diag     where a stack that could not be priced is raised (1.0.8)
 	 */
 	static StackPrice[] priceStacks(final Inputs in, final List<BankItem> items, final Lookups lookups,
-		@Nullable final Long[] r0Values, final boolean degraded, final PartPrices partPrices)
+		@Nullable final Long[] r0Values, final boolean degraded, final PartPrices partPrices, final Diagnostics diag)
 	{
 		final StackPrice[] out = new StackPrice[items.size()];
 		for (int i = 0; i < out.length; i++)
@@ -4952,10 +5188,23 @@ public class PriceService
 			{
 				continue;
 			}
-			final boolean fromR0 = !item.untradeable && (degraded || lookups.rewrittenOf(item.id));
-			final Long r0 = !fromR0 ? null
-				: r0Values != null ? r0Values[i] : r0Of(in, item, lookups.nameOf(item.id));
-			out[i] = priceStack(in, item, lookups, r0, degraded, partPrices);
+			try
+			{
+				final boolean fromR0 = !item.untradeable && (degraded || lookups.rewrittenOf(item.id));
+				final Long r0 = !fromR0 ? null
+					: r0Values != null ? r0Values[i] : r0Of(in, item, lookups.nameOf(item.id));
+				out[i] = priceStack(in, item, lookups, r0, degraded, partPrices);
+			}
+			catch (final RuntimeException e)
+			{
+				// 1.0.8: one stack that cannot be priced is one stack without a price - the same as an item the guide
+				// table does not name - and never the reason the rest of the bank is not shown. The "no price" value
+				// is a StackPrice of the kind the stack is with nothing in it, because every reader below treats a
+				// null entry as a null item and would fail on this one.
+				out[i] = new StackPrice(item.untradeable ? StackKind.ALCH : StackKind.TRADEABLE, null, null, false, null);
+				diag.warn(log, "price-stack", "bank-portfolio-tracker: could not price item {} - left without a price",
+					item.id, e);
+			}
 		}
 		return out;
 	}
@@ -5056,7 +5305,7 @@ public class PriceService
 	 * @param partPrices the parts' "now" and live prices (R2, T3)
 	 */
 	private static Computed rowsAndPortfolio(final Inputs in, final Lookups lookups, final Long[] r0Values,
-		final boolean degraded, final PartPrices partPrices)
+		final boolean degraded, final PartPrices partPrices, final Diagnostics diag)
 	{
 		final int count = in.items.size();
 		final List<MovementRow> all = new ArrayList<>(count);
@@ -5081,7 +5330,7 @@ public class PriceService
 		final MovementWindow current = in.filter.window();
 		// AV: the "now" of every stack, by the one rule - which of them the rows and the card add up is decided
 		// below, after pricing, because only pricing knows whether a parts stack ended on its parts or its alch.
-		final StackPrice[] prices = priceStacks(in, in.items, lookups, r0Values, degraded, partPrices);
+		final StackPrice[] prices = priceStacks(in, in.items, lookups, r0Values, degraded, partPrices, diag);
 		// AV2: the stacks left out because they ended on the alch rule while "Include alch-only untradeables" is
 		// off. Null until the first one, so a bank that loses none hands the summary the very list it had before.
 		boolean[] leftOut = null;
@@ -5515,8 +5764,22 @@ public class PriceService
 		final Agreement against, final boolean degraded, final boolean behind)
 	{
 		final long readAt = clockMillis.getAsLong();
-		final LocalDate today = BankHistoryMath.dayOf(readAt, zone);
-		final PriceStore.BankHistoryLoad load = loadBankHistoryFor(generation, in.priced);
+		// 1.0.8: the history is guarded three times over - the local day, the read of a new owner's file and the fold
+		// below. A throw from any of them means this computation records nothing (readDay == null), leaves the series in
+		// memory as it was, and STILL builds the status and publishes: a bank that was read and priced must never stay
+		// hidden because the net worth reading beside it failed.
+		LocalDate readDay = null;
+		PriceStore.BankHistoryLoad load = null;
+		try
+		{
+			readDay = BankHistoryMath.dayOf(readAt, zone);
+			load = loadBankHistoryFor(generation, in.priced);
+		}
+		catch (final RuntimeException e)
+		{
+			readDay = null;
+			historyGuard(e);
+		}
 		final boolean anchorChanged;
 		final BankHistoryWrite recorded;
 		synchronized (lock)
@@ -5560,9 +5823,26 @@ public class PriceService
 			agreeSamples = against.samples;
 			anchorDegraded = degraded;
 			anchorBehind = behind;
-			recorded = foldBankHistoryLocked(in.priced, load, computed.bankHistoryCells, readAt, today);
+			BankHistoryWrite folded = null;
+			if (readDay != null)
+			{
+				final HistoryState before = historyStateLocked();
+				try
+				{
+					folded = foldBankHistoryLocked(in.priced, load, computed.bankHistoryCells, readAt, readDay);
+				}
+				catch (final RuntimeException e)
+				{
+					restoreHistoryLocked(before);
+					folded = null;
+					historyGuard(e);
+				}
+			}
+			recorded = folded;
 			status = buildStatusLocked(null);
 		}
+		diagnostics.note("computed: rows=" + computed.rows.size() + ", priced=" + computed.priced + ", live="
+			+ computed.live + ", guide=" + computed.guide() + ", alch=" + computed.alch);
 		if (recorded != null)
 		{
 			submitWrite("recording the bank history", () -> writeBankHistory(recorded));
@@ -5574,6 +5854,61 @@ public class PriceService
 				against.matches, against.samples);
 			reconcile(readAt, "anchor day " + anchor, false);
 		}
+	}
+
+	/** A throw out of the history's day, load or fold (1.0.8): kept, raised once, and otherwise ignored by the commit. */
+	private void historyGuard(final RuntimeException e)
+	{
+		final Diagnostics diag = diagnostics;
+		diag.error(Diagnostics.HISTORY_FAILED, e);
+		diag.warn(log, "history-fold", "bank-portfolio-tracker: the net worth history could not be updated - not"
+			+ " recorded this time", e);
+	}
+
+	/**
+	 * What {@link #foldBankHistoryLocked} may change of the service's state, taken before it runs so that a throw
+	 * halfway through can put every field back (1.0.8) - the fold writes several of them one after another.
+	 */
+	private static final class HistoryState
+	{
+		final BankHistorySeries series;
+		final long hash;
+		final String profile;
+		final boolean failed;
+		final BankHistorySeries unwritten;
+		final BankHistorySeries behind;
+		final long capture;
+
+		HistoryState(final BankHistorySeries series, final long hash, final String profile, final boolean failed,
+			final BankHistorySeries unwritten, final BankHistorySeries behind, final long capture)
+		{
+			this.series = series;
+			this.hash = hash;
+			this.profile = profile;
+			this.failed = failed;
+			this.unwritten = unwritten;
+			this.behind = behind;
+			this.capture = capture;
+		}
+	}
+
+	/** Under the lock. The fields {@link #foldBankHistoryLocked} writes, as they stand now. */
+	private HistoryState historyStateLocked()
+	{
+		return new HistoryState(bankHistory, bankHistoryHash, bankHistoryProfile, bankHistoryFailed,
+			bankHistoryUnwritten, bankHistoryBehind, bankHistoryCapture);
+	}
+
+	/** Under the lock. Puts back what {@link #historyStateLocked} took. */
+	private void restoreHistoryLocked(final HistoryState state)
+	{
+		bankHistory = state.series;
+		bankHistoryHash = state.hash;
+		bankHistoryProfile = state.profile;
+		bankHistoryFailed = state.failed;
+		bankHistoryUnwritten = state.unwritten;
+		bankHistoryBehind = state.behind;
+		bankHistoryCapture = state.capture;
 	}
 
 	/**
@@ -5654,6 +5989,7 @@ public class PriceService
 		if (bank.accountHash <= 0L)
 		{
 			// The drawn bank belongs to nobody: there is no one's history to draw.
+			historyFoldNote = "no account on the bank";
 			bankHistory = BankHistorySeries.EMPTY;
 			bankHistoryHash = 0L;
 			bankHistoryProfile = "";
@@ -5668,15 +6004,25 @@ public class PriceService
 			bankHistoryHash = bank.accountHash;
 			bankHistoryProfile = bank.profileType;
 			bankHistoryFailed = read.state() == PriceStore.BankHistoryLoad.State.FAILED;
+			historyLoadState = read.state();
 			bankHistory = read.series();
 			bankHistoryUnwritten = BankHistorySeries.EMPTY;
 			bankHistoryBehind = BankHistorySeries.EMPTY;
 			// Debug, not WARN (review finding H8): the store has already warned once, naming the file and the cause.
 			log.debug("bank-portfolio-tracker: bank history {} with {} readings{}", read.state(), bankHistory.size(),
 				bankHistoryFailed ? " - kept in memory only, nothing is written to it this session" : "");
+			diagnostics.note("history load: " + read.state()
+				+ (read.state() == PriceStore.BankHistoryLoad.State.LOADED ? " " + bankHistory.size() : ""));
+			if (bankHistoryFailed)
+			{
+				// The store has already warned, once, naming the file and the cause; the key is for the report.
+				diagnostics.warnOnce("history-load");
+			}
 		}
 		if (cells == null || !bank.persist || cells.unpriced)
 		{
+			historyFoldNote = cells == null ? "the reading could not be worked out"
+				: (!bank.persist ? "a made-up bank" : "tradeable items without a price");
 			return null;
 		}
 		final boolean ownerLoggedIn = loggedIn && bank.accountHash == loginHash && bank.profileType.equals(loginProfile);
@@ -5684,6 +6030,7 @@ public class PriceService
 			&& today.equals(BankHistoryMath.dayOf(bank.capturedAtMillis, zone));
 		if (!ownerLoggedIn && !logoutRead)
 		{
+			historyFoldNote = "not the logged-in account's bank";
 			return null;
 		}
 		bankHistoryCapture = bank.capturedAtMillis;
@@ -5701,6 +6048,7 @@ public class PriceService
 			// is sent - nor sent again later (AU-W2). The reading is drawn while the clock stays here and is dropped by
 			// the first reading taken with the clock right (below).
 			bankHistory = added;
+			historyFoldNote = "the clock is behind the record";
 			if (changed)
 			{
 				bankHistoryBehind = bankHistoryBehind.with(point);
@@ -5722,6 +6070,8 @@ public class PriceService
 			}
 			log.debug("bank-portfolio-tracker: bank history reading for {}", today);
 		}
+		historyFoldNote = bankHistoryFailed ? "the history file could not be read, so nothing is written"
+			: (changed ? "recorded" : "unchanged since the last reading today");
 		if (bankHistoryFailed || bankHistoryUnwritten.isEmpty())
 		{
 			return null;
@@ -5748,10 +6098,18 @@ public class PriceService
 				failed = failed.with(point);
 			}
 		}
+		diagnostics.note("history record: " + (failed.isEmpty() ? "ok" : "failed (" + failed.size() + " of "
+			+ write.points.size() + ")"));
+		synchronized (lock)
+		{
+			historyWriteOk = failed.isEmpty();
+		}
 		if (failed.isEmpty())
 		{
 			return;
 		}
+		// Likewise: the store warns once per owner per session (final review R5); the key is for the report.
+		diagnostics.warnOnce("history-write");
 		synchronized (lock)
 		{
 			if (stopped || bankHistoryFailed || bankHistoryHash != write.accountHash
@@ -6032,6 +6390,13 @@ public class PriceService
 			currentRows = rows;
 			currentStatus = status;
 		}
+		final String flags = "publish: loggedIn=" + currentStatus.loggedIn() + ", bankLoaded="
+			+ currentStatus.bankLoaded() + ", rows=" + currentRows.size();
+		if (!flags.equals(lastPublishNote))
+		{
+			lastPublishNote = flags;
+			diagnostics.note(flags);
+		}
 		edt.accept(() ->
 		{
 			if (stopped)
@@ -6045,7 +6410,7 @@ public class PriceService
 		});
 	}
 
-	private static void deliver(final Listener listener, final List<MovementRow> rows, final Status status)
+	private void deliver(final Listener listener, final List<MovementRow> rows, final Status status)
 	{
 		try
 		{
@@ -6053,7 +6418,11 @@ public class PriceService
 		}
 		catch (final RuntimeException e)
 		{
-			log.warn("bank-portfolio-tracker: a listener threw", e);
+			// Every publish reaches every listener, so a listener that throws would throw once per publish:
+			// 1.0.8 raises each kind of failure once at WARN and the rest at DEBUG.
+			diagnostics.error("a listener threw", e);
+			diagnostics.warn(log, "listener-threw " + e.getClass().getName(), "bank-portfolio-tracker: a listener threw",
+				e);
 		}
 	}
 
@@ -6249,34 +6618,53 @@ public class PriceService
 	 * word {@code execute} out of this package, which makes an eyeball scan against the Hub's forbidden
 	 * {@code okhttp3.Call#execute()} trivially clean. The machine check is signature-based over bytecode and
 	 * would not have confused the two either way - do not contort other code to avoid a method NAME.
+	 *
+	 * @param what a short label for the watchdog (1.0.8) - what the task does, in words, with no identifiers in it
 	 */
-	private void execute(final Runnable task)
+	private void execute(final String what, final Runnable task)
 	{
 		if (stopped)
 		{
 			return;
 		}
+		final Diagnostics diag = diagnostics;
+		final Watchdog dog = diag.watchdog();
+		dog.submitted();
 		try
 		{
 			executor.submit(() ->
 			{
-				if (stopped)
-				{
-					return;
-				}
+				// 1.0.8: the watchdog sees the task from the moment it starts to the moment it ends, however it ends,
+				// so the Troubleshoot report can say which one is holding the client's one shared executor.
+				final long id = dog.started(what, true);
 				try
 				{
-					task.run();
+					if (stopped)
+					{
+						return;
+					}
+					try
+					{
+						task.run();
+					}
+					catch (final Throwable e)
+					{
+						// 1.0.8: one WARN per distinct failure, however often it repeats; the rest are debug.
+						diag.error("background task failed", e);
+						diag.warn(log, "task-failed " + e.getClass().getName() + ": " + e.getMessage(),
+							"bank-portfolio-tracker: background task failed", e);
+					}
 				}
-				catch (final Throwable e)
+				finally
 				{
-					log.warn("bank-portfolio-tracker: background task failed", e);
+					dog.finished(id);
 				}
 			});
 		}
 		catch (final RuntimeException e)
 		{
 			// RejectedExecutionException: the client is shutting its executor down.
+			dog.rejected();
 			log.debug("bank-portfolio-tracker: the executor refused a task", e);
 		}
 	}
@@ -6293,28 +6681,34 @@ public class PriceService
 			pendingWrites.removeIf(CompletableFuture::isDone);
 			pendingWrites.add(done);
 		}
+		final Diagnostics diag = diagnostics;
+		final Watchdog dog = diag.watchdog();
+		dog.submitted();
 		try
 		{
 			executor.submit(() ->
 			{
+				final long id = dog.started(what, true);
 				try
 				{
 					write.run();
 				}
 				catch (final RuntimeException e)
 				{
-					log.warn("bank-portfolio-tracker: {} failed", what, e);
+					diag.warn(log, "write-failed " + what, "bank-portfolio-tracker: {} failed", what, e);
 				}
 				finally
 				{
+					dog.finished(id);
 					done.complete(null);
 				}
 			});
 		}
 		catch (final RuntimeException e)
 		{
+			dog.rejected();
 			done.complete(null);
-			log.warn("bank-portfolio-tracker: {} could not be queued", what, e);
+			diag.warn(log, "write-queue " + what, "bank-portfolio-tracker: {} could not be queued", what, e);
 		}
 	}
 
@@ -6322,6 +6716,8 @@ public class PriceService
 	@Nullable
 	private ScheduledFuture<?> schedule(final String what, final Runnable task, final long initialDelayMs, final long periodMs)
 	{
+		final Diagnostics diag = diagnostics;
+		final Watchdog dog = diag.watchdog();
 		try
 		{
 			return executor.scheduleWithFixedDelay(() ->
@@ -6330,13 +6726,20 @@ public class PriceService
 				{
 					return;
 				}
+				// A periodic run was never queued by anyone, so the watchdog is told so (1.0.8).
+				final long id = dog.started(what, false);
 				try
 				{
 					task.run();
 				}
 				catch (final RuntimeException e)
 				{
-					log.warn("bank-portfolio-tracker: {} failed", what, e);
+					// A periodic task fails again at its next period: once at WARN, then DEBUG (1.0.8).
+					diag.warn(log, "periodic " + what, "bank-portfolio-tracker: {} failed", what, e);
+				}
+				finally
+				{
+					dog.finished(id);
 				}
 			}, initialDelayMs, periodMs, TimeUnit.MILLISECONDS);
 		}

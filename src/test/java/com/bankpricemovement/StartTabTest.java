@@ -13,6 +13,7 @@ import java.util.Collections;
 import java.util.List;
 import javax.annotation.Nullable;
 import javax.swing.JLabel;
+import javax.swing.JMenuItem;
 import javax.swing.JPopupMenu;
 import javax.swing.JRadioButtonMenuItem;
 import javax.swing.JSeparator;
@@ -398,8 +399,12 @@ public class StartTabTest
 			assertEquals(ColorScheme.LIGHT_GRAY_COLOR, caption.getForeground());
 			assertEquals("Items", ((JRadioButtonMenuItem) c[inventory + 3]).getText());
 			assertEquals("Net Worth History", ((JRadioButtonMenuItem) c[inventory + 4]).getText());
-			assertTrue("a separator before the preset caption", c[inventory + 5] instanceof JSeparator);
-			final JLabel presets = find((Container) c[inventory + 6], JLabel.class);
+			// 1.0.8: "Troubleshoot..." sits in its own group under the dots - a rule above it (the user, on the first
+			// look: without one it read as a start-tab choice) and the rule that opens the preset group under it.
+			assertTrue("a separator after the dots", c[inventory + 5] instanceof JSeparator);
+			assertEquals(BankPriceMovementPanel.TROUBLESHOOT_TEXT, ((JMenuItem) c[inventory + 6]).getText());
+			assertTrue("a separator before the preset caption", c[inventory + 7] instanceof JSeparator);
+			final JLabel presets = find((Container) c[inventory + 8], JLabel.class);
 			assertEquals("Preset price ranges", presets.getText());
 			assertSame(dots().get(0), c[inventory + 3]);
 			assertEquals("the caption looks like the presets'", presets.getFont(), caption.getFont());

@@ -85,6 +85,9 @@ public class TradedPriceClientTest
 	/** What died on the simulated dispatcher thread, so a test can assert the Error was not swallowed. */
 	private final List<Throwable> dispatched = Collections.synchronizedList(new ArrayList<>());
 
+	/** The {@code Date} header every faked response carries, when a test sets one. */
+	private String dateHeader;
+
 	private OkHttpClient http;
 	private Call call;
 	private TradedPriceClient client;
@@ -600,6 +603,101 @@ public class TradedPriceClientTest
 		assertTrue(failure.getMessage() + " should mention " + fragment, failure.getMessage().contains(fragment));
 	}
 
+	// ---------------------------------------------------------------- 1.0.8: the passive fetch log
+
+	private FetchLog fetchLogOn(final TradedPriceClient on)
+	{
+		final FetchLog log = new FetchLog(() -> NOON_SEP_11 * 1000L);
+		on.setFetchLog(log);
+		return log;
+	}
+
+	@Test
+	public void theLatestSnapshotIsNotedAsLiveLatestWithItsEntryCount() throws Exception
+	{
+		final FetchLog log = fetchLogOn(client);
+		queue(LATEST_BODY);
+
+		client.fetchLatest(1L).get(5, TimeUnit.SECONDS);
+
+		final FetchLog.Record record = log.last(FetchLog.LIVE_LATEST);
+		assertTrue(record.ok);
+		assertEquals(200, record.httpStatus);
+		assertEquals(3, record.items);
+		assertEquals(LATEST_BODY.length(), record.bytes);
+		assertEquals(0, record.consecutiveFailures);
+		assertNull("the buckets were not asked for", log.last(FetchLog.LIVE_BUCKETS));
+	}
+
+	@Test
+	public void aDayBucketIsNotedAsLiveDayBucketsWhicheverDayItWas() throws Exception
+	{
+		final FetchLog log = fetchLogOn(client);
+		queue(DAY_BODY);
+
+		client.fetchDay(SEP_11, 1L).get(5, TimeUnit.SECONDS);
+
+		final FetchLog.Record record = log.last(FetchLog.LIVE_BUCKETS);
+		assertTrue(record.ok);
+		assertEquals(3, record.items);
+		assertNull(log.last(FetchLog.LIVE_LATEST));
+	}
+
+	@Test
+	public void aFailureIsNotedWithItsStatusAndTheRunOfFailuresCountsUp() throws Exception
+	{
+		final FetchLog log = fetchLogOn(client);
+		queue(503, "busy");
+		client.fetchLatest(1L);
+		assertFalse(log.last(FetchLog.LIVE_LATEST).ok);
+		assertEquals(503, log.last(FetchLog.LIVE_LATEST).httpStatus);
+		assertEquals(1, log.last(FetchLog.LIVE_LATEST).consecutiveFailures);
+
+		queue(new IOException("reset"));
+		client.fetchLatest(1L);
+		assertEquals(0, log.last(FetchLog.LIVE_LATEST).httpStatus);
+		assertEquals(2, log.last(FetchLog.LIVE_LATEST).consecutiveFailures);
+		assertTrue(log.last(FetchLog.LIVE_LATEST).lastError.contains("reset"));
+
+		queue(LATEST_BODY);
+		client.fetchLatest(1L);
+		assertEquals(0, log.last(FetchLog.LIVE_LATEST).consecutiveFailures);
+	}
+
+	@Test
+	public void aBodyThatWillNotParseIsNotedAsFailed() throws Exception
+	{
+		final FetchLog log = fetchLogOn(client);
+		queue(200, "{\"nope\":1}");
+
+		client.fetchLatest(1L);
+
+		assertFalse(log.last(FetchLog.LIVE_LATEST).ok);
+		assertEquals(200, log.last(FetchLog.LIVE_LATEST).httpStatus);
+	}
+
+	@Test
+	public void theDateHeaderOfAResponseBecomesTheClockSkew() throws Exception
+	{
+		final FetchLog log = fetchLogOn(client);
+		dateHeader = "Fri, 11 Sep 2026 11:59:58 GMT";
+		queue(LATEST_BODY);
+
+		client.fetchLatest(1L).get(5, TimeUnit.SECONDS);
+
+		assertEquals("this computer's clock reads noon, the header two seconds before it", Long.valueOf(2L),
+			log.clockSkewSeconds());
+	}
+
+	@Test
+	public void aClientWithNoFetchLogFetchesExactlyAsBefore() throws Exception
+	{
+		client.setFetchLog(null);
+		queue(LATEST_BODY);
+
+		assertEquals(3, client.fetchLatest(1L).get(5, TimeUnit.SECONDS).size());
+	}
+
 	private void queue(final String body)
 	{
 		replies.add(new Reply(200, body, null, Mode.NORMAL));
@@ -633,13 +731,17 @@ public class TradedPriceClientTest
 			: requests.get(requests.size() - 1);
 
 		final ResponseBody carried = body == null ? new ExplodingBody() : ResponseBody.create(JSON, body);
-		return new Response.Builder()
+		final Response.Builder builder = new Response.Builder()
 			.request(request)
 			.protocol(Protocol.HTTP_1_1)
 			.code(code)
 			.message(code == 200 ? "OK" : "Error")
-			.body(new CountingBody(carried, bodyCloses))
-			.build();
+			.body(new CountingBody(carried, bodyCloses));
+		if (dateHeader != null)
+		{
+			builder.header("Date", dateHeader);
+		}
+		return builder.build();
 	}
 
 	private static WikiPriceException failureOf(final CompletableFuture<?> future)
