@@ -89,7 +89,6 @@ public class TroubleshootDialogTest
 		final Diagnostics.Facts.Builder b = Diagnostics.Facts.builder();
 		b.loggedIn(true).accountKnown(true);
 		b.line(Diagnostics.PLAYER, "profile", "STANDARD");
-		b.line(Diagnostics.PLAYER, "world", "402");
 		b.line(Diagnostics.PLAYER, "world types", "MEMBERS");
 		b.line(Diagnostics.PLAYER, "bank window open now", "no");
 		b.bankEvents(9, 2, 3, 0);

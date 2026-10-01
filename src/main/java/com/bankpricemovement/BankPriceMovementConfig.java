@@ -6,9 +6,16 @@ import net.runelite.client.config.ConfigItem;
 
 /**
  * The plugin's single config (contract C39; items 7-9 are addendum O line O2, items 10-11 addendum Q line Q3,
- * item 12 addendum Y line Y1, item 13 addendum AH, item 14 addendum T line T1, item 15 addendum AU). Sixteen
- * items, and every one of them is also a widget in the sidebar: the config panel and the sidebar are the same switch,
- * so a change in either place is written here and read back by the other through {@code ConfigChanged}.
+ * item 12 addendum Y line Y1, item 13 1.0.9 part 3, item 14 addendum AH, item 15 addendum T line T1, item 16
+ * addendum AU, item 17 1.0.9 part 5). Eighteen items, and every one of them is also a widget in the sidebar: the
+ * config panel and the sidebar are the same switch, so a change in either place is written here and read back by the
+ * other through {@code ConfigChanged}. The one exception is the eighteenth, which the settings page does not list
+ * at all (see {@code includeLegacyHistory}).
+ *
+ * <p><b>1.0.9 part 5 added an eighteenth and hid it</b>: {@code includeLegacyHistory}, whether the Net Worth History
+ * tab shows the days recorded before 1.0.9. It is the only item here that RuneLite's settings page does not draw
+ * (RuneLite's {@code ConfigItem.hidden}): the check box on the tracker tab is its control, and a second one on
+ * the page would be a way to turn on a dialog's worth of warning without seeing the warning.
  *
  * <p><b>Addendum AU added a sixteenth, took it away before it shipped, and put a different one in its place</b>:
  * {@code view}, which remembered the last tab used, was deleted on 2026-09-29 ("Yes, always open on Items, no
@@ -363,16 +370,50 @@ public interface BankPriceMovementConfig extends Config
 	}
 
 	/**
+	 * 1.0.9 part 3, the seventeenth item and the sixth field of {@link ViewOptions}: whether what the player has in
+	 * the Grand Exchange's eight offers is counted and listed beside the bank's own stacks. The user banked, logged
+	 * out with about 50m sitting in offers, and the day's reading was 50m short: what is in an offer belongs to the
+	 * player and was counted nowhere. Default ON, for the same reason {@code countInventory} is.
+	 *
+	 * <p><b>What is counted.</b> In a sell offer, the items not yet sold (still the player's) and the coins received
+	 * so far and not yet collected; in a buy offer, the items bought and not yet collected and the coins still
+	 * committed to the part not yet filled, including the change a lower fill hands back. An item held in an offer
+	 * and in the bank is ONE row with the quantities added, and its detail names the split ("3 in bank, 2 in the
+	 * Grand Exchange"). The items count at the item's price like any other stack; the coins count in the bank value
+	 * under the coins switch ({@code countCash}), as the carried coins do. Off, every figure is exactly what it was
+	 * without this item.
+	 *
+	 * <p><b>The known limit, said in the description.</b> The eight offers are read at exactly the moments the
+	 * inventory and the worn gear are read - a bank event, the bank's close, Refresh - and never when an offer
+	 * changes, because reading on every offer event would put a read and a redraw on every fill. An offer that fills
+	 * or is placed with the bank closed therefore shows at the next read moment, not at once. Moving items from the
+	 * inventory into an offer between two reads leaves the reading as it was, which is the right figure (the items
+	 * were counted as carried); the case this item exists for is the read taken while offers are open.
+	 */
+	@ConfigItem(
+		position = 13,
+		keyName = "countGrandExchange",
+		name = "Include Grand Exchange offers",
+		description = "Items in your Grand Exchange offers, and the coins committed to them or waiting to be"
+			+ " collected, count in the bank value and are listed with the bank's stacks. They are read when you"
+			+ " close the bank or press Refresh."
+	)
+	default boolean countGrandExchange()
+	{
+		return true;
+	}
+
+	/**
 	 * Addendum AH, narrowed by AI and AJ: whether the sidebar shows hover text at all. Default OFF, and the only
 	 * switch on this page whose default is the quieter sidebar.
 	 *
-	 * <p>It reaches the bank value's hover and every CONTROL's - the sort button, the chips, Refresh, the gear's
-	 * own items, the "Item prices update every 24hrs" line. It does not reach the item rows, because since
+	 * <p>It reaches the bank value's hover and every CONTROL's - the sort button, the chips, Refresh, the settings
+	 * menu's own items, the "Item prices update every 24hrs" line. It does not reach the item rows, because since
 	 * addendum AI a row carries no tooltip at any setting: its description is the block the cell opens when it
 	 * is clicked, so there is nothing there for a switch to silence.
 	 */
 	@ConfigItem(
-		position = 13,
+		position = 14,
 		keyName = "showHoverText",
 		name = "Show hover text",
 		description = "Show hover text anywhere in the sidebar: the bank value and the controls"
@@ -402,7 +443,7 @@ public interface BankPriceMovementConfig extends Config
 	 * and is the first check item in the gear's last group.
 	 */
 	@ConfigItem(
-		position = 14,
+		position = 15,
 		keyName = "livePrices",
 		name = "Use live prices",
 		description = "Actively traded items use the wiki's live traded prices for every figure;"
@@ -425,7 +466,7 @@ public interface BankPriceMovementConfig extends Config
 	 * nobody else: it does not switch the tab that is showing now, and the service is never told.
 	 */
 	@ConfigItem(
-		position = 15,
+		position = 16,
 		keyName = "startTab",
 		name = "Tab to open on startup",
 		description = "Which tab the sidebar shows when the plugin starts."
@@ -433,5 +474,29 @@ public interface BankPriceMovementConfig extends Config
 	default SidebarView startTab()
 	{
 		return SidebarView.ITEMS;
+	}
+
+	/**
+	 * 1.0.9 part 5, the eighteenth item and the last: whether the Net Worth History tab shows the days recorded
+	 * before 1.0.9. Those readings did not count the Grand Exchange offers, so for a player who keeps much of their
+	 * bank on offer they read low; the tab hides them unless the reader asks for them, and nothing is deleted.
+	 *
+	 * <p>HIDDEN from the settings page: the check box under the tab's caption is the control, and turning it on asks
+	 * a question the settings page has no room for. It is stored all the same, so the answer survives a restart.
+	 * It is a piece of the sidebar's SHAPE, like {@code foldOpen}, so it takes a road of its own
+	 * ({@link BankPriceMovementPlugin#isLegacyKey}) that reaches the panel and nobody else: the service is never
+	 * told, because what is drawn changes and no figure does.
+	 */
+	@ConfigItem(
+		position = 17,
+		keyName = "includeLegacyHistory",
+		name = "Include days before v1.0.9",
+		description = "Show net worth readings recorded before v1.0.9 on the Net Worth History tab."
+			+ " They did not count Grand Exchange offers.",
+		hidden = true
+	)
+	default boolean includeLegacyHistory()
+	{
+		return false;
 	}
 }

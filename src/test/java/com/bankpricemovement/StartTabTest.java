@@ -173,7 +173,7 @@ public class StartTabTest
 	// ---------------------------------------------------------------- the setting
 
 	@Test
-	public void theDefaultIsItemsAndTheItemIsTheSixteenthAndLast() throws Exception
+	public void theDefaultIsItemsAndTheItemIsTheSeventeenthAndLast() throws Exception
 	{
 		final BankPriceMovementConfig config = new BankPriceMovementConfig()
 		{
@@ -184,7 +184,7 @@ public class StartTabTest
 		assertEquals("startTab", item.keyName());
 		assertEquals("Tab to open on startup", item.name());
 		assertEquals("Which tab the sidebar shows when the plugin starts.", item.description());
-		assertEquals(15, item.position());
+		assertEquals("1.0.9 part 3 put the Grand Exchange switch above it and moved it down one", 16, item.position());
 		assertEquals(SidebarView.class, m.getReturnType());
 		int items = 0;
 		for (Method other : BankPriceMovementConfig.class.getMethods())
@@ -193,10 +193,11 @@ public class StartTabTest
 			if (o != null && other.getParameterCount() == 0)
 			{
 				items++;
-				assertTrue(o.position() <= 15);
+				// 1.0.9 part 5's hidden includeLegacyHistory sits at 17; the last item the settings page LISTS is this.
+				assertTrue(o.position() <= 16 || (o.hidden() && o.position() == 17));
 			}
 		}
-		assertEquals("sixteen items", 16, items);
+		assertEquals("seventeen items on the page and the hidden eighteenth", 18, items);
 		assertEquals("the same sentence in the menu's hover", item.description(), BankPriceMovementPanel.START_TAB_TIP);
 		assertEquals(item.name(), BankPriceMovementPanel.START_TAB_TEXT);
 	}
@@ -386,13 +387,14 @@ public class StartTabTest
 			int inventory = -1;
 			for (int i = 0; i < c.length; i++)
 			{
-				if (c[i] == panel.countInventoryItem())
+				// 1.0.9 part 3: the Grand Exchange switch is the last of the five, so it is the anchor.
+				if (c[i] == panel.countGrandExchangeItem())
 				{
 					inventory = i;
 				}
 			}
 			assertTrue(inventory > 0);
-			assertTrue("a separator after the four switches", c[inventory + 1] instanceof JSeparator);
+			assertTrue("a separator after the five switches", c[inventory + 1] instanceof JSeparator);
 			final JLabel caption = find((Container) c[inventory + 2], JLabel.class);
 			assertNotNull(caption);
 			assertEquals("Tab to open on startup", caption.getText());

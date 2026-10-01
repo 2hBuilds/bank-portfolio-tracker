@@ -4282,6 +4282,159 @@ public class PriceServiceTest
 		assertEquals(6_290_824L, lastStatus().portfolio().valueNow());
 	}
 
+	// ---------------------------------------------------------------- 1.0.9 part 3: the Grand Exchange offers
+
+	/**
+	 * What the player's offers hold in the 1.0.9 part 3 tests: two more of "Item 3" (the stack the bank holds three
+	 * of, so it merges into an existing row) and the unbaited Karambwan vessel (a stack the bank has never seen, so
+	 * it is a row of its own) - and {@code exchangeGp} in coins committed to buy offers or waiting to be collected.
+	 */
+	static BankReader.Carried offers(final long exchangeGp)
+	{
+		return new BankReader.Carried(Collections.<BankItem>emptyList(), Collections.<BankItem>emptyList(),
+			Arrays.asList(new BankItem(item(3), 2, "Item 3", true), new BankItem(VESSEL, 1, "Karambwan vessel", false)),
+			0L, exchangeGp, T0);
+	}
+
+	/** The captured bank with those offers hung on it, as the plugin's bank-event pass publishes it. */
+	static BankSnapshot bankWithOffers(final long capturedAt, final long exchangeGp)
+	{
+		return bank(capturedAt).withCarried(offers(exchangeGp));
+	}
+
+	/**
+	 * The headline: the offers' items merge into the bank's rows with the quantities ADDED and the split beside them,
+	 * an item the bank has never held gets a row of its own, and both are counted in the bank value and the stack
+	 * count - the way the inventory's stacks are, and under a switch of their own.
+	 */
+	@Test
+	public void theOffersItemsMergeIntoTheBanksRowsAndNameTheGrandExchange()
+	{
+		warmUpWith(bankWithOffers(T0, 0L));
+
+		final MovementRow three = rowFor(lastRows(), item(3));
+		assertNotNull(three);
+		assertEquals("3 in the bank and 2 in offers", 5, three.quantity());
+		assertEquals(3, three.bankQuantity());
+		assertEquals(2, three.exchangeQuantity());
+		assertEquals(0, three.inventoryQuantity());
+		assertEquals(0, three.wornQuantity());
+		assertEquals("one row, not two", 1, countRowsFor(lastRows(), item(3)));
+
+		final MovementRow vessel = rowFor(lastRows(), VESSEL);
+		assertNotNull("an item only an offer holds is a row of its own", vessel);
+		assertEquals(1, vessel.quantity());
+		assertEquals(0, vessel.bankQuantity());
+		assertEquals(1, vessel.exchangeQuantity());
+		assertEquals("priced like any other guide row", Long.valueOf(3_235L), vessel.unitPrice());
+
+		final long unit = three.unitPrice();
+		final PortfolioSummary p = lastStatus().portfolio();
+		assertEquals("the bank's own 6,290,824, two more of Item 3 and the vessel, at the rows' prices",
+			6_290_824L + 2L * unit + 3_235L, p.valueNow());
+		assertEquals("itemCount counts the merged stack once", 32, p.itemsTotal());
+		assertEquals(32, lastStatus().bankItems());
+		assertEquals("the two extra Item 3 gain a gp a day each", 285L, p.move(MovementWindow.D1).deltaGp());
+	}
+
+	/** The offers' coins join the Bank value under the coins switch AND the Grand Exchange switch, and under neither alone. */
+	@Test
+	public void theOffersCoinsFollowTheCoinsAndTheGrandExchangeSwitches()
+	{
+		warmUpWith(bankWithOffers(T0, 52_000_000L));
+
+		assertEquals("both on: counted", 52_000_000L, lastStatus().portfolio().currencyGp());
+		final long unit = rowFor(lastRows(), item(3)).unitPrice();
+		assertEquals(6_290_824L + 2L * unit + 3_235L + 52_000_000L, lastStatus().portfolio().valueNow());
+
+		service.setOptions(ViewOptions.DEFAULT.withCountCash(false));
+		assertEquals("coins off takes the offers' coins out, and keeps their items", 0L,
+			lastStatus().portfolio().currencyGp());
+		assertEquals(6_290_824L + 2L * unit + 3_235L, lastStatus().portfolio().valueNow());
+
+		service.setOptions(ViewOptions.DEFAULT.withCountGrandExchange(false));
+		assertEquals("and the Grand Exchange switch off takes them out with the cash switch back on", 0L,
+			lastStatus().portfolio().currencyGp());
+		assertEquals("...and the offers' items too", 6_290_824L, lastStatus().portfolio().valueNow());
+	}
+
+	/** With the switch OFF the offers are as if they were not there: today's rows and figures, field for field. */
+	@Test
+	public void withTheGrandExchangeSwitchOffTheServicePublishesWhatItPublishedBeforeThePart()
+	{
+		service.setOptions(ViewOptions.DEFAULT.withCountGrandExchange(false));
+		warmUpWith(bankWithOffers(T0, 52_000_000L));
+		final List<MovementRow> withOffers = lastRows();
+		final PriceService.Status statusWithOffers = lastStatus();
+
+		service.setBank(bank(T0 + 1L));
+
+		assertEquals("the same rows, in the same order", withOffers, lastRows());
+		assertEquals(statusWithOffers.portfolio(), lastStatus().portfolio());
+		assertEquals(statusWithOffers.totalRows(), lastStatus().totalRows());
+		assertEquals("and the same stack count", statusWithOffers.bankItems(), lastStatus().bankItems());
+		assertEquals(31, statusWithOffers.bankItems());
+		assertEquals(6_290_824L, statusWithOffers.portfolio().valueNow());
+		assertEquals("the offers' coins are not in it either", 0L, statusWithOffers.portfolio().currencyGp());
+		assertEquals(statusWithOffers.options(), lastStatus().options());
+		assertNull("no offer-only row was drawn", rowFor(withOffers, VESSEL));
+		assertEquals("and the merged quantity is not there", 3, rowFor(withOffers, item(3)).quantity());
+		for (final MovementRow row : withOffers)
+		{
+			assertFalse(row.name() + " must carry no split at all", row.split());
+		}
+	}
+
+	/** The inventory switch OFF and the Grand Exchange switch ON merges the offers alone: no worn row, no carried part. */
+	@Test
+	public void withTheInventoryOffAndTheOffersOnTheOffersAreMergedAlone()
+	{
+		final BankSnapshot both = bank(T0).withCarried(new BankReader.Carried(
+			Arrays.asList(new BankItem(item(3), 1, "Item 3", true)),
+			Arrays.asList(new BankItem(VESSEL, 1, "Karambwan vessel", false)),
+			Arrays.asList(new BankItem(item(3), 2, "Item 3", true)), 791_078L, 4_000L, T0));
+		service.setOptions(ViewOptions.DEFAULT.withCountInventory(false));
+		warmUpWith(both);
+
+		final MovementRow three = rowFor(lastRows(), item(3));
+		assertEquals("3 in the bank and 2 in offers - the inventory's 1 is not counted", 5, three.quantity());
+		assertEquals(3, three.bankQuantity());
+		assertEquals(0, three.inventoryQuantity());
+		assertEquals(0, three.wornQuantity());
+		assertEquals(2, three.exchangeQuantity());
+		assertNull("the worn vessel is not counted with the inventory switch off", rowFor(lastRows(), VESSEL));
+		assertEquals("the offers' coins, not the pocket's", 4_000L, lastStatus().portfolio().currencyGp());
+
+		// The other way round: inventory ON, offers OFF merges the carried half alone.
+		service.setOptions(ViewOptions.DEFAULT.withCountGrandExchange(false));
+		final MovementRow carriedOnly = rowFor(lastRows(), item(3));
+		assertEquals("3 + 1 carried, no offers", 4, carriedOnly.quantity());
+		assertEquals(0, carriedOnly.exchangeQuantity());
+		assertNotNull(rowFor(lastRows(), VESSEL));
+		assertEquals(791_078L, lastStatus().portfolio().currencyGp());
+	}
+
+	/** Flipping the switch recomputes on the spot: nothing is fetched, and no bank visit is needed. */
+	@Test
+	public void flippingTheGrandExchangeSwitchRepublishesWithoutFetchingAnything()
+	{
+		service.setOptions(ViewOptions.DEFAULT.withCountGrandExchange(false));
+		warmUpWith(bankWithOffers(T0, 0L));
+		final int requests = tableRequests.size();
+		assertNull(rowFor(lastRows(), VESSEL));
+
+		service.setOptions(ViewOptions.DEFAULT);
+
+		assertNotNull(rowFor(lastRows(), VESSEL));
+		assertEquals(5, rowFor(lastRows(), item(3)).quantity());
+		assertEquals("no table was asked for", requests, tableRequests.size());
+
+		service.setOptions(ViewOptions.DEFAULT.withCountGrandExchange(false));
+
+		assertNull("and back again", rowFor(lastRows(), VESSEL));
+		assertEquals(6_290_824L, lastStatus().portfolio().valueNow());
+	}
+
 	/**
 	 * Y2: Refresh re-reads what the player carries, BEFORE it re-checks the prices - and nothing else in the
 	 * service ever runs the hook. The reader records how many index requests had gone out when it ran, which is

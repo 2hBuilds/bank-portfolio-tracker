@@ -11,7 +11,7 @@ package com.bankpricemovement;
 public final class Version
 {
 	/** The version this build ships as, {@code major.minor.patch}. */
-	public static final String CURRENT = "1.0.8";
+	public static final String CURRENT = "1.0.9";
 
 	private Version()
 	{

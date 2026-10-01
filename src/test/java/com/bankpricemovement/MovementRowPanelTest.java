@@ -1853,11 +1853,28 @@ public class MovementRowPanelTest
 			// in the same shape as the line it qualifies.
 			assertEquals("27,000 in bank, 1,000 in inventory", MovementRowPanel.splitLine(carried(27_000, 1_000, 0)));
 
+			// 1.0.9 part 3: the Grand Exchange is the fourth place, named last, in full.
+			assertEquals("3 in bank, 1 in inventory, 1 worn, 2 in the Grand Exchange",
+				MovementRowPanel.splitLine(carried(3, 1, 1, 2)));
+			assertEquals("a bank-and-offer stack", "3 in bank, 2 in the Grand Exchange",
+				MovementRowPanel.splitLine(carried(3, 0, 0, 2)));
+			assertEquals("an offer-only stack", "2 in the Grand Exchange",
+				MovementRowPanel.splitLine(carried(0, 0, 0, 2)));
+			assertEquals("1,200 in the Grand Exchange", MovementRowPanel.splitLine(carried(0, 0, 0, 1_200)).trim());
+			assertEquals("", MovementRowPanel.splitLine(carried(5, 0, 0, 0)));
+			assertEquals(" in the Grand Exchange", MovementRowPanel.IN_EXCHANGE);
+
 			// In the tooltip: directly under the Holding line and above the change.
 			final String tip = new MovementRowPanel(carried(3, 1, 1), null, MovementWindow.D1, THEN_DAY,
 				ViewOptions.DEFAULT).tooltipHtml();
 			assertTrue(tip, tip.contains("<br>Holding: 5 = 7,600,000 gp<br>3 in bank, 1 in inventory, 1 worn"
 				+ "<br>Change per item: +20,000 gp (+1.3%)"));
+
+			// ...and with an offer in it, the fourth part ends the same line.
+			final String withOffer = new MovementRowPanel(carried(3, 1, 1, 2), null, MovementWindow.D1, THEN_DAY,
+				ViewOptions.DEFAULT).tooltipHtml();
+			assertTrue(withOffer, withOffer.contains("<br>Holding: 7 = 10,640,000 gp<br>3 in bank, 1 in inventory,"
+				+ " 1 worn, 2 in the Grand Exchange<br>Change per item: +20,000 gp (+1.3%)"));
 		});
 	}
 
@@ -1871,13 +1888,27 @@ public class MovementRowPanelTest
 	{
 		onEdt(() ->
 		{
-			// The switch off: the same row, the pre-Y tooltip.
-			final ViewOptions off = ViewOptions.DEFAULT.withCountInventory(false);
+			// The switches off: the same row, the pre-Y tooltip - both of them, since 1.0.9 part 3 (the Grand Exchange
+			// switch alone is reason enough to print the line, as the carried one is).
+			final ViewOptions off = ViewOptions.DEFAULT.withCountInventory(false).withCountGrandExchange(false);
 			final String offTip = new MovementRowPanel(carried(3, 1, 1), null, MovementWindow.D1, THEN_DAY, off)
 				.tooltipHtml();
 			assertFalse(offTip, offTip.contains("in bank"));
 			assertFalse(offTip, offTip.contains("worn"));
 			assertTrue(offTip, offTip.contains("<br>Holding: 5 = 7,600,000 gp<br>Change per item: "));
+			final String offOffers = new MovementRowPanel(carried(3, 0, 0, 2), null, MovementWindow.D1, THEN_DAY, off)
+				.tooltipHtml();
+			assertFalse(offOffers, offOffers.contains("Grand Exchange"));
+			assertFalse(offOffers, offOffers.contains("in bank"));
+
+			// 1.0.9 part 3: either switch alone keeps the line - inventory off and Grand Exchange on names the
+			// offer; Grand Exchange off and inventory on names the carried half.
+			final String offersOnly = new MovementRowPanel(carried(3, 0, 0, 2), null, MovementWindow.D1, THEN_DAY,
+				ViewOptions.DEFAULT.withCountInventory(false)).tooltipHtml();
+			assertTrue(offersOnly, offersOnly.contains("<br>3 in bank, 2 in the Grand Exchange<br>"));
+			final String carriedOnly = new MovementRowPanel(carried(3, 1, 1), null, MovementWindow.D1, THEN_DAY,
+				ViewOptions.DEFAULT.withCountGrandExchange(false)).tooltipHtml();
+			assertTrue(carriedOnly, carriedOnly.contains("<br>3 in bank, 1 in inventory, 1 worn<br>"));
 
 			// The switch on, the whole stack in the bank: "3 in bank" under "Holding: 3" is the same fact twice.
 			assertEquals("", MovementRowPanel.splitLine(carried(5, 0, 0)));
@@ -1911,12 +1942,12 @@ public class MovementRowPanelTest
 				+ "<br>Holding: 1 = 20,000 gp"
 				+ "<br>1 worn</html>", tip);
 
-			// The same stack in the bank, and with the switch off: the Q5 tooltip, word for word.
+			// The same stack in the bank, and with the switches off: the Q5 tooltip, word for word.
 			assertEquals("<html><b>Graceful hood</b>"
 				+ "<br>Untradeable - High Alchemy value 20,000 gp; not in the movement figures"
 				+ "<br>Holding: 1 = 20,000 gp</html>",
 				new MovementRowPanel(hood, null, MovementWindow.D30, THEN_DAY,
-					ViewOptions.DEFAULT.withCountInventory(false)).tooltipHtml());
+					ViewOptions.DEFAULT.withCountInventory(false).withCountGrandExchange(false)).tooltipHtml());
 		});
 	}
 
@@ -2666,17 +2697,25 @@ public class MovementRowPanelTest
 	 * twice.
 	 */
 	@Test
-	public void theCarriedSplitIsInTheCellOnlyWhileTheInventorySwitchIsOn()
+	public void theCarriedSplitIsInTheCellOnlyWhileAMergingSwitchIsOn()
 	{
 		final MovementRow split = carried(3, 1, 1);
 		final String on = MovementRowPanel.detail(split, MovementWindow.D1, THEN_DAY, ViewOptions.DEFAULT, false);
 		assertTrue(on, on.contains("</table>3 in bank, 1 in inventory, 1 worn"));
 
 		final String off = MovementRowPanel.detail(split, MovementWindow.D1, THEN_DAY,
-			ViewOptions.DEFAULT.withCountInventory(false), false);
+			ViewOptions.DEFAULT.withCountInventory(false).withCountGrandExchange(false), false);
 		assertFalse(off, off.contains("in bank"));
 		assertFalse(off, off.contains("worn"));
-		assertTrue("...and the four lines are untouched by the switch", off.endsWith("</table></div></html>"));
+		assertTrue("...and the four lines are untouched by the switches", off.endsWith("</table></div></html>"));
+
+		// 1.0.9 part 3: the open cell names the offers too, and the Grand Exchange switch alone keeps the line.
+		final String offered = MovementRowPanel.detail(carried(3, 1, 1, 2), MovementWindow.D1, THEN_DAY,
+			ViewOptions.DEFAULT, false);
+		assertTrue(offered, offered.contains("</table>3 in bank, 1 in inventory, 1 worn, 2 in the Grand Exchange"));
+		final String offersAlone = MovementRowPanel.detail(carried(3, 0, 0, 2), MovementWindow.D1, THEN_DAY,
+			ViewOptions.DEFAULT.withCountInventory(false), false);
+		assertTrue(offersAlone, offersAlone.contains("</table>3 in bank, 2 in the Grand Exchange"));
 
 		assertFalse("a stack the bank holds whole says nothing",
 			MovementRowPanel.detail(carried(5, 0, 0), MovementWindow.D1, THEN_DAY, ViewOptions.DEFAULT, false)
@@ -3275,10 +3314,16 @@ public class MovementRowPanelTest
 	 */
 	private static MovementRow carried(int bank, int inventory, int worn)
 	{
-		final int quantity = bank + inventory + worn;
+		return carried(bank, inventory, worn, 0);
+	}
+
+	/** The same, with the items in the player's Grand Exchange offers as the fourth place (1.0.9 part 3). */
+	private static MovementRow carried(int bank, int inventory, int worn, int exchange)
+	{
+		final int quantity = bank + inventory + worn + exchange;
 		return new MovementRow(4151, "Abyssal whip", quantity, false, 1_520_000L, 1_500_000L, 20_000L,
 			20_000d * 100.0 / 1_500_000d, 1_520_000L * quantity, null, null, null, null, null,
-			bank, inventory, worn);
+			bank, inventory, worn, exchange);
 	}
 
 	/**

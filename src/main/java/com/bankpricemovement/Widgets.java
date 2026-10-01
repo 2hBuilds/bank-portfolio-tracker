@@ -1059,8 +1059,9 @@ final class Widgets
 	 * The options gear (addendum Q, line Q1): a ring with {@value #GEAR_TEETH} teeth and a HOLE through the
 	 * middle, drawn in code at the size and colour the caller asks for - {@code LIGHT_GRAY} at rest on the hero
 	 * card's total line, {@code BRAND_ORANGE} under the mouse. Drawn and not loaded, exactly as
-	 * {@link NavIcon} draws the sidebar button: this package ships no image files (contract C46 forbids
-	 * classpath resources here), and the bitmap RuneScape faces have no gear glyph to type.
+	 * {@link NavIcon} draws the sidebar button, because the bitmap RuneScape faces have no gear glyph to type. (This
+	 * package shipped no image files at all until 1.0.9; the only ones it carries now are the brands' own marks,
+	 * {@link SupportLinks#markIcon}, which are not ours to redraw.)
 	 *
 	 * <p>The ring is a STROKE and not a filled disc, so the middle stays transparent and the glyph reads as a
 	 * gear at 12 px rather than as a cogged blob; the teeth are eight round-capped spokes every 45 degrees,
@@ -1160,6 +1161,24 @@ final class Widgets
 	 * needs no look-and-feel support and never becomes part of the text.
 	 */
 	static PlaceholderField gpField(String placeholder)
+	{
+		return field(placeholder);
+	}
+
+	/**
+	 * The box the Items list is searched through (1.0.9 part 4): exactly the look of {@link #gpField} - the
+	 * small RuneScape face, the sidebar's field colours and the thin border - because it stands directly above the
+	 * rows beside Min and Max and a box that looked different would read as a different kind of control. Both go
+	 * through the one builder below, so the two can never drift apart. Nothing about it is numeric: it takes any
+	 * text, and it has no invalid state to turn red.
+	 */
+	static PlaceholderField searchField(String placeholder)
+	{
+		return field(placeholder);
+	}
+
+	/** The one builder behind {@link #gpField} and {@link #searchField}. */
+	private static PlaceholderField field(String placeholder)
 	{
 		final PlaceholderField f = new PlaceholderField(placeholder);
 		final JTextField tf = f.getTextField();

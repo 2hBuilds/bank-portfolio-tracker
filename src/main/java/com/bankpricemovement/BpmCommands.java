@@ -56,6 +56,8 @@ import org.slf4j.LoggerFactory;
  * presets=&lt;a&gt;,&lt;b&gt;,&lt;c&gt;        the fold's three quick bands, in shorthand and any order
  *                            (presets=default puts 100k / 1m / 10m back - Z4)
  * fold=on|off|toggle         the price fold under the control row - the band button's own click (AA2)
+ * search=&lt;text&gt;             the search box above the item list: part of an item's name (empty clears; 1.0.9
+ *                            part 4)
  * hero=value|gp|pct|all|none which of the hero card's three figures are drawn (O5); a field word TOGGLES
  * opt=cash|untradeables|live|inventory|all|none  the gear's four view switches (Q7, T8, Y1, AO1); a field
  *                            word TOGGLES
@@ -226,8 +228,11 @@ public class BpmCommands implements Function<String, String>
 		"nobody is logged in, so a synthetic bank would be saved under account 0 - log in first, then bank=";
 	/** How many rows {@code state} carries, so a bank of 800 does not come back down the HTTP pipe. */
 	static final int STATE_ROWS = 10;
-	/** The six words {@code opt=} takes, for a refusal that says what to type instead (Q7, T8, Y1, AO1). */
-	static final String OPTION_VERBS = "cash, untradeables, live, inventory, all or none";
+	/**
+	 * The six words {@code opt=} takes, for a refusal that says what to type instead (Q7, T8, Y1, AO1, and 1.0.9 part
+	 * 3's {@code ge}).
+	 */
+	static final String OPTION_VERBS = "cash, untradeables, live, inventory, ge, all or none";
 	/**
 	 * What {@code opt=holding} answers since addendum AO (AO1), shaped on {@link #ORDER_GONE} and there for the
 	 * same reason: the switch is DELETED rather than repaired, so a script that sends the word deserves the one
@@ -267,6 +272,8 @@ public class BpmCommands implements Function<String, String>
 	 * and a script that knows which way it wants the fold says so rather than reading first.
 	 */
 	static final String FOLD_VERBS = "on, off or toggle";
+	/** The three words {@code legacy=} takes (1.0.9 part 5), the fold's own vocabulary for the same reason. */
+	static final String LEGACY_VERBS = "on, off or toggle";
 	/**
 	 * What {@code view=} answers for a word that names neither view (addendum AU), up to the word itself, which is
 	 * quoted back as typed.
@@ -448,6 +455,10 @@ public class BpmCommands implements Function<String, String>
 				return presets(value);
 			case "fold":
 				return fold(value);
+			case "legacy":
+				return legacy(value);
+			case "search":
+				return search(value);
 			case "view":
 				return view(value);
 			case "starttab":
@@ -466,7 +477,8 @@ public class BpmCommands implements Function<String, String>
 				return shot(value);
 			default:
 				return error("unknown command '" + key + "' (state, window=, sort=, dir=, min=, max=, presets=,"
-					+ " fold=, view=, starttab=, range=, hero=, opt=, refresh, more, bank=, wiki=, shot[=])");
+					+ " fold=, legacy=, search=, view=, starttab=, range=, hero=, opt=, refresh, more, bank=, wiki=,"
+					+ " shot[=])");
 		}
 	}
 
@@ -646,10 +658,11 @@ public class BpmCommands implements Function<String, String>
 
 	/**
 	 * {@code opt=} as a pure function of the options it is applied to, the shape of
-	 * {@link HeroVisibility#applyVerb(String)}: a field word TOGGLES its switch, {@code all} turns all four on
-	 * and {@code none} turns all four off. The spellings are generous because the verb is typed by hand into a
+	 * {@link HeroVisibility#applyVerb(String)}: a field word TOGGLES its switch, {@code all} turns all five on
+	 * and {@code none} turns all five off. The spellings are generous because the verb is typed by hand into a
 	 * URL query ({@code coins}, {@code plat}, {@code untradables}, {@code alch}, {@code traded},
-	 * {@code inv}, {@code gear}, {@code worn}), and the text is trimmed and case-folded first.
+	 * {@code inv}, {@code gear}, {@code worn}, {@code ge}, {@code offers}), and the text is trimmed and case-folded
+	 * first.
 	 *
 	 * <p>It lives here rather than on {@link ViewOptions} because the value is shared with the panel and the
 	 * service, which have no business knowing the developer bridge's vocabulary.
@@ -659,7 +672,7 @@ public class BpmCommands implements Function<String, String>
 	 * list it has fallen out of. A caller of this method that wants the same courtesy asks
 	 * {@link #namesHoldingOnRows(String)}.
 	 *
-	 * @return the options to apply, or null when the text names none of the six words of {@link #OPTION_VERBS} -
+	 * @return the options to apply, or null when the text names none of the words of {@link #OPTION_VERBS} -
 	 *         the caller then answers {@code ok:false} and leaves the sidebar exactly as it was
 	 */
 	@Nullable
@@ -701,19 +714,27 @@ public class BpmCommands implements Function<String, String>
 			case "worn":
 			case "countinventory":
 				return options.withCountInventory(!options.countInventory());
+			// 1.0.9 part 3. The Grand Exchange switch, with the words an operator reaches for from the label
+			// ("Include Grand Exchange offers") and the addendum; "countgrandexchange" is the stored key.
+			case "ge":
+			case "grandexchange":
+			case "exchange":
+			case "offers":
+			case "countgrandexchange":
+				return options.withCountGrandExchange(!options.countGrandExchange());
 			case "all":
 			case "on":
-				// All FOUR explicitly, and by name rather than through a constructor: the constructors are
+				// All FIVE explicitly, and by name rather than through a constructor: the constructors are
 				// positional and their shorter overloads default the newer switches ON, so a word that is meant
 				// to leave nothing standing would quietly leave one - and every addendum that adds or removes a
-				// switch moves the positions under this line (AO1 removed one). The hover switch is set the way
-				// addendum AH's own arity left it: "all" has never turned the data hovers on.
+				// switch moves the positions under this line (AO1 removed one, 1.0.9 part 3 added one). The hover
+				// switch is set the way addendum AH's own arity left it: "all" has never turned the data hovers on.
 				return options.withCountCash(true).withCountUntradeables(true).withLivePrices(true)
-					.withCountInventory(true).withShowHoverText(false);
+					.withCountInventory(true).withCountGrandExchange(true).withShowHoverText(false);
 			case "none":
 			case "off":
 				return options.withCountCash(false).withCountUntradeables(false).withLivePrices(false)
-					.withCountInventory(false).withShowHoverText(false);
+					.withCountInventory(false).withCountGrandExchange(false).withShowHoverText(false);
 			default:
 				return null;
 		}
@@ -840,6 +861,27 @@ public class BpmCommands implements Function<String, String>
 	}
 
 	/**
+	 * The {@code search=} verb (1.0.9 part 4): the box above the item list, typed into and applied as typing does - the
+	 * text goes into the box, so a {@code shot} shows what a script typed, and the list narrows to the rows whose names
+	 * hold it, anywhere in the name and whatever the case ({@code search=rune} finds "Rune platebody" and "Runite ore").
+	 * {@code search=} with nothing after it clears the box and brings the whole list back.
+	 *
+	 * <p>It presses {@link BankPriceMovementPanel#applySearch}, the very road every keystroke takes, which narrows the
+	 * rows the panel already holds and never asks the service - so there is no recompute and no band, sort or price
+	 * moves. And it is NEVER refused: any text is a search, and one that matches nothing is the "No items match" card
+	 * rather than an error. Like {@code min=} the text goes in as sent, minus the ends the dispatcher trimmed.
+	 *
+	 * <p>The answer reads back as {@code state.panel.search} (the trimmed text) and {@code state.panel.matching} (the
+	 * rows shown); {@code state.rows} stays the service's published list - the rows under the band - and
+	 * {@code state.panel.total} with it, so the pair {@code matching} / {@code total} is the narrowing.
+	 */
+	private Map<String, Object> search(@Nullable String value)
+	{
+		panel.applySearch(value == null ? "" : value);
+		return state();
+	}
+
+	/**
 	 * Addendum AA's {@code fold=} verb (AA2): the price fold under the control row - the chip strip the verb above
 	 * fills, over the Min / Max fields - opened, closed or flipped.
 	 *
@@ -883,6 +925,47 @@ public class BpmCommands implements Function<String, String>
 			return error("fold= wants " + FOLD_VERBS + ", not '" + raw + "'");
 		}
 		panel.pressFold(open);
+		return state();
+	}
+
+	/**
+	 * 1.0.9 part 5's {@code legacy=} verb: the Net Worth History tab's "Include days before v1.0.9" check box, turned
+	 * on, off or flipped - by pressing the box's own road, {@link BankPriceMovementPanel#pressLegacy(boolean)} for the
+	 * two states and {@link BankPriceMovementPanel#pressLegacy()} for the gesture, the way {@code fold=} presses the
+	 * fold: that road applies the change AND writes the stored key, so a {@code /bpm} session leaves the same state
+	 * behind as a hand session.
+	 *
+	 * <p>Turning it ON is the click's own act and so asks the click's own question: a dialog opens in the client and
+	 * waits for the player to answer it, and this answer comes back after they have (or, when they take longer than
+	 * {@link #EDT_TIMEOUT_MS}, as the timeout's, with the dialog still up). {@code off} asks nothing. {@code on} and
+	 * {@code off} name a STATE and are idempotent; {@code toggle} always flips.
+	 *
+	 * <p>The echoes are {@code state.panel.includeLegacy}, {@code state.panel.legacyDays} (whether the record holds
+	 * any such day, i.e. whether the box is in the sidebar at all) and {@code state.bankHistory.freshFrom}.
+	 */
+	private Map<String, Object> legacy(@Nullable String value)
+	{
+		final String raw = value == null ? "" : value.trim();
+		final String v = raw.toLowerCase(Locale.ROOT);
+		if ("toggle".equals(v) || "flip".equals(v))
+		{
+			panel.pressLegacy();
+			return state();
+		}
+		final boolean include;
+		if ("on".equals(v) || "true".equals(v) || "1".equals(v))
+		{
+			include = true;
+		}
+		else if ("off".equals(v) || "false".equals(v) || "0".equals(v))
+		{
+			include = false;
+		}
+		else
+		{
+			return error("legacy= wants " + LEGACY_VERBS + ", not '" + raw + "'");
+		}
+		panel.pressLegacy(include);
 		return state();
 	}
 
@@ -1213,10 +1296,11 @@ public class BpmCommands implements Function<String, String>
 			// The rows below came from bank= and not from a real bank: nothing measured off them is evidence.
 			m.put("syntheticBank", true);
 		}
-		// Y1: whether the three carried quantities are worth printing on each row below. Read once, from the
-		// same object the "options" echo above was built from, so a row can never disagree with the switch
-		// printed beside it.
-		final boolean carried = currentOptions().countInventory();
+		// Y1: whether the carried quantities are worth printing on each row below - with the inventory switch or,
+		// since 1.0.9 part 3, the Grand Exchange one on. Read once, from the same object the "options" echo above
+		// was built from, so a row can never disagree with the switch printed beside it.
+		final ViewOptions echoed = currentOptions();
+		final boolean carried = echoed.countInventory() || echoed.countGrandExchange();
 		final List<MovementRow> rows = service.currentRows();
 		final List<Map<String, Object>> out = new ArrayList<>();
 		if (rows != null)
@@ -1491,14 +1575,14 @@ public class BpmCommands implements Function<String, String>
 
 	/**
 	 * One row. {@code qty} is the whole stack, and since addendum Y (Y1) a row carries the SPLIT behind it -
-	 * {@code bankQty}, {@code invQty}, {@code wornQty}, which sum to {@code qty} - but only while the
-	 * {@code inventory} switch is on, because with it off there is nothing split to say and the three would
-	 * read 0 / 0 / 0 on every row of a bank that has never been merged. They are the numbers the row's own
-	 * tooltip prints as "3 in bank, 1 in inventory, 1 worn", so a script can assert the sentence without a
-	 * screenshot.
+	 * {@code bankQty}, {@code invQty}, {@code wornQty}, and since 1.0.9 part 3 {@code geQty}, which sum to
+	 * {@code qty} - but only while the {@code inventory} or the {@code ge} switch is on, because with both off there
+	 * is nothing split to say and the four would read 0 on every row of a bank that has never been merged. They are
+	 * the numbers the row's own tooltip prints as "3 in bank, 1 in inventory, 1 worn, 2 in the Grand Exchange", so a
+	 * script can assert the sentence without a screenshot.
 	 *
 	 * @param row     the row, or null
-	 * @param carried whether the carried switch is on, i.e. whether the split is worth printing
+	 * @param carried whether either merging switch is on, i.e. whether the split is worth printing
 	 */
 	private static Map<String, Object> rowJson(@Nullable MovementRow row, boolean carried)
 	{
@@ -1515,6 +1599,7 @@ public class BpmCommands implements Function<String, String>
 			m.put("bankQty", row.bankQuantity());
 			m.put("invQty", row.inventoryQuantity());
 			m.put("wornQty", row.wornQuantity());
+			m.put("geQty", row.exchangeQuantity());
 		}
 		m.put("unit", row.unitPrice());
 		m.put("then", row.thenPrice());

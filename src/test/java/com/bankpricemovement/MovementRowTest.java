@@ -435,7 +435,7 @@ public class MovementRowTest
 	@Test
 	public void theSplitSaysWhereTheQuantityIs()
 	{
-		final MovementRow all = row(5, 10_000L).withSplit(3, 1, 1);
+		final MovementRow all = row(5, 10_000L).withSplit(3, 1, 1, 0);
 
 		assertEquals(3, all.bankQuantity());
 		assertEquals(1, all.inventoryQuantity());
@@ -450,7 +450,7 @@ public class MovementRowTest
 	@Test
 	public void aWornOnlyStackHasNoBankQuantity()
 	{
-		final MovementRow worn = row(1, 10_000L).withSplit(0, 0, 1);
+		final MovementRow worn = row(1, 10_000L).withSplit(0, 0, 1, 0);
 
 		assertEquals(0, worn.bankQuantity());
 		assertEquals(0, worn.inventoryQuantity());
@@ -463,7 +463,7 @@ public class MovementRowTest
 	@Test
 	public void aBankOnlyStackIsAllInBank()
 	{
-		final MovementRow banked = row(3, 10_000L).withSplit(3, 0, 0);
+		final MovementRow banked = row(3, 10_000L).withSplit(3, 0, 0, 0);
 
 		assertEquals(3, banked.bankQuantity());
 		assertTrue(banked.split());
@@ -481,8 +481,8 @@ public class MovementRowTest
 		assertEquals(0, guide.wornQuantity());
 		assertFalse(guide.split());
 		assertTrue(guide.allInBank());
-		assertSame("three zeros answer the row itself", guide, guide.withSplit(0, 0, 0));
-		assertEquals("and a negative is no split either", guide, guide.withSplit(-2, 0, 0));
+		assertSame("three zeros answer the row itself", guide, guide.withSplit(0, 0, 0, 0));
+		assertEquals("and a negative is no split either", guide, guide.withSplit(-2, 0, 0, 0));
 	}
 
 	/** The split says where the stack lives, never what it is worth: every figure is untouched. */
@@ -490,7 +490,7 @@ public class MovementRowTest
 	public void theSplitChangesNoFigure()
 	{
 		final MovementRow guide = row(5, 10_000L);
-		final MovementRow split = guide.withSplit(3, 1, 1);
+		final MovementRow split = guide.withSplit(3, 1, 1, 0);
 
 		assertEquals(guide.unitPrice(), split.unitPrice());
 		assertEquals(guide.thenPrice(), split.thenPrice());
@@ -505,7 +505,7 @@ public class MovementRowTest
 	@Test
 	public void theSplitSurvivesAsPartsAsLiveAndARefusal()
 	{
-		final MovementRow body = crystalBodyRow().withSplit(2, 0, 1);
+		final MovementRow body = crystalBodyRow().withSplit(2, 0, 1, 0);
 
 		assertEquals(2, body.asParts(seeds(3L)).bankQuantity());
 		assertEquals(1, body.asParts(seeds(3L)).wornQuantity());
@@ -522,11 +522,11 @@ public class MovementRowTest
 	@Test
 	public void theSplitIsPartOfTheRowsIdentity()
 	{
-		final MovementRow banked = row(5, 10_000L).withSplit(5, 0, 0);
+		final MovementRow banked = row(5, 10_000L).withSplit(5, 0, 0, 0);
 
-		assertEquals(banked, row(5, 10_000L).withSplit(5, 0, 0));
-		assertEquals(banked.hashCode(), row(5, 10_000L).withSplit(5, 0, 0).hashCode());
-		assertNotEquals("four banked and one worn is not five banked", banked, row(5, 10_000L).withSplit(4, 0, 1));
+		assertEquals(banked, row(5, 10_000L).withSplit(5, 0, 0, 0));
+		assertEquals(banked.hashCode(), row(5, 10_000L).withSplit(5, 0, 0, 0).hashCode());
+		assertNotEquals("four banked and one worn is not five banked", banked, row(5, 10_000L).withSplit(4, 0, 1, 0));
 		assertNotEquals("and neither is a row that does not know", banked, row(5, 10_000L));
 	}
 
@@ -535,7 +535,79 @@ public class MovementRowTest
 	public void toStringNamesTheSplitOnlyWhenThereIsOne()
 	{
 		assertFalse(row(5, 10_000L).toString().contains("bank="));
-		assertTrue(row(5, 10_000L).withSplit(3, 1, 1).toString()
+		assertTrue(row(5, 10_000L).withSplit(3, 1, 1, 0).toString()
 			.contains(", bank=3, inventory=1, worn=1"));
+		assertFalse("the exchange part is printed only when there is one",
+			row(5, 10_000L).withSplit(3, 1, 1, 0).toString().contains("exchange="));
+		assertTrue(row(7, 10_000L).withSplit(3, 1, 1, 2).toString()
+			.contains(", bank=3, inventory=1, worn=1, exchange=2"));
+	}
+
+	// ---------------------------------------------------------------- 1.0.9 part 3: the Grand Exchange offers
+
+	/** The fourth figure says how many are in the player's offers, and the four add up to the quantity. */
+	@Test
+	public void theSplitSaysHowManyAreInTheOffersToo()
+	{
+		final MovementRow all = row(7, 10_000L).withSplit(3, 1, 1, 2);
+
+		assertEquals(3, all.bankQuantity());
+		assertEquals(1, all.inventoryQuantity());
+		assertEquals(1, all.wornQuantity());
+		assertEquals(2, all.exchangeQuantity());
+		assertEquals("the four add up to what the row prints", all.quantity(),
+			all.bankQuantity() + all.inventoryQuantity() + all.wornQuantity() + all.exchangeQuantity());
+		assertTrue(all.split());
+		assertFalse("something is in an offer, so the hover line is drawn", all.allInBank());
+	}
+
+	/** A stack only in an offer is a row with no bank quantity at all - "2 in the Grand Exchange". */
+	@Test
+	public void anOfferOnlyStackHasNoBankQuantityAndStillKnowsWhereItIs()
+	{
+		final MovementRow offer = row(2, 10_000L).withSplit(0, 0, 0, 2);
+
+		assertEquals(0, offer.bankQuantity());
+		assertEquals(2, offer.exchangeQuantity());
+		assertTrue("a split of nothing but offers is still a split", offer.split());
+		assertFalse(offer.allInBank());
+		assertNotEquals("and it is not the row that knows nothing of the split", offer, row(2, 10_000L));
+	}
+
+	/** The row built with the three-int split and the one built with no split carry no offers. */
+	@Test
+	public void aRowWithoutOffersCarriesZeroThere()
+	{
+		assertEquals(0, row(5, 10_000L).exchangeQuantity());
+		assertEquals(0, row(5, 10_000L).withSplit(3, 1, 1, 0).exchangeQuantity());
+		assertTrue("a bank-only split with no offers is all in the bank", row(3, 10_000L).withSplit(3, 0, 0, 0)
+			.allInBank());
+		final MovementRow guide = row(3, 10_000L);
+		assertSame(guide, guide.withSplit(0, 0, 0, 0));
+		assertEquals("a negative offer figure is no offer", guide, guide.withSplit(0, 0, 0, -3));
+	}
+
+	/** The offers' figure travels with the row through every re-sourcing and is part of its identity. */
+	@Test
+	public void theOffersFigureSurvivesAsPartsAsLiveAndARefusalAndIsPartOfTheIdentity()
+	{
+		final MovementRow body = crystalBodyRow().withSplit(1, 0, 0, 2);
+
+		assertEquals(2, body.asParts(seeds(3L)).exchangeQuantity());
+		assertEquals(2, body.asLive(2_000_000L, mixedSources(), mixedDays(), liveFacts()).exchangeQuantity());
+		final MovementRow.LiveFacts refused = new MovementRow.LiveFacts(1_000L, 900L, 12L, "12 traded yesterday");
+		assertEquals(2, body.withLiveRefusal(refused).exchangeQuantity());
+
+		final MovementRow banked = row(5, 10_000L).withSplit(3, 0, 0, 2);
+		assertEquals(banked, row(5, 10_000L).withSplit(3, 0, 0, 2));
+		assertEquals(banked.hashCode(), row(5, 10_000L).withSplit(3, 0, 0, 2).hashCode());
+		assertNotEquals("three banked and two in offers is not three banked and two worn", banked,
+			row(5, 10_000L).withSplit(3, 0, 2, 0));
+		assertNotEquals(banked, row(5, 10_000L).withSplit(5, 0, 0, 0));
+		final MovementRow viaConstructor = new MovementRow(4151, "Abyssal whip", 5, false, 1_500_000L, null, null, null,
+			7_500_000L, MovementRow.PriceSource.GUIDE, null, null, null, null, 3, 0, 0, 2);
+		assertEquals(2, viaConstructor.exchangeQuantity());
+		assertEquals(0, new MovementRow(4151, "Abyssal whip", 5, false, 1_500_000L, null, null, null, 7_500_000L,
+			MovementRow.PriceSource.GUIDE, null, null, null, null, 3, 0, 0).exchangeQuantity());
 	}
 }

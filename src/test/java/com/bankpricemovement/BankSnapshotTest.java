@@ -486,4 +486,151 @@ public class BankSnapshotTest
 		assertEquals("BankSnapshot{items=1, capturedAtMillis=17, accountHash=123, profileType='STANDARD',"
 			+ " currencyGp=500, inventory=1, worn=1, carriedGp=791078}", bank.withCarried(carried()).toString());
 	}
+
+	// ---------------------------------------------------------------- 1.0.9 part 3: the Grand Exchange offers
+
+	private static BankReader.Carried withOffers()
+	{
+		return new BankReader.Carried(Arrays.asList(SHARK), Arrays.asList(HELM), Arrays.asList(WHIP), 791_078L,
+			52_000_000L, 1_700_000_009_000L);
+	}
+
+	/** A fresh snapshot has an exchange list, not a null - the no-arg constructor is Gson's. */
+	@Test
+	public void aFreshSnapshotHoldsNothingInTheExchange()
+	{
+		final BankSnapshot bank = new BankSnapshot();
+
+		assertNotNull(bank.exchange);
+		assertTrue(bank.exchange.isEmpty());
+		assertEquals(0L, bank.exchangeGp);
+		assertTrue(BankSnapshot.EMPTY.exchange.isEmpty());
+		assertTrue("the nine-argument shape of addendum Y builds one with none",
+			new BankSnapshot(new ArrayList<>(), 1L, 9L, "STANDARD", 0L, null, null, 0L, 0L).exchange.isEmpty());
+	}
+
+	/** {@code withCarried} carries the exchange pair over from the {@code Carried}, and leaves the bank alone. */
+	@Test
+	public void withCarriedCarriesTheExchangeAndItsCoinsOver()
+	{
+		final BankSnapshot bank = new BankSnapshot(new ArrayList<>(Arrays.asList(WHIP)), 1_700_000_000_000L, 123L,
+			"STANDARD", 500L);
+
+		final BankSnapshot next = bank.withCarried(withOffers());
+
+		assertEquals(Arrays.asList(WHIP), next.exchange);
+		assertEquals(52_000_000L, next.exchangeGp);
+		assertEquals(Arrays.asList(SHARK), next.inventory);
+		assertEquals(Arrays.asList(HELM), next.worn);
+		assertEquals(791_078L, next.carriedGp);
+		assertEquals("stamped by the same clock as the carried pair", 1_700_000_009_000L, next.carriedAtMillis);
+		assertEquals("the bank's own cash is untouched", 500L, next.currencyGp);
+		assertEquals(1, next.items.size());
+		assertTrue("a copy, never a mutation", bank.exchange.isEmpty());
+		final BankSnapshot cleared = next.withCarried(null);
+		assertTrue("a null Carried clears the exchange too", cleared.exchange.isEmpty());
+		assertEquals(0L, cleared.exchangeGp);
+	}
+
+	/** A file written before this part has neither field: it reads as nothing in the exchange, repaired by normalize. */
+	@Test
+	public void aFileWrittenBeforeTheExchangeExistedReadsAsNothingInTheExchange()
+	{
+		final String json = "{\"items\":[{\"id\":4151,\"quantity\":1,\"name\":\"Abyssal whip\",\"stackable\":false}],"
+			+ "\"capturedAtMillis\":17,\"accountHash\":123,\"profileType\":\"STANDARD\",\"currencyGp\":500,"
+			+ "\"inventory\":[],\"worn\":[],\"carriedGp\":9,\"carriedAtMillis\":18}";
+
+		final BankSnapshot bank = new Gson().fromJson(json, BankSnapshot.class);
+		bank.normalize();
+
+		assertNotNull(bank.exchange);
+		assertTrue(bank.exchange.isEmpty());
+		assertEquals(0L, bank.exchangeGp);
+		assertEquals(9L, bank.carriedGp);
+		assertEquals(1, bank.items.size());
+	}
+
+	/** Even where Gson leaves the absent list null (no usable no-arg constructor), normalize answers for it. */
+	@Test
+	public void normalizeTurnsANullExchangeIntoAnEmptyOneAndClampsItsCoins()
+	{
+		final BankSnapshot bank = new BankSnapshot(new ArrayList<>(), 1L, 9L, "STANDARD", 0L, null, null, null, 0L,
+			-7L, -9L);
+		bank.exchange = null;
+
+		bank.normalize();
+
+		assertNotNull(bank.exchange);
+		assertTrue(bank.exchange.isEmpty());
+		assertEquals("a negative worth reads 0", 0L, bank.exchangeGp);
+		assertEquals(0L, bank.carriedAtMillis);
+
+		final BankItem nameless = new BankItem();
+		nameless.id = 4151;
+		nameless.quantity = 4;
+		nameless.name = null;
+		final BankSnapshot dirty = new BankSnapshot(new ArrayList<>(), 1L, 9L, "STANDARD", 0L, null, null,
+			new ArrayList<>(Arrays.asList(nameless, null, new BankItem(2, 0, "a placeholder", true))), 0L, 5L, 1L);
+		dirty.normalize();
+		assertEquals(1, dirty.exchange.size());
+		assertEquals("", dirty.exchange.get(0).name);
+	}
+
+	/** The exchange is CONTENT: a Refresh that found a different offer must be written, and must publish. */
+	@Test
+	public void equalityAndSameContentCountBothExchangeFields()
+	{
+		final BankSnapshot bank = new BankSnapshot(new ArrayList<>(Arrays.asList(WHIP)), 1_000L, 7L, "STANDARD")
+			.withCarried(carried());
+		final BankSnapshot offered = bank.withCarried(withOffers());
+
+		assertFalse("an offer appeared", bank.sameContentAs(offered));
+		assertFalse("and the other way round", offered.sameContentAs(bank));
+		assertNotEquals(bank, offered);
+		assertTrue("the same offers, read again a moment later", offered.sameContentAs(bank.withCarried(
+			new BankReader.Carried(Arrays.asList(SHARK), Arrays.asList(HELM), Arrays.asList(WHIP), 791_078L,
+				52_000_000L, 1_700_000_099_000L))));
+		assertFalse("one item fewer in the offer", offered.sameContentAs(bank.withCarried(new BankReader.Carried(
+			Arrays.asList(SHARK), Arrays.asList(HELM), Arrays.asList(new BankItem(4151, 2, "Abyssal whip", false)),
+			791_078L, 52_000_000L, 1L))));
+		assertFalse("coins collected", offered.sameContentAs(bank.withCarried(new BankReader.Carried(
+			Arrays.asList(SHARK), Arrays.asList(HELM), Arrays.asList(WHIP), 791_078L, 0L, 1L))));
+		assertEquals(offered, bank.withCarried(withOffers()));
+		assertEquals(offered.hashCode(), bank.withCarried(withOffers()).hashCode());
+		assertNotEquals("the coins are part of the hash", offered.hashCode(), bank.withCarried(
+			new BankReader.Carried(Arrays.asList(SHARK), Arrays.asList(HELM), Arrays.asList(WHIP), 791_078L, 1L,
+				1_700_000_009_000L)).hashCode());
+	}
+
+	/** The exchange survives the file, and a snapshot written by this build reads back equal. */
+	@Test
+	public void theExchangeRoundTripsThroughStockGson()
+	{
+		final Gson gson = new Gson();
+		final BankSnapshot bank = new BankSnapshot(new ArrayList<>(Arrays.asList(WHIP)), 1_700_000_000_000L, 123L,
+			"STANDARD", 500L).withCarried(withOffers());
+
+		final BankSnapshot back = gson.fromJson(gson.toJson(bank), BankSnapshot.class);
+		back.normalize();
+
+		assertEquals(Arrays.asList(WHIP), back.exchange);
+		assertEquals(52_000_000L, back.exchangeGp);
+		assertEquals(bank, back);
+	}
+
+	/** The exchange part is printed only when the offers held something. */
+	@Test
+	public void toStringNamesTheExchangeOnlyWhenThereIsOne()
+	{
+		final BankSnapshot bank = new BankSnapshot(new ArrayList<>(Arrays.asList(WHIP)), 17L, 123L, "STANDARD", 500L);
+
+		assertEquals("BankSnapshot{items=1, capturedAtMillis=17, accountHash=123, profileType='STANDARD',"
+			+ " currencyGp=500, inventory=1, worn=1, carriedGp=791078, exchange=1, exchangeGp=52000000}",
+			bank.withCarried(withOffers()).toString());
+		assertEquals("coins alone count as something to print", "BankSnapshot{items=1, capturedAtMillis=17,"
+			+ " accountHash=123, profileType='STANDARD', currencyGp=500, exchange=0, exchangeGp=7}",
+			bank.withCarried(new BankReader.Carried(null, null, null, 0L, 7L, 1L)).toString());
+		assertEquals("BankSnapshot{items=1, capturedAtMillis=17, accountHash=123, profileType='STANDARD',"
+			+ " currencyGp=500, inventory=1, worn=1, carriedGp=791078}", bank.withCarried(carried()).toString());
+	}
 }

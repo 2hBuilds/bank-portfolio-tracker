@@ -10,11 +10,15 @@ import javax.annotation.Nullable;
  * sections 2 and 9.4): the total the Bank value card showed that day, saved IN PARTS so the History line can be
  * drawn under whatever counting switches are on NOW.
  *
- * <p><b>The eight cells.</b> WHERE (in the bank | carried = inventory + worn) times WHAT (tradeable stacks | coins
+ * <p><b>The ten cells.</b> WHERE (in the bank | carried = inventory + worn) times WHAT (tradeable stacks | coins
  * and platinum tokens | untradeables valued as their tradeable PARTS that day | untradeables at their High Alchemy
- * value that day). An untradeable is filed by its ACTUAL source that day, not by whether it has a mapping: a parts
- * stack with one unpriced part ended at its alch value, and so is an alch cell. Every cell is recorded whatever the
- * switches say, so a switch flipped later redraws the whole line instead of showing as a one-day jump.
+ * value that day) - eight cells, to which 1.0.9 part 3 added two for the third place a player's worth can be, the
+ * Grand Exchange offers: the tradeable stacks in them and the coins committed to or earned by them. The Grand
+ * Exchange trades tradeables and holds coins, so it has no parts or alch cell. An untradeable is filed by its ACTUAL
+ * source that day, not by whether it has a mapping: a parts stack with one unpriced part ended at its alch value, and
+ * so is an alch cell. Every cell is recorded whatever the switches say, so a switch flipped later redraws the whole
+ * line instead of showing as a one-day jump. A reading written before the offers were counted holds eight cells, and
+ * reads as ten with the two new ones at zero ({@code PriceStore.cells}).
  *
  * <p><b>Two sets of figures.</b> {@code card} is the day as the card priced it (live mids where "Use live prices"
  * priced them live); {@code guide} is the same stacks at guide prices alone. When the two are equal - every day
@@ -45,8 +49,18 @@ public final class BankHistoryPoint
 	public static final int CARRIED_PARTS = 6;
 	/** Carried untradeables at their alch value. Counted with the inventory switch AND the untradeables switch. */
 	public static final int CARRIED_ALCH = 7;
+	/**
+	 * Tradeable stacks in Grand Exchange offers - unsold in a sell offer, bought and uncollected in a buy offer, at the
+	 * item's price that day. Counted with "Include Grand Exchange offers".
+	 */
+	public static final int GE_TRADEABLE = 8;
+	/**
+	 * Coins committed to buy offers, or received by sell offers and not yet collected. Counted with the Grand Exchange
+	 * switch AND the coins switch.
+	 */
+	public static final int GE_CASH = 9;
 	/** How many cells a reading holds, in {@code card} and in {@code guide}. */
-	public static final int CELLS = 8;
+	public static final int CELLS = 10;
 
 	private final LocalDate day;
 	private final long readAtMillis;
@@ -113,7 +127,7 @@ public final class BankHistoryPoint
 	/**
 	 * One cell as the card priced it that day.
 	 *
-	 * @throws ArrayIndexOutOfBoundsException if {@code cell} is not one of the eight
+	 * @throws ArrayIndexOutOfBoundsException if {@code cell} is not one of the ten
 	 */
 	public long card(final int cell)
 	{
@@ -123,7 +137,7 @@ public final class BankHistoryPoint
 	/**
 	 * One cell at guide prices alone; equal to {@link #card(int)} when no separate figure was stored.
 	 *
-	 * @throws ArrayIndexOutOfBoundsException if {@code cell} is not one of the eight
+	 * @throws ArrayIndexOutOfBoundsException if {@code cell} is not one of the ten
 	 */
 	public long guide(final int cell)
 	{
@@ -144,7 +158,9 @@ public final class BankHistoryPoint
 	 * <li>bank cash - {@code countCash}; bank alch - {@code countUntradeables};</li>
 	 * <li>carried tradeable and carried parts - {@code countInventory};</li>
 	 * <li>carried cash - {@code countInventory && countCash}; carried alch -
-	 * {@code countInventory && countUntradeables}.</li>
+	 * {@code countInventory && countUntradeables};</li>
+	 * <li>Grand Exchange tradeable - {@code countGrandExchange}; Grand Exchange cash -
+	 * {@code countGrandExchange && countCash} (1.0.9 part 3).</li>
 	 * </ul>
 	 * Summed from {@code card} with {@code livePrices} on and from {@code guide} with it off, with the clamped
 	 * addition {@link PortfolioSummary} uses ({@link PortfolioMath#clampedAdd}).
@@ -158,6 +174,7 @@ public final class BankHistoryPoint
 		final boolean cash = o.countCash();
 		final boolean alch = o.countUntradeables();
 		final boolean carried = o.countInventory();
+		final boolean offers = o.countGrandExchange();
 
 		long sum = figures[BANK_TRADEABLE];
 		sum = PortfolioMath.clampedAdd(sum, figures[BANK_PARTS]);
@@ -180,6 +197,14 @@ public final class BankHistoryPoint
 			if (alch)
 			{
 				sum = PortfolioMath.clampedAdd(sum, figures[CARRIED_ALCH]);
+			}
+		}
+		if (offers)
+		{
+			sum = PortfolioMath.clampedAdd(sum, figures[GE_TRADEABLE]);
+			if (cash)
+			{
+				sum = PortfolioMath.clampedAdd(sum, figures[GE_CASH]);
 			}
 		}
 		return sum;

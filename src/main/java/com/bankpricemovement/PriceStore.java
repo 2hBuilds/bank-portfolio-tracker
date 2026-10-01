@@ -460,18 +460,31 @@ public class PriceStore
 	 * The version of the history file's shape this build writes. Bump it when a stored field's MEANING changes, AND
 	 * when a field is ADDED - this build rewrites only the keys it knows, so a newer build's extra field would be
 	 * lost the next time an older build wrote the file, while a higher number makes the older build leave it alone -
-	 * and teach {@link #migrateHistory} the step; a file with a HIGHER number is a newer build's and is left alone.
+	 * and teach {@link #migrateHistory} the step; a file with a HIGHER number is a newer build's and is left alone -
+	 * which is what an OLDER build does with the schema 2 this build writes: "written by a newer build - leaving it
+	 * alone". Schema 2 is 1.0.9 part 3's: every entry's {@code card} and {@code guide} hold ten cells, the two new
+	 * ones being the Grand Exchange offers' ({@link BankHistoryPoint#GE_TRADEABLE}, {@link BankHistoryPoint#GE_CASH}).
 	 */
-	static final int HISTORY_SCHEMA = 1;
+	static final int HISTORY_SCHEMA = 2;
+
+	/** How many cells a schema 1 entry holds: the eight of addendum AU, before 1.0.9 part 3 added the offers' two. */
+	private static final int SCHEMA_1_CELLS = 8;
 
 	private static final String POINTS_KEY = "points";
+	/**
+	 * 1.0.9 part 5: the root key holding {@link BankHistorySeries#freshFrom()} as an ISO date. Written only while the
+	 * series has a real one; a series whose every day is legacy ({@link LocalDate#MAX}) is a migrated file nothing has
+	 * recorded into yet, which is read from its old schema and never written under this key.
+	 */
+	private static final String FRESH_FROM_KEY = "freshFrom";
 	private static final String DAY_KEY = "day";
 	private static final String READ_AT_KEY = "readAtMillis";
 	private static final String BANK_AT_KEY = "bankAtMillis";
 	private static final String CARD_KEY = "card";
 	private static final String GUIDE_KEY = "guide";
 	/** Every key a history document holds at its top level, and every key an entry holds, in this build. */
-	private static final Set<String> HISTORY_ROOT_KEYS = new HashSet<>(Arrays.asList(SCHEMA_KEY, POINTS_KEY));
+	private static final Set<String> HISTORY_ROOT_KEYS = new HashSet<>(Arrays.asList(SCHEMA_KEY, POINTS_KEY,
+		FRESH_FROM_KEY));
 	private static final Set<String> HISTORY_ENTRY_KEYS = new HashSet<>(Arrays.asList(DAY_KEY, READ_AT_KEY, BANK_AT_KEY,
 		CARD_KEY, GUIDE_KEY));
 
@@ -526,6 +539,11 @@ public class PriceStore
 	 * true when the merge equals what was read (the point is already there). Otherwise answers whether the write
 	 * succeeded. Never throws.
 	 *
+	 * <p>The fresh start (1.0.9 part 5): when the file read is a migrated one - its series answers
+	 * {@link LocalDate#MAX} from {@link BankHistorySeries#freshFrom()} - the series written gets this point's day as
+	 * its {@code freshFrom}, so the days before it stay on disk and are hidden from the tab until the reader asks for
+	 * them. Later recordings keep the stored date.
+	 *
 	 * <p>A file that holds something the series does not ({@link BankHistoryLoad#lossy()}: an entry that did not
 	 * parse, two entries for one day, a key this build does not know) is COPIED aside as
 	 * {@code <name>.corrupt-<millis>} before its first rewrite of the session (review finding H7), and nothing is
@@ -578,7 +596,13 @@ public class PriceStore
 				return false;
 			}
 
-			final BankHistorySeries added = read.series().with(point);
+			// 1.0.9 part 5: the first recording after a migration is the first day 1.0.9 counted the offers, so it is where
+			// the fresh start stands; a reading on the newest old day's own date replaces that day and is fresh itself.
+			BankHistorySeries added = read.series().with(point);
+			if (LocalDate.MAX.equals(read.series().freshFrom()))
+			{
+				added = added.withFreshFrom(point.day());
+			}
 			final BankHistorySeries merged = added.upTo(today);
 			final int ahead = added.size() - merged.size();
 			if (ahead > 0 && ahead >= merged.size())
@@ -703,6 +727,19 @@ public class PriceStore
 		}
 
 		boolean unknownKeys = !HISTORY_ROOT_KEYS.containsAll(root.keySet());
+		final boolean migrated = schema < HISTORY_SCHEMA;
+		LocalDate freshFrom = null;
+		if (!migrated)
+		{
+			final JsonElement stamped = root.get(FRESH_FROM_KEY);
+			if (stamped != null && !stamped.isJsonNull())
+			{
+				freshFrom = stamped.isJsonPrimitive() ? parseDay(stamped.getAsString()) : null;
+				// A fresh start that does not read as a date is not understood: nothing is hidden by it, and the file is
+				// copied aside before its first rewrite, which drops it.
+				unknownKeys |= freshFrom == null;
+			}
+		}
 		final JsonElement points = root.get(POINTS_KEY);
 		if (points == null || points.isJsonNull())
 		{
@@ -728,7 +765,10 @@ public class PriceStore
 		{
 			log.debug("bank-portfolio-tracker: skipped {} unreadable entries of {}", skipped, file);
 		}
-		final BankHistorySeries series = BankHistorySeries.of(read);
+		BankHistorySeries series = BankHistorySeries.of(read);
+		// 1.0.9 part 5: a migrated file's days were all recorded before 1.0.9 - until a recording stamps a fresh start,
+		// every load of it answers the same. A file with no days has nothing to hide.
+		series = series.withFreshFrom(migrated ? LocalDate.MAX : freshFrom);
 		// Anything the series does not hold - a skipped entry, a second entry for one day, a key this build does not
 		// know - would be gone after a rewrite; recordBankHistory copies such a file aside first (H7).
 		return skipped > 0 || unknownKeys || series.size() != read.size() ? BankHistoryLoad.loadedLossy(series)
@@ -737,12 +777,26 @@ public class PriceStore
 
 	/**
 	 * Brings a document written under an OLDER schema to this build's shape (plan 7.1 item 5: migrated, never read
-	 * as empty). Schema 0 is a document with no {@code schema} key - the same shape as schema 1, so there is nothing
-	 * to change yet. The next schema adds its step here.
+	 * as empty). Schema 0 is a document with no {@code schema} key - the same shape as schema 1, so there was nothing
+	 * to change. The next schema adds its step here.
+	 *
+	 * <p><b>1 -> 2</b> (1.0.9 part 3): schema 1 entries hold eight cells and schema 2 holds ten, the two new ones for
+	 * the Grand Exchange offers. The step is the padding {@link #cells} performs as each entry is read - an
+	 * eight-cell array is read as ten with the new cells at zero, which is the truth about a day recorded before the
+	 * offers were counted, and nothing is lost by it, so no file is copied aside for it. The document itself is NOT
+	 * rewritten by a load (a read never writes): a schema 1 file stays schema 1 on disk until the next recording that
+	 * changes it, which writes schema 2 with ten cells in every entry, the earlier ones padded.
+	 *
+	 * <p>The padding makes those days readable, not right: they did not count the offers. So a migrated file's days are
+	 * the LEGACY days of 1.0.9 part 5 - {@link #readHistory} answers a series whose {@link BankHistorySeries#freshFrom()}
+	 * is {@link LocalDate#MAX} (an empty file has nothing to hide: null), and the first recording after it stamps the
+	 * day of that reading into the {@code freshFrom} root key. Nothing is deleted or moved: the days stay in the file,
+	 * and the tab shows them again when the reader asks.
 	 */
 	private static JsonObject migrateHistory(final JsonObject root, final int schema)
 	{
 		// 0 -> 1: the same shape; the number alone was missing.
+		// 1 -> 2: the same document; cells() pads each entry's eight cells to ten as it reads them.
 		return root;
 	}
 
@@ -779,7 +833,11 @@ public class PriceStore
 		}
 	}
 
-	/** Exactly {@link BankHistoryPoint#CELLS} numbers, or null. */
+	/**
+	 * Exactly {@link BankHistoryPoint#CELLS} numbers - or exactly {@link #SCHEMA_1_CELLS}, a schema 1 entry written
+	 * before the Grand Exchange offers were counted, which is padded with zeros into the cells that did not exist
+	 * yet - or null for any other length.
+	 */
 	@Nullable
 	private static long[] cells(@Nullable final JsonElement element)
 	{
@@ -788,12 +846,12 @@ public class PriceStore
 			return null;
 		}
 		final JsonArray array = element.getAsJsonArray();
-		if (array.size() != BankHistoryPoint.CELLS)
+		if (array.size() != BankHistoryPoint.CELLS && array.size() != SCHEMA_1_CELLS)
 		{
 			return null;
 		}
 		final long[] cells = new long[BankHistoryPoint.CELLS];
-		for (int i = 0; i < cells.length; i++)
+		for (int i = 0; i < array.size(); i++)
 		{
 			cells[i] = array.get(i).getAsLong();
 		}
@@ -801,7 +859,8 @@ public class PriceStore
 	}
 
 	/**
-	 * The file's text (contract section 4): {@code schema} first, then {@code points}, each entry
+	 * The file's text (contract section 4): {@code schema} first, then {@code freshFrom} when the series has one
+	 * (1.0.9 part 5), then {@code points}, each entry
 	 * {@code day, readAtMillis, bankAtMillis, card, guide} in that order, {@code guide} left out when it equals
 	 * {@code card}. Built as a tree so the shape does not depend on how the injected Gson treats nulls.
 	 */
@@ -809,6 +868,11 @@ public class PriceStore
 	{
 		final JsonObject root = new JsonObject();
 		root.addProperty(SCHEMA_KEY, HISTORY_SCHEMA);
+		final LocalDate freshFrom = series.freshFrom();
+		if (freshFrom != null && !LocalDate.MAX.equals(freshFrom))
+		{
+			root.addProperty(FRESH_FROM_KEY, freshFrom.toString());
+		}
 		final JsonArray points = new JsonArray();
 		for (final BankHistoryPoint point : series.points())
 		{

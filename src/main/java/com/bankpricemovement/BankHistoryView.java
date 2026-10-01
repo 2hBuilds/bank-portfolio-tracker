@@ -169,9 +169,9 @@ public final class BankHistoryView extends JPanel
 	/**
 	 * Draws the series under these switches. EDT only. A null series reads as {@link BankHistorySeries#EMPTY} and
 	 * null options as {@link ViewOptions#DEFAULT} (amendment 9.2); the series is cut to {@code upTo(today)} first,
-	 * today being the clock's LOCAL date, read now. A no-op when the cut series, the four switches that change a
-	 * total ({@code countCash}, {@code countUntradeables}, {@code countInventory}, {@code livePrices} - not
-	 * {@code showHoverText}) and today all equal what is drawn (amendment 9.10).
+	 * today being the clock's LOCAL date, read now. A no-op when the cut series, the five switches that change a
+	 * total ({@code countCash}, {@code countUntradeables}, {@code countInventory}, {@code countGrandExchange},
+	 * {@code livePrices} - not {@code showHoverText}) and today all equal what is drawn (amendment 9.10).
 	 */
 	public void show(@Nullable final BankHistorySeries series, @Nullable final ViewOptions options)
 	{
@@ -200,11 +200,12 @@ public final class BankHistoryView extends JPanel
 		repaint();
 	}
 
-	/** Whether two option sets give every total the same figure: the four switches {@code valueFor} reads. */
+	/** Whether two option sets give every total the same figure: the five switches {@code valueFor} reads. */
 	private static boolean sameTotals(final ViewOptions a, final ViewOptions b)
 	{
 		return a.countCash() == b.countCash() && a.countUntradeables() == b.countUntradeables()
-			&& a.countInventory() == b.countInventory() && a.livePrices() == b.livePrices();
+			&& a.countInventory() == b.countInventory() && a.countGrandExchange() == b.countGrandExchange()
+			&& a.livePrices() == b.livePrices();
 	}
 
 	/**

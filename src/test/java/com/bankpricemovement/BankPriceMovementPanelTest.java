@@ -35,6 +35,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.regex.Pattern;
 import javax.annotation.Nullable;
 import javax.imageio.ImageIO;
@@ -307,6 +308,23 @@ public class BankPriceMovementPanelTest
 		onEdt(() ->
 		{
 			panel = new BankPriceMovementPanel(itemManager, service, prefs);
+			panel.setClock(() -> PRICES_AT);
+		});
+		final ArgumentCaptor<PriceService.Listener> captor = ArgumentCaptor.forClass(PriceService.Listener.class);
+		verify(service).addListener(captor.capture());
+		listener = captor.getValue();
+		assertNotNull(listener);
+	}
+
+	/**
+	 * {@link #build()} with the panel's browser seam handed in (1.0.9): what a press on a brand mark hands its URL to.
+	 * The tests record; the client's {@code LinkBrowser::browse} is what {@link #build()} leaves in place.
+	 */
+	private void buildWith(Consumer<String> browser) throws Exception
+	{
+		onEdt(() ->
+		{
+			panel = new BankPriceMovementPanel(itemManager, service, prefs, browser);
 			panel.setClock(() -> PRICES_AT);
 		});
 		final ArgumentCaptor<PriceService.Listener> captor = ArgumentCaptor.forClass(PriceService.Listener.class);
@@ -774,6 +792,40 @@ public class BankPriceMovementPanelTest
 		throw new AssertionError("no Items | Net Worth History strip in the header");
 	}
 
+	/**
+	 * 1.0.9 part 4, the user's first look: "once the typing box is selected it stays selected even when i click off
+	 * of it". A press anywhere but on the focused box takes the focus off it - for the search box and the Min / Max
+	 * boxes alike - and a press on the box itself, or with no box focused, leaves the focus alone. The decision is
+	 * asked directly: a headless JVM has no focus owner to press around.
+	 */
+	@Test
+	public void aPressOutsideAFocusedBoxTakesTheFocusOffIt() throws Exception
+	{
+		build();
+		onEdt(() ->
+		{
+			final Component label = new javax.swing.JLabel("a row");
+			final Component search = panel.searchField().getTextField();
+			final Component min = panel.minField().getTextField();
+			assertTrue("a press on a label leaves the search box", panel.pressLeavesField(search, label));
+			assertTrue("...and the Min box", panel.pressLeavesField(min, label));
+			assertTrue("a press with no component behind it too", panel.pressLeavesField(search, null));
+			assertFalse("a press on the box's own text field stays", panel.pressLeavesField(search, search));
+			assertFalse("...or anywhere in the box's panel", panel.pressLeavesField(search, panel.searchField()));
+			assertFalse("nothing focused: nothing to drop", panel.pressLeavesField(null, label));
+			assertFalse("a focused control that is not a box is left alone", panel.pressLeavesField(label, search));
+		});
+	}
+
+	/**
+	 * The search row of 1.0.9 part 4, the header's last row in Items while a bank is loaded: the row the search box stands
+	 * in. Found as the box's parent - the panel has no accessor for it.
+	 */
+	private Component searchRow()
+	{
+		return panel.searchField().getParent();
+	}
+
 	/** N section 3 §3 / section 4: LOGIN and NO_BANK empty the header; EMPTY and LIST carry the card and the control row. */
 	@Test
 	public void headerIsEmptiedWithoutABankAndWholeWithOne() throws Exception
@@ -788,29 +840,30 @@ public class BankPriceMovementPanelTest
 		publish(Collections.emptyList(), listed(10, 0));
 		assertEquals(BankPriceMovementPanel.CARD_EMPTY, panel.card());
 		// AU: the Items | Net Worth History strip sits between the card and the control row whenever a bank is loaded.
-		assertEquals(Arrays.asList(panel.hero(), viewStrip(), panel.controlRow()),
+		// 1.0.9 part 4: and the search box, last, in Items.
+		assertEquals(Arrays.asList(panel.hero(), viewStrip(), panel.controlRow(), searchRow()),
 			Arrays.asList(panel.header().getComponents()));
 		assertTrue(panel.heroShowing());
 
 		final JPanel hero = panel.hero();
 		publish(rows(3), listed(3, 3));
 		assertSame("the same card, not a new one per publish", hero, panel.hero());
-		assertEquals(3, panel.header().getComponentCount());
+		assertEquals(4, panel.header().getComponentCount());
 
 		publish(rows(3), listedWithProblem(COOLDOWN, MovementWindow.D1, THEN_DAY));
-		assertEquals(Arrays.asList(panel.hero(), viewStrip(), panel.controlRow(), panel.problemLabel()),
+		assertEquals(Arrays.asList(panel.hero(), viewStrip(), panel.controlRow(), panel.problemLabel(), searchRow()),
 			Arrays.asList(panel.header().getComponents()));
 
 		onEdt(() -> panel.toggleFold());
-		assertEquals("the fold sits between the control row and the problem row",
-			Arrays.asList(panel.hero(), viewStrip(), panel.controlRow(), panel.fold(), panel.problemLabel()),
+		assertEquals("the fold sits between the control row and the problem row, and the search box is last",
+			Arrays.asList(panel.hero(), viewStrip(), panel.controlRow(), panel.fold(), panel.problemLabel(), searchRow()),
 			Arrays.asList(panel.header().getComponents()));
 
 		publish(Collections.emptyList(), status(true, false, 0, 0, MovementWindow.D1, null, "No bank yet", 0L));
 		assertEquals("the bank went away: everything goes with it", 0, panel.header().getComponentCount());
 		assertTrue("...but the fold remembers it was open", panel.foldOpen());
 		publish(rows(3), listed(3, 3));
-		assertEquals(Arrays.asList(panel.hero(), viewStrip(), panel.controlRow(), panel.fold()),
+		assertEquals(Arrays.asList(panel.hero(), viewStrip(), panel.controlRow(), panel.fold(), searchRow()),
 			Arrays.asList(panel.header().getComponents()));
 	}
 
@@ -834,7 +887,7 @@ public class BankPriceMovementPanelTest
 				assertFalse("a chip is transparent so the card shows through", chip.isOpaque());
 			}
 			panel.toggleFold();
-			assertEquals(Arrays.asList(panel.hero(), viewStrip(), panel.controlRow(), panel.fold()),
+			assertEquals(Arrays.asList(panel.hero(), viewStrip(), panel.controlRow(), panel.fold(), searchRow()),
 				Arrays.asList(panel.header().getComponents()));
 		});
 	}
@@ -872,8 +925,9 @@ public class BankPriceMovementPanelTest
 			assertEquals(ColorScheme.LIGHT_GRAY_COLOR, panel.footnoteLabel().getForeground());
 			assertEquals("every line, top to bottom", Arrays.asList(panel.captionRow(), panel.totalRow(), panel.moveLine(),
 				panel.stripHolder(), panel.footnoteLabel(), panel.updateLabel()), Arrays.asList(panel.hero().getComponents()));
-			assertEquals("the total shares its line with the gear (Q1)",
-				Arrays.asList(panel.totalLabel(), panel.gearLabel()), Arrays.asList(panel.totalRow().getComponents()));
+			assertEquals("the total shares its line with the Refresh link (1.0.9; the gear's place from Q1)",
+				Arrays.asList(panel.totalLabel(), panel.refreshLabel().getParent()),
+				Arrays.asList(panel.totalRow().getComponents()));
 
 			panel.selectWindow(MovementWindow.D30);
 			assertTrue("a fall points down", sameIcon(Widgets.triangleDown(ColorScheme.PROGRESS_ERROR_COLOR), panel.triangleLabel().getIcon()));
@@ -1125,7 +1179,7 @@ public class BankPriceMovementPanelTest
 				{
 					assertEquals(v + ": " + c.getClass().getSimpleName(), tip, c.getToolTipText());
 				}
-				assertEquals(v + ": the gear keeps its own word", BankPriceMovementPanel.OPTIONS_TIP,
+				assertEquals(v + ": the gear keeps its own word", SupportLinks.SETTINGS_TIP,
 					panel.gearLabel().getToolTipText());
 				assertEquals(v + ": the update line keeps its own hover (S2)", UPDATE_TIP,
 					panel.updateLabel().getToolTipText());
@@ -1170,11 +1224,14 @@ public class BankPriceMovementPanelTest
 		onEdt(() -> panel.applyHeroVisibility(HeroVisibility.NONE));
 		onEdt(() ->
 		{
-			assertEquals("the total's line stays, with the gear alone on it (Q1); the update line stays too (S1)",
+			assertEquals("the total's line stays, with the Refresh link alone on it (1.0.9); the update line stays too (S1)",
 				Arrays.asList(panel.captionRow(), panel.totalRow(), panel.stripHolder(), panel.footnoteLabel(),
 					panel.updateLabel()),
 				Arrays.asList(panel.hero().getComponents()));
-			assertEquals(Collections.singletonList(panel.gearLabel()), Arrays.asList(panel.totalRow().getComponents()));
+			assertEquals(Collections.singletonList(panel.refreshLabel().getParent()),
+				Arrays.asList(panel.totalRow().getComponents()));
+			assertTrue("and the settings icon stays on the caption row, whatever the switches say",
+				SwingUtilities.isDescendingFrom(panel.gearLabel(), panel.captionRow()));
 			assertEquals(BankPriceMovementPanel.VALUE_TITLE, panel.captionLabel().getText());
 			assertEquals(BankPriceMovementPanel.REFRESH_TEXT, panel.refreshLabel().getText());
 			assertTrue(Widgets.isLit(panel.windowChip(MovementWindow.D1)));
@@ -1770,7 +1827,9 @@ public class BankPriceMovementPanelTest
 			BankPriceMovementPanel.SHOW_GP_TEXT, BankPriceMovementPanel.SHOW_PCT_TEXT,
 			BankPriceMovementPanel.LIVE_PRICES_TEXT, BankPriceMovementPanel.COUNT_CASH_TEXT,
 			BankPriceMovementPanel.COUNT_UNTRADEABLES_TEXT, BankPriceMovementPanel.COUNT_INVENTORY_TEXT,
-			// AU: the start-tab group's two dots, between the four switches and the preset row.
+			// 1.0.9 part 3: the Grand Exchange switch, directly after the inventory's and last of the group.
+			BankPriceMovementPanel.COUNT_GRAND_EXCHANGE_TEXT,
+			// AU: the start-tab group's two dots, between the five switches and the preset row.
 			SidebarView.ITEMS.toString(), SidebarView.HISTORY.toString(),
 			// 1.0.8: and the troubleshooting item under them.
 			BankPriceMovementPanel.TROUBLESHOOT_TEXT,
@@ -1780,8 +1839,8 @@ public class BankPriceMovementPanelTest
 			BankPriceMovementPanel.SHOW_HOVER_TEXT_TEXT), itemTexts(menu));
 		// Z2: nine items - the eight switches and addendum AH's hover switch - with the preset row among them and,
 		// under everything, addendum AB's OK row carrying AH2's "Reset to default" button at its left end.
-		assertEquals("twelve items (two of them AU's dots, one 1.0.8's troubleshooting), the caption, the preset row, the OK row,"
-			+ " the version row and six separators", 22, menu.getComponentCount());
+		assertEquals("thirteen items (two of them AU's dots, one 1.0.8's troubleshooting, one 1.0.9 part 3's), the caption,"
+			+ " the preset row, the OK row, the version row and six separators", 23, menu.getComponentCount());
 		assertTrue("1.0.8: the header's rule first, under the name and the version", menu.getComponent(1) instanceof JSeparator);
 		assertTrue("then the rule under Refresh", menu.getComponent(3) instanceof JSeparator);
 		assertTrue("the third is between the card's three and the view's four", menu.getComponent(7) instanceof JSeparator);
@@ -1909,23 +1968,26 @@ public class BankPriceMovementPanelTest
 	// ---- addendum Q: the gear (Q1), its menu's view switches (Q2) and what they draw (Q4-Q6)
 
 	/**
-	 * Q1: the gear sits at the RIGHT end of the total's line, directly under the "Refresh" link, so the card
-	 * gains no height for it; it says "Options"; it brightens under the mouse the way every other icon control
-	 * on this panel does; and a right-click is not its gesture - the LEFT button opens the menu.
+	 * Q1, moved by 1.0.9: the gear sits at the RIGHT end of the card's TOP row, beside the Discord mark - no longer on
+	 * the total's line, which the Refresh link has now - and the card gains no height for it; it says "Settings" (Q1's
+	 * "Options", renamed by 1.0.9); it brightens under the mouse the way every other icon control on this panel does;
+	 * and a right-click is not its gesture - the LEFT button opens the menu.
 	 */
 	@Test
-	public void theGearSitsAtTheRightOfTheTotalLineAndSaysOptions() throws Exception
+	public void theGearSitsAtTheRightOfTheTopRowAndSaysSettings() throws Exception
 	{
 		buildWithHovers();
 		publish(rows(3), listedWith(summary()));
 		onEdt(() ->
 		{
-			final BorderLayout line = (BorderLayout) panel.totalRow().getLayout();
-			assertSame("the EAST end of the total's line", panel.gearLabel(), line.getLayoutComponent(BorderLayout.EAST));
-			assertSame(panel.totalLabel(), line.getLayoutComponent(BorderLayout.WEST));
+			final BorderLayout line = (BorderLayout) panel.captionRow().getLayout();
+			assertSame(panel.captionLabel(), line.getLayoutComponent(BorderLayout.WEST));
+			final Container pair = (Container) line.getLayoutComponent(BorderLayout.EAST);
+			assertSame("the settings icon is the right-most thing on the row", panel.gearLabel(),
+				pair.getComponent(pair.getComponentCount() - 1));
 			assertTrue("on the card", panel.shows(panel.gearLabel()));
-			assertEquals(BankPriceMovementPanel.OPTIONS_TIP, panel.gearLabel().getToolTipText());
-			assertEquals("Options", BankPriceMovementPanel.OPTIONS_TIP);
+			assertEquals(SupportLinks.SETTINGS_TIP, panel.gearLabel().getToolTipText());
+			assertEquals("Settings", SupportLinks.SETTINGS_TIP);
 			assertEquals("a 12 px glyph", Widgets.GEAR_SIZE, panel.gearLabel().getIcon().getIconWidth());
 			assertTrue("it is the drawn gear at rest",
 				sameIcon(Widgets.gearIcon(Widgets.GEAR_SIZE, ColorScheme.LIGHT_GRAY_COLOR), panel.gearLabel().getIcon()));
@@ -1950,7 +2012,7 @@ public class BankPriceMovementPanelTest
 	 * logged out I would like the user to always be able to see the settings gear icon and by clicking it, the
 	 * settings menu, or else they won't be able to troubleshoot if this is as far as they load into the plugin" -
 	 * the hero card, which holds the gear, is not drawn at either card, and a label can sit in only one container,
-	 * so each card has its own. Each says "Options", is the same drawn gear, brightens under the mouse, and is a
+	 * so each card has its own. Each says "Settings", is the same drawn gear, brightens under the mouse, and is a
 	 * different label from the hero's and from the other card's.
 	 */
 	@Test
@@ -1961,7 +2023,7 @@ public class BankPriceMovementPanelTest
 		{
 			assertEquals(BankPriceMovementPanel.CARD_LOGIN, panel.card());
 			final JLabel gear = gearIn(panel.shotComponents().get(1));
-			assertEquals(BankPriceMovementPanel.OPTIONS_TIP, gear.getToolTipText());
+			assertEquals(SupportLinks.SETTINGS_TIP, gear.getToolTipText());
 			assertEquals("a 12 px glyph", Widgets.GEAR_SIZE, gear.getIcon().getIconWidth());
 			assertTrue("the drawn gear at rest",
 				sameIcon(Widgets.gearIcon(Widgets.GEAR_SIZE, ColorScheme.LIGHT_GRAY_COLOR), gear.getIcon()));
@@ -1980,7 +2042,7 @@ public class BankPriceMovementPanelTest
 		{
 			assertEquals(BankPriceMovementPanel.CARD_NO_BANK, panel.card());
 			final JLabel gear = gearIn(panel.shotComponents().get(1));
-			assertEquals(BankPriceMovementPanel.OPTIONS_TIP, gear.getToolTipText());
+			assertEquals(SupportLinks.SETTINGS_TIP, gear.getToolTipText());
 			assertTrue("the drawn gear at rest",
 				sameIcon(Widgets.gearIcon(Widgets.GEAR_SIZE, ColorScheme.LIGHT_GRAY_COLOR), gear.getIcon()));
 			assertNotSame("one label cannot sit in two cards", loginGear.get(), gear);
@@ -2111,16 +2173,343 @@ public class BankPriceMovementPanelTest
 		}
 	}
 
+	// ---- 1.0.9: the support pair, Refresh under it, and the one-word hovers that are always on
+
+	/** The labels of {@code pair}, left to right (the strip between them is not a label). */
+	private static List<JLabel> marksOf(Container pair)
+	{
+		final List<JLabel> out = new ArrayList<>();
+		for (Component c : pair.getComponents())
+		{
+			if (c instanceof JLabel)
+			{
+				out.add((JLabel) c);
+			}
+		}
+		return out;
+	}
+
+	/** The component at the EAST end of a bar: the pair, on the top row and on a message card. */
+	private static Container eastOf(Container bar)
+	{
+		return (Container) ((BorderLayout) bar.getLayout()).getLayoutComponent(BorderLayout.EAST);
+	}
+
+	/** Where the icon's ink starts, in its parent's coordinates: the label's box less its left inset. */
+	private static int inkLeft(JLabel label)
+	{
+		return label.getX() + label.getInsets().left;
+	}
+
+	/** Where the icon's ink ends, in its parent's coordinates: the label's box less its right inset. */
+	private static int inkRight(JLabel label)
+	{
+		return label.getX() + label.getWidth() - label.getInsets().right;
+	}
+
+	private static BufferedImage imageOf(Icon icon)
+	{
+		return (BufferedImage) ((javax.swing.ImageIcon) icon).getImage();
+	}
+
+	/**
+	 * 1.0.9, the pair in the corner (the 2hBuilds template): the card's TOP row ends with the Discord mark and then the
+	 * settings icon, in that order, both 12 px, 8 px apart ink to ink, the settings icon right-most where it always was;
+	 * and the Refresh link is on the row UNDER it, the number's row, right-aligned at the card's right padding, with the
+	 * ring's room round it - the ring's box 5 px clear of the card's right edge and its halo clear of the number. The top
+	 * row keeps the height the link used to give it, so the card is as tall as it was.
+	 */
+	@Test
+	public void theCornerHoldsTheDiscordMarkThenTheSettingsIconAndRefreshSitsUnderThem() throws Exception
+	{
+		buildWithHovers();
+		publish(rows(3), listedWith(summary()));
+		onEdt(() ->
+		{
+			layout(SIDEBAR_WIDTH, 400);
+			final List<JLabel> marks = marksOf(eastOf(panel.captionRow()));
+			assertEquals("the Discord mark and the settings icon, and nothing else", 2, marks.size());
+			final JLabel discord = marks.get(0);
+			final JLabel gear = marks.get(1);
+			assertSame("the settings icon is the right-most thing, as it was", panel.gearLabel(), gear);
+			assertEquals("the Discord mark is 12 px", 12, discord.getIcon().getIconWidth());
+			assertEquals(12, discord.getIcon().getIconHeight());
+			assertEquals("the settings icon is 12 px", 12, gear.getIcon().getIconWidth());
+			assertEquals(12, gear.getIcon().getIconHeight());
+			assertEquals("the two are 8 px apart, ink to ink", 8, inkLeft(gear) - inkRight(discord));
+			assertEquals("8 is the contract's number", 8, SupportLinks.PAIR_GAP);
+			assertEquals(SupportLinks.DISCORD_TIP, discord.getToolTipText());
+
+			// Where the settings icon ends is where it ended when it sat on the total's line: the card's inner edge.
+			final int innerRight = panel.hero().getWidth() - panel.hero().getInsets().right;
+			final Rectangle gearBox = SwingUtilities.convertRectangle(gear.getParent(), gear.getBounds(), panel.hero());
+			assertEquals("the settings icon ends at the card's right padding", innerRight, gearBox.x + gearBox.width);
+
+			// Refresh: the row below, right-aligned on the number's row.
+			final Rectangle link = linkInCard();
+			final Rectangle top = SwingUtilities.convertRectangle(panel.captionRow().getParent(),
+				panel.captionRow().getBounds(), panel.hero());
+			final Rectangle number = SwingUtilities.convertRectangle(panel.totalRow().getParent(),
+				panel.totalRow().getBounds(), panel.hero());
+			assertTrue("the link is below the top row: " + link + " under " + top, link.y >= top.y + top.height);
+			assertTrue("on the number's row: " + link + " in " + number,
+				link.y >= number.y && link.y + link.height <= number.y + number.height);
+			assertEquals("right-aligned at the card's right padding", innerRight, link.x + link.width);
+			assertEquals("the link is its own 19 px, not the row's 37 (so the ring is a ring round a word)",
+				panel.refreshLabel().getPreferredSize().height, link.height);
+
+			// The ring's room: its box (the link, 5 px wider) stays 5 px clear of the card's right edge...
+			final Rectangle box = ringBox(link);
+			assertTrue("the ring's box ends " + (panel.hero().getWidth() - box.x - box.width) + " px from the card's edge",
+				box.x + box.width <= panel.hero().getWidth() - 5);
+			assertTrue("...and its region stays inside the card",
+				ringRegion(link).x + ringRegion(link).width <= panel.hero().getWidth());
+			// ...and its halo is clear of the number on its left.
+			final Rectangle total = SwingUtilities.convertRectangle(panel.totalLabel().getParent(),
+				panel.totalLabel().getBounds(), panel.hero());
+			assertTrue("the number ends at " + (total.x + total.width) + ", the halo starts at "
+				+ (link.x - HALO_REACH), total.x + total.width <= link.x - HALO_REACH);
+
+			// The card is as tall as it was: the top row is the pair's 16 px, and what it gave up of the 19 the link used
+			// to make it is the air over the number.
+			assertEquals("the top row is the pair's height", 16, panel.captionRow().getHeight());
+			assertEquals("the number takes the 3 px the top row gave up, so the two rows are the link's 19 and the"
+				+ " number's 34 as before", panel.refreshLabel().getPreferredSize().height,
+				panel.captionRow().getHeight() + panel.totalLabel().getInsets().top);
+			assertEquals("the number's row is the number and its air", panel.totalLabel().getPreferredSize().height,
+				panel.totalRow().getHeight());
+		});
+	}
+
+	/**
+	 * 1.0.9, the Discord mark's two looks: at rest it is the white mark at alpha about 165 - the settings icon's grey by
+	 * ALPHA, never by recolouring, so every visible pixel is still pure white - and under the mouse the very same
+	 * pixel is white at 255. Sampled at the first fully opaque pixel of the file: the 12 px mark's centre pixel is at
+	 * 243 of 255, so the centre would read 157 and prove nothing about the rule.
+	 */
+	@Test
+	public void theDiscordMarkRestsAtTheSettingsGreyByAlphaAndGoesWhiteUnderTheMouse() throws Exception
+	{
+		buildWithHovers();
+		publish(rows(3), listedWith(summary()));
+		onEdt(() ->
+		{
+			final JLabel discord = marksOf(eastOf(panel.captionRow())).get(0);
+			final BufferedImage raw = imageOf(SupportLinks.markIcon(SupportLinks.DISCORD_12, 1f));
+			int ox = -1;
+			int oy = -1;
+			for (int y = 0; y < raw.getHeight() && ox < 0; y++)
+			{
+				for (int x = 0; x < raw.getWidth() && ox < 0; x++)
+				{
+					if (raw.getRGB(x, y) >>> 24 == 255)
+					{
+						ox = x;
+						oy = y;
+					}
+				}
+			}
+			assertTrue("the file has a fully opaque pixel", ox >= 0);
+
+			BufferedImage rest = imageOf(discord.getIcon());
+			assertEquals("white at alpha about 165", 165, rest.getRGB(ox, oy) >>> 24, 1);
+			assertEquals("and still white, not grey", 0xFFFFFF, rest.getRGB(ox, oy) & 0xFFFFFF);
+			for (int y = 0; y < rest.getHeight(); y++)
+			{
+				for (int x = 0; x < rest.getWidth(); x++)
+				{
+					if (rest.getRGB(x, y) >>> 24 != 0)
+					{
+						assertEquals("every visible pixel is white (" + x + ", " + y + ")", 0xFFFFFF,
+							rest.getRGB(x, y) & 0xFFFFFF);
+					}
+				}
+			}
+			hover(discord, true);
+			final BufferedImage hot = imageOf(discord.getIcon());
+			assertEquals("white at 255 under the mouse", 0xFFFFFFFF, hot.getRGB(ox, oy));
+			hover(discord, false);
+			rest = imageOf(discord.getIcon());
+			assertEquals("and back to the resting grey", 165, rest.getRGB(ox, oy) >>> 24, 1);
+		});
+	}
+
+	/**
+	 * 1.0.9: a press on the hero card's Discord mark hands the panel's browser the invite ONCE and opens no menu (the
+	 * gear is the only control that opens it); a right-button press, the sidebar's menu gesture, is never a press. Where
+	 * there is a display the panel is also hosted in a frame, so "opens no menu" is asked of a mark that is showing.
+	 */
+	@Test
+	public void theDiscordMarksPressBrowsesTheInviteOnceAndOpensNoMenu() throws Exception
+	{
+		final List<String> visited = new ArrayList<>();
+		buildWith(visited::add);
+		publish(rows(3), listedWith(summary()));
+		onEdt(() ->
+		{
+			final JLabel discord = marksOf(eastOf(panel.captionRow())).get(0);
+			press(discord);
+			assertEquals(Collections.singletonList(SupportLinks.DISCORD_URL), visited);
+			assertFalse("a press on the mark opens no menu", panel.heroMenu().isVisible());
+			rightPress(discord);
+			assertEquals("a right-button press is a menu gesture, never a press", 1, visited.size());
+		});
+		assertEquals("the 2hBuilds Discord", "https://discord.gg/nsam4CfWzf", SupportLinks.DISCORD_URL);
+		if (GraphicsEnvironment.isHeadless())
+		{
+			return;
+		}
+		final JFrame frame = hostInFrame();
+		try
+		{
+			onEdt(() ->
+			{
+				final JLabel discord = marksOf(eastOf(panel.captionRow())).get(0);
+				assertTrue("the mark is on screen", discord.isShowing());
+				press(discord);
+				assertEquals(2, visited.size());
+				assertFalse("and no menu is showing", panel.heroMenu().isVisible());
+			});
+		}
+		finally
+		{
+			onEdt(frame::dispose);
+		}
+	}
+
+	/**
+	 * 1.0.9, the message cards: the LOGIN card and the NO_BANK card each carry the same pair in the bar above their
+	 * message - the Discord mark, 8 px, the settings icon - and the mark browses the invite. (The settings icon still
+	 * opens the menu under itself: {@link #aPressOnAMessageCardsGearOpensTheSettingsMenuUnderIt}.)
+	 */
+	@Test
+	public void theLoginAndNoBankCardsCarryTheDiscordMarkAndTheSettingsIcon() throws Exception
+	{
+		final List<String> visited = new ArrayList<>();
+		buildWith(visited::add);
+		onEdt(() ->
+		{
+			assertEquals(BankPriceMovementPanel.CARD_LOGIN, panel.card());
+			assertPairOnMessageCard(panel.shotComponents().get(1), visited);
+		});
+		publish(Collections.emptyList(), status(true, false, 0, 0, MovementWindow.D1, null, "No bank yet", 0L));
+		onEdt(() ->
+		{
+			assertEquals(BankPriceMovementPanel.CARD_NO_BANK, panel.card());
+			assertPairOnMessageCard(panel.shotComponents().get(1), visited);
+		});
+	}
+
+	/** EDT. The pair on {@code card}: Discord then settings, 8 px apart, the mark browsing the invite. */
+	private void assertPairOnMessageCard(Component card, List<String> visited)
+	{
+		final List<JComponent> all = new ArrayList<>();
+		descendants((Container) card, all);
+		JLabel discord = null;
+		JLabel gear = null;
+		for (JComponent c : all)
+		{
+			if (c instanceof JLabel && SupportLinks.DISCORD_TIP.equals(c.getToolTipText()))
+			{
+				assertNull("one Discord mark on the card", discord);
+				discord = (JLabel) c;
+			}
+			if (c instanceof JLabel && SupportLinks.SETTINGS_TIP.equals(c.getToolTipText()))
+			{
+				assertNull("one settings icon on the card", gear);
+				gear = (JLabel) c;
+			}
+		}
+		assertNotNull("a Discord mark on the card", discord);
+		assertNotNull("a settings icon on the card", gear);
+		assertSame("in one pair", discord.getParent(), gear.getParent());
+		final Container pair = discord.getParent();
+		assertEquals("Discord first, the settings icon right-most", Arrays.asList(discord, gear), marksOf(pair));
+		assertSame("the pair is the EAST end of the card's bar", pair, eastOf(pair.getParent()));
+		assertEquals("12 px", 12, discord.getIcon().getIconWidth());
+		assertEquals("12 px", 12, gear.getIcon().getIconWidth());
+		final Dimension size = pair.getPreferredSize();
+		pair.setSize(size);
+		pair.doLayout();
+		assertEquals("8 px apart, ink to ink", 8, inkLeft(gear) - inkRight(discord));
+		visited.clear();
+		press(discord);
+		assertEquals(Collections.singletonList(SupportLinks.DISCORD_URL), visited);
+		visited.clear();
+	}
+
+	/**
+	 * 1.0.9, one word, always on: with the hover switch OFF and with it ON, the settings icon says "Settings" and the
+	 * Discord mark "Discord" on all three cards (LOGIN, NO_BANK and the hero card), and flipping the switch on a built
+	 * panel changes neither - while a SENTENCE hover, the Refresh link's, still follows the switch. The word is the
+	 * words pinned: "Settings", "Discord".
+	 */
+	@Test
+	public void theSettingsIconAndTheMarksNameThemselvesWhateverTheHoverSwitchSays() throws Exception
+	{
+		assertEquals("Settings", SupportLinks.SETTINGS_TIP);
+		assertEquals("Discord", SupportLinks.DISCORD_TIP);
+		for (boolean on : new boolean[]{false, true})
+		{
+			final String why = "switch " + (on ? "ON" : "OFF");
+			prefs.storedOptions = on ? HOVERS_ON : ViewOptions.DEFAULT;
+			service = mock(PriceService.class);
+			build();
+			assertEquals(why, on, panel.options().showHoverText());
+			onEdt(() -> assertNamedOnMessageCard(why + ", LOGIN", panel.shotComponents().get(1)));
+			publish(Collections.emptyList(), status(true, false, 0, 0, MovementWindow.D1, null, "No bank yet", 0L));
+			onEdt(() -> assertNamedOnMessageCard(why + ", NO_BANK", panel.shotComponents().get(1)));
+			publish(rows(3), listedWith(summary()));
+			onEdt(() ->
+			{
+				assertNamedOnHero(why + ", hero");
+				assertEquals(why + ": the sentence hover follows the switch", on ? BankPriceMovementPanel.REFRESH_TIP : null,
+					panel.refreshLabel().getToolTipText());
+				// Flipping the switch on this very panel: the words stay, the sentence goes or comes.
+				panel.applyOptions(on ? ViewOptions.DEFAULT : HOVERS_ON);
+				assertNamedOnHero(why + ", after the flip");
+				assertEquals(why + ": and the sentence followed the flip", on ? null : BankPriceMovementPanel.REFRESH_TIP,
+					panel.refreshLabel().getToolTipText());
+				panel.stop();
+			});
+		}
+	}
+
+	/** EDT. The settings icon and the Discord mark of the hero card say their word. */
+	private void assertNamedOnHero(String why)
+	{
+		final List<JLabel> marks = marksOf(eastOf(panel.captionRow()));
+		assertEquals(why + ": the Discord mark", SupportLinks.DISCORD_TIP, marks.get(0).getToolTipText());
+		assertEquals(why + ": the settings icon", SupportLinks.SETTINGS_TIP, marks.get(1).getToolTipText());
+		assertSame(panel.gearLabel(), marks.get(1));
+	}
+
+	/** EDT. The settings icon and the Discord mark of a message card say their word. */
+	private void assertNamedOnMessageCard(String why, Component card)
+	{
+		final List<JComponent> all = new ArrayList<>();
+		descendants((Container) card, all);
+		final List<String> words = new ArrayList<>();
+		for (JComponent c : all)
+		{
+			if (c instanceof JLabel && ((JLabel) c).getIcon() != null && c.getToolTipText() != null)
+			{
+				words.add(c.getToolTipText());
+			}
+		}
+		assertEquals(why, Arrays.asList(SupportLinks.DISCORD_TIP, SupportLinks.SETTINGS_TIP), words);
+	}
+
 	/** Q3: the initial view switches come from the config, through the prefs seam; the menu ticks agree. */
 	@Test
 	public void theInitialViewOptionsComeFromThePrefs() throws Exception
 	{
-		prefs.storedOptions = new ViewOptions(false, true, true, false, false);
+		prefs.storedOptions = new ViewOptions(false, true, true, false, false, false);
 		build();
 		publish(rows(3), listedWith(summary()));
 		onEdt(() ->
 		{
-			assertEquals(new ViewOptions(false, true, true, false, false), panel.options());
+			assertEquals(new ViewOptions(false, true, true, false, false, false), panel.options());
 			assertFalse(panel.countCashItem().isSelected());
 			assertTrue(panel.countUntradeablesItem().isSelected());
 			// T1's switch reads through the seam as well; it stood beside the row switch addendum AO deleted.
@@ -2180,21 +2569,21 @@ public class BankPriceMovementPanelTest
 		assertEquals(Arrays.asList(hovers(ViewOptions.DEFAULT.withCountUntradeables(true))), prefs.optionSaves);
 
 		onEdt(() -> panel.countCashItem().doClick(0));
-		assertEquals(hovers(new ViewOptions(false, true, true, true, false)), panel.options());
+		assertEquals(hovers(new ViewOptions(false, true, true, true, true, false)), panel.options());
 		onEdt(() -> panel.livePricesItem().doClick(0));
-		assertEquals(hovers(new ViewOptions(false, true, false, true, false)), panel.options());
+		assertEquals(hovers(new ViewOptions(false, true, false, true, true, false)), panel.options());
 		assertEquals(3, prefs.optionSaves.size());
-		assertEquals(hovers(new ViewOptions(false, true, false, true, false)), prefs.optionSaves.get(2));
+		assertEquals(hovers(new ViewOptions(false, true, false, true, true, false)), prefs.optionSaves.get(2));
 
 		// The config's ConfigChanged comes back through applyOptions and writes nothing more.
-		onEdt(() -> panel.applyOptions(hovers(new ViewOptions(false, true, false, true, false))));
+		onEdt(() -> panel.applyOptions(hovers(new ViewOptions(false, true, false, true, true, false))));
 		assertEquals(3, prefs.optionSaves.size());
 		assertTrue("the hero switches and the filter are untouched", prefs.heroSaves.isEmpty());
 		assertTrue(prefs.saves.isEmpty());
 		verify(service, never()).setFilter(any());
 
 		onEdt(() -> panel.countCashItem().doClick(0));
-		assertEquals(hovers(new ViewOptions(true, true, false, true, false)), panel.options());
+		assertEquals(hovers(new ViewOptions(true, true, false, true, true, false)), panel.options());
 		assertTrue(panel.countCashItem().isSelected());
 	}
 
@@ -2223,6 +2612,8 @@ public class BankPriceMovementPanelTest
 			// AV: the untradeables switch in the user's words since it reaches the alch-only ones alone.
 			"Include alch-only untradeables",
 			"Include inventory and worn gear",
+			// 1.0.9 part 3: directly after it, and the last of the group.
+			"Include Grand Exchange offers",
 			// AU: the two dots of "Tab to open on startup".
 			"Items",
 			"Net Worth History",
@@ -2247,8 +2638,9 @@ public class BankPriceMovementPanelTest
 		// addendum AB's OK row - now carrying "Reset to default" as well (AH2) - after everything.
 		assertFalse("AH2: the way back to the default bands is a button in that row, not an entry",
 			texts.contains(BankPriceMovementPanel.RESET_PRESETS_TEXT));
-		assertEquals("twelve items (AU's two dots and 1.0.8's troubleshooting among them), the caption, the preset row, the OK"
-			+ " row, the version row and six separators", 22, panel.heroMenu().getComponentCount());
+		assertEquals("thirteen items (AU's two dots, 1.0.8's troubleshooting and 1.0.9 part 3's Grand Exchange switch among"
+			+ " them), the caption, the preset row, the OK row, the version row and six separators", 23,
+			panel.heroMenu().getComponentCount());
 	}
 
 	/**
@@ -2266,8 +2658,9 @@ public class BankPriceMovementPanelTest
 		final JPopupMenu menu = panel.heroMenu();
 		assertSame(panel.countInventoryItem(), item(menu, BankPriceMovementPanel.COUNT_INVENTORY_TEXT));
 		assertSame("directly after the untradeables", panel.countInventoryItem(), menu.getComponent(11));
-		assertTrue("AO1: and last of its group now, with the separator under it",
-			menu.getComponent(12) instanceof JSeparator);
+		assertSame("1.0.9 part 3: the Grand Exchange switch directly after it", panel.countGrandExchangeItem(),
+			menu.getComponent(12));
+		assertTrue("and last of the group, with the separator under it", menu.getComponent(13) instanceof JSeparator);
 		assertEquals("the name addendum Y asks for, pinned", "Include inventory and worn gear",
 			BankPriceMovementPanel.COUNT_INVENTORY_TEXT);
 		assertEquals("the description addendum Y asks for, its moment the close since addendum AS, pinned",
@@ -2295,7 +2688,8 @@ public class BankPriceMovementPanelTest
 		// between the untradeables and the live switch - and since AH the fifth and last is "hover", which is
 		// TRUE here because this panel was built with it on.
 		assertTrue(panel.describe(), panel.describe().contains(
-			",\"options\":{\"cash\":true,\"untradeables\":false,\"live\":true,\"inventory\":false,\"hover\":true}"));
+			",\"options\":{\"cash\":true,\"untradeables\":false,\"live\":true,\"inventory\":false,\"ge\":true"
+				+ ",\"hover\":true}"));
 
 		// The settings page's own change comes back through applyOptions: it ticks and writes nothing more.
 		onEdt(() -> panel.applyOptions(hovers(ViewOptions.DEFAULT)));
@@ -2303,7 +2697,63 @@ public class BankPriceMovementPanelTest
 		assertEquals(1, prefs.optionSaves.size());
 		assertEquals(rebuilds, panel.rebuilds());
 		assertTrue(panel.describe(), panel.describe().contains(
-			",\"options\":{\"cash\":true,\"untradeables\":false,\"live\":true,\"inventory\":true,\"hover\":true}"));
+			",\"options\":{\"cash\":true,\"untradeables\":false,\"live\":true,\"inventory\":true,\"ge\":true"
+				+ ",\"hover\":true}"));
+	}
+
+	/**
+	 * 1.0.9 part 3: the Grand Exchange switch is a check item of the same group, directly after "Include inventory and
+	 * worn gear" and last of them. It carries its sentence, is ticked out of the box (default ON), writes through
+	 * {@code saveOptions} the way the other three do with {@code withCountGrandExchange}, rebuilds no rows, follows the
+	 * settings page through {@code applyOptions} - and leaves the Bank value's hover as the same exact-gp string it was
+	 * (addendum AF): the card says nothing about where the figure came from.
+	 */
+	@Test
+	public void theGrandExchangeSwitchSitsAfterTheCarriedOneAndWritesThePref() throws Exception
+	{
+		buildWithHovers();
+		publish(rows(3), listedWith(summary()));
+		final JPopupMenu menu = panel.heroMenu();
+		assertSame(panel.countGrandExchangeItem(), item(menu, BankPriceMovementPanel.COUNT_GRAND_EXCHANGE_TEXT));
+		assertSame("directly after \"Include inventory and worn gear\"", panel.countGrandExchangeItem(),
+			menu.getComponent(12));
+		assertSame(panel.countInventoryItem(), menu.getComponent(11));
+		assertEquals("the name, pinned", "Include Grand Exchange offers",
+			BankPriceMovementPanel.COUNT_GRAND_EXCHANGE_TEXT);
+		assertEquals("the sentence, pinned",
+			"Items you are selling or have bought, and the coins committed to or waiting in your offers, count in the"
+				+ " bank value.", BankPriceMovementPanel.COUNT_GRAND_EXCHANGE_TIP);
+		assertEquals(BankPriceMovementPanel.COUNT_GRAND_EXCHANGE_TIP, panel.countGrandExchangeItem().getToolTipText());
+		assertTrue("on by default", panel.countGrandExchangeItem().isSelected());
+		assertTrue(panel.options().countGrandExchange());
+		assertEquals("construction saves nothing", Collections.emptyList(), prefs.optionSaves);
+
+		final int rebuilds = panel.rebuilds();
+		onEdt(() -> panel.countGrandExchangeItem().doClick(0));
+		assertEquals(hovers(ViewOptions.DEFAULT.withCountGrandExchange(false)), panel.options());
+		assertFalse("the tick follows the click", panel.countGrandExchangeItem().isSelected());
+		assertTrue("and the inventory's tick is untouched", panel.countInventoryItem().isSelected());
+		assertEquals("the pref is written so the config panel follows",
+			Arrays.asList(hovers(ViewOptions.DEFAULT.withCountGrandExchange(false))), prefs.optionSaves);
+		assertEquals("the rows wait for the service's own recompute", rebuilds, panel.rebuilds());
+		assertTrue("the filter and the hero switches are untouched", prefs.saves.isEmpty());
+		assertTrue(prefs.heroSaves.isEmpty());
+		verify(service, never()).setFilter(any());
+		assertTrue(panel.describe(), panel.describe().contains(
+			",\"options\":{\"cash\":true,\"untradeables\":false,\"live\":true,\"inventory\":true,\"ge\":false"
+				+ ",\"hover\":true}"));
+		assertEquals("the card's hover is the same exact-gp string as before (AF)", VALUE_TIP,
+			panel.hero().getToolTipText());
+
+		// The settings page's own change comes back through applyOptions: it ticks and writes nothing more.
+		onEdt(() -> panel.applyOptions(hovers(ViewOptions.DEFAULT)));
+		assertTrue("the tick follows the config", panel.countGrandExchangeItem().isSelected());
+		assertEquals(1, prefs.optionSaves.size());
+		assertEquals(rebuilds, panel.rebuilds());
+		onEdt(() -> panel.applyOptions(hovers(ViewOptions.DEFAULT.withCountGrandExchange(false))));
+		assertFalse(panel.countGrandExchangeItem().isSelected());
+		assertEquals(1, prefs.optionSaves.size());
+		assertEquals(VALUE_TIP, panel.hero().getToolTipText());
 	}
 
 	/**
@@ -2337,12 +2787,12 @@ public class BankPriceMovementPanelTest
 
 			panel.applyOptions(ViewOptions.DEFAULT.withCountCash(false));
 			assertEquals(built, panel.rebuilds());
-			panel.applyOptions(new ViewOptions(false, true, true, true, false));
+			panel.applyOptions(new ViewOptions(false, true, true, true, true, false));
 			assertEquals("a switch the rows do not read leaves them alone", built, panel.rebuilds());
 			assertFalse(panel.countCashItem().isSelected());
 			assertTrue(panel.countUntradeablesItem().isSelected());
 
-			panel.applyOptions(new ViewOptions(false, true, false, false, false));
+			panel.applyOptions(new ViewOptions(false, true, false, false, false, false));
 			assertEquals("AO1: and so does every other one, now that the row switch is gone", built,
 				panel.rebuilds());
 			assertEquals("the face is unmoved", "9,000", panel.rowPanels().get(2).priceText());
@@ -2351,10 +2801,10 @@ public class BankPriceMovementPanelTest
 			assertFalse(panel.countInventoryItem().isSelected());
 
 			// AH3's switch is the one that does reach the open page, and it reaches it without a rebuild.
-			panel.applyOptions(new ViewOptions(false, true, false, false, true));
+			panel.applyOptions(new ViewOptions(false, true, false, false, false, true));
 			assertEquals("the hover switch repaints the hovers, not the rows", built, panel.rebuilds());
 
-			panel.applyOptions(new ViewOptions(false, true, false, false, true));
+			panel.applyOptions(new ViewOptions(false, true, false, false, false, true));
 			assertEquals("the same value again does nothing at all", built, panel.rebuilds());
 			panel.applyOptions(null);
 			assertEquals("null reads as the defaults", ViewOptions.DEFAULT, panel.options());
@@ -2420,7 +2870,8 @@ public class BankPriceMovementPanelTest
 			assertEquals(ColorScheme.BRAND_ORANGE, panel.refreshLabel().getForeground());
 			hover(panel.refreshLabel(), false);
 			assertEquals(ColorScheme.LIGHT_GRAY_COLOR, panel.refreshLabel().getForeground());
-			assertTrue("the link lives in the caption row", SwingUtilities.isDescendingFrom(panel.refreshLabel(), panel.captionRow()));
+			assertTrue("the link lives in the total's row since 1.0.9 (the top row holds the pair)",
+				SwingUtilities.isDescendingFrom(panel.refreshLabel(), panel.totalRow()));
 			press(panel.refreshLabel());
 		});
 		verify(service, times(1)).refreshNow(false);
@@ -2853,8 +3304,8 @@ public class BankPriceMovementPanelTest
 		onEdt(() ->
 		{
 			assertFalse(panel.foldOpen());
-			// AU: hero, the Items | Net Worth History strip, the control row.
-			assertEquals(3, panel.header().getComponentCount());
+			// AU: hero, the Items | Net Worth History strip, the control row - and the search box of 1.0.9 part 4.
+			assertEquals(4, panel.header().getComponentCount());
 			press(panel.bandTarget());
 			assertTrue(panel.foldOpen());
 			assertSame(panel.fold(), panel.header().getComponent(3));
@@ -2870,7 +3321,7 @@ public class BankPriceMovementPanelTest
 
 			press(panel.bandTarget());
 			assertFalse(panel.foldOpen());
-			assertEquals("the fold is removed, not hidden", 3, panel.header().getComponentCount());
+			assertEquals("the fold is removed, not hidden", 4, panel.header().getComponentCount());
 			assertEquals("the band survives the close", 1_000_000L, panel.filter().gpMin());
 			assertEquals("1m+", panel.bandTarget().getText());
 
@@ -2898,7 +3349,7 @@ public class BankPriceMovementPanelTest
 		onEdt(() ->
 		{
 			assertTrue("a fresh install opens on the fold", panel.foldOpen());
-			assertEquals(Arrays.asList(panel.hero(), viewStrip(), panel.controlRow(), panel.fold()),
+			assertEquals(Arrays.asList(panel.hero(), viewStrip(), panel.controlRow(), panel.fold(), searchRow()),
 				Arrays.asList(panel.header().getComponents()));
 			assertSame("directly under the control row", panel.fold(), panel.header().getComponent(3));
 			assertTrue("construction writes nothing back", prefs.foldSaves.isEmpty());
@@ -2980,7 +3431,7 @@ public class BankPriceMovementPanelTest
 			assertSame(panel.fold(), panel.header().getComponent(3));
 			panel.setFoldOpen(false);
 			assertFalse(panel.foldOpen());
-			assertEquals("the fold is removed, not hidden", 3, panel.header().getComponentCount());
+			assertEquals("the fold is removed, not hidden", 4, panel.header().getComponentCount());
 			assertTrue("the road never writes", prefs.foldSaves.isEmpty());
 
 			assertTrue(panel.applyMin("1m"));
@@ -3054,7 +3505,8 @@ public class BankPriceMovementPanelTest
 			try
 			{
 				assertFalse("...and false is the sidebar of addenda N to W", closed.foldOpen());
-				assertEquals(3, closed.header().getComponentCount());
+				assertEquals("the card, the strip, the control row and the search box", 4,
+					closed.header().getComponentCount());
 			}
 			finally
 			{
@@ -3289,25 +3741,26 @@ public class BankPriceMovementPanelTest
 	{
 		buildWithHovers();
 		final JPopupMenu menu = panel.heroMenu();
-		assertEquals("ten items, AU's caption, the troubleshooting item, the preset row, the hover switch, the OK row, the version"
-			+ " row and six separators", 22, menu.getComponentCount());
+		assertEquals("eleven items, AU's caption, the troubleshooting item, the preset row, the hover switch, the OK row, the"
+			+ " version row and six separators", 23, menu.getComponentCount());
 		// 1.0.8: the header (the name over the version) and its rule come first, so everything else sits two places
 		// lower than before it.
 		assertTrue("the header's rule", menu.getComponent(1) instanceof JSeparator);
 		assertTrue("1.0.8: a rule above the troubleshooting item - the user, on the first look: without it the item"
-			+ " read as one more start-tab choice", menu.getComponent(16) instanceof JSeparator);
+			+ " read as one more start-tab choice", menu.getComponent(17) instanceof JSeparator);
 		assertEquals("1.0.8: the troubleshooting item in its own group under the start-tab dots",
-			BankPriceMovementPanel.TROUBLESHOOT_TEXT, ((JMenuItem) menu.getComponent(17)).getText());
-		assertTrue("a rule under it (AU's, moved down two places by 1.0.8)", menu.getComponent(18) instanceof JSeparator);
-		assertSame("then the row", panel.presetRow(), menu.getComponent(19));
+			BankPriceMovementPanel.TROUBLESHOOT_TEXT, ((JMenuItem) menu.getComponent(18)).getText());
+		assertTrue("a rule under it (AU's, moved down two places by 1.0.8 and one more by 1.0.9 part 3)",
+			menu.getComponent(19) instanceof JSeparator);
+		assertSame("then the row", panel.presetRow(), menu.getComponent(20));
 		// AH: and in the space under it, where the user drew the box - the group's rule is the one above, so the
 		// hover switch joins this last group rather than starting another. AH2 took "Reset to default" out from
 		// between the two and put it in the bottom row.
-		assertSame(panel.showHoverTextItem(), menu.getComponent(20));
-		assertEquals(BankPriceMovementPanel.SHOW_HOVER_TEXT_TEXT, ((JMenuItem) menu.getComponent(20)).getText());
+		assertSame(panel.showHoverTextItem(), menu.getComponent(21));
+		assertEquals(BankPriceMovementPanel.SHOW_HOVER_TEXT_TEXT, ((JMenuItem) menu.getComponent(21)).getText());
 		assertSame("and the OK row under all of those (AB2), the menu's last thing again - the user moved the version"
-			+ " lines to the top (2026-09-30)", panel.okRow(), menu.getComponent(21));
-		assertEquals(21, menu.getComponentCount() - 1);
+			+ " lines to the top (2026-09-30)", panel.okRow(), menu.getComponent(22));
+		assertEquals(22, menu.getComponentCount() - 1);
 		assertFalse("the row is no menu element - which is what makes the popup window focusable",
 			panel.presetRow() instanceof MenuElement);
 		assertEquals("the caption addendum AB line AB3 asks for, pinned", "Preset price ranges",
@@ -4291,8 +4744,9 @@ public class BankPriceMovementPanelTest
 
 		publish(rows(1), listedWithProblem(COOLDOWN, MovementWindow.D1, THEN_DAY));
 		assertTrue(panel.problemShowing());
-		assertSame("the last row of the header", panel.problemLabel(), panel.header().getComponent(panel.header().getComponentCount() - 1));
-		assertEquals(Arrays.asList(panel.hero(), viewStrip(), panel.controlRow(), panel.problemLabel()),
+		assertSame("the last row of the header but the search box, which stands directly over the list", searchRow(),
+			panel.header().getComponent(panel.header().getComponentCount() - 1));
+		assertEquals(Arrays.asList(panel.hero(), viewStrip(), panel.controlRow(), panel.problemLabel(), searchRow()),
 			Arrays.asList(panel.header().getComponents()));
 		assertEquals(COOLDOWN, panel.problemLabel().getText());
 		assertEquals("the whole sentence is the tooltip", COOLDOWN, panel.problemLabel().getToolTipText());
@@ -5460,7 +5914,11 @@ public class BankPriceMovementPanelTest
 		assertSame(panel.listView(), panel.scrollPane().getViewport().getView());
 	}
 
-	/** N section 3 §8 and O3: the old fields in the old order and places, the synthesised bankMove, the hero switches. */
+	/**
+	 * N section 3 §8 and O3: the old fields in the old order and places, the synthesised bankMove, the hero switches -
+	 * and since 1.0.9 part 4 the search the box holds and the rows it leaves shown, after gpMax and before the two fields'
+	 * validity.
+	 */
 	@Test
 	public void describeCarriesTheOldFieldsAndTheNewOnes() throws Exception
 	{
@@ -5469,13 +5927,13 @@ public class BankPriceMovementPanelTest
 		onEdt(() -> panel.clickSort(SortMode.GP_MOVE));
 		final String d = panel.describe();
 		assertFalse(d, d.contains("\n"));
-		assertTrue(d, d.startsWith("{\"card\":\"LIST\",\"shown\":3,\"total\":3,\"window\":\"D1\",\"sort\":\"GP_MOVE\",\"descending\":true,\"gpMin\":0,\"gpMax\":0,\"minInvalid\":false,\"maxInvalid\":false,\"status\":\"Prices \\\"14:05\\\"\",\"showing\":false"));
+		assertTrue(d, d.startsWith("{\"card\":\"LIST\",\"shown\":3,\"total\":3,\"window\":\"D1\",\"sort\":\"GP_MOVE\",\"descending\":true,\"gpMin\":0,\"gpMax\":0,\"search\":\"\",\"matching\":3,\"minInvalid\":false,\"maxInvalid\":false,\"status\":\"Prices \\\"14:05\\\"\",\"showing\":false"));
 		// M4/M5/O3: the switches, then the card as drawn - in the header (a bank is loaded), the total, and the old
 		// line 2 synthesised for the lit window (the mocked status carries no summary, so the total is 0 and 1d has
 		// no baseline: one dash on the gp, nothing on the percent). The bank time is before the epoch, so the clock
 		// in the footnote is a dash.
 		assertTrue(d, d.contains(",\"options\":{\"cash\":true,\"untradeables\":false,\"live\":true"
-			+ ",\"inventory\":true,\"hover\":false}"
+			+ ",\"inventory\":true,\"ge\":true,\"hover\":false}"
 			+ ",\"live\":{\"fetchedAt\":0,\"latestItems\":0,\"liveRows\":0,\"guideRows\":0,\"alchRows\":0"
 			+ ",\"liveDay\":null,\"windowDays\":{\"1d\":null,\"7d\":null,\"30d\":null,\"90d\":null,\"180d\":null}}"));
 		assertTrue(d, d.contains(",\"hero\":{\"value\":true,\"gp\":true,\"pct\":true},\"bankValueShowing\":true,\"bankValue\":\"0\",\"bankMove\":\"1d   -   -\",\"bankWindow\":\"1d\",\"heroGp\":\"-\",\"heroPct\":\"\",\"heroSub\":\"Guide prices - bank -\""));
@@ -5486,7 +5944,10 @@ public class BankPriceMovementPanelTest
 		// described went with addendum N's six named orderings, and the direction is the descending field above.
 		// Z4: the reader's three quick bands and the four chip TEXTS ride with the fold, between it and the problem
 		// row - the numbers so a script can assert what was stored, the labels so it can assert what a shot reads.
+		// 1.0.9 part 5: includeLegacy and legacyDays follow foldOpen - the History tab's check box and whether the record
+		// holds a day for it to show (none here: the mocked status answers no record).
 		assertTrue(d, d.contains(",\"sortLabel\":\"gp change\",\"countText\":\"All items\",\"bandOn\":false,\"foldOpen\":false"
+			+ ",\"includeLegacy\":false,\"legacyDays\":false"
 			+ ",\"presets\":[100000,1000000,10000000],\"presetLabels\":[\"All\",\"100k+\",\"1m+\",\"10m+\"]"
 			+ ",\"problemText\":\"\",\"problemRed\":false,\"showMoreText\":\"\"}"));
 		assertFalse(d, d.contains("sortHint"));
@@ -5502,13 +5963,15 @@ public class BankPriceMovementPanelTest
 		// Q7: the view switches ride beside the hero's, written from ViewOptions.asMap() in the same shape - five
 		// of them since addendum AO took "holding" out from between the untradeables and the live switch, in that
 		// value's own order, with the hover switch last.
-		onEdt(() -> panel.applyOptions(new ViewOptions(false, true, true, true, false)));
+		onEdt(() -> panel.applyOptions(new ViewOptions(false, true, true, true, true, false)));
 		assertTrue(panel.describe(), panel.describe().contains(
-			",\"options\":{\"cash\":false,\"untradeables\":true,\"live\":true,\"inventory\":true,\"hover\":false}"));
+			",\"options\":{\"cash\":false,\"untradeables\":true,\"live\":true,\"inventory\":true,\"ge\":true"
+				+ ",\"hover\":false}"));
 		assertFalse("AO1: and the key it echoed is gone", panel.describe().contains("\"holding\":"));
 		onEdt(() -> panel.applyOptions(LIVE_OFF.withCountInventory(false)));
 		assertTrue(panel.describe(), panel.describe().contains(
-			",\"options\":{\"cash\":true,\"untradeables\":false,\"live\":false,\"inventory\":false,\"hover\":false}"
+			",\"options\":{\"cash\":true,\"untradeables\":false,\"live\":false,\"inventory\":false,\"ge\":true"
+				+ ",\"hover\":false}"
 				+ ",\"live\":{"));
 		assertTrue(panel.describe(), panel.describe().contains(
 			",\"updateLine\":\"Item prices update every 24hrs\","));
@@ -5992,15 +6455,16 @@ public class BankPriceMovementPanelTest
 		}));
 
 		publish(rows(3), listedWithProblem(COOLDOWN, MovementWindow.D1, THEN_DAY));
-		assertEquals(Arrays.asList(panel.hero(), viewStrip(), panel.controlRow(), panel.fold(), panel.problemLabel()),
-			Arrays.asList(panel.header().getComponents()));
+		assertEquals(Arrays.asList(panel.hero(), viewStrip(), panel.controlRow(), panel.fold(), panel.problemLabel(),
+			searchRow()), Arrays.asList(panel.header().getComponents()));
 		publish(rows(3), listed(3, 3));
-		assertEquals(Arrays.asList(panel.hero(), viewStrip(), panel.controlRow(), panel.fold()),
+		assertEquals(Arrays.asList(panel.hero(), viewStrip(), panel.controlRow(), panel.fold(), searchRow()),
 			Arrays.asList(panel.header().getComponents()));
 
 		assertEquals("only the problem row moved: " + removed, Arrays.asList(panel.problemLabel()), removed);
 		assertFalse("the fold stayed in place", removed.contains(panel.fold()));
 		assertFalse("...and so did the card", removed.contains(panel.hero()));
+		assertFalse("...and so did the search box, which a typed caret may be in", removed.contains(searchRow()));
 	}
 
 	/**
@@ -6089,9 +6553,9 @@ public class BankPriceMovementPanelTest
 			assertEquals(BankPriceMovementPanel.REFRESHING_TEXT, panel.refreshLabel().getText());
 			assertEquals("the tooltip still says what the control does", BankPriceMovementPanel.REFRESH_TIP,
 				panel.refreshLabel().getToolTipText());
-			// The caption row is a fixed 191 px and the acknowledgement is the longer word: measure it.
-			assertTrue(panel.captionRow().getPreferredSize().width + " px of " + BankPriceMovementPanel.CARD_INNER,
-				panel.captionRow().getPreferredSize().width <= BankPriceMovementPanel.CARD_INNER);
+			// The total's row is a fixed 191 px and the acknowledgement is the longer word: measure it.
+			assertTrue(panel.totalRow().getPreferredSize().width + " px of " + BankPriceMovementPanel.CARD_INNER,
+				panel.totalRow().getPreferredSize().width <= BankPriceMovementPanel.CARD_INNER);
 
 			// A publish does not wipe it - the one that follows a refresh lands within a frame or two.
 			panel.applyHeroVisibility(HeroVisibility.ALL);
@@ -6108,8 +6572,8 @@ public class BankPriceMovementPanelTest
 			assertEquals("the same face", face, panel.refreshLabel().getFont());
 			assertEquals("the same grey - it is not a failure", grey, panel.refreshLabel().getForeground());
 			assertEquals(BankPriceMovementPanel.REFRESH_TIP, panel.refreshLabel().getToolTipText());
-			assertTrue(panel.captionRow().getPreferredSize().width + " px of " + BankPriceMovementPanel.CARD_INNER,
-				panel.captionRow().getPreferredSize().width <= BankPriceMovementPanel.CARD_INNER);
+			assertTrue(panel.totalRow().getPreferredSize().width + " px of " + BankPriceMovementPanel.CARD_INNER,
+				panel.totalRow().getPreferredSize().width <= BankPriceMovementPanel.CARD_INNER);
 			assertEquals("the minute the user asked for", 60_000, BankPriceMovementPanel.UP_TO_DATE_MILLIS);
 
 			// Beat three: the fade takes it back to the word the control started with.
@@ -6345,6 +6809,463 @@ public class BankPriceMovementPanelTest
 		});
 		publish(rows(1), listed(1, 1));
 		assertTrue(panel.bandTarget().getToolTipText(), panel.bandTarget().getToolTipText().endsWith("1 item"));
+	}
+
+	// ---- 1.0.9 part 4: the search box above the item list
+
+	/**
+	 * The bank the search tests type into: six rows, two of which hold "run" and one of which holds "rune" (the contract's
+	 * own example, "rune" finding "Rune platebody" and "Runite ore", cannot hold of a plain substring - "runite" does not
+	 * contain "rune" - so "run" is what finds both and "rune" the one).
+	 */
+	private static List<MovementRow> searchBank()
+	{
+		return named("Rune platebody", "Runite ore", "Dragon claws", "Abyssal whip", "Prayer potion(4)",
+			"Zulrah's scales");
+	}
+
+	/** Rows with the given names, ids 1..n, priced as {@link #rows} prices them. */
+	private static List<MovementRow> named(String... names)
+	{
+		final List<MovementRow> out = new ArrayList<>(names.length);
+		for (int i = 1; i <= names.length; i++)
+		{
+			final long unit = i * 1_000L;
+			out.add(new MovementRow(i, names[i - 1], i, i > 1, unit, unit - 100L, 100L, 100.0 * 100 / (unit - 100),
+				unit * i, null));
+		}
+		return Collections.unmodifiableList(out);
+	}
+
+	/** What the pages hold, by name, in order. */
+	private List<String> shownNames()
+	{
+		final List<String> out = new ArrayList<>();
+		for (MovementRowPanel row : panel.rowPanels())
+		{
+			out.add(row.row().name());
+		}
+		return out;
+	}
+
+	/** Types {@code text} into the search box one character at a time, as the keyboard does: through its document. */
+	private void type(String text) throws Exception
+	{
+		onEdt(() ->
+		{
+			final javax.swing.text.Document doc = panel.searchField().getTextField().getDocument();
+			try
+			{
+				for (int i = 0; i < text.length(); i++)
+				{
+					doc.insertString(doc.getLength(), text.substring(i, i + 1), null);
+				}
+			}
+			catch (javax.swing.text.BadLocationException e)
+			{
+				throw new IllegalStateException(e);
+			}
+		});
+	}
+
+	/**
+	 * Where the search box stands in a laid-out sidebar, whichever of the fold and the control row is above it: exactly
+	 * {@link BankPriceMovementPanel#SEARCH_GAP} under what precedes it, exactly that over the first row cell, on the row
+	 * cells' own left and right edges, as tall as the Min box.
+	 */
+	private void assertSearchBoxPlacement(boolean foldOpen) throws Exception
+	{
+		prefs.storedFoldOpen = foldOpen;
+		build();
+		publish(rows(3), listed(3, 3));
+		onEdt(() ->
+		{
+			layout(SIDEBAR_WIDTH, 900);
+			assertFalse("no scroll bar, so the header and the list are as wide as each other",
+				panel.scrollPane().getVerticalScrollBar().isVisible());
+			assertEquals("the fold is " + (foldOpen ? "open" : "closed"), foldOpen, panel.foldOpen());
+			final Component before = foldOpen ? panel.fold() : panel.controlRow();
+			final Rectangle above = SwingUtilities.convertRectangle(before.getParent(), before.getBounds(), panel);
+			final JComponent box = panel.searchField();
+			final Rectangle at = SwingUtilities.convertRectangle(box.getParent(), box.getBounds(), panel);
+			final Rectangle row = SwingUtilities.convertRectangle(box.getParent().getParent(), box.getParent().getBounds(),
+				panel);
+			final MovementRowPanel first = panel.rowPanels().get(0);
+			final Rectangle cell = SwingUtilities.convertRectangle(first.getParent(), first.getBounds(), panel);
+
+			assertSame("the last row of the header: directly over the list", box.getParent(),
+				panel.header().getComponent(panel.header().getComponentCount() - 1));
+			assertEquals("4 px from the bottom of what precedes it to the box's top border",
+				BankPriceMovementPanel.SEARCH_GAP, at.y - (above.y + above.height));
+			assertEquals("4 px from the box's bottom border to the first row cell's top",
+				BankPriceMovementPanel.SEARCH_GAP, cell.y - (at.y + at.height));
+			assertEquals("the box has the row cell's left edge", cell.x, at.x);
+			assertEquals("...and its right edge", cell.x + cell.width, at.x + at.width);
+			assertEquals("as tall as the Min box", panel.minField().getPreferredSize().height, at.height);
+			assertEquals("the row is the air over the box and the box", BankPriceMovementPanel.SEARCH_GAP + at.height,
+				row.height);
+		});
+	}
+
+	/** 1.0.9 part 4, the placement (the user's pick S2), with the price fold OPEN: 4 px under it, 4 px over the list. */
+	@Test
+	public void theSearchBoxStandsFourPxUnderTheOpenFoldAndFourPxOverTheFirstRow() throws Exception
+	{
+		assertSearchBoxPlacement(true);
+	}
+
+	/** ...and with the fold CLOSED: 4 px under the control row, the fold's gap not stacked on the box's. */
+	@Test
+	public void theSearchBoxStandsFourPxUnderTheControlRowAndFourPxOverTheFirstRowWithTheFoldClosed() throws Exception
+	{
+		assertSearchBoxPlacement(false);
+	}
+
+	/**
+	 * The box is the Min / Max boxes' own look - the one builder - and reads "Search items" in grey until it is typed in;
+	 * no config key, no clear button and no magnifier come with it.
+	 */
+	@Test
+	public void theSearchBoxReadsItsPlaceholderInTheMinMaxBoxesLook() throws Exception
+	{
+		build();
+		publish(rows(3), listed(3, 3));
+		onEdt(() ->
+		{
+			final Widgets.PlaceholderField box = panel.searchField();
+			assertEquals("Search items", BankPriceMovementPanel.SEARCH_PLACEHOLDER);
+			assertEquals(BankPriceMovementPanel.SEARCH_PLACEHOLDER, box.placeholder());
+			assertTrue("grey on its placeholder while empty and not being typed in", box.placeholderShowing());
+			assertFalse("nothing to be red about", Widgets.isMarkedInvalid(box));
+			assertEquals(panel.minField().getBackground(), box.getBackground());
+			assertEquals(panel.minField().getTextField().getFont(), box.getTextField().getFont());
+			assertEquals(panel.minField().getTextField().getForeground(), box.getTextField().getForeground());
+			assertEquals(panel.minField().getPreferredSize().height, box.getPreferredSize().height);
+			assertEquals("the box holds only the text field", 1, box.getComponentCount());
+			box.setText("r");
+			assertFalse("typed in: the placeholder goes", box.getText().isEmpty());
+			assertEquals("the settings menu is still 23 components", 23, panel.heroMenu().getComponentCount());
+		});
+		assertTrue("nothing is stored for a search", prefs.saves.isEmpty() && prefs.optionSaves.isEmpty()
+			&& prefs.heroSaves.isEmpty() && prefs.presetSaves.isEmpty() && prefs.foldSaves.isEmpty());
+	}
+
+	/**
+	 * Typing "rune" through the box's document narrows the pages to the one row whose name holds it, the count sentence
+	 * reads "1 of 13 items", "run" finds two, a trailing space changes nothing and nothing is built for it, and emptying
+	 * the box brings the whole list back. The service is never asked: no filter change, no recompute.
+	 */
+	@Test
+	public void typingNarrowsThePagesToTheMatchingRowsAndTheCountSentenceFollows() throws Exception
+	{
+		buildWithHovers();
+		publish(searchBank(), listed(13, 6));
+		assertEquals(6, panel.rowPanels().size());
+		assertTrue(panel.bandTarget().getToolTipText(), panel.bandTarget().getToolTipText().endsWith("6 of 13 items"));
+		final int built = panel.rebuilds();
+
+		type("rune");
+		assertEquals(Arrays.asList("Rune platebody"), shownNames());
+		assertEquals(1, panel.shownRows());
+		assertEquals("the published rows are what they were", 6, panel.totalRows());
+		assertTrue(panel.bandTarget().getToolTipText(), panel.bandTarget().getToolTipText().endsWith("1 of 13 items"));
+		assertEquals(BankPriceMovementPanel.CARD_LIST, panel.card());
+
+		onEdt(() -> panel.searchField().setText("RUN"));
+		assertEquals("any part of the name, whatever the case", Arrays.asList("Rune platebody", "Runite ore"),
+			shownNames());
+		assertTrue(panel.bandTarget().getToolTipText(), panel.bandTarget().getToolTipText().endsWith("2 of 13 items"));
+
+		final int narrowed = panel.rebuilds();
+		type(" ");
+		assertEquals("a space after a word is a slip, not another list", narrowed, panel.rebuilds());
+		assertEquals(Arrays.asList("Rune platebody", "Runite ore"), shownNames());
+
+		onEdt(() -> panel.searchField().setText(""));
+		assertEquals("emptying the box brings the whole list back", 6, panel.rowPanels().size());
+		assertTrue(panel.bandTarget().getToolTipText(), panel.bandTarget().getToolTipText().endsWith("6 of 13 items"));
+		assertTrue("each change of the text built the list again", panel.rebuilds() > built);
+
+		verify(service, never()).setFilter(any());
+		assertTrue("a search is not a filter: nothing is saved", prefs.saves.isEmpty());
+	}
+
+	/**
+	 * The count sentence names the rows shown against the bank's total, and the noun agrees with the last number said:
+	 * "1 of 6 items", where a lone row of a lone item is still "1 item".
+	 */
+	@Test
+	public void theCountSentenceReadsTheRowsShownAgainstTheBanksItems() throws Exception
+	{
+		buildWithHovers();
+		publish(searchBank(), listed(6, 6));
+		type("zul");
+		assertTrue(panel.bandTarget().getToolTipText(), panel.bandTarget().getToolTipText().endsWith("1 of 6 items"));
+		type("rah's scales");
+		assertEquals(Arrays.asList("Zulrah's scales"), shownNames());
+		publish(rows(1), listed(1, 1));
+		onEdt(() -> panel.searchField().setText(""));
+		assertTrue(panel.bandTarget().getToolTipText(), panel.bandTarget().getToolTipText().endsWith("1 item"));
+	}
+
+	/**
+	 * A publish during a search keeps the narrowing: the new rows are cut down by what is typed, and a row that arrives
+	 * with a matching name joins the list.
+	 */
+	@Test
+	public void aPublishDuringASearchKeepsTheNarrowing() throws Exception
+	{
+		build();
+		publish(searchBank(), listed(13, 6));
+		type("rune");
+		assertEquals(Arrays.asList("Rune platebody"), shownNames());
+
+		publish(named("Rune platebody", "Runite ore", "Dragon claws", "Abyssal whip", "Prayer potion(4)",
+			"Zulrah's scales", "Rune scimitar"), listed(13, 7));
+		assertEquals("the new row that matches is in, the six that do not are out",
+			Arrays.asList("Rune platebody", "Rune scimitar"), shownNames());
+		assertEquals(7, panel.totalRows());
+		assertEquals(2, panel.shownRows());
+		assertEquals("the box still holds what was typed", "rune", panel.searchField().getText());
+
+		publish(searchBank(), listed(13, 6));
+		assertEquals(Arrays.asList("Rune platebody"), shownNames());
+	}
+
+	/**
+	 * Escape clears the box - and with it the search - and Enter does what the keystrokes already did and nothing more:
+	 * the list is not built again.
+	 */
+	@Test
+	public void escapeClearsTheSearchAndEnterChangesNothingMore() throws Exception
+	{
+		build();
+		publish(searchBank(), listed(13, 6));
+		type("runi");
+		assertEquals(Arrays.asList("Runite ore"), shownNames());
+		final int built = panel.rebuilds();
+		onEdt(() -> panel.searchField().getTextField().postActionEvent());
+		assertEquals("Enter: nothing more", built, panel.rebuilds());
+		assertEquals(Arrays.asList("Runite ore"), shownNames());
+
+		onEdt(() ->
+		{
+			final JTextField tf = panel.searchField().getTextField();
+			final Object key = tf.getInputMap(JComponent.WHEN_FOCUSED)
+				.get(javax.swing.KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_ESCAPE, 0));
+			assertNotNull("Escape is bound in the box", key);
+			tf.getActionMap().get(key).actionPerformed(new ActionEvent(tf, ActionEvent.ACTION_PERFORMED, ""));
+		});
+		assertEquals("Escape empties the box", "", panel.searchField().getText());
+		assertEquals("...which clears the search", 6, panel.rowPanels().size());
+		assertTrue(panel.describe(), panel.describe().contains("\"search\":\"\",\"matching\":6"));
+	}
+
+	/**
+	 * A search that leaves no row, though the list has rows, is "No items match" with the typed text quoted back - HTML
+	 * escaped, and cut when it is long - and no clear button: the box is right there. When the BAND alone leaves nothing
+	 * the band's own message stands, with its button, exactly as it did.
+	 */
+	@Test
+	public void noItemsMatchQuotesTheTextAndTheBandMessageIsStillTheBands() throws Exception
+	{
+		build();
+		publish(searchBank(), listed(13, 6));
+		type("zzz");
+		assertEquals(BankPriceMovementPanel.CARD_EMPTY, panel.card());
+		String shown = texts(panel.shotComponents().get(1)).toString();
+		assertTrue(shown, shown.contains(BankPriceMovementPanel.NO_MATCH_TEXT));
+		assertEquals("No items match", BankPriceMovementPanel.NO_MATCH_TEXT);
+		assertTrue(shown, shown.contains("&quot;zzz&quot;") || shown.contains("\"zzz\""));
+		assertFalse("the band's message is not the answer", shown.contains(BankPriceMovementPanel.EMPTY_TEXT));
+		assertFalse("no clear-search button: the box is right there", panel.clearBandShowing());
+		assertTrue("the search box is still in the header, with the text in it",
+			SwingUtilities.isDescendingFrom(panel.searchField(), panel.header()));
+
+		onEdt(() -> panel.searchField().setText("<b>&"));
+		shown = texts(panel.shotComponents().get(1)).toString();
+		assertTrue(shown, shown.contains("&lt;b&gt;&amp;"));
+		assertFalse("the typed text is not HTML", shown.contains("<b>&"));
+
+		final StringBuilder longText = new StringBuilder();
+		for (int i = 0; i < 60; i++)
+		{
+			longText.append('x');
+		}
+		onEdt(() -> panel.searchField().setText(longText.toString()));
+		shown = texts(panel.shotComponents().get(1)).toString();
+		assertTrue(shown, shown.contains(longText.substring(0, 40) + "..."));
+		assertFalse("cut, so a long run cannot push the card wider than the sidebar", shown.contains(longText.substring(0, 41)));
+
+		onEdt(() -> panel.searchField().setText(""));
+		assertEquals("the list is back", BankPriceMovementPanel.CARD_LIST, panel.card());
+
+		// With a band that leaves rows and a search that takes them: still the search's message, still no button.
+		onEdt(() -> panel.applyBand(1_000L, 0L));
+		type("zzz");
+		assertEquals(BankPriceMovementPanel.CARD_EMPTY, panel.card());
+		assertFalse(panel.clearBandShowing());
+		onEdt(() -> panel.searchField().setText(""));
+
+		// The band alone leaves nothing: the published list is empty, and the band's own message and button stand.
+		publish(Collections.emptyList(), listed(10, 0));
+		assertEquals(BankPriceMovementPanel.CARD_EMPTY, panel.card());
+		shown = texts(panel.shotComponents().get(1)).toString();
+		assertTrue(shown, shown.contains(BankPriceMovementPanel.EMPTY_TEXT));
+		assertTrue(panel.clearBandShowing());
+		type("zzz");
+		shown = texts(panel.shotComponents().get(1)).toString();
+		assertTrue("a search over nothing is still the band's message: " + shown,
+			shown.contains(BankPriceMovementPanel.EMPTY_TEXT));
+		assertFalse(shown, shown.contains(BankPriceMovementPanel.NO_MATCH_TEXT));
+		assertTrue(panel.clearBandShowing());
+	}
+
+	/** The box's hover is one sentence, and it is behind the switch like every sentence-class hover: absent with it off. */
+	@Test
+	public void theSearchBoxHoverIsSilentWithTheSwitchOff() throws Exception
+	{
+		build();
+		publish(searchBank(), listed(13, 6));
+		onEdt(() ->
+		{
+			assertNull(panel.searchField().getToolTipText());
+			assertNull(panel.searchField().getTextField().getToolTipText());
+		});
+	}
+
+	/** ...and with it ON, on the field AND its text field, as the Min / Max boxes carry theirs. */
+	@Test
+	public void theSearchBoxHoverIsOneSentenceWithTheSwitchOn() throws Exception
+	{
+		buildWithHovers();
+		publish(searchBank(), listed(13, 6));
+		onEdt(() ->
+		{
+			assertEquals("Type part of an item's name to show only the matching rows.", panel.searchField().getToolTipText());
+			assertEquals(panel.searchField().getToolTipText(), panel.searchField().getTextField().getToolTipText());
+		});
+	}
+
+	/** {@code describe()} carries the typed text and the rows shown, after gpMax; {@code total} stays the published rows. */
+	@Test
+	public void describeCarriesTheSearchAndTheMatchingCount() throws Exception
+	{
+		build();
+		publish(searchBank(), listed(13, 6));
+		assertTrue(panel.describe(), panel.describe().contains("\"gpMax\":0,\"search\":\"\",\"matching\":6,\"minInvalid\""));
+		type("  Rune ");
+		final String d = panel.describe();
+		assertTrue(d, d.contains("\"total\":6"));
+		assertTrue(d, d.contains("\"gpMax\":0,\"search\":\"Rune\",\"matching\":1,\"minInvalid\""));
+		onEdt(() -> panel.applySearch("a \"quoted\" word"));
+		assertTrue(panel.describe(), panel.describe().contains("\"search\":\"a \\\"quoted\\\" word\",\"matching\":0"));
+	}
+
+	/**
+	 * Typing is the reader's own act and lifts the bank hold as a band does: with the bank open and a re-statement stored,
+	 * the keystroke draws the search at once, and the publish that follows is drawn rather than stored.
+	 */
+	@Test
+	public void typingLiftsTheBankHoldAsABandDoes() throws Exception
+	{
+		build();
+		publish(searchBank(), listed(13, 6));
+		bank(true, true, 1, 1);
+		publish(repriced(6), listed(13, 6));
+		final int before = panel.rebuilds();
+		assertEquals("a re-statement is stored while the hold stands", before, panel.rebuilds());
+
+		onEdt(() -> panel.searchField().setText("rune"));
+		assertEquals("the search is drawn with the bank open", before + 1, panel.rebuilds());
+		assertEquals(Arrays.asList("Rune platebody"), shownNames());
+
+		publish(named("Rune platebody", "Runite ore", "Rune scimitar"), listed(13, 3));
+		assertEquals("...and its answer is drawn too: the hold was lifted", before + 2, panel.rebuilds());
+		assertEquals(Arrays.asList("Rune platebody", "Rune scimitar"), shownNames());
+		onEdt(() -> panel.stop());
+	}
+
+	/**
+	 * The History tab has no box and the Items tab has it back, text and all: the search is the reader's and survives a
+	 * tab switch, and the list under it is still the narrowed one.
+	 */
+	@Test
+	public void theHistoryTabHidesTheBoxAndTheSearchComesBackOnTheItemsTab() throws Exception
+	{
+		build();
+		publish(searchBank(), listed(13, 6));
+		type("rune");
+		onEdt(() ->
+		{
+			assertTrue(SwingUtilities.isDescendingFrom(panel.searchField(), panel.header()));
+			panel.pressView(SidebarView.HISTORY);
+			assertFalse("History has no list of items to search", SwingUtilities.isDescendingFrom(panel.searchField(),
+				panel.header()));
+			assertEquals("what was typed is kept", "rune", panel.searchField().getText());
+			panel.pressView(SidebarView.ITEMS);
+			assertTrue("it comes back with the Items tab", SwingUtilities.isDescendingFrom(panel.searchField(),
+				panel.header()));
+			assertEquals("rune", panel.searchField().getText());
+		});
+		assertEquals("...and so does the narrowed list", Arrays.asList("Rune platebody"), shownNames());
+		assertTrue(panel.describe(), panel.describe().contains("\"search\":\"rune\",\"matching\":1"));
+	}
+
+	/**
+	 * The box is never focused by the panel itself (addendum Z's Z6 rule): not on build, not on a publish, not on the
+	 * sidebar's activation, not on a tab switch - only the reader's click puts a caret there. The headless JVM has no focus
+	 * owner to begin with, so the observable half is that none is the box and the field is still on its placeholder; the
+	 * rule itself is pinned at its source, where no line of the panel may ask the box for focus.
+	 */
+	@Test
+	public void neitherBuildNorActivationNorATabSwitchFocusesTheSearchBox() throws Exception
+	{
+		build();
+		publish(searchBank(), listed(13, 6));
+		onEdt(() ->
+		{
+			panel.onDeactivate();
+			panel.onActivate();
+			panel.pressView(SidebarView.HISTORY);
+			panel.pressView(SidebarView.ITEMS);
+			assertFalse(panel.searchField().getTextField().isFocusOwner());
+			assertFalse(panel.searchField().isFocusOwner());
+			assertTrue("still on its placeholder: nothing was typed or focused", panel.searchField().placeholderShowing());
+		});
+		final String source = new String(java.nio.file.Files.readAllBytes(
+			new File("src/main/java/com/bankpricemovement/BankPriceMovementPanel.java").toPath()),
+			java.nio.charset.StandardCharsets.UTF_8);
+		for (String ask : new String[]{"requestFocus", "grabFocus", "requestFocusInWindow", "setFocusable"})
+		{
+			for (String line : source.split("\n"))
+			{
+				final String code = line.trim();
+				if (code.startsWith("*") || code.startsWith("//") || code.startsWith("/*"))
+				{
+					continue;
+				}
+				assertFalse("the panel asks for focus: " + line.trim(), code.contains("searchField") && code.contains(ask));
+				assertFalse("the panel asks for focus: " + line.trim(), code.contains("searchBox") && code.contains(ask));
+			}
+		}
+	}
+
+	/**
+	 * The typed text never reaches the Troubleshoot report: the sidebar facts carry counts and states, never the search -
+	 * and "rows" is still the rows the service published, not the rows shown.
+	 */
+	@Test
+	public void theTypedTextIsNotInTheTroubleshootFacts() throws Exception
+	{
+		build();
+		publish(searchBank(), listed(13, 6));
+		type("secretword");
+		final Diagnostics.Facts.Builder builder = Diagnostics.Facts.builder();
+		onEdt(() -> panel.describeInto(builder));
+		final List<String> lines = builder.build().lines(Diagnostics.SIDEBAR);
+		assertFalse(lines.toString(), lines.toString().contains("secretword"));
+		assertTrue(lines.toString(), lines.contains("rows: 6"));
 	}
 
 	/**
@@ -8784,7 +9705,7 @@ public class BankPriceMovementPanelTest
 
 	/** Every label of a message card is in the sidebar's own family, and its description is the readable grey. */
 	/**
-	 * The one settings gear inside {@code card}, found by its hover text ("Options"), so a test reaches a message
+	 * The one settings gear inside {@code card}, found by its hover text ("Settings"), so a test reaches a message
 	 * card's gear without an accessor on the panel that only tests would call. The panel must have been built with
 	 * hover text on ({@link #buildWithHovers()}).
 	 */
@@ -8795,7 +9716,7 @@ public class BankPriceMovementPanelTest
 		JLabel found = null;
 		for (JComponent c : all)
 		{
-			if (c instanceof JLabel && BankPriceMovementPanel.OPTIONS_TIP.equals(c.getToolTipText()))
+			if (c instanceof JLabel && SupportLinks.SETTINGS_TIP.equals(c.getToolTipText()))
 			{
 				assertNull("one gear on the card", found);
 				found = (JLabel) c;
@@ -9202,9 +10123,32 @@ public class BankPriceMovementPanelTest
 		return c.getClass().getSimpleName() + (text == null || text.isEmpty() ? "" : " \"" + text + "\"");
 	}
 
+	private static boolean isBlank(@Nullable String text)
+	{
+		return text == null || text.isEmpty();
+	}
+
+	/**
+	 * Whether {@code c} is one of the icons that name themselves in one word (1.0.9): the settings icon and the brand
+	 * marks, each a label with an icon and no text of its own. They are the ONE exception to "nothing hovers with the
+	 * switch off", and what identifies them is what they are - an icon-only label whose hover is exactly one of the
+	 * five words - so a sentence on an icon, or a word on anything else, is still an offender.
+	 */
+	private static boolean isSelfNamingIcon(JComponent c)
+	{
+		if (!(c instanceof JLabel) || ((JLabel) c).getIcon() == null || !isBlank(((JLabel) c).getText()))
+		{
+			return false;
+		}
+		return Arrays.asList(SupportLinks.SETTINGS_TIP, SupportLinks.DISCORD_TIP,
+			SupportLinks.X_TIP, SupportLinks.GITHUB_PROFILE_TIP, SupportLinks.GITHUB_TIP)
+			.contains(c.getToolTipText());
+	}
+
 	/**
 	 * AH3: nothing in the sidebar is showing a hover. Every offender is collected before anything fails, so one
-	 * run names all of them rather than the first one the walk happened to reach.
+	 * run names all of them rather than the first one the walk happened to reach. (The icons of
+	 * {@link #isSelfNamingIcon} are not hovers in this sense: their word is on whatever the switch says.)
 	 */
 	private void assertNothingHovers(String why)
 	{
@@ -9212,7 +10156,7 @@ public class BankPriceMovementPanelTest
 		for (Map.Entry<JComponent, String> e : everyHoverTarget().entrySet())
 		{
 			final String tip = e.getKey().getToolTipText();
-			if (tip != null)
+			if (tip != null && !isSelfNamingIcon(e.getKey()))
 			{
 				offenders.add(e.getValue() + ": " + name(e.getKey()) + " -> \"" + tip + "\"");
 			}
@@ -9247,7 +10191,6 @@ public class BankPriceMovementPanelTest
 		out.put(panel.sortButton(), "the sort button");
 		out.put(panel.refreshLabel(), "the Refresh link");
 		out.put(panel.updateLabel(), "the update line");
-		out.put(panel.gearLabel(), "the gear");
 		out.put(panel.bandTarget(), "the band button");
 		for (MovementWindow w : MovementWindow.values())
 		{
@@ -9284,7 +10227,7 @@ public class BankPriceMovementPanelTest
 		assertEquals(why + ": the update line",
 			BankPriceMovementPanel.updateTooltip(PRICES_AT, panel.options()),
 			panel.updateLabel().getToolTipText());
-		assertEquals(why + ": the gear", BankPriceMovementPanel.OPTIONS_TIP, panel.gearLabel().getToolTipText());
+		assertEquals(why + ": the gear", SupportLinks.SETTINGS_TIP, panel.gearLabel().getToolTipText());
 		assertNotNull(why + ": the band button", panel.bandTarget().getToolTipText());
 		for (MovementWindow w : MovementWindow.values())
 		{

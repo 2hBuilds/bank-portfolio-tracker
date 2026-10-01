@@ -24,6 +24,7 @@ import net.runelite.api.ItemContainer;
 import net.runelite.api.WorldType;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
+import net.runelite.api.events.GrandExchangeOfferChanged;
 import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.events.WidgetClosed;
 import net.runelite.api.events.WidgetLoaded;
@@ -142,6 +143,14 @@ public class BankPriceMovementPlugin extends Plugin
 	 */
 	static final String COUNT_INVENTORY_KEY = "countInventory";
 	/**
+	 * 1.0.9 part 3's Grand Exchange switch, the sixth key of the same {@link ViewOptions} - the player's offers
+	 * counted and listed beside the bank's stacks. Listed apart only because it arrived later;
+	 * {@link #isOptionKey(String)} treats every passenger alike. Like the carried switch it changes what the bank
+	 * VALUE is and which stacks are rows, so the service is told and the panel re-rendered, and no fetch is made
+	 * either way: the offers come from the client, not from the wiki.
+	 */
+	static final String COUNT_GRAND_EXCHANGE_KEY = "countGrandExchange";
+	/**
 	 * Addendum AH's switch, which landed as the sixth and is the fifth since addendum AO - and is the only one of
 	 * them whose default is OFF: whether the sidebar's hover text is
 	 * shown at all. {@link #isOptionKey(String)} treats them all alike. Addendum AI took the ROWS out of its
@@ -178,6 +187,13 @@ public class BankPriceMovementPlugin extends Plugin
 	 * the tab that is showing now.
 	 */
 	static final String START_TAB_KEY = "startTab";
+	/**
+	 * 1.0.9 part 5's setting, the eighteenth stored key and the only HIDDEN one: whether the Net Worth History tab
+	 * shows the days recorded before 1.0.9, which did not count the Grand Exchange offers. It takes a road of its own
+	 * ({@link #isLegacyKey(String)}) of the fold's shape: a piece of the sidebar's SHAPE, so the panel is told and
+	 * the service never is - no figure is recomputed, only which days of the history are drawn.
+	 */
+	static final String INCLUDE_LEGACY_KEY = "includeLegacyHistory";
 	/**
 	 * Addendum N's look switch, which addendum O deleted (O1). The key survives only as something to SWEEP:
 	 * see {@link #unstickLook()}.
@@ -386,6 +402,20 @@ public class BankPriceMovementPlugin extends Plugin
 	private volatile Item[] heldWorn;
 
 	/**
+	 * 1.0.9 part 3: the player's Grand Exchange offers as the last {@code GrandExchangeOfferChanged} left them - a
+	 * COPY ({@link ExchangeOffers} holds no client object), refreshed by {@link #onGrandExchangeOfferChanged} and by
+	 * nothing else, and the figure the logout read uses when the client can no longer be asked
+	 * ({@link #readBankOnce}). It is not part of the hold: the held copies exist because the bank container can be
+	 * gone at the close, and this is already the freshest copy of the offers, kept across the hold.
+	 *
+	 * <p>Null until the first offer event of a run. A plugin switched on mid-session that has seen none has it null,
+	 * so a logout read before any event counts no offer - which is today's figure, 0 - and the next bank read or
+	 * Refresh, which ask the client, correct it. Cleared at the end of a session ({@link #endSession}) and at
+	 * {@link #startUp()} / {@link #shutDown()} ({@link #resetBankHold}).
+	 */
+	private volatile ExchangeOffers lastOffers;
+
+	/**
 	 * AS: bank events held rather than read, and reads made, since startUp - the two counters the dev bridge echoes
 	 * ({@code bpm state}: {@code panel.bank.heldEvents} / {@code reads}) so a live run can COUNT what a gear swap
 	 * cost. Plugin-run totals, never reset by a close or a logout, so two readings of them can be subtracted.
@@ -527,6 +557,9 @@ public class BankPriceMovementPlugin extends Plugin
 		// AU, and the panel alone once more: the menu's dot stands on the tab this profile chose. setStartTab and not
 		// pressStartTab, for setFoldOpen's reason - seeding is not a press and writes nothing back.
 		panel.setStartTab(startTabFromConfig());
+		// 1.0.9 part 5, and the panel alone for the same reason: the History tab opens on the stored answer to "include
+		// days before 1.0.9". setIncludeLegacy and not pressLegacy - seeding is not a press and asks nothing.
+		panel.setIncludeLegacy(includeLegacyFromConfig());
 		service.setFilter(filterFromConfig());
 		service.setOptions(options);
 		// Y2 (b): the Refresh link's second job. PriceService owns the cooldown and the re-check; what it
@@ -712,7 +745,7 @@ public class BankPriceMovementPlugin extends Plugin
 
 	/**
 	 * CLIENT THREAD. The report's Player and Bank sections: whether the client is logged in and has named the account
-	 * (a yes or a no - never which), the profile, the world and its types, whether the bank is open, the bank-event
+	 * (a yes or a no - never which), the profile, the world types, whether the bank is open, the bank-event
 	 * totals and what the last read held, as counts. Never the hash, the name, an item or a quantity.
 	 */
 	void describePlayer(final Diagnostics.Facts.Builder facts)
@@ -726,7 +759,6 @@ public class BankPriceMovementPlugin extends Plugin
 		facts.loggedIn(c.getGameState() == GameState.LOGGED_IN);
 		facts.accountKnown(c.getAccountHash() > 0L);
 		facts.line(Diagnostics.PLAYER, "profile", RuneScapeProfileType.getCurrent(c).name());
-		facts.line(Diagnostics.PLAYER, "world", String.valueOf(c.getWorld()));
 		final StringBuilder types = new StringBuilder();
 		for (final WorldType type : c.getWorldType())
 		{
@@ -744,7 +776,7 @@ public class BankPriceMovementPlugin extends Plugin
 		s.describeBankInto(facts);
 	}
 
-	/** The report's Settings section: the sixteen stored values, by key. Plain values the player chose. */
+	/** The report's Settings section: the eighteen stored values, by key. Plain values the player chose. */
 	void describeSettings(final Diagnostics.Facts.Builder facts)
 	{
 		facts.line(Diagnostics.SETTINGS, "gpMin", String.valueOf(config.gpMin()));
@@ -760,9 +792,11 @@ public class BankPriceMovementPlugin extends Plugin
 		facts.line(Diagnostics.SETTINGS, COUNT_CASH_KEY, String.valueOf(config.countCash()));
 		facts.line(Diagnostics.SETTINGS, COUNT_UNTRADEABLES_KEY, String.valueOf(config.countUntradeables()));
 		facts.line(Diagnostics.SETTINGS, COUNT_INVENTORY_KEY, String.valueOf(config.countInventory()));
+		facts.line(Diagnostics.SETTINGS, COUNT_GRAND_EXCHANGE_KEY, String.valueOf(config.countGrandExchange()));
 		facts.line(Diagnostics.SETTINGS, SHOW_HOVER_TEXT_KEY, String.valueOf(config.showHoverText()));
 		facts.line(Diagnostics.SETTINGS, LIVE_PRICES_KEY, String.valueOf(config.livePrices()));
 		facts.line(Diagnostics.SETTINGS, START_TAB_KEY, nameOf(config.startTab()));
+		facts.line(Diagnostics.SETTINGS, INCLUDE_LEGACY_KEY, String.valueOf(config.includeLegacyHistory()));
 	}
 
 	/** An enum setting as the name RuneLite stores it under, not the label the settings page shows. */
@@ -1102,6 +1136,12 @@ public class BankPriceMovementPlugin extends Plugin
 	 * known to be open, or the first bank of the run or of another account, which has nothing to be compared with
 	 * and which the sidebar may never have seen.</li>
 	 * </ol>
+	 *
+	 * <p><b>The Grand Exchange offers ride along (1.0.9 part 3)</b> and are not part of the comparison: they are
+	 * taken from the client in the same pass and folded into whatever read happens, but a bank, an inventory and a
+	 * worn set that add up to the last read's are skipped even if an offer has moved since. An offer that fills, or
+	 * is placed, with the bank closed therefore shows at the next read - the next bank close, or Refresh - not at
+	 * once.
 	 */
 	@Subscribe
 	public void onItemContainerChanged(ItemContainerChanged event)
@@ -1139,6 +1179,7 @@ public class BankPriceMovementPlugin extends Plugin
 		// read folds them in, and all three have to describe the same moment.
 		final Item[] inventory = inventoryOf(c);
 		final Item[] worn = wornOf(c);
+		final ExchangeOffers offers = offersOf(c);
 		if (bankPending)
 		{
 			hold(items, inventory, worn, hash, profile);
@@ -1171,9 +1212,9 @@ public class BankPriceMovementPlugin extends Plugin
 			notifyBankHold();
 			return;
 		}
-		log.debug("bank-portfolio-tracker: bank hold - bank event read (open={}, first read for this account={})",
-			bankOpen, !readBefore);
-		captureBank(items, inventory, worn, hash, profile, "bank event");
+		log.debug("bank-portfolio-tracker: bank hold - bank event read (open={}, first read for this account={}),"
+			+ " ge slots {}", bankOpen, !readBefore, offers.slotsInUse());
+		captureBank(items, inventory, worn, offers, hash, profile, "bank event");
 		notifyBankHold();
 	}
 
@@ -1194,12 +1235,14 @@ public class BankPriceMovementPlugin extends Plugin
 	 * @param items     the bank's slots, as the container gave them (or a copy)
 	 * @param inventory the inventory's slots to fold in; null reads as an empty inventory
 	 * @param worn      the worn gear's slots; null reads as nothing worn
+	 * @param offers    the Grand Exchange offers to fold in (1.0.9 part 3); null reads as none
 	 * @param hash      the account the capture is stamped and saved under - a real one, checked by the caller
 	 * @param profile   the RuneScape profile that goes with it
 	 * @param why       what asked for the read, as the diagnostics note names it ("bank event", "bank closed" ...)
 	 */
 	private void captureBank(@Nullable final Item[] items, @Nullable final Item[] inventory,
-		@Nullable final Item[] worn, final long hash, final String profile, final String why)
+		@Nullable final Item[] worn, @Nullable final ExchangeOffers offers, final long hash, final String profile,
+		final String why)
 	{
 		final PriceService s = service;
 		final BankReader reader = bankReader;
@@ -1211,7 +1254,7 @@ public class BankPriceMovementPlugin extends Plugin
 		final BankSnapshot snapshot;
 		try
 		{
-			snapshot = carriedInto(reader, inventory, worn, reader.read(items, hash, profile, now), now);
+			snapshot = carriedInto(reader, inventory, worn, offers, reader.read(items, hash, profile, now), now);
 		}
 		catch (final RuntimeException e)
 		{
@@ -1249,11 +1292,15 @@ public class BankPriceMovementPlugin extends Plugin
 		return snapshot == null || snapshot.items == null ? 0 : snapshot.items.size();
 	}
 
-	/** How many stacks the inventory and the worn gear of a snapshot hold, for the diagnostics note. */
+	/**
+	 * How many stacks the inventory, the worn gear and the Grand Exchange offers of a snapshot hold, for the
+	 * diagnostics note.
+	 */
 	private static int carriedStacks(@Nullable final BankSnapshot snapshot)
 	{
 		return snapshot == null ? 0 : (snapshot.inventory == null ? 0 : snapshot.inventory.size())
-			+ (snapshot.worn == null ? 0 : snapshot.worn.size());
+			+ (snapshot.worn == null ? 0 : snapshot.worn.size())
+			+ (snapshot.exchange == null ? 0 : snapshot.exchange.size());
 	}
 
 	/**
@@ -1278,7 +1325,9 @@ public class BankPriceMovementPlugin extends Plugin
 	 * CLIENT THREAD. Folds what the player is CARRYING into a snapshot that already holds their bank (Y2):
 	 * the inventory and the worn gear, handed over as the slots the caller took them from - the client
 	 * ({@link #inventoryOf} / {@link #wornOf}, which answer null for a container the client has not cached) or,
-	 * at a logout, the copies held beside the bank (addendum AS). A null is an empty list rather than a failure
+	 * at a logout, the copies held beside the bank (addendum AS) - and, since 1.0.9 part 3, the items and coins in
+	 * the player's Grand Exchange offers, the client's ({@link #offersOf}) or, at a logout, the last copy an offer
+	 * event left ({@link #lastOffers}). A null is an empty list rather than a failure
 	 * ({@link BankReader#readContainers}).
 	 *
 	 * <p>The one caller of {@code readContainers}, so the bank event, the Refresh hook and the hold's one read
@@ -1288,19 +1337,21 @@ public class BankPriceMovementPlugin extends Plugin
 	 * @param reader    the live reader (never null - the caller has copied the field)
 	 * @param inventory the inventory's slots, or null
 	 * @param worn      the worn gear's slots, or null
+	 * @param offers    the Grand Exchange offers, or null for none
 	 * @param bank      the bank half of the snapshot about to be published
 	 * @param now       wall clock, stamped on the carried half
 	 * @return {@code bank} with its carried half replaced, or {@code bank} itself when there is none to add
 	 */
 	@Nullable
 	private static BankSnapshot carriedInto(final BankReader reader, @Nullable final Item[] inventory,
-		@Nullable final Item[] worn, @Nullable final BankSnapshot bank, final long now)
+		@Nullable final Item[] worn, @Nullable final ExchangeOffers offers, @Nullable final BankSnapshot bank,
+		final long now)
 	{
 		if (bank == null)
 		{
 			return null;
 		}
-		final BankReader.Carried carried = reader.readContainers(inventory, worn, now);
+		final BankReader.Carried carried = reader.readContainers(inventory, worn, offers, now);
 		return carried == null ? bank : bank.withCarried(carried);
 	}
 
@@ -1330,6 +1381,40 @@ public class BankPriceMovementPlugin extends Plugin
 	}
 
 	/**
+	 * CLIENT THREAD. A copy of the player's eight Grand Exchange offers as the client holds them now (1.0.9 part 3),
+	 * beside {@link #inventoryOf} / {@link #wornOf} and taken at the same moments. Never null: a client with no
+	 * offers array, or only empty slots, answers {@link ExchangeOffers#EMPTY}.
+	 */
+	private static ExchangeOffers offersOf(final Client c)
+	{
+		return ExchangeOffers.of(c.getGrandExchangeOffers());
+	}
+
+	/**
+	 * CLIENT THREAD. An offer was placed, filled, cancelled or collected - or the client is loading the eight slots
+	 * after login, one event each (1.0.9 part 3). It keeps {@link #lastOffers} current and does NOTHING else: no
+	 * read, no publish, no hold change and no fingerprint change, because a read and a redraw on every fill would
+	 * cost the sidebar and the player what the bank hold exists to save them.
+	 *
+	 * <p><b>The known limit.</b> The offers are read at exactly the moments the inventory and the worn gear are -
+	 * the bank event, Refresh, the bank's close, a Refresh click with the bank open, and the end of a session with a
+	 * change held. An offer that fills, or is placed, with the bank closed therefore shows at the next of those, not
+	 * at once. Moving items from the inventory into an offer between two reads leaves the reading as it was, which is
+	 * the right figure: the items were counted as carried. The case this part fixes is the read taken while offers
+	 * are open.
+	 */
+	@Subscribe
+	public void onGrandExchangeOfferChanged(final GrandExchangeOfferChanged event)
+	{
+		final Client c = client;
+		if (c == null)
+		{
+			return;
+		}
+		lastOffers = offersOf(c);
+	}
+
+	/**
 	 * Y2 (b), the Refresh trigger: the hook {@link #startUp()} hands {@link PriceService#setCarriedReader}
 	 * and {@code refreshNow()} runs before it re-checks the prices. Refresh is pressed on the EDT, and an
 	 * item container may only be read on the client thread, so all this does is hop - the work is
@@ -1348,10 +1433,11 @@ public class BankPriceMovementPlugin extends Plugin
 	}
 
 	/**
-	 * CLIENT THREAD. Re-reads the inventory and the worn gear and republishes the STORED bank part with the
-	 * fresh carried part (Y2). The bank half is never re-read: it is whatever the last container event
-	 * captured, so a Refresh can move a row's quantity but can never invent stacks the player has not
-	 * banked.
+	 * CLIENT THREAD. Re-reads the inventory, the worn gear and the Grand Exchange offers (1.0.9 part 3) and
+	 * republishes the STORED bank part with the fresh carried part (Y2). The bank half is never re-read: it is
+	 * whatever the last container event captured, so a Refresh can move a row's quantity but can never invent stacks
+	 * the player has not banked. The fingerprint's carried pair follows what this publishes, and the offers are not
+	 * in it, so there is nothing of theirs to re-stamp there.
 	 *
 	 * <p>Nothing happens unless the client can say who is playing - the two guards
 	 * {@link #onItemContainerChanged} uses, for the same reason: the republished snapshot keeps its stamps
@@ -1417,13 +1503,15 @@ public class BankPriceMovementPlugin extends Plugin
 		// Taken once, like the bank event's pair: the same two arrays are folded in and re-stamped below.
 		final Item[] inventory = inventoryOf(c);
 		final Item[] worn = wornOf(c);
-		final BankSnapshot next = carriedInto(reader, inventory, worn, stored, System.currentTimeMillis());
+		final ExchangeOffers offers = offersOf(c);
+		final BankSnapshot next = carriedInto(reader, inventory, worn, offers, stored, System.currentTimeMillis());
 		if (next == null || next == stored)
 		{
 			return;
 		}
 		lastBank = next;
-		note("Refresh: what you carry was re-read (" + carriedStacks(next) + " stacks)");
+		note("Refresh: what you carry was re-read (" + carriedStacks(next) + " stacks, ge slots "
+			+ offers.slotsInUse() + ")");
 		s.setBank(next);
 		final Fingerprint last = lastFingerprint;
 		if (last != null && lastFingerprintHash == hash && Objects.equals(lastFingerprintProfile, profile))
@@ -1585,6 +1673,9 @@ public class BankPriceMovementPlugin extends Plugin
 		}
 		bankOpen = false;
 		endHold();
+		// 1.0.9 part 3: the offers belong to the account that has just left, and the read above was the last that
+		// could want them. Cleared AFTER it, so the logout read still sees them.
+		lastOffers = null;
 		notifyBankHold();
 	}
 
@@ -1599,7 +1690,8 @@ public class BankPriceMovementPlugin extends Plugin
 	 * are handled and the debug line says which was used).</li>
 	 * </ol>
 	 * The carried half follows the same rule: the client's two containers when the client vouches for that same
-	 * account and profile, the copies held beside the bank otherwise.
+	 * account and profile, the copies held beside the bank otherwise - and so do the Grand Exchange offers (1.0.9 part
+	 * 3), the client's own while it vouches, {@link #lastOffers} otherwise.
 	 *
 	 * @param why what asked for the read, for the client log
 	 */
@@ -1618,8 +1710,10 @@ public class BankPriceMovementPlugin extends Plugin
 			final ItemContainer live = c.getItemContainer(BankReader.BANK_CONTAINER_ID);
 			if (live != null)
 			{
-				log.debug("bank-portfolio-tracker: bank hold - {}: read from the client's bank container", why);
-				captureBank(live.getItems(), inventoryOf(c), wornOf(c), liveHash, liveProfile, why);
+				final ExchangeOffers offers = offersOf(c);
+				log.debug("bank-portfolio-tracker: bank hold - {}: read from the client's bank container, ge slots {}",
+					why, offers.slotsInUse());
+				captureBank(live.getItems(), inventoryOf(c), wornOf(c), offers, liveHash, liveProfile, why);
 				return;
 			}
 		}
@@ -1638,10 +1732,15 @@ public class BankPriceMovementPlugin extends Plugin
 		final long hash = heldHash;
 		final String profile = heldProfile;
 		final boolean vouched = liveHash > 0L && liveHash == hash && Objects.equals(liveProfile, profile);
+		// 1.0.9 part 3: the offers follow the carried pair's rule - the client's while it vouches for this account, the
+		// last copy an offer event left when it cannot (the logout). Null, which a run that has seen no offer event
+		// has, reads as none.
+		final ExchangeOffers offers = vouched ? offersOf(c) : lastOffers;
 		log.debug("bank-portfolio-tracker: bank hold - {}: no bank container (logged in={}), read the {} slots"
-			+ " held at the last bank event", why, loggedIn, items.length);
-		captureBank(items, vouched ? inventoryOf(c) : heldInventory, vouched ? wornOf(c) : heldWorn, hash, profile,
-			why);
+			+ " held at the last bank event, ge slots {}", why, loggedIn, items.length,
+			offers == null ? 0 : offers.slotsInUse());
+		captureBank(items, vouched ? inventoryOf(c) : heldInventory, vouched ? wornOf(c) : heldWorn, offers, hash,
+			profile, why);
 	}
 
 	/**
@@ -1685,7 +1784,8 @@ public class BankPriceMovementPlugin extends Plugin
 	 * CLIENT THREAD. Keeps one bank event's slots as the held bank - COPIES of them, and of the inventory and the
 	 * worn gear the handler took from the client at this same event ({@link #heldInventory}) - under the account and
 	 * profile they arrived with, and counts the event. Three array copies of a few hundred references: the whole
-	 * cost of an event while a change is held.
+	 * cost of an event while a change is held. The Grand Exchange offers are not copied here (1.0.9 part 3):
+	 * {@link #lastOffers} is already the freshest copy of them and is kept across the hold.
 	 */
 	private void hold(@Nullable final Item[] items, @Nullable final Item[] inventory, @Nullable final Item[] worn,
 		final long hash, final String profile)
@@ -1728,6 +1828,7 @@ public class BankPriceMovementPlugin extends Plugin
 		lastFingerprint = null;
 		lastFingerprintHash = 0L;
 		lastFingerprintProfile = "";
+		lastOffers = null;
 		heldEvents = 0;
 		bankReads = 0;
 		bankEventsSeen = 0;
@@ -2061,6 +2162,21 @@ public class BankPriceMovementPlugin extends Plugin
 			}
 			return;
 		}
+		if (isLegacyKey(event.getKey()))
+		{
+			// 1.0.9 part 5's road, the fold's twin: whether the History tab shows the days before 1.0.9 is the
+			// sidebar's shape, so the panel is told and nobody else. No figure is recomputed - the days were read
+			// from the file long ago and only which of them are drawn changes - so the service is never told.
+			final boolean include = includeLegacyFromConfig();
+			final BankPriceMovementPanel shape = panel;
+			if (shape != null)
+			{
+				// setIncludeLegacy and not pressLegacy: this IS the config, so writing it back would say nothing, and
+				// pressLegacy would ask the reader the question again for a change they already answered.
+				SwingUtilities.invokeLater(() -> shape.setIncludeLegacy(include));
+			}
+			return;
+		}
 		final RowFilter filter = filterFromConfig();
 		final BankPriceMovementPanel p = panel;
 		if (p != null)
@@ -2133,30 +2249,30 @@ public class BankPriceMovementPlugin extends Plugin
 	}
 
 	/**
-	 * The gear menu's five stored keys (Q3, T1, Y1, AH) as one immutable value - the plugin's only reader of
-	 * {@code countCash} / {@code countUntradeables} / {@code livePrices} / {@code countInventory} /
-	 * {@code showHoverText}, and so the one place the config and {@link ViewOptions} are put in step. The panel's
-	 * {@code Prefs.loadOptions}, the value {@link #startUp()} opens on, and what {@link #onConfigChanged} rebuilds
-	 * when one of the five is written anywhere. Addendum AO took a sixth, {@code holdingOnRows}, off this list and
-	 * out of the group altogether (AO1).
+	 * The settings menu's six stored keys (Q3, T1, Y1, 1.0.9 part 3, AH) as one immutable value - the plugin's only
+	 * reader of {@code countCash} / {@code countUntradeables} / {@code livePrices} / {@code countInventory} /
+	 * {@code countGrandExchange} / {@code showHoverText}, and so the one place the config and {@link ViewOptions}
+	 * are put in step. The panel's {@code Prefs.loadOptions}, the value {@link #startUp()} opens on, and what
+	 * {@link #onConfigChanged} rebuilds when one of the six is written anywhere. Addendum AO took a seventh,
+	 * {@code holdingOnRows}, off this list and out of the group altogether (AO1).
 	 *
-	 * <p>It must name every field of {@link ViewOptions}: the value keeps shorter constructors that default
-	 * {@code livePrices} and {@code countInventory} to on, which is right for a caller that predates addendum T or
-	 * Y and wrong here - it would make the stored switch unreadable, so that a user who turned live prices (or the
-	 * carried items) off in RuneLite's settings got them back on the next launch.
-	 * {@code BankPriceMovementWiringTest} pins the five-way round trip.
+	 * <p>It must name every field of {@link ViewOptions}, and the value has no shorter constructors to default one
+	 * (addendum AO): a constructor that defaulted {@code livePrices} or {@code countInventory} to on would be right
+	 * for a caller that predates addendum T or Y and wrong here - it would make the stored switch unreadable, so that
+	 * a user who turned live prices (or the carried items) off in RuneLite's settings got them back on the next
+	 * launch. {@code BankPriceMovementWiringTest} pins the six-way round trip.
 	 */
 	ViewOptions optionsFromConfig()
 	{
 		return new ViewOptions(config.countCash(), config.countUntradeables(), config.livePrices(),
-			config.countInventory(), config.showHoverText());
+			config.countInventory(), config.countGrandExchange(), config.showHoverText());
 	}
 
 	/**
 	 * Whether a {@code ConfigChanged} key is one of the gear menu's view switches - addendum Q's two remaining
 	 * ones (Q3; the third, {@code holdingOnRows}, went with addendum AO and is swept by {@link #unstickHolding()}
-	 * rather than answered here), addendum T's live-price switch (T1), addendum Y's carried switch (Y1) or
-	 * addendum AH's hover switch, which ride the same road for the
+	 * rather than answered here), addendum T's live-price switch (T1), addendum Y's carried switch (Y1), 1.0.9 part
+	 * 3's Grand Exchange switch or addendum AH's hover switch, which ride the same road for the
 	 * same reason: they are neither a filter (no gp band changes, and no ordering) nor presentation (what a live
 	 * row's unit, "then" and move figures ARE changes, and so does the bank value built out of them, and so does
 	 * the quantity of a stack the player is half carrying), so the service is told and the panel is re-rendered,
@@ -2166,7 +2282,7 @@ public class BankPriceMovementPlugin extends Plugin
 	{
 		return COUNT_CASH_KEY.equals(key) || COUNT_UNTRADEABLES_KEY.equals(key)
 			|| LIVE_PRICES_KEY.equals(key) || COUNT_INVENTORY_KEY.equals(key)
-			|| SHOW_HOVER_TEXT_KEY.equals(key);
+			|| COUNT_GRAND_EXCHANGE_KEY.equals(key) || SHOW_HOVER_TEXT_KEY.equals(key);
 	}
 
 	/**
@@ -2246,6 +2362,27 @@ public class BankPriceMovementPlugin extends Plugin
 	}
 
 	/**
+	 * The eighteenth stored key as whether the History tab shows the days before 1.0.9 (1.0.9 part 5) - the plugin's
+	 * only reader of {@code includeLegacyHistory}: the panel's {@code Prefs.loadIncludeLegacy}, the value
+	 * {@link #startUp()} seeds the tab with, and what {@link #onConfigChanged} hands the panel when the key changes
+	 * under it. A plain {@code boolean}: the config's own default (false) answers a fresh profile.
+	 */
+	boolean includeLegacyFromConfig()
+	{
+		return config.includeLegacyHistory();
+	}
+
+	/**
+	 * Whether a {@code ConfigChanged} key is 1.0.9 part 5's "include days before 1.0.9" - a road of its own after the
+	 * start tab's, and like the fold's it reaches nothing but the panel. The settings page does not list the item
+	 * (it is hidden), so a change here comes from the tab's own check box or from a hand-edited profile.
+	 */
+	static boolean isLegacyKey(@Nullable String key)
+	{
+		return INCLUDE_LEGACY_KEY.equals(key);
+	}
+
+	/**
 	 * The panel's and the bridge's way into the config. Writing a widget's value back through
 	 * {@link ConfigManager} rather than holding it in the panel is what makes the sidebar and the config panel
 	 * one switch: the write posts a {@code ConfigChanged} that {@link #onConfigChanged} turns back into a
@@ -2273,10 +2410,11 @@ public class BankPriceMovementPlugin extends Plugin
 	 * {@code Boolean} the panel treats as "nothing stored = open"; this implementation never answers null, the
 	 * config having a default of its own.
 	 *
-	 * <p><b>And so do the gear menu's five switches</b> (Q3, T1, Y1, AH): {@code loadOptions} /
+	 * <p><b>And so do the settings menu's six switches</b> (Q3, T1, Y1, 1.0.9 part 3, AH): {@code loadOptions} /
 	 * {@code saveOptions} are the way
 	 * to {@code countCash} / {@code countUntradeables} / {@code livePrices} / {@code countInventory} /
-	 * {@code showHoverText} - a sixth, {@code holdingOnRows}, travelled here until addendum AO deleted it (AO1).
+	 * {@code countGrandExchange} / {@code showHoverText} - a seventh, {@code holdingOnRows}, travelled here until
+	 * addendum AO deleted it (AO1).
 	 * The save half does one thing more
 	 * than {@code saveHero} does, and the comment inside it says why: the switch it wrote is suppressed on the
 	 * {@code ConfigChanged} round trip as this thread's own write, and three of the five change figures the
@@ -2375,7 +2513,7 @@ public class BankPriceMovementPlugin extends Plugin
 				final ConfigManager cm = configManager;
 				if (cm != null)
 				{
-					// Five writes since addendum AO, one change of mind, guarded exactly as saveHero's three
+					// Six writes since 1.0.9 part 3, one change of mind, guarded exactly as saveHero's three
 					// are: ConfigManager posts a ConfigChanged on this very thread as each key lands, and the
 					// check item that was ticked has already applied the switch itself. Unguarded, ticking one
 					// item would recompute the whole bank value again for every other key, from a config in
@@ -2385,7 +2523,7 @@ public class BankPriceMovementPlugin extends Plugin
 					prefsWriter = Thread.currentThread();
 					try
 					{
-						// All five every time, for saveHero's reason: an item that wrote only its own key would
+						// All six every time, for saveHero's reason: an item that wrote only its own key would
 						// leave the others unstored the first time a fresh profile touched the menu.
 						cm.setConfiguration(BankPriceMovementConfig.GROUP, COUNT_CASH_KEY, options.countCash());
 						cm.setConfiguration(BankPriceMovementConfig.GROUP, COUNT_UNTRADEABLES_KEY,
@@ -2399,6 +2537,10 @@ public class BankPriceMovementPlugin extends Plugin
 						// told below, or the choice would be forgotten by the next launch.
 						cm.setConfiguration(BankPriceMovementConfig.GROUP, COUNT_INVENTORY_KEY,
 							options.countInventory());
+						// 1.0.9 part 3. The Grand Exchange offers come from the client the same way, and it is stored
+						// with the rest before the service is told below.
+						cm.setConfiguration(BankPriceMovementConfig.GROUP, COUNT_GRAND_EXCHANGE_KEY,
+							options.countGrandExchange());
 						// AH. Nothing is fetched or recomputed for this one - it decides whether the sidebar's
 						// tooltips are handed to Swing at all - but it is stored with the rest so a reader who
 						// turned the hovers on does not meet a silent sidebar again next launch.
@@ -2514,6 +2656,35 @@ public class BankPriceMovementPlugin extends Plugin
 				try
 				{
 					cm.setConfiguration(BankPriceMovementConfig.GROUP, START_TAB_KEY, tab);
+				}
+				finally
+				{
+					prefsWriter = outer;
+				}
+			}
+
+			@Override
+			public Boolean loadIncludeLegacy()
+			{
+				return includeLegacyFromConfig();
+			}
+
+			@Override
+			public void saveIncludeLegacy(boolean include)
+			{
+				final ConfigManager cm = configManager;
+				if (cm == null)
+				{
+					return;
+				}
+				// ONE key and no service, guarded as saveFoldOpen is (1.0.9 part 5): the check box that was ticked has
+				// already redrawn the tab itself (BankPriceMovementPanel.pressLegacy applies, then calls this), and the
+				// ConfigChanged this write posts on this thread would only draw it a second time.
+				final Thread outer = prefsWriter;
+				prefsWriter = Thread.currentThread();
+				try
+				{
+					cm.setConfiguration(BankPriceMovementConfig.GROUP, INCLUDE_LEGACY_KEY, include);
 				}
 				finally
 				{

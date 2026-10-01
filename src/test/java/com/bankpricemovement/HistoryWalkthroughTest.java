@@ -1818,17 +1818,20 @@ public class HistoryWalkthroughTest
 		assertTrue(store().recordBankHistory(account, PROFILE, new BankHistoryPoint(day, noon, noon, cells, null), SEEDING));
 	}
 
-	/** {@code count} daily readings from {@code start}, written as one file in the store's own format. */
+	/**
+	 * {@code count} daily readings from {@code start}, written as one file in the store's own format - schema 2, ten cells
+	 * a reading: a record this build wrote, so nothing in it is a day before 1.0.9 (1.0.9 part 5).
+	 */
 	private void writeLongRecord(LocalDate start, int count) throws IOException
 	{
-		final StringBuilder json = new StringBuilder("{\"schema\":1,\"points\":[");
+		final StringBuilder json = new StringBuilder("{\"schema\":2,\"points\":[");
 		for (int i = 0; i < count; i++)
 		{
 			final LocalDate day = start.plusDays(i);
 			final long noon = at(day, 12, 0);
 			json.append(i == 0 ? "" : ",").append("{\"day\":\"").append(day).append("\",\"readAtMillis\":").append(noon)
 				.append(",\"bankAtMillis\":").append(noon).append(",\"card\":[").append(5_000_000L + 1_000L * i)
-				.append(",0,0,0,0,0,0,0]}");
+				.append(",0,0,0,0,0,0,0,0,0]}");
 		}
 		json.append("]}");
 		Files.write(historyFile(MAIN).toPath(), json.toString().getBytes(StandardCharsets.UTF_8));

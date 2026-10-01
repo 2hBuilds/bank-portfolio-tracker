@@ -1,17 +1,21 @@
 package com.bankpricemovement;
 
+import java.io.BufferedReader;
 import java.io.DataInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
-import java.net.URISyntaxException;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Enumeration;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -36,60 +40,26 @@ import static org.junit.Assert.assertTrue;
  * <p>Not counted as test-only: a method that overrides or implements one it inherits (the framework calls
  * {@code equals}, {@code paintComponent}, {@code getPreferredSize}), a method RuneLite reaches by annotation
  * ({@code @Subscribe}, {@code @Provides}, the config interface's items), an enum's {@code valueOf} (RuneLite's config
- * parses stored names through it), and a lambda body. Everything that predates AU and breaks the rule is listed by
- * name in {@link #BEFORE_AU}, so a NEW one fails and an old one taken out of use fails too, until it leaves the list.
+ * parses stored names through it), and a lambda body.
+ *
+ * <p><b>The tolerated set.</b> Everything that predates the rule and breaks it is listed by name in the optional
+ * resource {@value #TOLERATED_RESOURCE} on the test classpath (the file's own first line says what it is), so a NEW
+ * one fails and an old one taken out of use fails too, until it leaves the list. This plugin's list is
+ * {@code src/test/resources/kit-rules/test-only-members.txt}: mostly the panel's package-private accessors that its
+ * tests read, and addendum AS's hooks, every one declared at 7898eb1 and checked member by member against that
+ * commit's sources, left alone by the AU round so that the list can only shrink. An absent file is an empty set.
  */
 public class NoTestOnlyMembersRuleTest
 {
 	/**
-	 * Members that break the rule and were in {@code src/main} before addendum AU (every one declared at 7898eb1,
-	 * checked member by member against that commit's sources): mostly the panel's package-private accessors that its
-	 * tests read, and addendum AS's hooks. Left alone by the AU round, each named so that the list can only shrink.
-	 * {@code Owner#name}, the owner by its simple binary name; an overloaded name is listed once.
+	 * The optional classpath resource that lists the members a plugin tolerates: {@code kit-rules/test-only-members.txt}
+	 * on the TEST classpath ({@code src/test/resources}). One {@code Owner#name} per line, the owner by its simple
+	 * binary name, an overloaded name listed once; blank lines and lines starting with {@code #} are ignored. A plugin
+	 * with no such file tolerates nothing, which is what a new plugin should start with. The list lives in a file and
+	 * not in this class so that this class is the same in every 2hBuilds plugin, with nothing changed but its
+	 * {@code package} line.
 	 */
-	private static final Set<String> BEFORE_AU = Collections.unmodifiableSet(new TreeSet<>(Arrays.asList(
-		"BankPriceMovementPanel#bandTarget", "BankPriceMovementPanel#captionLabel", "BankPriceMovementPanel#captionRow",
-		"BankPriceMovementPanel#card", "BankPriceMovementPanel#chipRow", "BankPriceMovementPanel#clearBandButton",
-		"BankPriceMovementPanel#clearBandShowing", "BankPriceMovementPanel#clearBoundsLabel",
-		"BankPriceMovementPanel#controlRow", "BankPriceMovementPanel#countCashItem",
-		"BankPriceMovementPanel#countInventoryItem", "BankPriceMovementPanel#countUntradeablesItem",
-		"BankPriceMovementPanel#deltaLabel", "BankPriceMovementPanel#filter", "BankPriceMovementPanel#fold",
-		"BankPriceMovementPanel#foldOpen", "BankPriceMovementPanel#footnoteLabel", "BankPriceMovementPanel#gearLabel",
-		"BankPriceMovementPanel#glowTimer", "BankPriceMovementPanel#gutter", "BankPriceMovementPanel#header",
-		"BankPriceMovementPanel#hero", "BankPriceMovementPanel#heroMenu", "BankPriceMovementPanel#listThenDay",
-		"BankPriceMovementPanel#listView", "BankPriceMovementPanel#livePricesItem", "BankPriceMovementPanel#maxField",
-		"BankPriceMovementPanel#minField", "BankPriceMovementPanel#moveLine", "BankPriceMovementPanel#okButton",
-		"BankPriceMovementPanel#okRow", "BankPriceMovementPanel#pctLabel", "BankPriceMovementPanel#presetCell",
-		"BankPriceMovementPanel#presetField", "BankPriceMovementPanel#presetRow", "BankPriceMovementPanel#problemLabel",
-		"BankPriceMovementPanel#problemShowing", "BankPriceMovementPanel#provenanceText",
-		"BankPriceMovementPanel#rebuilds", "BankPriceMovementPanel#refreshAcknowledging",
-		"BankPriceMovementPanel#refreshLabel", "BankPriceMovementPanel#refreshTimersRunning",
-		"BankPriceMovementPanel#resetPresetsButton", "BankPriceMovementPanel#rowPanels",
-		"BankPriceMovementPanel#rowsColumn", "BankPriceMovementPanel#scrollPane", "BankPriceMovementPanel#setClock",
-		"BankPriceMovementPanel#setGlowClock", "BankPriceMovementPanel#setSort", "BankPriceMovementPanel#showGpItem",
-		"BankPriceMovementPanel#showHoverTextItem", "BankPriceMovementPanel#showMoreLabel",
-		"BankPriceMovementPanel#showPctItem", "BankPriceMovementPanel#showValueItem", "BankPriceMovementPanel#sortButton",
-		"BankPriceMovementPanel#status", "BankPriceMovementPanel#stopped", "BankPriceMovementPanel#stripHolder",
-		"BankPriceMovementPanel#totalLabel", "BankPriceMovementPanel#totalRow", "BankPriceMovementPanel#triangleLabel",
-		"BankPriceMovementPanel#upToDateShowing", "BankPriceMovementPanel#updateLabel",
-		"BankPriceMovementPanel#updateTooltip", "BankPriceMovementPanel#windowChip", "BankReader$Carried#isEmpty",
-		"BankSnapshot#isEmpty", "BpmCommands#writeShot", "GuidePriceClient#parseGuideTable", "GuideSnapshot#get",
-		"GuideSnapshot#revisionSeconds", "GuideSnapshot#size", "HeroVisibility#any", "MovementMath#formatPct",
-		"MovementMath#formatSince", "MovementRow#asLive", "MovementRowPanel#changeColor", "MovementRowPanel#changeText",
-		"MovementRowPanel#detailBuilds", "MovementRowPanel#gpText", "MovementRowPanel#hovered", "MovementRowPanel#icon",
-		"MovementRowPanel#iconLabel", "MovementRowPanel#isParts", "MovementRowPanel#nameText",
-		"MovementRowPanel#priceText", "MovementRowPanel#railColor", "MovementRowPanel#row", "MovementRowPanel#tooltip",
-		"MovementRowPanel#tooltipBuilds", "MovementRowPanel#tooltipHtml", "PortfolioMath#summarise",
-		"PortfolioSummary#liveRows", "PortfolioSummary#moves", "PortfolioSummary#valueStacks", "PriceMap#isEmpty",
-		"PriceMap#points", "PricePoint#isEmpty", "PriceService#isVisible", "PriceService#isWikiEnabled",
-		"PriceService#options", "PriceService#pickBaseline", "PriceService#refreshNow", "PriceService#revisionIndex",
-		"PriceService#setTradedClient", "PriceService$Status#anchorDegraded", "PriceService$Status#baselineRevId",
-		"PriceService$Status#baselineRevisionSeconds", "PriceService$Status$LiveStatus#alchRows",
-		"PriceService$Status$LiveStatus#fetchedAtMillis", "PriceService$Status$LiveStatus#guideRows",
-		"PriceService$Status$LiveStatus#latestItems", "PriceService$Status$LiveStatus#liveDay",
-		"TradedPriceClient#isEnabled", "TradedPriceClient#setEnabled", "Widgets#column", "Widgets#dotIcon", "Widgets#fit",
-		"Widgets#fitName", "Widgets$PlaceholderField#placeholder", "WindowMove#window"
-	)));
+	private static final String TOLERATED_RESOURCE = "kit-rules/test-only-members.txt";
 
 	@Test
 	public void everyMainMethodHasAMainCaller() throws Exception
@@ -99,10 +69,10 @@ public class NoTestOnlyMembersRuleTest
 		try (Stream<Path> walk = Files.walk(root))
 		{
 			classFiles = walk.filter(p -> p.toString().endsWith(".class"))
-				.filter(p -> root.relativize(p).toString().replace('\\', '/').startsWith("com/bankpricemovement/"))
+				.filter(p -> root.relativize(p).toString().replace('\\', '/').startsWith(packagePath() + "/"))
 				.collect(Collectors.toList());
 		}
-		assertTrue("the walk found the package's compiled classes: " + classFiles.size(), classFiles.size() > 30);
+		assertTrue("the walk found the package's compiled classes: " + classFiles.size(), classFiles.size() > 0);
 
 		final Set<String> referenced = new HashSet<>();
 		for (final Path file : classFiles)
@@ -137,14 +107,42 @@ public class NoTestOnlyMembersRuleTest
 			}
 		}
 
+		final Set<String> tolerated = tolerated();
 		final Set<String> fresh = new TreeSet<>(testOnly);
-		fresh.removeAll(BEFORE_AU);
-		final Set<String> gone = new TreeSet<>(BEFORE_AU);
+		fresh.removeAll(tolerated);
+		final Set<String> gone = new TreeSet<>(tolerated);
 		gone.removeAll(testOnly);
 		assertEquals("members with no caller in src/main (only a test calls them) - give each a main caller or delete it",
 			Collections.emptySet(), fresh);
-		assertEquals("members listed as pre-AU test-only that now have a main caller or are gone - take them off the list",
+		assertEquals("members listed in " + TOLERATED_RESOURCE + " as test-only that now have a main caller or are gone - take them off the list",
 			Collections.emptySet(), gone);
+	}
+
+	/**
+	 * The members this plugin tolerates, read from {@link #TOLERATED_RESOURCE}: one entry per line, {@code #} comments and
+	 * blank lines ignored, and an absent file is an empty set.
+	 */
+	private static Set<String> tolerated() throws IOException
+	{
+		final Set<String> out = new TreeSet<>();
+		try (InputStream in = NoTestOnlyMembersRuleTest.class.getClassLoader().getResourceAsStream(TOLERATED_RESOURCE))
+		{
+			if (in == null)
+			{
+				return out;
+			}
+			final BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
+			String line;
+			while ((line = reader.readLine()) != null)
+			{
+				final String entry = line.trim();
+				if (!entry.isEmpty() && !entry.startsWith("#"))
+				{
+					out.add(entry);
+				}
+			}
+		}
+		return out;
 	}
 
 	/** Whether the rule does not apply to this method (see the class comment). */
@@ -324,9 +322,49 @@ public class NoTestOnlyMembersRuleTest
 		return refs;
 	}
 
-	/** {@code build/classes/java/main}, found through a main class's own code source. */
-	private static Path mainClasses() throws URISyntaxException
+	/** This test's package as a folder, e.g. {@code com/zenbank}: the prefix every compiled class of the package has. */
+	private static String packagePath()
 	{
-		return Paths.get(BankHistorySeries.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+		final String name = NoTestOnlyMembersRuleTest.class.getName();
+		return name.substring(0, name.lastIndexOf('.')).replace('.', '/');
+	}
+
+	/**
+	 * The class-path root the plugin's MAIN classes are compiled into ({@code build/classes/java/main}): the root, among
+	 * those that hold a folder for this package with compiled classes in it, that is not the one this test itself was
+	 * compiled into. Found through the class loader and the package's own name, so it names no class of the plugin.
+	 */
+	private static Path mainClasses() throws Exception
+	{
+		final String folder = packagePath();
+		final Path own = Paths.get(NoTestOnlyMembersRuleTest.class.getResource(
+			NoTestOnlyMembersRuleTest.class.getSimpleName() + ".class").toURI());
+		final Enumeration<URL> folders = NoTestOnlyMembersRuleTest.class.getClassLoader().getResources(folder);
+		while (folders.hasMoreElements())
+		{
+			final URL url = folders.nextElement();
+			if (!"file".equals(url.getProtocol()))
+			{
+				continue;
+			}
+			final Path dir = Paths.get(url.toURI());
+			if (own.startsWith(dir))
+			{
+				continue;
+			}
+			try (Stream<Path> walk = Files.walk(dir))
+			{
+				if (walk.anyMatch(p -> p.toString().endsWith(".class")))
+				{
+					Path root = dir;
+					for (int i = 0; i < folder.split("/").length; i++)
+					{
+						root = root.getParent();
+					}
+					return root;
+				}
+			}
+		}
+		throw new AssertionError("no compiled classes of " + folder + " outside this test's own output");
 	}
 }

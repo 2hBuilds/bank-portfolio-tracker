@@ -20,14 +20,15 @@
 3. **Switch tabs.** Items or Net Worth History, under the bank value.
 4. **Pick a window.** 1d, 7d, 30d, 90d or 180d, on the card.
 5. **Sort.** By % change, gp change, item price or stack price. Click the lit one again to flip.
-6. **Filter.** Items over 100k, 1m or 10m, or your own min and max.
+6. **Filter.** Items over 100k, 1m or 10m, or your own min and max. Or type part of a name in the search box above the list.
 7. **Open an item.** Click any item to see its exact figures. Click it again to close.
-8. **Settings.** Click the settings icon to include or exclude your inventory, worn gear, coins and alch-only untradeables, and to turn live prices and hover text on or off.
+8. **Settings.** Click the settings icon to include or exclude your inventory, worn gear, Grand Exchange offers, coins and alch-only untradeables, and to turn live prices and hover text on or off.
 
 ## Good to know
 
 - **Prices** are the Grand Exchange guide price, updated daily, plus live prices for actively traded items.
 - **Untradeables** made from tradeable items, like a charged bow or crystal armour, count at their parts' prices.
+- **Grand Exchange offers** count too: unsold items, bought items waiting to be collected, and the coins committed or waiting in your offers.
 - **Privacy.** No account or bank data is ever uploaded. The plugin only fetches prices.
 - **Something wrong?** Click the settings icon, then Troubleshoot..., and paste the report in the Discord.
 
@@ -37,7 +38,7 @@
 
 <br>
 
-<img width="235" src="images/sidebar.png" alt="The Items tab: bank value on top, every item below, one item opened">
+<img width="248" src="images/sidebar.png" alt="The Items tab: bank value on top, a search box, every item below">
 
 </td>
 </tr>
@@ -64,7 +65,7 @@
 
 <br>
 
-<img width="235" src="images/history.png" alt="The Net Worth History tab: a chart of your bank's total over a list of days">
+<img width="248" src="images/history.png" alt="The Net Worth History tab: a chart of your bank's total over a list of days">
 
 </td>
 </tr>

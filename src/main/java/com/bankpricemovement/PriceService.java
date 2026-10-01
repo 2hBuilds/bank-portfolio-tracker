@@ -90,6 +90,14 @@ import org.slf4j.LoggerFactory;
  * snapshot ({@link BankSnapshot#inventory}), so flipping the switch costs no bank visit and no request. With the
  * switch off every figure is the bank's alone, byte for byte.
  *
+ * <p><b>What is in the Grand Exchange offers</b> (1.0.9 part 3). A fourth source sits beside the bank, the inventory
+ * and the worn gear, under its own switch ("Include Grand Exchange offers"): the items in the player's offers
+ * ({@link BankSnapshot#exchange}) fold into the same rows by the same rule - a stack in the bank and in an offer is
+ * ONE row, its quantity added and its hover naming "2 in the Grand Exchange" ({@link MovementRow#exchangeQuantity()}) -
+ * and the coins the offers hold ({@link BankSnapshot#exchangeGp}) join the bank value under the cash switch, as the
+ * carried coins do. They are read by the plugin at the same moments as the inventory and ride on the snapshot, so
+ * flipping the switch costs no bank visit and no request, and with it off every figure is what it was without it.
+ *
  * <p><b>Why a calendar day and not "now minus the window"</b> (L-C, L-D). Addendum K fetched "the newest
  * revision at or before now - W seconds". Six analysts measured that against live data and it picked the right
  * Jagex day on only 50-56 % of clock hours, because the wiki's bot writes day D's table at a random hour of day
@@ -1777,9 +1785,10 @@ public class PriceService
 		final List<BankItem> items;
 
 		/**
-		 * Canonical id to {bank, inventory, worn} - the three figures a row's hover names. EMPTY while "Include
-		 * inventory and worn gear" is off (and while nothing is carried), which leaves every row's split at three
-		 * zeros and so byte-identical to the pre-Y one.
+		 * Canonical id to {bank, inventory, worn, exchange} - the four figures a row's hover names. EMPTY while no
+		 * source beside the bank merges anything (both of "Include inventory and worn gear" and "Include Grand
+		 * Exchange offers" off, or nothing in either), which leaves every row's split at zeros and so byte-identical
+		 * to the pre-Y one.
 		 */
 		final Map<Integer, int[]> splits;
 
@@ -1807,6 +1816,8 @@ public class PriceService
 		final long bankCashGp;
 		/** {@link BankSnapshot#carriedGp}, whatever the coins and inventory switches say. */
 		final long carriedCashGp;
+		/** {@link BankSnapshot#exchangeGp}, whatever the coins and Grand Exchange switches say (1.0.9 part 3). */
+		final long exchangeCashGp;
 
 		PricedBank(final BankSnapshot snapshot, final boolean persist)
 		{
@@ -1816,6 +1827,7 @@ public class PriceService
 			this.persist = persist;
 			this.bankCashGp = Math.max(0L, snapshot.currencyGp);
 			this.carriedCashGp = Math.max(0L, snapshot.carriedGp);
+			this.exchangeCashGp = Math.max(0L, snapshot.exchangeGp);
 		}
 	}
 
@@ -1835,22 +1847,24 @@ public class PriceService
 		 */
 		final List<BankItem> items;
 		/**
-		 * EVERY stack the snapshot holds, whatever the three counting switches say (addendum AV, line AV1): the bank,
-		 * the inventory and the worn gear folded onto canonical ids, with their {bank, inventory, worn} splits - the
-		 * list {@link #stacksOf} answers with cash, untradeables and carried all switched on. The one client-thread
+		 * EVERY stack the snapshot holds, whatever the counting switches say (addendum AV, line AV1): the bank, the
+		 * inventory, the worn gear and the Grand Exchange offers folded onto canonical ids, with their
+		 * {bank, inventory, worn, exchange} splits - the list {@link #stacksOf} answers with cash, untradeables,
+		 * carried and the offers all switched on. The one client-thread
 		 * trip prices every stack in it ({@link Lookups}), so a switch that is off never leaves a stack unpriced;
 		 * the switches only choose, afterwards, what the rows and the card add up. {@link #items} is a subset of it
 		 * by canonical id. The same instance as {@link #items}' own stacks when all three switches are on.
 		 */
 		final Stacks everything;
 		/**
-		 * Where each stack's quantity is (Y3), by canonical id: {bank, inventory, worn}. Empty while "Include
-		 * inventory and worn gear" is off, which is what leaves every row's split at three zeros.
+		 * Where each stack's quantity is (Y3), by canonical id: {bank, inventory, worn, exchange}. Empty while no
+		 * source beside the bank merges anything, which is what leaves every row's split at zeros.
 		 */
 		final Map<Integer, int[]> splits;
 		/**
 		 * The coins and platinum tokens in gp at the moment the items were snapshotted
-		 * ({@link BankSnapshot#currencyGp}, P1, plus {@link BankSnapshot#carriedGp} under Y3's switch) - taken here
+		 * ({@link BankSnapshot#currencyGp}, P1, plus {@link BankSnapshot#carriedGp} under Y3's switch and
+		 * {@link BankSnapshot#exchangeGp} under the Grand Exchange's) - taken here
 		 * rather than read from {@code bank} later so the total and the stacks it is added to can never come from
 		 * two different banks. 0 while "Include coins and platinum tokens" is off (Q4): the snapshot on disk still
 		 * records the real figure, so the switch costs no bank visit.
@@ -1959,7 +1973,7 @@ public class PriceService
 		MovementRow withSplit(final MovementRow row)
 		{
 			final int[] split = splits.get(row.id());
-			return split == null ? row : row.withSplit(split[0], split[1], split[2]);
+			return split == null ? row : row.withSplit(split[0], split[1], split[2], split[3]);
 		}
 
 		/**
@@ -4831,12 +4845,14 @@ public class PriceService
 					}
 				}
 			}
-			// Q4/Q5/Y3: the three switches that change the FIGURES choose, here and once, the stacks the rows and the
-			// card may add up (the bank's, and what the player carries and wears when Y3's switch is on, folded into
-			// one list) and the cash they may count. AV: EVERY stack is priced all the same - the second list is the
-			// snapshot with all three switches on, and it is the one the client-thread trip below reads.
+			// Q4/Q5/Y3: the switches that change the FIGURES choose, here and once, the stacks the rows and the
+			// card may add up (the bank's, what the player carries and wears when Y3's switch is on, and what is in
+			// the Grand Exchange offers when theirs is, folded into one list) and the cash they may count. AV: EVERY
+			// stack is priced all the same - the second list is the snapshot with every switch on, and it is the one
+			// the client-thread trip below reads.
 			final Stacks counted = stacksOf(bank, options);
-			final ViewOptions allOn = options.withCountCash(true).withCountUntradeables(true).withCountInventory(true);
+			final ViewOptions allOn = options.withCountCash(true).withCountUntradeables(true).withCountInventory(true)
+				.withCountGrandExchange(true);
 			final Stacks everything = allOn.equals(options) ? counted : stacksOf(bank, allOn);
 			in = new Inputs(counted, everything, cashOf(bank, options),
 				filter, options, snapshotBaselines, snapshotTables, inMemory, r0, r0Map, mapping, foldedNames, owners,
@@ -5035,18 +5051,23 @@ public class PriceService
 	}
 
 	/**
-	 * The eight bank-history cells of one computation (addendum AU, contract section 2, plan 7.7 items 1-4): every
+	 * The ten bank-history cells of one computation (addendum AU, contract section 2, plan 7.7 items 1-4): every
 	 * stack of {@link Inputs#everything} priced by {@link #priceStacks} - the ONE "now" rule the rows and the card
 	 * use, never a copy of it - and filed by the kind it ACTUALLY ended as (a parts stack with an unpriced part is
 	 * {@link StackKind#ALCH}), in the bank or carried:
 	 *
 	 * <ul>
 	 * <li>bank cell = {@code holdingValue(unit, bankQty)};</li>
-	 * <li>carried cell = {@code holdingValue(unit, mergedQty) - holdingValue(unit, bankQty)}, so bank + carried is
-	 * exactly the stack's holding and the long clamp cannot break the sum;</li>
-	 * <li>the two cash cells are the snapshot's raw {@link BankSnapshot#currencyGp} and
-	 * {@link BankSnapshot#carriedGp}.</li>
+	 * <li>carried cell = {@code holdingValue(unit, bankQty + carriedQty) - holdingValue(unit, bankQty)}, the
+	 * inventory's and the worn gear's together;</li>
+	 * <li>Grand Exchange cell = {@code holdingValue(unit, mergedQty) - holdingValue(unit, bankQty + carriedQty)},
+	 * the offers' items (1.0.9 part 3) - always the tradeable cell, because the Grand Exchange trades tradeables
+	 * (a merged stack of another kind that ever held an offer's part still counts there rather than vanishing);</li>
+	 * <li>the three cash cells are the snapshot's raw {@link BankSnapshot#currencyGp}, {@link BankSnapshot#carriedGp}
+	 * and {@link BankSnapshot#exchangeGp}.</li>
 	 * </ul>
+	 * Each difference is clamped at zero, so bank + carried + Grand Exchange is exactly the stack's holding and the
+	 * long clamp cannot break the sum.
 	 *
 	 * <p>A price that is absent or not positive counts nothing, which is how {@link PortfolioMath} reads it. Pure:
 	 * no counting switch is read, so flipping one changes no cell.
@@ -5069,8 +5090,9 @@ public class PriceService
 				continue;
 			}
 			final int[] split = in.everything.splits.get(item.id);
-			// No split at all means nothing is carried: the whole stack is the bank's.
+			// No split at all means nothing is carried and nothing is in the Grand Exchange: the whole stack is the bank's.
 			final int bankQty = split == null ? item.quantity : split[0];
+			final int carriedQty = split == null ? 0 : BankReader.addClamped(split[1], split[2]);
 			final int bankCell;
 			final int carriedCell;
 			if (price.kind == StackKind.TRADEABLE)
@@ -5090,25 +5112,34 @@ public class PriceService
 				bankCell = BankHistoryPoint.BANK_ALCH;
 				carriedCell = BankHistoryPoint.CARRIED_ALCH;
 			}
-			addHolding(card, bankCell, carriedCell, positive(price.cardUnit), bankQty, item.quantity);
-			addHolding(guide, bankCell, carriedCell, positive(price.guideUnit), bankQty, item.quantity);
+			addHolding(card, bankCell, carriedCell, positive(price.cardUnit), bankQty, carriedQty, item.quantity);
+			addHolding(guide, bankCell, carriedCell, positive(price.guideUnit), bankQty, carriedQty, item.quantity);
 		}
 		final PricedBank bank = in.priced;
 		card[BankHistoryPoint.BANK_CASH] = bank.bankCashGp;
 		card[BankHistoryPoint.CARRIED_CASH] = bank.carriedCashGp;
+		card[BankHistoryPoint.GE_CASH] = bank.exchangeCashGp;
 		guide[BankHistoryPoint.BANK_CASH] = bank.bankCashGp;
 		guide[BankHistoryPoint.CARRIED_CASH] = bank.carriedCashGp;
+		guide[BankHistoryPoint.GE_CASH] = bank.exchangeCashGp;
 		return new BankHistoryCells(card, guide, anyTradeable && !anyTradeablePriced);
 	}
 
-	/** One stack's holding into a bank cell and a carried cell (contract section 2's arithmetic), clamped sums. */
+	/**
+	 * One stack's holding into a bank cell, a carried cell and - since 1.0.9 part 3 - the Grand Exchange cell
+	 * (contract section 2's arithmetic), clamped sums. The three parts are each cut from the running holding, so they
+	 * add up to {@code holdingValue(unit, mergedQty)} exactly.
+	 */
 	private static void addHolding(final long[] cells, final int bankCell, final int carriedCell,
-		@Nullable final Long unit, final int bankQty, final int mergedQty)
+		@Nullable final Long unit, final int bankQty, final int carriedQty, final int mergedQty)
 	{
 		final long inBank = MovementMath.holdingValue(unit, bankQty);
-		final long carried = Math.max(0L, MovementMath.holdingValue(unit, mergedQty) - inBank);
+		final long withCarried = MovementMath.holdingValue(unit, BankReader.addClamped(bankQty, carriedQty));
+		final long carried = Math.max(0L, withCarried - inBank);
+		final long offers = Math.max(0L, MovementMath.holdingValue(unit, mergedQty) - withCarried);
 		cells[bankCell] = PortfolioMath.clampedAdd(cells[bankCell], inBank);
 		cells[carriedCell] = PortfolioMath.clampedAdd(cells[carriedCell], carried);
+		cells[BankHistoryPoint.GE_TRADEABLE] = PortfolioMath.clampedAdd(cells[BankHistoryPoint.GE_TRADEABLE], offers);
 	}
 
 	/** A price that counts - present and positive - or null, the way {@link PortfolioMath} reads one. */
@@ -5947,7 +5978,9 @@ public class PriceService
 	 */
 	private boolean hasBankHistoryTodayLocked(final long accountHash, final String profile)
 	{
+		// A series still marked all-legacy (1.0.9 part 5) holds no reading of this build, whatever its newest day is.
 		return bankHistoryHash == accountHash && bankHistoryProfile.equals(profile)
+			&& !LocalDate.MAX.equals(bankHistory.freshFrom())
 			&& bankHistory.on(BankHistoryMath.dayOf(clockMillis.getAsLong(), zone)) != null;
 	}
 
@@ -5979,6 +6012,12 @@ public class PriceService
 	 * counted - the reading is drawn but never sent (the store would refuse it, and a refused reading sent again once
 	 * the clock is right would enter the file as a real day), and the first reading taken with the clock right drops
 	 * it again ({@link #bankHistoryBehind}).
+	 *
+	 * <p><b>The fresh start</b> (1.0.9 part 5): a series the store read from a file written before 1.0.9 answers
+	 * {@link LocalDate#MAX} from {@link BankHistorySeries#freshFrom()} - every day legacy. The first reading folded into
+	 * it is the first one that counts the Grand Exchange offers, so it is stamped here with its day, as the store
+	 * stamps the file when it writes the same reading, and the History tab shows it from the next publish. That first
+	 * reading is always recorded, even when a held one of the same day has the same cells.
 	 *
 	 * @return what to hand the store - the owner, taken from the PRICED snapshot, and every reading not yet on disk
 	 */
@@ -6036,10 +6075,20 @@ public class PriceService
 		bankHistoryCapture = bank.capturedAtMillis;
 		final BankHistoryPoint point = new BankHistoryPoint(today, readAt, bank.capturedAtMillis, cells.card, cells.guide);
 		final BankHistoryPoint held = bankHistory.on(today);
+		// 1.0.9 part 5: a series read from a file written before 1.0.9 has every day marked legacy until a reading is
+		// recorded into it. This reading IS that first one, so it is always written - even when a held reading of today
+		// has the same cells, which is how a player with no offers meets it - and the series in memory is stamped
+		// with its day, exactly as the store stamps the file, so the tab shows today's reading as soon as it is drawn.
+		final boolean firstSinceUpdate = LocalDate.MAX.equals(bankHistory.freshFrom());
 		// A held reading stamped after this one was taken under a clock that was AHEAD (walk-through AU-W1): it is not
 		// the day's last reading, whatever its cells say, so this one replaces it and is written.
-		final boolean changed = held == null || held.readAtMillis() > readAt || !sameCells(held, point);
-		final BankHistorySeries added = changed ? bankHistory.with(point) : bankHistory;
+		final boolean changed = firstSinceUpdate || held == null || held.readAtMillis() > readAt
+			|| !sameCells(held, point);
+		BankHistorySeries added = changed ? bankHistory.with(point) : bankHistory;
+		if (firstSinceUpdate)
+		{
+			added = added.withFreshFrom(today);
+		}
 		final BankHistorySeries kept = added.upTo(today);
 		final int ahead = added.size() - kept.size();
 		if (ahead > 0 && ahead >= kept.size())
@@ -6168,7 +6217,8 @@ public class PriceService
 				kept.add(point);
 			}
 		}
-		return BankHistorySeries.of(kept);
+		// Rebuilt from its readings, so the fresh start (1.0.9 part 5) has to be put back on it.
+		return BankHistorySeries.of(kept).withFreshFrom(series.freshFrom());
 	}
 
 	/** Whether two readings carry the same eight cells, card and guide - what a write is decided on (plan 7.7 item 7). */
@@ -6855,17 +6905,19 @@ public class PriceService
 	}
 
 	/**
-	 * The stacks a computation is to consider and where each one's quantity is (Q5, Y3) - the one place the two
+	 * The stacks a computation is to consider and where each one's quantity is (Q5, Y3) - the one place the
 	 * switches that decide WHICH STACKS EXIST are applied, so everything downstream simply works on "the bank" and
-	 * neither switch can be half-applied.
+	 * no switch can be half-applied.
 	 *
 	 * <ul>
-	 * <li>"Include inventory and worn gear" OFF, or nothing carried: the bank's own stacks, and no split at all -
-	 * which is the list the snapshot used to hold at all, so the whole computation downstream is the pre-Y one,
-	 * figure for figure.</li>
-	 * <li>ON: the bank's stacks, the inventory's and the worn gear's folded onto canonical ids with the quantities
-	 * added, in the one row order this plugin has ({@link BankReader#BY_NAME_THEN_ID}), each carrying the three
-	 * figures its row's hover names ({@link Stacks#splits}).</li>
+	 * <li>Neither "Include inventory and worn gear" nor "Include Grand Exchange offers" merging anything (a switch
+	 * off, or nothing in that source): the bank's own stacks, and no split at all - which is the list the snapshot
+	 * used to hold at all, so the whole computation downstream is the pre-Y one, figure for figure.</li>
+	 * <li>Otherwise: the bank's stacks, then the inventory's and the worn gear's (while their switch is on), then the
+	 * Grand Exchange offers' (while theirs is) folded onto canonical ids with the quantities added, in the one row
+	 * order this plugin has ({@link BankReader#BY_NAME_THEN_ID}), each carrying the four figures its row's hover
+	 * names ({@link Stacks#splits}). A source whose switch is off is left out of the fold altogether, so a row
+	 * never says "in the Grand Exchange" for a quantity the bank value does not count.</li>
 	 * </ul>
 	 *
 	 * <p>Then "Include alch-only untradeables" (Q5, split by addendum AV), over the merged list: a worn or carried
@@ -6873,7 +6925,9 @@ public class PriceService
 	 */
 	private static Stacks stacksOf(@Nullable final BankSnapshot snapshot, final ViewOptions options)
 	{
-		if (!options.countInventory() || snapshot == null || nothingCarried(snapshot))
+		final boolean carried = carriedMerges(snapshot, options);
+		final boolean offered = exchangeMerges(snapshot, options);
+		if (snapshot == null || (!carried && !offered))
 		{
 			return new Stacks(keep(itemsOf(snapshot), options), Collections.<Integer, int[]>emptyMap());
 		}
@@ -6881,10 +6935,18 @@ public class PriceService
 		final Map<Integer, BankItem> merged = new LinkedHashMap<>();
 		final Map<Integer, int[]> splits = new HashMap<>();
 		// The bank first, so a stack held in two places keeps the name, the stackable flag and the untradeable
-		// marks the BANK captured for it; the inventory before the worn gear, which is the order the hover reads.
+		// marks the BANK captured for it; the inventory before the worn gear and the Grand Exchange offers last, which
+		// is the order the hover reads.
 		fold(merged, splits, snapshot.items, 0);
-		fold(merged, splits, snapshot.inventory, 1);
-		fold(merged, splits, snapshot.worn, 2);
+		if (carried)
+		{
+			fold(merged, splits, snapshot.inventory, 1);
+			fold(merged, splits, snapshot.worn, 2);
+		}
+		if (offered)
+		{
+			fold(merged, splits, snapshot.exchange, 3);
+		}
 		final List<BankItem> rows = new ArrayList<>(merged.values());
 		rows.sort(BankReader.BY_NAME_THEN_ID);
 		return new Stacks(keep(rows, options), splits);
@@ -6898,14 +6960,35 @@ public class PriceService
 	}
 
 	/**
+	 * Whether a snapshot has Grand Exchange stacks worth merging - a file written before 1.0.9 part 3, a logged-out
+	 * read and a player with no offers holding an item have none.
+	 */
+	private static boolean nothingInExchange(final BankSnapshot snapshot)
+	{
+		return snapshot.exchange == null || snapshot.exchange.isEmpty();
+	}
+
+	/** The carried half merges into the stacks: its switch is on and there is something in it. */
+	private static boolean carriedMerges(@Nullable final BankSnapshot snapshot, final ViewOptions options)
+	{
+		return snapshot != null && options.countInventory() && !nothingCarried(snapshot);
+	}
+
+	/** The Grand Exchange offers merge into the stacks: their switch is on and there is something in them. */
+	private static boolean exchangeMerges(@Nullable final BankSnapshot snapshot, final ViewOptions options)
+	{
+		return snapshot != null && options.countGrandExchange() && !nothingInExchange(snapshot);
+	}
+
+	/**
 	 * One container's stacks folded into the merge (Y3): a stack already there gains the quantity, a new one is
 	 * COPIED in ({@link BankItem#withQuantity}) rather than shared, because the lists belong to the persisted
 	 * snapshot and a computation must never write to them.
 	 *
 	 * @param merged the fold map, keyed by canonical id and mutated in place
-	 * @param splits id to {bank, inventory, worn}, mutated in place
+	 * @param splits id to {bank, inventory, worn, exchange}, mutated in place
 	 * @param stacks one container's stacks; null or empty adds nothing
-	 * @param slot   which of the three figures these stacks count towards
+	 * @param slot   which of the four figures these stacks count towards
 	 */
 	private static void fold(final Map<Integer, BankItem> merged, final Map<Integer, int[]> splits,
 		@Nullable final List<BankItem> stacks, final int slot)
@@ -6929,7 +7012,7 @@ public class PriceService
 			final int[] split = splits.get(item.id);
 			if (split == null)
 			{
-				final int[] fresh = new int[3];
+				final int[] fresh = new int[4];
 				fresh[slot] = item.quantity;
 				splits.put(item.id, fresh);
 			}
@@ -7011,7 +7094,8 @@ public class PriceService
 	/**
 	 * How many stacks {@link #stacksOf(BankSnapshot, ViewOptions)} would hand a computation - the status's bank
 	 * count, and the {@code m} of "n of m stacks". Since Y3 that is the MERGED count while "Include inventory and
-	 * worn gear" is on: one row for a stack held in two places, counted once. A parts stack that ends on the alch
+	 * worn gear" is on, and since 1.0.9 part 3 while "Include Grand Exchange offers" is: one row for a stack held in
+	 * two places, counted once. A parts stack that ends on the alch
 	 * rule is counted here and taken off again by {@link #buildStatusLocked} ({@link #leftOutRows}, AV2): only
 	 * pricing can tell.
 	 */
@@ -7021,7 +7105,7 @@ public class PriceService
 		{
 			return 0;
 		}
-		if (options.countInventory() && !nothingCarried(snapshot))
+		if (carriedMerges(snapshot, options) || exchangeMerges(snapshot, options))
 		{
 			return stacksOf(snapshot, options).items.size();
 		}
@@ -7044,7 +7128,8 @@ public class PriceService
 
 	/**
 	 * The cash a computation may count (Q4, Y3): the bank's coins and platinum tokens, plus the ones in the
-	 * player's own pockets while "Include inventory and worn gear" is on, and 0 with the cash switch off.
+	 * player's own pockets while "Include inventory and worn gear" is on, plus the coins the Grand Exchange offers
+	 * hold while "Include Grand Exchange offers" is (1.0.9 part 3) - and 0 with the cash switch off.
 	 */
 	private static long cashOf(@Nullable final BankSnapshot snapshot, final ViewOptions options)
 	{
@@ -7052,9 +7137,16 @@ public class PriceService
 		{
 			return 0L;
 		}
-		return options.countInventory()
-			? PortfolioMath.clampedAdd(snapshot.currencyGp, snapshot.carriedGp)
-			: snapshot.currencyGp;
+		long cash = snapshot.currencyGp;
+		if (options.countInventory())
+		{
+			cash = PortfolioMath.clampedAdd(cash, snapshot.carriedGp);
+		}
+		if (options.countGrandExchange())
+		{
+			cash = PortfolioMath.clampedAdd(cash, Math.max(0L, snapshot.exchangeGp));
+		}
+		return cash;
 	}
 
 	private static String describe(@Nullable final Throwable error)

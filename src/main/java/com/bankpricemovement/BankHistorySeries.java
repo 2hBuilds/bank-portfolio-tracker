@@ -21,18 +21,30 @@ import javax.annotation.Nullable;
  * <p>Value equality over {@link #points()}, so a series re-read from disk equals the one in memory when they hold
  * the same readings - which is how the store decides that a write would change nothing, and how the History view
  * decides that there is nothing to redraw.
+ *
+ * <p><b>The fresh start</b> (1.0.9 part 5). Readings recorded before 1.0.9 did not count the Grand Exchange offers,
+ * so for a player who keeps much of their bank on offer those days read low. {@link #freshFrom()} names the first day
+ * recorded by 1.0.9 or later: the days before it are the LEGACY days, and {@link #fromFresh()} is the series without
+ * them. It is part of the value - two series holding the same readings but cut at different days are not equal - and
+ * every copy carries it, so the store and the panel never have to remember it on the side. A series built by
+ * {@link #of} has none: every day counts.
  */
 public final class BankHistorySeries
 {
 	/** No readings at all. */
-	public static final BankHistorySeries EMPTY = new BankHistorySeries(Collections.<BankHistoryPoint>emptyList());
+	public static final BankHistorySeries EMPTY = new BankHistorySeries(Collections.<BankHistoryPoint>emptyList(), null);
 
 	/** Ascending by day, one per day, unmodifiable. */
 	private final List<BankHistoryPoint> points;
 
-	private BankHistorySeries(final List<BankHistoryPoint> sorted)
+	/** The first day recorded by 1.0.9 or later; null = no legacy days; {@link LocalDate#MAX} = every day is one. */
+	@Nullable
+	private final LocalDate freshFrom;
+
+	private BankHistorySeries(final List<BankHistoryPoint> sorted, @Nullable final LocalDate freshFrom)
 	{
 		this.points = sorted;
+		this.freshFrom = freshFrom;
 	}
 
 	/**
@@ -53,7 +65,7 @@ public final class BankHistorySeries
 				byDay.merge(point.day(), point, BankHistorySeries::later);
 			}
 		}
-		return fromMap(byDay);
+		return fromMap(byDay, null);
 	}
 
 	/** Of two readings of one day, the one taken later; {@code b} on a tie. */
@@ -62,13 +74,14 @@ public final class BankHistorySeries
 		return a.readAtMillis() > b.readAtMillis() ? a : b;
 	}
 
-	private static BankHistorySeries fromMap(final TreeMap<LocalDate, BankHistoryPoint> byDay)
+	private static BankHistorySeries fromMap(final TreeMap<LocalDate, BankHistoryPoint> byDay,
+		@Nullable final LocalDate freshFrom)
 	{
 		if (byDay.isEmpty())
 		{
 			return EMPTY;
 		}
-		return new BankHistorySeries(Collections.unmodifiableList(new ArrayList<>(byDay.values())));
+		return new BankHistorySeries(Collections.unmodifiableList(new ArrayList<>(byDay.values())), freshFrom);
 	}
 
 	private TreeMap<LocalDate, BankHistoryPoint> toMap()
@@ -93,7 +106,21 @@ public final class BankHistorySeries
 		}
 		final TreeMap<LocalDate, BankHistoryPoint> byDay = toMap();
 		byDay.put(point.day(), point);
-		return fromMap(byDay);
+		return fromMap(byDay, freshFrom);
+	}
+
+	/**
+	 * This series with {@code freshFrom} as its fresh start (1.0.9 part 5): the store's way to say "the days before
+	 * this one were recorded before 1.0.9". Null clears it; {@link LocalDate#MAX} says every day is a legacy day. An
+	 * EMPTY series has nothing to hide and answers itself.
+	 */
+	public BankHistorySeries withFreshFrom(@Nullable final LocalDate freshFrom)
+	{
+		if (points.isEmpty() || Objects.equals(this.freshFrom, freshFrom))
+		{
+			return this;
+		}
+		return new BankHistorySeries(points, freshFrom);
 	}
 
 	/**
@@ -116,7 +143,60 @@ public final class BankHistorySeries
 				kept.add(point);
 			}
 		}
-		return kept.isEmpty() ? EMPTY : new BankHistorySeries(Collections.unmodifiableList(kept));
+		return kept.isEmpty() ? EMPTY : new BankHistorySeries(Collections.unmodifiableList(kept), freshFrom);
+	}
+
+	/**
+	 * The first day recorded by 1.0.9 or later (1.0.9 part 5), or null when this series has no legacy days: every new
+	 * install, and every file that was never written by an older build. {@link LocalDate#MAX} means every day here
+	 * is a legacy day - a file migrated from an older schema that 1.0.9 has not recorded into yet. Otherwise the days
+	 * BEFORE it are the legacy ones.
+	 */
+	@Nullable
+	public LocalDate freshFrom()
+	{
+		return freshFrom;
+	}
+
+	/**
+	 * This series cut to the days recorded by 1.0.9 or later - the days at or after {@link #freshFrom()}: the whole
+	 * series when there is none, {@link #EMPTY} when every day is a legacy day. The cut series has no legacy days of
+	 * its own, so its {@link #freshFrom()} is null. The panel hands the History view and the card THIS unless the
+	 * reader has asked to see the old days.
+	 */
+	public BankHistorySeries fromFresh()
+	{
+		if (freshFrom == null)
+		{
+			return this;
+		}
+		if (LocalDate.MAX.equals(freshFrom))
+		{
+			return EMPTY;
+		}
+		final List<BankHistoryPoint> kept = new ArrayList<>(points.size());
+		for (final BankHistoryPoint point : points)
+		{
+			if (!point.day().isBefore(freshFrom))
+			{
+				kept.add(point);
+			}
+		}
+		return kept.isEmpty() ? EMPTY : new BankHistorySeries(Collections.unmodifiableList(kept), null);
+	}
+
+	/**
+	 * Whether any reading here was recorded before 1.0.9 (1.0.9 part 5): a {@link #freshFrom()} is named and at least
+	 * one day lies before it - {@link LocalDate#MAX} counts as long as the series is not empty. The History tab
+	 * shows its "Include days before v1.0.9" check box only while this is true.
+	 */
+	public boolean hasLegacyDays()
+	{
+		if (freshFrom == null || points.isEmpty())
+		{
+			return false;
+		}
+		return points.get(0).day().isBefore(freshFrom);
 	}
 
 	/** Every reading, ascending by day; unmodifiable. */
@@ -199,13 +279,18 @@ public final class BankHistorySeries
 		{
 			return true;
 		}
-		return o instanceof BankHistorySeries && points.equals(((BankHistorySeries) o).points);
+		if (!(o instanceof BankHistorySeries))
+		{
+			return false;
+		}
+		final BankHistorySeries that = (BankHistorySeries) o;
+		return points.equals(that.points) && Objects.equals(freshFrom, that.freshFrom);
 	}
 
 	@Override
 	public int hashCode()
 	{
-		return points.hashCode();
+		return 31 * points.hashCode() + Objects.hashCode(freshFrom);
 	}
 
 	@Override
@@ -214,6 +299,7 @@ public final class BankHistorySeries
 		final BankHistoryPoint first = first();
 		final BankHistoryPoint last = last();
 		return "BankHistorySeries{readings=" + points.size()
-			+ (first == null ? "" : ", first=" + first.day() + ", last=" + last.day()) + '}';
+			+ (first == null ? "" : ", first=" + first.day() + ", last=" + last.day())
+			+ (freshFrom == null ? "" : ", freshFrom=" + (LocalDate.MAX.equals(freshFrom) ? "all" : freshFrom)) + '}';
 	}
 }

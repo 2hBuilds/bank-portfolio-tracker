@@ -15,6 +15,8 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import net.runelite.api.GrandExchangeOffer;
+import net.runelite.api.GrandExchangeOfferState;
 import net.runelite.api.Item;
 import net.runelite.api.ItemComposition;
 import net.runelite.api.ItemContainer;
@@ -592,7 +594,7 @@ public class BankReaderTest
 		when(itemManager.getItemComposition(poisoned)).thenThrow(new IllegalStateException("planted"));
 
 		final BankReader.Carried carried = reader.readContainers(
-			new Item[]{item(poisoned, 1), item(SHARK, 4)}, new Item[]{item(WHIP, 1)}, NOW);
+			new Item[]{item(poisoned, 1), item(SHARK, 4)}, new Item[]{item(WHIP, 1)}, null, NOW);
 
 		assertEquals(1, carried.inventory.size());
 		assertEquals(SHARK, carried.inventory.get(0).id);
@@ -827,7 +829,7 @@ public class BankReaderTest
 	public void readContainersKeepsTheInventoryAndTheWornGearApart()
 	{
 		final BankReader.Carried carried = reader.readContainers(
-			new Item[]{item(SHARK, 3), item(BONES, 2)}, new Item[]{item(WHIP, 1)}, NOW);
+			new Item[]{item(SHARK, 3), item(BONES, 2)}, new Item[]{item(WHIP, 1)}, null, NOW);
 
 		assertEquals(2, carried.inventory.size());
 		assertEquals("name order, like every list this plugin draws", BONES, carried.inventory.get(0).id);
@@ -850,7 +852,7 @@ public class BankReaderTest
 	{
 		final BankReader.Carried carried = reader.readContainers(
 			new Item[]{item(WHIP, 1), null, item(WHIP_NOTED, 4), item(-1, 0), item(WHIP, 2), item(BANK_FILLER, 1)},
-			null, NOW);
+			null, null, NOW);
 
 		assertEquals(1, carried.inventory.size());
 		assertEquals(WHIP, carried.inventory.get(0).id);
@@ -862,7 +864,7 @@ public class BankReaderTest
 	@Test
 	public void aNullContainerReadsAsEmpty()
 	{
-		final BankReader.Carried neither = reader.readContainers(null, null, NOW);
+		final BankReader.Carried neither = reader.readContainers(null, null, null, NOW);
 
 		assertNotNull(neither.inventory);
 		assertNotNull(neither.worn);
@@ -871,7 +873,7 @@ public class BankReaderTest
 		assertTrue(neither.isEmpty());
 		assertEquals("an empty read is still a read", NOW, neither.readAtMillis);
 
-		final BankReader.Carried wornOnly = reader.readContainers(null, new Item[]{item(WHIP, 1)}, NOW);
+		final BankReader.Carried wornOnly = reader.readContainers(null, new Item[]{item(WHIP, 1)}, null, NOW);
 		assertTrue(wornOnly.inventory.isEmpty());
 		assertEquals(1, wornOnly.worn.size());
 	}
@@ -884,7 +886,7 @@ public class BankReaderTest
 		define(PLATINUM, "Platinum token", true, true);
 
 		final BankReader.Carried carried = reader.readContainers(
-			new Item[]{item(COINS, 791_078), item(PLATINUM, 2), item(SHARK, 1)}, new Item[]{item(WHIP, 1)}, NOW);
+			new Item[]{item(COINS, 791_078), item(PLATINUM, 2), item(SHARK, 1)}, new Item[]{item(WHIP, 1)}, null, NOW);
 
 		assertEquals("only the shark is a row", 1, carried.inventory.size());
 		assertEquals(SHARK, carried.inventory.get(0).id);
@@ -898,7 +900,7 @@ public class BankReaderTest
 		when(define(CRYSTAL_BODY, "Crystal body", false, false).getHaPrice()).thenReturn(900_000);
 		define(ARMOUR_SEED, SEED_NAME, true, false);
 
-		final BankReader.Carried carried = reader.readContainers(null, new Item[]{item(CRYSTAL_BODY, 1)}, NOW);
+		final BankReader.Carried carried = reader.readContainers(null, new Item[]{item(CRYSTAL_BODY, 1)}, null, NOW);
 
 		assertEquals(1, carried.worn.size());
 		final BankItem body = carried.worn.get(0);
@@ -917,7 +919,7 @@ public class BankReaderTest
 		when(define(quest, "Quest item", false, false).getHaPrice()).thenReturn(0);
 
 		final BankReader.Carried carried = reader.readContainers(new Item[]{item(quest, 1)},
-			new Item[]{item(quest, 1)}, NOW);
+			new Item[]{item(quest, 1)}, null, NOW);
 
 		assertTrue(carried.inventory.isEmpty());
 		assertTrue(carried.worn.isEmpty());
@@ -927,12 +929,13 @@ public class BankReaderTest
 	@Test
 	public void carriedComparesByValue()
 	{
-		final BankReader.Carried one = reader.readContainers(new Item[]{item(SHARK, 3)}, new Item[]{item(WHIP, 1)}, NOW);
-		final BankReader.Carried two = reader.readContainers(new Item[]{item(SHARK, 3)}, new Item[]{item(WHIP, 1)}, NOW);
+		final BankReader.Carried one = reader.readContainers(new Item[]{item(SHARK, 3)}, new Item[]{item(WHIP, 1)}, null, NOW);
+		final BankReader.Carried two = reader.readContainers(new Item[]{item(SHARK, 3)}, new Item[]{item(WHIP, 1)}, null, NOW);
 
 		assertEquals(one, two);
 		assertEquals(one.hashCode(), two.hashCode());
-		assertEquals("Carried{inventory=1, worn=1, carriedGp=0, readAtMillis=" + NOW + "}", one.toString());
+		assertEquals("Carried{inventory=1, worn=1, exchange=0, carriedGp=0, exchangeGp=0, readAtMillis=" + NOW + "}",
+			one.toString());
 		assertTrue(BankReader.Carried.EMPTY.isEmpty());
 		assertEquals(0L, BankReader.Carried.EMPTY.readAtMillis);
 	}
@@ -949,7 +952,156 @@ public class BankReaderTest
 		assertEquals(0L, snapshot.carriedAtMillis);
 	}
 
+	// ---------------------------------------------------------------- 1.0.9 part 3: the Grand Exchange offers
+
+	/**
+	 * Two offers for one item become ONE exchange stack, by the bank's own walk: a noted item in an offer folds onto
+	 * the item it notes, quantities add, and the name is the canonical item's.
+	 */
+	@Test
+	public void twoOffersOfOneItemBecomeOneExchangeStackCanonicalisedLikeTheBanks()
+	{
+		final ExchangeOffers offers = offers(
+			offer(GrandExchangeOfferState.SELLING, WHIP_NOTED, 10, 4, 100L, 350L),
+			offer(GrandExchangeOfferState.BOUGHT, WHIP, 3, 3, 90L, 270L),
+			offer(GrandExchangeOfferState.BUYING, SHARK, 5, 2, 800L, 1_600L));
+
+		final BankReader.Carried carried = reader.readContainers(null, null, offers, NOW);
+
+		assertEquals(2, carried.exchange.size());
+		assertEquals("name order, like every list this plugin draws", WHIP, carried.exchange.get(0).id);
+		assertEquals(WHIP_NAME, carried.exchange.get(0).name);
+		assertEquals("6 unsold of the noted offer + 3 bought, on one canonical id", 9,
+			carried.exchange.get(0).quantity);
+		assertEquals(SHARK, carried.exchange.get(1).id);
+		assertEquals("2 bought and waiting", 2, carried.exchange.get(1).quantity);
+		assertEquals(NOW, carried.readAtMillis);
+		assertFalse(carried.isEmpty());
+	}
+
+	/** The offers' coins leave as {@code exchangeGp}, never as a row. */
+	@Test
+	public void theOffersCoinsLeaveAsExchangeGpAndNeverAsARow()
+	{
+		final ExchangeOffers offers = offers(
+			offer(GrandExchangeOfferState.SOLD, WHIP, 10, 10, 100L, 1_000L),
+			offer(GrandExchangeOfferState.BUYING, SHARK, 10, 0, 100L, 0L));
+
+		final BankReader.Carried carried = reader.readContainers(null, null, offers, NOW);
+
+		assertEquals("1,000 received by the sell, 1,000 still committed to the buy", 2_000L, carried.exchangeGp);
+		assertEquals(0L, carried.carriedGp);
+		assertTrue("a sold-out offer and an unfilled one hold no item", carried.exchange.isEmpty());
+		assertFalse("coins alone make the read non-empty", carried.isEmpty());
+	}
+
+	/** Null offers - a plugin that has seen none, or a test - read as none: an empty list and 0. */
+	@Test
+	public void nullOffersGiveAnEmptyExchangeAndNoCoins()
+	{
+		final BankReader.Carried carried = reader.readContainers(new Item[]{item(SHARK, 3)}, null, null, NOW);
+
+		assertNotNull(carried.exchange);
+		assertTrue(carried.exchange.isEmpty());
+		assertEquals(0L, carried.exchangeGp);
+		assertEquals(1, carried.inventory.size());
+		final BankReader.Carried empty = reader.readContainers(null, null, ExchangeOffers.EMPTY, NOW);
+		assertTrue(empty.exchange.isEmpty());
+		assertEquals(0L, empty.exchangeGp);
+		assertTrue(empty.isEmpty());
+	}
+
+	/** The third source does not touch the first two: same lists, same cash, with and without offers. */
+	@Test
+	public void theInventoryAndTheWornGearAreUntouchedByTheThirdSource()
+	{
+		define(COINS, "Coins", true, true);
+		final Item[] inventory = {item(SHARK, 3), item(BONES, 2), item(COINS, 500)};
+		final Item[] worn = {item(WHIP, 1)};
+		final ExchangeOffers offers = offers(offer(GrandExchangeOfferState.SELLING, WHIP, 10, 4, 100L, 350L));
+
+		final BankReader.Carried without = reader.readContainers(inventory, worn, null, NOW);
+		final BankReader.Carried with = reader.readContainers(inventory, worn, offers, NOW);
+
+		assertEquals(without.inventory, with.inventory);
+		assertEquals(without.worn, with.worn);
+		assertEquals(without.carriedGp, with.carriedGp);
+		assertEquals(500L, with.carriedGp);
+		assertEquals("the offer is its own list, not folded into the worn gear", 1, with.worn.size());
+		assertEquals(1, with.worn.get(0).quantity);
+		assertEquals(6, with.exchange.get(0).quantity);
+		assertEquals(350L, with.exchangeGp);
+		assertTrue(without.exchange.isEmpty());
+	}
+
+	/** The four-argument constructor of addendum Y still builds a carried part with no offers in it. */
+	@Test
+	public void theFourArgumentCarriedDelegatesWithNoExchange()
+	{
+		final BankItem shark = new BankItem(SHARK, 3, SHARK_NAME, true);
+		final BankReader.Carried carried = new BankReader.Carried(Arrays.asList(shark), null, 12L, NOW);
+
+		assertEquals(1, carried.inventory.size());
+		assertTrue(carried.worn.isEmpty());
+		assertTrue("an empty list, never null", carried.exchange.isEmpty());
+		assertEquals(0L, carried.exchangeGp);
+		assertEquals(12L, carried.carriedGp);
+		assertEquals(new BankReader.Carried(Arrays.asList(shark), null, null, 12L, 0L, NOW), carried);
+	}
+
+	/** The six-argument constructor: the new pair is clamped, defaulted, compared and printed like its twins. */
+	@Test
+	public void theSixArgumentCarriedClampsAndComparesTheExchangePair()
+	{
+		final BankItem whip = new BankItem(WHIP, 6, WHIP_NAME, false);
+		final BankReader.Carried carried = new BankReader.Carried(null, null, Arrays.asList(whip), 0L, -5L, -1L);
+
+		assertEquals("a negative worth reads as 0", 0L, carried.exchangeGp);
+		assertEquals(0L, carried.readAtMillis);
+		assertFalse("an item in an offer is something", carried.isEmpty());
+		assertFalse(new BankReader.Carried(null, null, null, 0L, 1L, 0L).isEmpty());
+		assertTrue(new BankReader.Carried(null, null, null, 0L, 0L, 0L).isEmpty());
+
+		final BankReader.Carried same = new BankReader.Carried(null, null, Arrays.asList(whip), 0L, 0L, 0L);
+		assertEquals(carried, same);
+		assertEquals(carried.hashCode(), same.hashCode());
+		assertFalse("the list is part of the value",
+			carried.equals(new BankReader.Carried(null, null, null, 0L, 0L, 0L)));
+		assertFalse("and so is the coin figure",
+			carried.equals(new BankReader.Carried(null, null, Arrays.asList(whip), 0L, 9L, 0L)));
+		assertEquals("Carried{inventory=0, worn=0, exchange=1, carriedGp=0, exchangeGp=0, readAtMillis=0}",
+			carried.toString());
+	}
+
+	/** The bank's own read still answers a snapshot with no Grand Exchange half at all. */
+	@Test
+	public void readStillAnswersABankWithNoExchangeHalf()
+	{
+		final BankSnapshot snapshot = reader.read(new Item[]{item(WHIP, 1)}, ACCOUNT, PROFILE, NOW);
+
+		assertTrue(snapshot.exchange.isEmpty());
+		assertEquals(0L, snapshot.exchangeGp);
+	}
+
 	// ---------------------------------------------------------------- fixtures
+
+	private static GrandExchangeOffer offer(final GrandExchangeOfferState state, final int itemId, final int total,
+		final int sold, final long price, final long spent)
+	{
+		final GrandExchangeOffer offer = mock(GrandExchangeOffer.class);
+		when(offer.getState()).thenReturn(state);
+		when(offer.getItemId()).thenReturn(itemId);
+		when(offer.getTotalQuantity()).thenReturn(total);
+		when(offer.getQuantitySold()).thenReturn(sold);
+		when(offer.getPrice()).thenReturn(price);
+		when(offer.getSpent()).thenReturn(spent);
+		return offer;
+	}
+
+	private static ExchangeOffers offers(final GrandExchangeOffer... offers)
+	{
+		return ExchangeOffers.of(offers);
+	}
 
 	/**
 	 * Registers a composition for an id. Built first and stubbed afterwards on purpose: a mock created inside

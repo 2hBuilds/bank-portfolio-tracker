@@ -3,6 +3,7 @@ package com.bankpricemovement;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
@@ -335,6 +336,119 @@ public class MovementMathTest
 
 		assertTrue(MovementMath.apply(null, RowFilter.DEFAULT).isEmpty());
 		assertTrue(MovementMath.apply(Collections.emptyList(), RowFilter.DEFAULT).isEmpty());
+	}
+
+	// ---------------------------------------------------------------- the search box (1.0.9 part 4)
+
+	/**
+	 * What the box matches: any PART of the name, whatever the case, the query trimmed, a blank query everything and a
+	 * name that is not there nothing. The contract's own example - "rune" finding "Rune platebody" and "Runite ore" - is
+	 * not a plain substring ("runite" does not contain "rune"), so "run" is the query that finds both and "rune" finds
+	 * the one.
+	 */
+	@Test
+	public void matchesAnyPartOfTheNameWhateverTheCase()
+	{
+		assertTrue(MovementMath.matches("Rune platebody", "rune"));
+		assertTrue(MovementMath.matches("Rune platebody", "RUNE"));
+		assertTrue(MovementMath.matches("Rune platebody", "plate"));
+		assertTrue("the end of the name too", MovementMath.matches("Rune platebody", "body"));
+		assertTrue("across a space", MovementMath.matches("Rune platebody", "e p"));
+		assertTrue(MovementMath.matches("Runite ore", "run"));
+		assertTrue(MovementMath.matches("Rune platebody", "run"));
+		assertFalse("a plain substring: runite is not rune", MovementMath.matches("Runite ore", "rune"));
+		assertFalse(MovementMath.matches("Dragon claws", "run"));
+		assertFalse(MovementMath.matches("Rune platebody", "rune platebodyx"));
+	}
+
+	@Test
+	public void matchesTrimsTheQueryAndReadsABlankOneAsEverything()
+	{
+		assertTrue(MovementMath.matches("Rune platebody", "  rune  "));
+		assertTrue("a space inside is a space inside", MovementMath.matches("Rune platebody", " e p "));
+		assertFalse(MovementMath.matches("Dragon claws", "  rune  "));
+		assertTrue(MovementMath.matches("Dragon claws", ""));
+		assertTrue(MovementMath.matches("Dragon claws", "   "));
+		assertTrue(MovementMath.matches("Dragon claws", null));
+		assertTrue("a blank query matches even a row with no name", MovementMath.matches(null, ""));
+		assertFalse("a null name matches nothing", MovementMath.matches(null, "rune"));
+		assertFalse(MovementMath.matches(null, "x"));
+	}
+
+	/** The case-fold is the root locale's: the Turkish dotted capital I does not break a search for "iron". */
+	@Test
+	public void matchesFoldsCaseWithTheRootLocale()
+	{
+		final Locale before = Locale.getDefault();
+		try
+		{
+			Locale.setDefault(new Locale("tr", "TR"));
+			assertTrue(MovementMath.matches("Iron platebody", "IRON"));
+			assertTrue(MovementMath.matches("Iron platebody", "iron"));
+			assertTrue(MovementMath.matches("IRON PLATEBODY", "iron"));
+		}
+		finally
+		{
+			Locale.setDefault(before);
+		}
+	}
+
+	@Test
+	public void searchKeepsTheOrderGivenAndAnswersAnUnmodifiableList()
+	{
+		final List<MovementRow> rows = Arrays.asList(guideRow(1, "Zeta rune", 300L, 200L),
+			guideRow(2, "Dragon claws", 100L, 50L), guideRow(3, "Runite ore", 100L, 50L),
+			guideRow(4, "Rune platebody", 200L, 100L));
+
+		assertEquals(Arrays.asList("Zeta rune", "Runite ore", "Rune platebody"), names(MovementMath.search(rows, "run")));
+		assertEquals("the order is the order given, not a sort", Arrays.asList("Zeta rune", "Rune platebody"),
+			names(MovementMath.search(rows, "RUNE")));
+		assertEquals(Arrays.asList("Dragon claws"), names(MovementMath.search(rows, " claws ")));
+		assertTrue(MovementMath.search(rows, "nothing like it").isEmpty());
+
+		final List<MovementRow> kept = MovementMath.search(rows, "rune");
+		try
+		{
+			kept.add(guideRow(5, "Bravo", 100L, 50L));
+			fail("the narrowed list must be unmodifiable");
+		}
+		catch (UnsupportedOperationException expected)
+		{
+			// the point of the test
+		}
+		try
+		{
+			MovementMath.search(rows, "zzz").add(guideRow(5, "Bravo", 100L, 50L));
+			fail("an empty answer is unmodifiable too");
+		}
+		catch (UnsupportedOperationException expected)
+		{
+			// the point of the test
+		}
+	}
+
+	/** A blank query costs nothing: the SAME list instance comes back, so an untouched box is not a copy of every row. */
+	@Test
+	public void searchAnswersTheSameListInstanceForABlankQuery()
+	{
+		final List<MovementRow> rows = Arrays.asList(guideRow(1, "Zeta rune", 300L, 200L),
+			guideRow(2, "Dragon claws", 100L, 50L));
+
+		assertSame(rows, MovementMath.search(rows, ""));
+		assertSame(rows, MovementMath.search(rows, "   "));
+		assertSame(rows, MovementMath.search(rows, null));
+		assertNotSame("a real query is a new list", rows, MovementMath.search(rows, "zeta"));
+	}
+
+	@Test
+	public void searchReadsNullRowsAsEmptyAndSkipsNullEntries()
+	{
+		assertTrue(MovementMath.search(null, "rune").isEmpty());
+		assertTrue(MovementMath.search(null, "").isEmpty());
+		assertTrue(MovementMath.search(null, null).isEmpty());
+		assertTrue(MovementMath.search(Collections.emptyList(), "rune").isEmpty());
+		assertEquals("a null entry is no row", Arrays.asList("Zeta rune"),
+			names(MovementMath.search(Arrays.asList(null, guideRow(1, "Zeta rune", 300L, 200L), null), "rune")));
 	}
 
 	// ---------------------------------------------------------------- the sorts (C9)

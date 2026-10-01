@@ -427,7 +427,7 @@ public final class Diagnostics
 		line(out, "hub version", hubVersion == null ? "unknown" : hubVersion);
 		line(out, "system", property("os.name") + " " + property("os.version"));
 		line(out, "java", property("java.version"));
-		line(out, "time zone", zone.getId());
+		line(out, "utc offset", utcOffset(now));
 		line(out, "local time", DATE_TIME.format(now));
 		final Long skew = fetchLog.clockSkewSeconds();
 		line(out, "clock skew", skew == null ? "unknown"
@@ -583,6 +583,18 @@ public final class Diagnostics
 	private String clockTime(final long millis)
 	{
 		return TIME.format(Instant.ofEpochMilli(millis).atZone(zone));
+	}
+
+	/**
+	 * The zone's offset from UTC at {@code moment}, as {@code UTC-04:00}, {@code UTC+00:00} or {@code UTC+05:30}: the
+	 * one fact about the player's time zone that tells a reader how far their local times are from the wiki's, without
+	 * naming the place. (Whole minutes; {@link java.time.ZoneOffset#getId} would give {@code Z} for zero.)
+	 */
+	private static String utcOffset(final ZonedDateTime moment)
+	{
+		final int total = moment.getOffset().getTotalSeconds();
+		final int abs = Math.abs(total);
+		return String.format(Locale.ROOT, "UTC%c%02d:%02d", total < 0 ? '-' : '+', abs / 3600, abs % 3600 / 60);
 	}
 
 	private ZonedDateTime now()

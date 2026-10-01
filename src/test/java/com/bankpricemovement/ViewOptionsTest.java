@@ -18,6 +18,7 @@ public class ViewOptionsTest
 		assertTrue(ViewOptions.DEFAULT.livePrices());
 		assertTrue("Y1: the inventory and worn gear count unless the user says otherwise",
 			ViewOptions.DEFAULT.countInventory());
+		assertTrue("1.0.9 part 3: and so do the Grand Exchange offers", ViewOptions.DEFAULT.countGrandExchange());
 		assertFalse("AH: and the hover text is OFF until the user asks for it",
 			ViewOptions.DEFAULT.showHoverText());
 	}
@@ -76,7 +77,7 @@ public class ViewOptionsTest
 		// The value is shared - DEFAULT is a static every road in the plugin reads - so a with() that wrote through
 		// to the receiver would hand the whole client one user's answer. Pin the receiver, not just the copy.
 		assertEquals("and none of them touched the value they were called on", ViewOptions.DEFAULT,
-			new ViewOptions(true, false, true, true, false));
+			new ViewOptions(true, false, true, true, true, false));
 	}
 
 	/** Y1: the inventory switch is one more {@code with} of the same shape, and it moves nothing else. */
@@ -92,6 +93,27 @@ public class ViewOptionsTest
 		assertFalse(bankOnly.showHoverText());
 		assertTrue("and back again", bankOnly.withCountInventory(true).countInventory());
 		assertEquals(ViewOptions.DEFAULT, bankOnly.withCountInventory(true));
+	}
+
+	/** 1.0.9 part 3: the Grand Exchange switch is one more {@code with} of the same shape, and it moves nothing else. */
+	@Test
+	public void withCountGrandExchangeFlipsTheFifthSwitchAlone()
+	{
+		final ViewOptions noOffers = ViewOptions.DEFAULT.withCountGrandExchange(false);
+
+		assertFalse(noOffers.countGrandExchange());
+		assertTrue(noOffers.countCash());
+		assertFalse(noOffers.countUntradeables());
+		assertTrue(noOffers.livePrices());
+		assertTrue("and the inventory is untouched by it", noOffers.countInventory());
+		assertFalse(noOffers.showHoverText());
+		assertTrue("and back again", noOffers.withCountGrandExchange(true).countGrandExchange());
+		assertEquals(ViewOptions.DEFAULT, noOffers.withCountGrandExchange(true));
+		assertEquals("and every other with() passes it through", noOffers,
+			noOffers.withCountCash(true).withCountUntradeables(false).withLivePrices(true).withCountInventory(true)
+				.withShowHoverText(false));
+		assertFalse(ViewOptions.DEFAULT.withCountCash(false).withCountUntradeables(true).withLivePrices(false)
+			.withCountInventory(false).withCountGrandExchange(false).withShowHoverText(true).countGrandExchange());
 	}
 
 	/** AH: the hover switch is one more {@code with} of the same shape, and it moves nothing else. */
@@ -115,7 +137,7 @@ public class ViewOptionsTest
 
 	/**
 	 * Addendum AO line AO1 deleted the ladder of shorter constructors along with {@code holdingOnRows}, so there is
-	 * exactly ONE way to build this value and its five arguments are the whole contract. The test that stood here
+	 * exactly ONE way to build this value and its six arguments (five until 1.0.9 part 3) are the whole contract. The test that stood here
 	 * pinned what each rung of that ladder defaulted (the inventory ON, the hovers OFF); its subject is gone, and
 	 * what replaces it is the reason the ladder went.
 	 *
@@ -126,35 +148,42 @@ public class ViewOptionsTest
 	 * sets that one argument true and every other false.
 	 */
 	@Test
-	public void theOneConstructorTakesTheFiveSwitchesInThisOrder()
+	public void theOneConstructorTakesTheSixSwitchesInThisOrder()
 	{
-		assertTrue("first: cash", new ViewOptions(true, false, false, false, false).countCash());
-		assertTrue("second: untradeables", new ViewOptions(false, true, false, false, false).countUntradeables());
-		assertTrue("third: live", new ViewOptions(false, false, true, false, false).livePrices());
-		assertTrue("fourth: inventory", new ViewOptions(false, false, false, true, false).countInventory());
-		assertTrue("fifth: hover", new ViewOptions(false, false, false, false, true).showHoverText());
+		assertTrue("first: cash", new ViewOptions(true, false, false, false, false, false).countCash());
+		assertTrue("second: untradeables", new ViewOptions(false, true, false, false, false, false).countUntradeables());
+		assertTrue("third: live", new ViewOptions(false, false, true, false, false, false).livePrices());
+		assertTrue("fourth: inventory", new ViewOptions(false, false, false, true, false, false).countInventory());
+		assertTrue("fifth: Grand Exchange", new ViewOptions(false, false, false, false, true, false)
+			.countGrandExchange());
+		assertTrue("sixth: hover", new ViewOptions(false, false, false, false, false, true).showHoverText());
+		assertFalse("and the fourth is not the fifth", new ViewOptions(false, false, false, true, false, false)
+			.countGrandExchange());
+		assertFalse(new ViewOptions(false, false, false, false, true, false).countInventory());
 
-		assertFalse("and nothing else came on with it", new ViewOptions(true, false, false, false, false)
+		assertFalse("and nothing else came on with it", new ViewOptions(true, false, false, false, false, false)
 			.countUntradeables());
-		assertFalse(new ViewOptions(false, false, false, false, true).countCash());
+		assertFalse(new ViewOptions(false, false, false, false, false, true).countCash());
 
 		assertEquals("so the default spelled out IS DEFAULT", ViewOptions.DEFAULT,
-			new ViewOptions(true, false, true, true, false));
+			new ViewOptions(true, false, true, true, true, false));
 	}
 
 	@Test
-	public void asMapPrintsTheFiveSwitchesInTheOrderTheBridgeUses()
+	public void asMapPrintsTheSixSwitchesInTheOrderTheBridgeUses()
 	{
-		final ViewOptions o = new ViewOptions(false, true, false, false, true);
-		assertEquals("[cash, untradeables, live, inventory, hover]",
+		final ViewOptions o = new ViewOptions(false, true, false, false, true, true);
+		assertEquals("[cash, untradeables, live, inventory, ge, hover]",
 			new ArrayList<>(o.asMap().keySet()).toString());
-		assertEquals("[false, true, false, false, true]", new ArrayList<>(o.asMap().values()).toString());
+		assertEquals("[false, true, false, false, true, true]", new ArrayList<>(o.asMap().values()).toString());
 		assertEquals("AO1: live moves up to THIRD, where holding used to sit", "live",
 			new ArrayList<>(ViewOptions.DEFAULT.asMap().keySet()).get(2));
 		assertEquals("Y1: inventory is the FOURTH key", "inventory",
 			new ArrayList<>(ViewOptions.DEFAULT.asMap().keySet()).get(3));
-		assertEquals("AH: hover is the FIFTH and last", "hover",
+		assertEquals("1.0.9 part 3: ge is the FIFTH, directly after inventory", "ge",
 			new ArrayList<>(ViewOptions.DEFAULT.asMap().keySet()).get(4));
+		assertEquals("AH: hover is the SIXTH and last", "hover",
+			new ArrayList<>(ViewOptions.DEFAULT.asMap().keySet()).get(5));
 		assertEquals("and a fresh profile prints it off", Boolean.FALSE, ViewOptions.DEFAULT.asMap().get("hover"));
 		assertFalse("AO1: and nothing prints the deleted switch any more",
 			ViewOptions.DEFAULT.asMap().containsKey("holding"));
@@ -163,25 +192,29 @@ public class ViewOptionsTest
 	@Test
 	public void equalityIsByValue()
 	{
-		assertEquals(new ViewOptions(true, false, true, true, false), ViewOptions.DEFAULT);
+		assertEquals(new ViewOptions(true, false, true, true, true, false), ViewOptions.DEFAULT);
 		assertEquals(ViewOptions.DEFAULT.hashCode(),
-			new ViewOptions(true, false, true, true, false).hashCode());
+			new ViewOptions(true, false, true, true, true, false).hashCode());
 		// Every remaining field on its own: the panel decides what to rebuild by comparing two of these values, so
 		// a field equals() skipped would be a switch the user pressed and the sidebar never followed.
 		assertNotEquals(ViewOptions.DEFAULT, ViewOptions.DEFAULT.withCountCash(false));
 		assertNotEquals(ViewOptions.DEFAULT, ViewOptions.DEFAULT.withCountUntradeables(true));
 		assertNotEquals(ViewOptions.DEFAULT, ViewOptions.DEFAULT.withLivePrices(false));
 		assertNotEquals(ViewOptions.DEFAULT, ViewOptions.DEFAULT.withCountInventory(false));
+		assertNotEquals(ViewOptions.DEFAULT, ViewOptions.DEFAULT.withCountGrandExchange(false));
+		assertNotEquals(ViewOptions.DEFAULT.hashCode(), ViewOptions.DEFAULT.withCountGrandExchange(false).hashCode());
 		// AH: two options that differ in the hover switch ALONE are two different options - the panel decides
 		// whether to build the card's tooltip and whether the controls carry theirs by comparing them, so an
 		// equals() that ignored this field would leave the sidebar's hover text whatever it was when the menu
 		// item was last pressed.
 		assertNotEquals(ViewOptions.DEFAULT, ViewOptions.DEFAULT.withShowHoverText(true));
 		assertNotEquals(ViewOptions.DEFAULT.hashCode(), ViewOptions.DEFAULT.withShowHoverText(true).hashCode());
-		assertEquals("ViewOptions{cash=true, untradeables=false, live=true, inventory=true, hover=false}",
+		assertEquals("ViewOptions{cash=true, untradeables=false, live=true, inventory=true, ge=true, hover=false}",
 			ViewOptions.DEFAULT.toString());
-		assertEquals("ViewOptions{cash=true, untradeables=false, live=true, inventory=true, hover=true}",
+		assertEquals("ViewOptions{cash=true, untradeables=false, live=true, inventory=true, ge=true, hover=true}",
 			ViewOptions.DEFAULT.withShowHoverText(true).toString());
+		assertEquals("ViewOptions{cash=true, untradeables=false, live=true, inventory=true, ge=false, hover=false}",
+			ViewOptions.DEFAULT.withCountGrandExchange(false).toString());
 	}
 
 	/**
@@ -193,10 +226,11 @@ public class ViewOptionsTest
 	 * be a stored answer nothing reads.
 	 */
 	@Test
-	public void theValueCarriesFiveSwitchesAndNoMore()
+	public void theValueCarriesSixSwitchesAndNoMore()
 	{
-		assertEquals("AO1: holding is gone, so the bridge prints five", 5, ViewOptions.DEFAULT.asMap().size());
-		assertEquals("ViewOptions{cash=true, untradeables=false, live=true, inventory=true, hover=false}",
+		assertEquals("AO1: holding is gone and 1.0.9 part 3 added ge, so the bridge prints six", 6,
+			ViewOptions.DEFAULT.asMap().size());
+		assertEquals("ViewOptions{cash=true, untradeables=false, live=true, inventory=true, ge=true, hover=false}",
 			ViewOptions.DEFAULT.toString());
 	}
 }

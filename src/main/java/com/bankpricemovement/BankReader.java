@@ -25,7 +25,9 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Since addendum Y line Y2 the same rules read two more containers: {@link #readContainers} turns the player's
  * INVENTORY and WORN gear into a {@link Carried}, which {@link BankSnapshot#withCarried(Carried)} hangs on the
- * snapshot so "Include inventory and worn gear" can count and list those stacks beside the bank's.
+ * snapshot so "Include inventory and worn gear" can count and list those stacks beside the bank's. Since 1.0.9
+ * part 3 it reads a third source through the same walk - the items in the player's Grand Exchange offers
+ * ({@link ExchangeOffers}) - so "Include Grand Exchange offers" can do the same for them.
  *
  * <p><b>Client thread only.</b> {@link #read} calls {@link ItemManager#canonicalize(int)} and
  * {@link ItemManager#getItemComposition(int)}, and both bottom out in {@code client.getItemDefinition(int)}
@@ -148,10 +150,12 @@ public class BankReader
 	 * What the player is CARRYING and WEARING at one moment (addendum Y, line Y2): the inventory's stacks and the
 	 * worn gear's, each folded onto canonical ids by exactly the bank's rules, and the coins and platinum tokens in
 	 * hand as a worth rather than as rows - the carried half of {@link BankSnapshot}, which {@link
-	 * BankSnapshot#withCarried(Carried)} puts on a snapshot.
+	 * BankSnapshot#withCarried(Carried)} puts on a snapshot. Since 1.0.9 part 3 it holds a third list beside the two,
+	 * the stacks in the player's Grand Exchange offers ({@link #exchange}), and the worth of any currency among them
+	 * ({@link #exchangeGp}) - read at the same moment, so all three are stamped by the one {@link #readAtMillis}.
 	 *
 	 * <p>Public final fields and no accessors, like the snapshot it is folded into: it is one read's answer, handed
-	 * straight on. Never mutated after {@link #readContainers} builds it; the two lists are unmodifiable.
+	 * straight on. Never mutated after {@link #readContainers} builds it; the three lists are unmodifiable.
 	 */
 	public static final class Carried
 	{
@@ -171,10 +175,52 @@ public class BankReader
 		 */
 		public final long carriedGp;
 
-		/** When the two containers were read, epoch millis; 0 means "never". */
+		/**
+		 * The stacks the Grand Exchange offers hold - unsold in a sell offer, bought and uncollected in a buy offer -
+		 * by the same rules; never null, possibly empty (1.0.9 part 3).
+		 */
+		public final List<BankItem> exchange;
+
+		/**
+		 * What the offers hold in COINS, in gp: the coins committed to buy offers and those received by sell offers
+		 * and not yet collected ({@link ExchangeOffers#cashGp()}), plus the worth of any currency among the offers'
+		 * items - none in practice, because the Grand Exchange trades no coins, but the one walk of a container has
+		 * nowhere to lose one. Counted only while the Grand Exchange switch AND the coins switch are on, and never a
+		 * row, for the same reason the carried cash is not one (1.0.9 part 3).
+		 */
+		public final long exchangeGp;
+
+		/** When the containers were read, epoch millis; 0 means "never". */
 		public final long readAtMillis;
 
 		/**
+		 * The three-source constructor of 1.0.9 part 3.
+		 *
+		 * @param inventory    the inventory's stacks; null becomes empty
+		 * @param worn         the worn gear's stacks; null becomes empty
+		 * @param exchange     the stacks in the Grand Exchange offers; null becomes empty
+		 * @param carriedGp    the coins and platinum tokens in hand, in gp; a negative reads as 0
+		 * @param exchangeGp   the coins and platinum tokens among the offers' items, in gp; a negative reads as 0
+		 * @param readAtMillis wall clock at the read; a negative reads as 0
+		 */
+		public Carried(final List<BankItem> inventory, final List<BankItem> worn, final List<BankItem> exchange,
+			final long carriedGp, final long exchangeGp, final long readAtMillis)
+		{
+			this.inventory = inventory == null
+				? Collections.<BankItem>emptyList() : Collections.unmodifiableList(inventory);
+			this.worn = worn == null ? Collections.<BankItem>emptyList() : Collections.unmodifiableList(worn);
+			this.exchange = exchange == null
+				? Collections.<BankItem>emptyList() : Collections.unmodifiableList(exchange);
+			this.carriedGp = Math.max(0L, carriedGp);
+			this.exchangeGp = Math.max(0L, exchangeGp);
+			this.readAtMillis = Math.max(0L, readAtMillis);
+		}
+
+		/**
+		 * The inventory and the worn gear alone, as addendum Y built it: the Grand Exchange list is empty and its
+		 * worth 0. A different arity and different parameter types from the six-argument constructor, so nothing
+		 * written against this one can compile to the wrong meaning.
+		 *
 		 * @param inventory    the inventory's stacks; null becomes empty
 		 * @param worn         the worn gear's stacks; null becomes empty
 		 * @param carriedGp    the coins and platinum tokens in hand, in gp; a negative reads as 0
@@ -183,17 +229,16 @@ public class BankReader
 		public Carried(final List<BankItem> inventory, final List<BankItem> worn, final long carriedGp,
 			final long readAtMillis)
 		{
-			this.inventory = inventory == null
-				? Collections.<BankItem>emptyList() : Collections.unmodifiableList(inventory);
-			this.worn = worn == null ? Collections.<BankItem>emptyList() : Collections.unmodifiableList(worn);
-			this.carriedGp = Math.max(0L, carriedGp);
-			this.readAtMillis = Math.max(0L, readAtMillis);
+			this(inventory, worn, null, carriedGp, 0L, readAtMillis);
 		}
 
-		/** True when the player holds and wears nothing priceable and carries no cash. */
+		/**
+		 * True when the player holds and wears nothing priceable, carries no cash and has nothing in the Grand
+		 * Exchange.
+		 */
 		public boolean isEmpty()
 		{
-			return inventory.isEmpty() && worn.isEmpty() && carriedGp <= 0L;
+			return inventory.isEmpty() && worn.isEmpty() && exchange.isEmpty() && carriedGp <= 0L && exchangeGp <= 0L;
 		}
 
 		@Override
@@ -211,22 +256,24 @@ public class BankReader
 
 			final Carried other = (Carried) o;
 			return carriedGp == other.carriedGp
+				&& exchangeGp == other.exchangeGp
 				&& readAtMillis == other.readAtMillis
 				&& inventory.equals(other.inventory)
-				&& worn.equals(other.worn);
+				&& worn.equals(other.worn)
+				&& exchange.equals(other.exchange);
 		}
 
 		@Override
 		public int hashCode()
 		{
-			return Objects.hash(inventory, worn, carriedGp, readAtMillis);
+			return Objects.hash(inventory, worn, exchange, carriedGp, exchangeGp, readAtMillis);
 		}
 
 		@Override
 		public String toString()
 		{
-			return "Carried{inventory=" + inventory.size() + ", worn=" + worn.size() + ", carriedGp=" + carriedGp
-				+ ", readAtMillis=" + readAtMillis + '}';
+			return "Carried{inventory=" + inventory.size() + ", worn=" + worn.size() + ", exchange=" + exchange.size()
+				+ ", carriedGp=" + carriedGp + ", exchangeGp=" + exchangeGp + ", readAtMillis=" + readAtMillis + '}';
 		}
 	}
 
@@ -306,26 +353,41 @@ public class BankReader
 	 * inventory for it, which is the only container of the two that can hold coins or platinum tokens; the rule is
 	 * applied to both so that a currency slot can never become a row whichever container it arrives in.
 	 *
-	 * <p>The two containers are read INDEPENDENTLY - an item in both is two stacks here, one in each list - because
-	 * the row's hover has to name the parts separately ("3 in bank, 1 in inventory, 1 worn"). Adding them up is the
-	 * service's job, done under the switch.
+	 * <p>The sources are read INDEPENDENTLY - an item in two of them is two stacks here, one in each list - because
+	 * the row's hover has to name the parts separately ("3 in bank, 1 in inventory, 1 worn, 2 in the Grand
+	 * Exchange"). Adding them up is the service's job, done under the switches.
+	 *
+	 * <p><b>The third source (1.0.9 part 3)</b> is the Grand Exchange offers. {@link ExchangeOffers#items()} hands
+	 * their items over as slots and they go through the SAME walk as the two containers - canonicalised, so a noted
+	 * item in an offer folds onto the item it notes; quantity-summed, so two offers for one item become one stack;
+	 * the untradeable rules still run - which is what lets a stack in an offer and a stack in the bank become one row
+	 * the way an inventory stack and a bank stack do. Null offers read as none. The coins the offers hold
+	 * ({@link ExchangeOffers#cashGp()}) leave as {@link Carried#exchangeGp}, with the worth of any currency the walk
+	 * finds among the items, never as a row.
 	 *
 	 * @param inventory the inventory container's items ({@code ItemContainer.getItems()} of
 	 *                  {@link #INVENTORY_CONTAINER_ID}); NULL when the client has no such container yet, which
 	 *                  reads as an empty list rather than as an error
 	 * @param worn      the worn container's items ({@link #WORN_CONTAINER_ID}); null reads the same way
+	 * @param offers    the Grand Exchange offers, copied by {@link ExchangeOffers#of}; null reads as none
 	 * @param nowMillis wall clock at the read, stored as {@link Carried#readAtMillis}
-	 * @return what the player carries and wears; {@link Carried#EMPTY} is never answered - an empty read is still a
-	 *         read, and is stamped with {@code nowMillis}
+	 * @return what the player carries, wears and has in the Grand Exchange; {@link Carried#EMPTY} is never answered -
+	 *         an empty read is still a read, and is stamped with {@code nowMillis}
 	 */
-	public Carried readContainers(@Nullable final Item[] inventory, @Nullable final Item[] worn, final long nowMillis)
+	public Carried readContainers(@Nullable final Item[] inventory, @Nullable final Item[] worn,
+		@Nullable final ExchangeOffers offers, final long nowMillis)
 	{
 		final Map<Integer, BankItem> heldFold = new LinkedHashMap<>();
 		final Map<Integer, BankItem> wornFold = new LinkedHashMap<>();
+		final Map<Integer, BankItem> exchangeFold = new LinkedHashMap<>();
 		final long held = fold(inventory, heldFold);
 		final long onBody = fold(worn, wornFold);
+		final long inOffers = fold(offers == null ? null : offers.items(), exchangeFold);
 
-		return new Carried(rowsOf(heldFold), rowsOf(wornFold), PortfolioMath.clampedAdd(held, onBody), nowMillis);
+		final long offerCoins = offers == null ? 0L : offers.cashGp();
+
+		return new Carried(rowsOf(heldFold), rowsOf(wornFold), rowsOf(exchangeFold),
+			PortfolioMath.clampedAdd(held, onBody), PortfolioMath.clampedAdd(offerCoins, inOffers), nowMillis);
 	}
 
 	/**

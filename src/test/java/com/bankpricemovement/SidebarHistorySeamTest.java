@@ -451,6 +451,95 @@ public class SidebarHistorySeamTest
 		onEdt(() -> assertEquals(MovementMath.formatGp(total), panel.totalLabel().getText()));
 	}
 
+	// ---------------------------------------------------------------- 1.0.9 part 5: days before 1.0.9
+
+	/**
+	 * A record an older build wrote - schema 1, eight cells, eight days ending the day before yesterday - on the REAL
+	 * store under the REAL service and the REAL panel. Until a reading is recorded into it every day is a legacy day: the
+	 * tab draws the empty state (and the card says so) with the check box on screen. The first reading folded in is the
+	 * first that counts the offers: the service stamps it, the store writes it as {@code freshFrom} beside the old days
+	 * (which are not touched), and the tab shows that one day. Turned on, the box shows all nine; the bridge reads the
+	 * marker back.
+	 */
+	@Test
+	public void aRecordFromBeforeThisBuildIsHiddenUntilTheBoxIsOnAndTheFirstReadingStartsTheFreshDays() throws Exception
+	{
+		final net.runelite.client.util.Filepath file = disk.historyFile(ACCOUNT, PROFILE);
+		final StringBuilder old = new StringBuilder("{\"schema\":1,\"points\":[");
+		for (int back = 9; back >= 2; back--)
+		{
+			final LocalDate day = today.minusDays(back);
+			final long noon = day.atTime(12, 0).atZone(ZONE).toInstant().toEpochMilli();
+			old.append(back == 9 ? "" : ",").append("{\"day\":\"").append(day).append("\",\"readAtMillis\":").append(noon)
+				.append(",\"bankAtMillis\":").append(noon).append(",\"card\":[").append(30_000_000L + back)
+				.append(",1000000,0,0,250000,791078,0,0]}");
+		}
+		TestFilepaths.write(file, old.append("]}").toString());
+		final BankHistorySeries migrated = disk.loadBankHistory(ACCOUNT, PROFILE).series();
+		assertEquals(8, migrated.size());
+		assertEquals(LocalDate.MAX, migrated.freshFrom());
+
+		final java.util.List<String> asked = new ArrayList<>();
+		final ItemManager sprites = mock(ItemManager.class);
+		when(sprites.getImage(anyInt(), anyInt(), anyBoolean()))
+			.thenAnswer(invocation -> LookRenderer.sprite(invocation.getArgument(0)));
+		onEdt(() ->
+		{
+			panel.stop();
+			panel = new BankPriceMovementPanel(sprites, service, prefs, text -> { }, question ->
+			{
+				asked.add(question);
+				return true;
+			});
+			panel.setClock(f.clock::get);
+		});
+
+		login();
+
+		// The first reading since the update was folded in and stamped: nine readings, the fresh start on today.
+		final BankHistorySeries series = service.currentStatus().bankHistory();
+		assertEquals(9, series.size());
+		assertEquals(today, series.freshFrom());
+		assertTrue(series.hasLegacyDays());
+		assertEquals(Collections.singletonList(today), BankHistorySeriesTest.days(series.fromFresh()));
+		// ...and the file says the same, with the old days still in it, padded to ten cells.
+		final JsonObject written = new Gson().fromJson(TestFilepaths.read(file), JsonObject.class);
+		assertEquals(2, written.get("schema").getAsInt());
+		assertEquals(today.toString(), written.get("freshFrom").getAsString());
+		assertEquals(9, written.getAsJsonArray("points").size());
+		assertEquals(series, disk.loadBankHistory(ACCOUNT, PROFILE).series());
+
+		pressHistory();
+		final BpmCommands dev = new BpmCommands(panel, service, new Gson());
+		JsonObject state = new Gson().fromJson(dev.apply("state"), JsonObject.class);
+		assertEquals("only the first reading of this build", 1, state.getAsJsonObject("bankHistory").get("readings").getAsInt());
+		assertEquals(today.toString(), state.getAsJsonObject("bankHistory").get("first").getAsString());
+		assertEquals(today.toString(), state.getAsJsonObject("bankHistory").get("freshFrom").getAsString());
+		assertTrue(state.getAsJsonObject("panel").get("legacyDays").getAsBoolean());
+		assertFalse(state.getAsJsonObject("panel").get("includeLegacy").getAsBoolean());
+		onEdt(() ->
+		{
+			assertTrue("the box is on screen", SwingUtilities.isDescendingFrom(panel.legacyRow(), panel.header()));
+			assertEquals("1 day recorded", panel.updateLabel().getText());
+		});
+
+		state = new Gson().fromJson(dev.apply("legacy=on"), JsonObject.class);
+		settle();
+		assertEquals("asked once, in the words", java.util.Arrays.asList(BankPriceMovementPanel.LEGACY_ASK), asked);
+		assertTrue(state.getAsJsonObject("panel").get("includeLegacy").getAsBoolean());
+		assertEquals("every reading", 9, state.getAsJsonObject("bankHistory").get("readings").getAsInt());
+		assertEquals(today.minusDays(9).toString(), state.getAsJsonObject("bankHistory").get("first").getAsString());
+		assertEquals("every calendar day from the first reading to today, yesterday carried", 10,
+			state.getAsJsonObject("bankHistory").get("rows").getAsInt());
+		onEdt(() -> assertEquals("9 days recorded since " + MovementMath.formatDay(today.minusDays(9)),
+			panel.updateLabel().getText()));
+
+		state = new Gson().fromJson(dev.apply("legacy=off"), JsonObject.class);
+		assertEquals(1, state.getAsJsonObject("bankHistory").get("readings").getAsInt());
+		assertEquals("turning it off asked nothing", 1, asked.size());
+		assertEquals("the file was not touched by any of it", series, disk.loadBankHistory(ACCOUNT, PROFILE).series());
+	}
+
 	private String readout() throws Exception
 	{
 		final String[] out = new String[1];

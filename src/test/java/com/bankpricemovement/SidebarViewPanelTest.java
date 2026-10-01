@@ -16,6 +16,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.annotation.Nullable;
 import javax.swing.JLabel;
+import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.ui.ColorScheme;
@@ -65,6 +66,10 @@ public class SidebarViewPanelTest
 		Boolean storedFold = Boolean.TRUE;
 		final List<Boolean> foldSaves = new ArrayList<>();
 		final List<RowFilter> saves = new ArrayList<>();
+		/** 1.0.9 part 5: what "Include days before v1.0.9" was stored as (null = nothing stored), and every write of it. */
+		@Nullable
+		Boolean storedLegacy;
+		final List<Boolean> legacySaves = new ArrayList<>();
 
 		@Override
 		public RowFilter load()
@@ -88,6 +93,18 @@ public class SidebarViewPanelTest
 		public void saveFoldOpen(boolean open)
 		{
 			foldSaves.add(open);
+		}
+
+		@Override
+		public Boolean loadIncludeLegacy()
+		{
+			return storedLegacy;
+		}
+
+		@Override
+		public void saveIncludeLegacy(boolean include)
+		{
+			legacySaves.add(include);
 		}
 	}
 
@@ -113,6 +130,19 @@ public class SidebarViewPanelTest
 		onEdt(() ->
 		{
 			panel = new BankPriceMovementPanel(itemManager, service, prefs);
+			panel.setClock(() -> NOW);
+		});
+		final ArgumentCaptor<PriceService.Listener> captor = ArgumentCaptor.forClass(PriceService.Listener.class);
+		verify(service).addListener(captor.capture());
+		listener = captor.getValue();
+	}
+
+	/** {@link #build()} with the History tab's question answered by {@code prompt} instead of a window. */
+	private void build(BankPriceMovementPanel.LegacyPrompt prompt) throws Exception
+	{
+		onEdt(() ->
+		{
+			panel = new BankPriceMovementPanel(itemManager, service, prefs, text -> { }, prompt);
 			panel.setClock(() -> NOW);
 		});
 		final ArgumentCaptor<PriceService.Listener> captor = ArgumentCaptor.forClass(PriceService.Listener.class);
@@ -292,8 +322,9 @@ public class SidebarViewPanelTest
 	}
 
 	/**
-	 * The header in each view (amendment 9.9): hero, strip, control row and fold (while open) in Items; hero and strip
-	 * in History - with the problem row last in both - and nothing without a bank. The fold's state is KEPT, not
+	 * The header in each view (amendment 9.9): hero, strip, control row and fold (while open) in Items - then, last, the
+	 * search box (1.0.9 part 4), which History has no list for; hero and strip in History - with the problem row last in
+	 * History and just above the search box in Items - and nothing without a bank. The fold's state is KEPT, not
 	 * written, while History hides it.
 	 */
 	@Test
@@ -304,13 +335,13 @@ public class SidebarViewPanelTest
 		onEdt(() ->
 		{
 			assertTrue(panel.foldOpen());
-			assertEquals(Arrays.asList(panel.hero(), strip(), panel.controlRow(), panel.fold()), header());
+			assertEquals(Arrays.asList(panel.hero(), strip(), panel.controlRow(), panel.fold(), searchRow()), header());
 			panel.pressView(SidebarView.HISTORY);
 			assertEquals(Arrays.asList(panel.hero(), strip()), header());
 			assertTrue("the fold keeps its state", panel.foldOpen());
 			panel.pressView(SidebarView.ITEMS);
 			assertEquals("...and comes back as the reader left it",
-				Arrays.asList(panel.hero(), strip(), panel.controlRow(), panel.fold()), header());
+				Arrays.asList(panel.hero(), strip(), panel.controlRow(), panel.fold(), searchRow()), header());
 		});
 		assertTrue("switching views never writes the fold", prefs.foldSaves.isEmpty());
 
@@ -320,8 +351,8 @@ public class SidebarViewPanelTest
 		publish(rows(3), troubled);
 		onEdt(() ->
 		{
-			assertEquals(Arrays.asList(panel.hero(), strip(), panel.controlRow(), panel.fold(), panel.problemLabel()),
-				header());
+			assertEquals(Arrays.asList(panel.hero(), strip(), panel.controlRow(), panel.fold(), panel.problemLabel(),
+				searchRow()), header());
 			panel.pressView(SidebarView.HISTORY);
 			assertEquals("the problem row stays in History", Arrays.asList(panel.hero(), strip(), panel.problemLabel()),
 				header());
@@ -490,6 +521,408 @@ public class SidebarViewPanelTest
 		});
 	}
 
+	// ---------------------------------------------------------------- 1.0.9 part 5: days before 1.0.9
+
+	/** A prompt that answers {@code answer} and keeps every question it was asked. */
+	private static final class Asked implements BankPriceMovementPanel.LegacyPrompt
+	{
+		boolean answer;
+		final List<String> questions = new ArrayList<>();
+
+		Asked(boolean answer)
+		{
+			this.answer = answer;
+		}
+
+		@Override
+		public boolean ask(String question)
+		{
+			questions.add(question);
+			return answer;
+		}
+	}
+
+	/**
+	 * Six readings: the four before 1.0.9 (a week back to three days back) and the two since it, the fresh start
+	 * standing on yesterday's.
+	 */
+	private static BankHistorySeries withLegacyDays()
+	{
+		return series(TODAY.minusDays(7), TODAY.minusDays(6), TODAY.minusDays(4), TODAY.minusDays(3),
+			TODAY.minusDays(1), TODAY).withFreshFrom(TODAY.minusDays(1));
+	}
+
+	private int readings()
+	{
+		return (Integer) panel.bankHistoryState().get("readings");
+	}
+
+	private List<Component> legacyHeader()
+	{
+		return Arrays.asList(panel.header().getComponents());
+	}
+
+	private boolean legacyRowShows()
+	{
+		return SwingUtilities.isDescendingFrom(panel.legacyRow(), panel.header());
+	}
+
+	private static boolean sameIcon(javax.swing.Icon a, javax.swing.Icon b)
+	{
+		if (a.getIconWidth() != b.getIconWidth() || a.getIconHeight() != b.getIconHeight())
+		{
+			return false;
+		}
+		final java.awt.image.BufferedImage x = new java.awt.image.BufferedImage(a.getIconWidth(), a.getIconHeight(),
+			java.awt.image.BufferedImage.TYPE_INT_ARGB);
+		final java.awt.image.BufferedImage y = new java.awt.image.BufferedImage(a.getIconWidth(), a.getIconHeight(),
+			java.awt.image.BufferedImage.TYPE_INT_ARGB);
+		a.paintIcon(null, x.getGraphics(), 0, 0);
+		b.paintIcon(null, y.getGraphics(), 0, 0);
+		for (int i = 0; i < x.getWidth(); i++)
+		{
+			for (int j = 0; j < x.getHeight(); j++)
+			{
+				if (x.getRGB(i, j) != y.getRGB(i, j))
+				{
+					return false;
+				}
+			}
+		}
+		return true;
+	}
+
+	/** The words, the hover and the question are the user's; one place pins them. */
+	@Test
+	public void theLegacyWordsAreVerbatim()
+	{
+		assertEquals("Include days before v1.0.9", BankPriceMovementPanel.LEGACY_TEXT);
+		assertEquals("Days before v1.0.9 did not count open G.E. orders.", BankPriceMovementPanel.LEGACY_TIP);
+		assertEquals("Days before v1.0.9 did not count open G.E. orders, so their net worth totals may read low."
+			+ " Include them anyway?", BankPriceMovementPanel.LEGACY_ASK);
+	}
+
+	/**
+	 * With no legacy days the row is not in the tree at all - in either view, with an empty record and with a full
+	 * one - so every History picture stays what it was; and in Items it is not there even WITH legacy days, because the
+	 * caption it sits under is History's.
+	 */
+	@Test
+	public void theLegacyRowIsAbsentWithoutLegacyDaysAndInItems() throws Exception
+	{
+		build(new Asked(true));
+		publish(rows(3), status(series(TODAY.minusDays(2), TODAY.minusDays(1), TODAY), VALUE_NOW, NOW - 60_000L));
+		onEdt(() ->
+		{
+			panel.pressView(SidebarView.HISTORY);
+			assertEquals(Arrays.asList(panel.hero(), strip()), legacyHeader());
+			assertFalse(legacyRowShows());
+			assertTrue(panel.describe(), panel.describe().contains("\"legacyDays\":false"));
+		});
+		publish(rows(3), status(BankHistorySeries.EMPTY, VALUE_NOW, NOW - 60_000L));
+		onEdt(() ->
+		{
+			assertEquals(Arrays.asList(panel.hero(), strip()), legacyHeader());
+			assertFalse(legacyRowShows());
+		});
+		// A mocked status that answers no series at all reads as empty.
+		publish(rows(3), status(null, VALUE_NOW, NOW - 60_000L));
+		onEdt(() -> assertFalse(legacyRowShows()));
+
+		publish(rows(3), status(withLegacyDays(), VALUE_NOW, NOW - 60_000L));
+		onEdt(() ->
+		{
+			assertTrue(panel.describe(), panel.describe().contains("\"legacyDays\":true"));
+			assertTrue("in History it is under the caption", legacyRowShows());
+			panel.pressView(SidebarView.ITEMS);
+			assertFalse("in Items it is not there", legacyRowShows());
+			assertEquals(Arrays.asList(panel.hero(), strip(), panel.controlRow(), panel.fold(), searchRow()), header());
+		});
+	}
+
+	/** Present: directly under the strip, the label verbatim, 11 px grey, the box unticked, a hand cursor. */
+	@Test
+	public void theLegacyRowStandsUnderTheCaptionWithItsWordsItsBoxAndItsHover() throws Exception
+	{
+		build(new Asked(true));
+		publish(rows(3), status(withLegacyDays(), VALUE_NOW, NOW - 60_000L));
+		onEdt(() ->
+		{
+			panel.pressView(SidebarView.HISTORY);
+			assertEquals("hero, the strip, then the row - nothing between the caption and the chart",
+				3, legacyHeader().size());
+			assertSame(strip(), legacyHeader().get(1));
+			assertSame(panel.legacyRow().getParent(), legacyHeader().get(2));
+			final JLabel row = panel.legacyRow();
+			assertEquals(BankPriceMovementPanel.LEGACY_TEXT, row.getText());
+			assertEquals(11, row.getFont().getSize());
+			assertEquals(ColorScheme.LIGHT_GRAY_COLOR, row.getForeground());
+			assertTrue("an unticked box", sameIcon(Widgets.checkBox(false), row.getIcon()));
+			assertFalse("not a second line: one label", row.getText().contains("\n") || row.getText().contains("<"));
+			assertEquals(java.awt.Cursor.HAND_CURSOR, row.getCursor().getType());
+			assertEquals("the caption's own indent", 4,
+				((javax.swing.border.EmptyBorder) ((JPanel) row.getParent()).getBorder()).getBorderInsets().left);
+
+			// Its hover is behind "Show hover text" like every sentence hover here.
+			assertNull("no hover with the switch off", row.getToolTipText());
+			panel.applyOptions(ViewOptions.DEFAULT.withShowHoverText(true));
+			assertEquals(BankPriceMovementPanel.LEGACY_TIP, row.getToolTipText());
+			panel.applyOptions(ViewOptions.DEFAULT);
+			assertNull(row.getToolTipText());
+		});
+	}
+
+	/**
+	 * With the box off the chart, the list, the card's comparison and "n days recorded since" see only the days
+	 * recorded since 1.0.9; with it on, every day - and the card's two lines follow the same cut.
+	 */
+	@Test
+	public void theTabAndTheCardSeeOnlyTheFreshDaysUntilTheBoxIsOn() throws Exception
+	{
+		final Asked yes = new Asked(true);
+		build(yes);
+		final BankHistorySeries record = withLegacyDays();
+		publish(rows(3), status(record, VALUE_NOW, NOW - 60_000L));
+		onEdt(() ->
+		{
+			panel.pressView(SidebarView.HISTORY);
+			panel.selectWindow(MovementWindow.D7);
+			assertEquals("the fresh days only: yesterday and today", 2, readings());
+			assertEquals(TODAY.minusDays(1).toString(), panel.bankHistoryState().get("first"));
+			assertEquals(TODAY.toString(), panel.bankHistoryState().get("last"));
+			final String hidden = panel.updateLabel().getText();
+			assertEquals(BankPriceMovementPanel.historyRecorded(record.fromFresh()), hidden);
+			assertTrue(hidden, hidden.startsWith("2 days recorded since"));
+			final String hiddenFootnote = panel.heroSubText();
+
+			panel.pressLegacy();
+			assertEquals("asked once, in the words", Arrays.asList(BankPriceMovementPanel.LEGACY_ASK), yes.questions);
+			assertEquals("every reading", 6, readings());
+			assertEquals(TODAY.minusDays(7).toString(), panel.bankHistoryState().get("first"));
+			final String shown = panel.updateLabel().getText();
+			assertEquals(BankPriceMovementPanel.historyRecorded(record), shown);
+			assertTrue(shown, shown.startsWith("6 days recorded since"));
+			assertNotEquals("the comparison line follows the cut", hiddenFootnote, panel.heroSubText());
+			assertTrue("the box is ticked", sameIcon(Widgets.checkBox(true), panel.legacyRow().getIcon()));
+			assertTrue(panel.describe(), panel.describe().contains("\"includeLegacy\":true"));
+			assertEquals("written once", Arrays.asList(true), prefs.legacySaves);
+			assertTrue("the row stays while the days are there", legacyRowShows());
+
+			// Turned off again: the cut comes back, nothing is asked, and the write follows.
+			panel.pressLegacy();
+			assertEquals("asked nothing", 1, yes.questions.size());
+			assertEquals(2, readings());
+			assertEquals(hidden, panel.updateLabel().getText());
+			assertEquals(Arrays.asList(true, false), prefs.legacySaves);
+			assertTrue(sameIcon(Widgets.checkBox(false), panel.legacyRow().getIcon()));
+		});
+		verify(service, never()).setOptions(any());
+	}
+
+	private static void assertNotEquals(String message, Object a, Object b)
+	{
+		assertFalse(message + ": " + a, a.equals(b));
+	}
+
+	/** A series whose every day is a legacy day draws the empty state until the box is on. */
+	@Test
+	public void aSeriesOfLegacyDaysAloneDrawsTheEmptyStateUntilTheBoxIsOn() throws Exception
+	{
+		build(new Asked(true));
+		final BankHistorySeries all = series(TODAY.minusDays(5), TODAY.minusDays(4), TODAY.minusDays(2))
+			.withFreshFrom(LocalDate.MAX);
+		publish(rows(3), status(all, VALUE_NOW, NOW - 60_000L));
+		onEdt(() ->
+		{
+			panel.pressView(SidebarView.HISTORY);
+			assertEquals(0, readings());
+			assertNull(panel.bankHistoryState().get("first"));
+			assertEquals("all", panel.bankHistoryState().get("freshFrom"));
+			assertEquals(MovementMath.DASH, panel.updateLabel().getText());
+			assertTrue("the way out is on screen", legacyRowShows());
+			assertEquals(BankPriceMovementPanel.CARD_HISTORY, panel.card());
+
+			panel.pressLegacy(true);
+			assertEquals(3, readings());
+			assertEquals(BankPriceMovementPanel.historyRecorded(all), panel.updateLabel().getText());
+		});
+	}
+
+	/** Answered no: the box stays unticked, the series stays cut, and nothing is written. */
+	@Test
+	public void declinedTheBoxStaysOffAndNothingIsWritten() throws Exception
+	{
+		final Asked no = new Asked(false);
+		build(no);
+		publish(rows(3), status(withLegacyDays(), VALUE_NOW, NOW - 60_000L));
+		onEdt(() ->
+		{
+			panel.pressView(SidebarView.HISTORY);
+			panel.pressLegacy();
+			panel.pressLegacy(true);
+			assertEquals("asked each time, answered no each time", 2, no.questions.size());
+			assertEquals(2, readings());
+			assertTrue(sameIcon(Widgets.checkBox(false), panel.legacyRow().getIcon()));
+			assertTrue(panel.describe(), panel.describe().contains("\"includeLegacy\":false"));
+		});
+		assertTrue("nothing written", prefs.legacySaves.isEmpty());
+	}
+
+	/** Through the box's own mouse listener: a left press asks; a right press is not a press. */
+	@Test
+	public void aLeftPressOnTheRowAsksAndARightPressDoesNot() throws Exception
+	{
+		final Asked yes = new Asked(true);
+		build(yes);
+		publish(rows(3), status(withLegacyDays(), VALUE_NOW, NOW - 60_000L));
+		onEdt(() ->
+		{
+			panel.pressView(SidebarView.HISTORY);
+			press(panel.legacyRow(), MouseEvent.BUTTON3);
+			assertTrue(yes.questions.isEmpty());
+			press(panel.legacyRow(), MouseEvent.BUTTON1);
+			assertEquals(1, yes.questions.size());
+			assertEquals(6, readings());
+		});
+		assertEquals(Arrays.asList(true), prefs.legacySaves);
+	}
+
+	/** {@code setIncludeLegacy} is the config's road: it redraws, asks nothing and writes nothing back. */
+	@Test
+	public void setIncludeLegacyRedrawsAndAsksAndWritesNothing() throws Exception
+	{
+		final Asked yes = new Asked(true);
+		build(yes);
+		publish(rows(3), status(withLegacyDays(), VALUE_NOW, NOW - 60_000L));
+		onEdt(() ->
+		{
+			panel.pressView(SidebarView.HISTORY);
+			assertEquals(2, readings());
+			panel.setIncludeLegacy(true);
+			assertEquals(6, readings());
+			assertTrue(sameIcon(Widgets.checkBox(true), panel.legacyRow().getIcon()));
+			panel.setIncludeLegacy(true);
+			assertEquals("the same state again redraws what it drew", 6, readings());
+			panel.setIncludeLegacy(false);
+			assertEquals(2, readings());
+			assertTrue(sameIcon(Widgets.checkBox(false), panel.legacyRow().getIcon()));
+
+			panel.stop();
+			panel.setIncludeLegacy(true);
+			assertTrue("a stopped panel changes nothing", panel.describe().contains("\"includeLegacy\":false"));
+			panel.pressLegacy(true);
+			panel.pressLegacy();
+		});
+		assertTrue("the config's road writes nothing back", prefs.legacySaves.isEmpty());
+		assertTrue("and asks nothing", yes.questions.isEmpty());
+	}
+
+	/** The state-aimed press is idempotent: the same state again asks nothing and writes nothing. */
+	@Test
+	public void pressingTheStateItIsInDoesNothing() throws Exception
+	{
+		final Asked yes = new Asked(true);
+		build(yes);
+		publish(rows(3), status(withLegacyDays(), VALUE_NOW, NOW - 60_000L));
+		onEdt(() ->
+		{
+			panel.pressView(SidebarView.HISTORY);
+			panel.pressLegacy(false);
+			assertTrue(yes.questions.isEmpty());
+			panel.pressLegacy(true);
+			panel.pressLegacy(true);
+			panel.pressLegacy(false);
+			panel.pressLegacy(false);
+			assertEquals("one question, for the one turning ON", 1, yes.questions.size());
+		});
+		assertEquals(Arrays.asList(true, false), prefs.legacySaves);
+	}
+
+	/** A second press while the question is open (a script's) does not open a second question on top of it. */
+	@Test
+	public void aPressWhileTheQuestionIsOpenIsIgnored() throws Exception
+	{
+		final List<String> asked = new ArrayList<>();
+		build(question ->
+		{
+			asked.add(question);
+			panel.pressLegacy(true);
+			panel.pressLegacy();
+			return true;
+		});
+		publish(rows(3), status(withLegacyDays(), VALUE_NOW, NOW - 60_000L));
+		onEdt(() ->
+		{
+			panel.pressView(SidebarView.HISTORY);
+			panel.pressLegacy(true);
+			assertEquals("only the first press asked", 1, asked.size());
+			assertEquals(6, readings());
+		});
+		assertEquals(Arrays.asList(true), prefs.legacySaves);
+	}
+
+	/** The panel opens on the stored answer: ticked, every reading drawn, nothing written to say so. */
+	@Test
+	public void aPanelBuiltOnAStoredYesOpensWithTheDaysIncluded() throws Exception
+	{
+		prefs.storedLegacy = Boolean.TRUE;
+		build(new Asked(false));
+		publish(rows(3), status(withLegacyDays(), VALUE_NOW, NOW - 60_000L));
+		onEdt(() ->
+		{
+			panel.pressView(SidebarView.HISTORY);
+			assertEquals(6, readings());
+			assertTrue(sameIcon(Widgets.checkBox(true), panel.legacyRow().getIcon()));
+			assertTrue(panel.describe(), panel.describe().contains("\"includeLegacy\":true"));
+		});
+		assertTrue(prefs.legacySaves.isEmpty());
+	}
+
+	/** Nothing stored reads as the days hidden. */
+	@Test
+	public void nothingStoredReadsAsTheDaysHidden() throws Exception
+	{
+		prefs.storedLegacy = null;
+		build(new Asked(false));
+		publish(rows(3), status(withLegacyDays(), VALUE_NOW, NOW - 60_000L));
+		onEdt(() ->
+		{
+			panel.pressView(SidebarView.HISTORY);
+			assertEquals(2, readings());
+		});
+	}
+
+	/** The row never touches the settings menu: still 23 components. */
+	@Test
+	public void theSettingsMenuIsStillTwentyThreeComponents() throws Exception
+	{
+		build(new Asked(true));
+		publish(rows(3), status(withLegacyDays(), VALUE_NOW, NOW - 60_000L));
+		onEdt(() ->
+		{
+			panel.pressView(SidebarView.HISTORY);
+			assertTrue(legacyRowShows());
+			assertEquals(23, panel.heroMenu().getComponentCount());
+		});
+	}
+
+	/** A status arriving while the row is up that carries no legacy days takes the row away again. */
+	@Test
+	public void theRowGoesWhenALaterStatusHasNoLegacyDays() throws Exception
+	{
+		build(new Asked(true));
+		publish(rows(3), status(withLegacyDays(), VALUE_NOW, NOW - 60_000L));
+		onEdt(() ->
+		{
+			panel.pressView(SidebarView.HISTORY);
+			assertTrue(legacyRowShows());
+		});
+		publish(rows(3), status(series(TODAY.minusDays(1), TODAY), VALUE_NOW, NOW - 60_000L));
+		onEdt(() -> assertFalse(legacyRowShows()));
+		publish(rows(3), status(withLegacyDays(), VALUE_NOW, NOW - 60_000L));
+		onEdt(() -> assertTrue(legacyRowShows()));
+	}
+
 	// ---------------------------------------------------------------- fixtures and helpers
 
 	static long noon(LocalDate day)
@@ -577,6 +1010,12 @@ public class SidebarViewPanelTest
 	private List<Component> header()
 	{
 		return Arrays.asList(panel.header().getComponents());
+	}
+
+	/** The search box's row (1.0.9 part 4): the header's last row in Items. */
+	private Component searchRow()
+	{
+		return panel.searchField().getParent();
 	}
 
 	/** The Items | Net Worth History strip: the header row holding the toggle (the panel has no accessor for it). */

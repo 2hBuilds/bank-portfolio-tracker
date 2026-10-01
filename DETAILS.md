@@ -5,7 +5,7 @@
 
 Your whole bank, priced, with what each item's Grand Exchange price has done over the last day, week, month,
 quarter or half year - live traded prices for the items the market is actually trading, the daily guide price
-for the rest, and your inventory and worn gear counted in. It also has a **Net Worth History**: your bank's own
+for the rest, and your inventory, worn gear and Grand Exchange offers counted in. It also has a **Net Worth History**: your bank's own
 total, one reading a day.
 
 ## What the sidebar shows
@@ -37,7 +37,8 @@ total, one reading a day.
   hover text* on, hovering the line above tells you when the prices on screen were last read, so you can tell
   "nothing changed" from "nothing happened". A click is answered in two words: *Refreshing...*, then **Up to
   date**, which fades back to *Refresh* on its own a minute later;
-- a small **settings icon**, just under the Refresh link, which opens the panel's **Options** menu: *Refresh
+- a small **settings icon**, in the top-right corner of the card, with a **Discord mark** beside it on every card
+  that opens the 2hBuilds Discord, which opens the panel's **Options** menu: *Refresh
   prices now* (the prices alone, whether your bank is open or not), the three switches for the card's own
   figures, the four that decide what the panel counts and which stacks get a row (see *Settings* - they are the
   same switches as RuneLite's settings page, so either place works), then the three **Preset price ranges**
@@ -46,7 +47,13 @@ total, one reading a day.
   10m* back into the preset boxes, and **OK** on the right, which closes the menu - it takes the boxes with it
   on the way out, which closing the menu does anyway, since everything in here saves itself as you set it.
   Clicking the settings icon again while the menu is open closes it too: the icon is a switch, not just a way
-  in.
+  in. The menu opens with the plugin's name and which version of it you are running, as its header, and under the
+  version a row of marks for the 2hBuilds Discord, X and GitHub pages and this plugin's own GitHub page. **Troubleshoot...**,
+  under the start-tab choices, checks the plugin's connections and state, and opens a small window. It also
+  asks the Plugin Hub whether a newer version of the plugin exists, and says so first if there is one. The
+  window shows what is wrong in plain words, in one sentence at the top, with a line under it on what to do
+  next and how to send the report. Under that is a report to paste into a bug report, which **Copy report**
+  puts on the clipboard - it holds no account or bank data.
 
 The gp band you set does **not** apply here: a portfolio is everything you own, coins included. Each of the
 three figures has its own switch, and a switch you turn off **removes** the line rather than blanking it - the
@@ -117,7 +124,7 @@ Click the row for the exact number.
   bound; text the parser refuses turns the field red and changes nothing. The band filters on the **unit** price.
   Click the band button to fold the whole strip away if you want a shorter header - the choice is remembered, and
   *Show preset price ranges* in the settings does the same thing. **The three presets are yours to set**:
-  *Preset price ranges*, at the foot of the Options menu (behind the settings icon, under the Refresh link),
+  *Preset price ranges*, at the foot of the Options menu (behind the settings icon in the card's top-right corner),
   carries a box for each, and typing a new amount into one re-cuts that chip - so a big bank can read *1m+ /
   10m+ / 100m+*. *Reset to default*, bottom left of that menu, puts *100k / 1m / 10m* back.
 - on the **right**, a **sort button** naming the column the list is ordered on, with a small **arrow** for the
@@ -132,6 +139,12 @@ Click the row for the exact number.
 
 Rows come in pages of 250 with a "Show *n* more" button under them, so an 800-item bank does not freeze the
 sidebar. If a band matches nothing, the panel says so and offers *Clear price range* in one click.
+
+**Search** (1.0.9). Directly above the first item sits a box reading *Search items*. Type part of a name and the
+list keeps only the matching rows as you type - "rune" finds Rune platebody and Runite ore - on top of whatever
+band and sort are set; the count under the card says how many matched. Empty the box (or press Escape in it) and
+the whole list is back. It is not remembered between sessions, and it works on the list the panel already has, so
+typing never touches the game.
 
 ## Net Worth History
 
@@ -177,7 +190,12 @@ shows its year. The days come in pages of 250, like the items.
 
 **It adds up the way the card does.** Every reading is saved in parts - what was in your bank and what you were
 carrying, each split into tradeable items, coins and platinum tokens, untradeables made from tradeable items,
-and alch-only untradeables - so the Net Worth History always counts exactly what your settings count. Turn off
+and alch-only untradeables, and since 1.0.9 the items and the coins in your Grand Exchange offers - so the Net
+Worth History always counts exactly what your settings count. Readings saved before 1.0.9 did not count offers,
+so the tracker hides them by default and your first bank read on 1.0.9 is day one. A checkbox above the chart,
+*Include days before v1.0.9*, shows them again after a short confirmation (those days did not count open G.E.
+orders, so their totals may read low); it appears only if you have such days, and it is remembered. Nothing is
+deleted. Turn off
 *Include coins and platinum tokens* and the whole line redraws without coins, past days included; it never shows
 up as a one-day loss. A reading is priced the way the card priced it that day, and the guide-price figure is
 saved beside it, so turning *Use live prices* off redraws the line on guide prices alone. A day saved with live
@@ -285,6 +303,16 @@ An item you hold in **both** places is **one row** with the quantities added tog
 names the split under its figures: *"3 in bank, 1 in inventory, 1 worn"* (a
 worn-only item just says *"1 worn"*). The Bank value card counts the lot.
 
+**Your Grand Exchange offers count too.** *Include Grand Exchange offers* is **on by default** (1.0.9): what is
+sitting in your eight offer slots is yours and is counted - the items of a sell offer that have not sold yet, the
+items a buy offer has bought that you have not collected, the coins a sell offer has earned that are waiting to be
+collected, and the coins still committed to a buy offer (including the change a cheaper fill hands back). Items
+are valued like the inventory's, at the item's price; coins are coins and follow *Include coins and platinum
+tokens*. The offers are read at the same moments as your inventory - when the bank closes or you press Refresh -
+and never on their own: an offer that fills with the bank closed shows at the next of those moments. A stack in
+your bank and in an offer is one row, and the split reads *"3 in bank, 2 in the Grand Exchange"*. This is what
+closed the gap where logging out with items on the Grand Exchange left the day's net worth short by their worth.
+
 One consequence worth knowing: **RuneLite's own bank title bar will read lower than this card**, by roughly what
 you are carrying and wearing, because it counts the bank container and nothing else. Turn the switch off and
 every figure here is the bank alone, as the title bar's is.
@@ -363,12 +391,13 @@ follows.
 | Include coins and platinum tokens | Coins and platinum tokens (1,000 gp each) count in the bank value. On by default. |
 | Include alch-only untradeables | Counts untradeables with no tradeable parts, at alch value. Off by default. Untradeables made from tradeable items always count, at their parts' prices. |
 | Include inventory and worn gear | Items in your inventory and worn gear count in the bank value and are listed with the bank's stacks. They are read when you open or close the bank, or press Refresh. On by default. |
+| Include Grand Exchange offers | Items in your Grand Exchange offers, and the coins committed to them or waiting to be collected, count in the bank value and are listed with the bank's stacks. They are read when you close the bank or press Refresh. On by default. |
 | Show hover text | The bank value and the panel's controls explain themselves when you rest the pointer on them. Off by default. Item rows never use hover text either way - click a row to open its detail. |
 | Use live prices | Actively traded items use the wiki's live traded prices for every figure; thin items keep the daily guide price. On by default. |
 | Tab to open on startup | Which tab the sidebar shows when the plugin starts: Items or Net Worth History. Items by default. The Items \| Net Worth History buttons switch the tab for that session only and never change this setting. |
 
-Nine of them are also controls in the panel's own **Options** menu, behind the settings icon beneath the
-Refresh link - the three that decide what the card draws, then *Use live prices* and the three that decide what
+Ten of them are also controls in the panel's own **Options** menu, behind the settings icon in the card's
+top-right corner - the three that decide what the card draws, then *Use live prices* and the four that decide what
 the card counts and which stacks get a row, then *Tab to open on startup* with a dot beside *Items* or *Net Worth History* (choosing
 one changes the setting for the next start, not the tab you are looking at), and last of all *Show hover text*. *Preset price ranges* is in that
 menu too, as three boxes, with *Refresh prices now* at its top and a *Reset to default* and an *OK* button along

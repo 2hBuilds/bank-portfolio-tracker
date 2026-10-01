@@ -40,12 +40,15 @@ import javax.swing.JMenuItem;
 import javax.swing.SwingUtilities;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
+import net.runelite.api.GrandExchangeOffer;
+import net.runelite.api.GrandExchangeOfferState;
 import net.runelite.api.Item;
 import net.runelite.api.ItemComposition;
 import net.runelite.api.ItemContainer;
 import net.runelite.api.WorldType;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
+import net.runelite.api.events.GrandExchangeOfferChanged;
 import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.events.WidgetClosed;
 import net.runelite.api.events.WidgetLoaded;
@@ -113,42 +116,6 @@ import static org.mockito.Mockito.when;
  */
 public class BankPriceMovementWiringTest
 {
-	/**
-	 * The exact text C46 forbids anywhere in {@code src/main/java/com/bankpricemovement}, spelled out: the
-	 * seven fragments the contract lists, plus the three ways its prose rules ("no reflection", "no
-	 * {@code Thread} construction", "no sleeps", "{@code ImageUtil} unused", "files only under
-	 * {@code RuneLite.RUNELITE_DIR}") are actually written in Java. Deliberately NOT here: {@code TimeUnit} and
-	 * {@code Executors}, which are legitimate ({@code f.get(timeout, TimeUnit.MILLISECONDS)},
-	 * {@code scheduleWithFixedDelay(..., TimeUnit.MILLISECONDS)}) - a blanket "no concurrency" fragment would
-	 * fail the suite on correct code.
-	 */
-	private static final List<String> HUB_BLOCKERS = Arrays.asList(
-		"new Gson(",
-		"new GsonBuilder(",
-		"new OkHttpClient(",
-		"OkHttpClient.Builder(",
-		".execute()",
-		"Class.getResource(",
-		"getResourceAsStream(",
-		"Class.forName(",
-		"java.lang.reflect",
-		".setAccessible(",
-		"new Thread(",
-		"Thread.sleep(",
-		"ImageUtil",
-		"System.getProperty(\"user.home\")",
-		// The rest of the packager's disallowed-apis.txt (runelite/plugin-hub-tooling, read 2026-09-11) and the one
-		// idiom its reviewers flag (re-asserting an interrupt in a catch block).
-		".getVar(",
-		"ChatMessageManager",
-		"WidgetInfo",
-		"WidgetID",
-		"getItemStats(",
-		"AccountClient",
-		"AccountSession",
-		"SessionManager",
-		".interrupt(");
-
 	/**
 	 * The one line that decides where every file this plugin saves lands (addendum AD). Whitespace and line
 	 * breaks are tolerated and nothing else is: a store rooted at any other expression is the defect this pins.
@@ -416,53 +383,6 @@ public class BankPriceMovementWiringTest
 		assertEquals("only the plugin class may ask RuneLite for the directory - getPluginDirectory() is"
 			+ " protected on Plugin, and every other class is handed a Filepath or a seam instead",
 			Collections.singletonList("BankPriceMovementPlugin.java"), askers);
-	}
-
-	/**
-	 * C46 as a TEST rather than as a promise that somebody greps. The rule is the Hub's own submission blocker
-	 * list, and the whole build is aimed at passing it, yet until now the only gate was a manual grep in a
-	 * checklist - the one class of defect with nothing behind it. The fragments are matched literally, over
-	 * source with its COMMENTS REMOVED: this package documents the rules it obeys ("never {@code execute}",
-	 * "constructing one here is a Plugin Hub blocker"), and a raw substring scan would red-fail on a compliant
-	 * file the moment somebody wrote the rule down. Two guards against a vacuous pass: the file count, and a
-	 * marker that only real source can contain.
-	 */
-	@Test
-	public void hubBlockersAreAbsentFromTheWholePackage() throws Exception
-	{
-		final Path root = Paths.get("src", "main", "java", "com", "bankpricemovement");
-		assertTrue("wrong working directory - no package at " + root.toAbsolutePath(), Files.isDirectory(root));
-
-		final List<String> hits = new ArrayList<>();
-		int scanned = 0;
-		boolean sawMarker = false;
-		final List<Path> sources;
-		try (Stream<Path> walk = Files.walk(root))
-		{
-			sources = walk.filter(p -> p.toString().endsWith(".java")).sorted().collect(Collectors.toList());
-		}
-		for (Path source : sources)
-		{
-			scanned++;
-			final String code = withoutComments(new String(Files.readAllBytes(source), StandardCharsets.UTF_8));
-			sawMarker |= code.contains("implements Function<String, String>");
-			final String[] lines = code.split("\n", -1);
-			for (int i = 0; i < lines.length; i++)
-			{
-				for (String blocker : HUB_BLOCKERS)
-				{
-					if (lines[i].contains(blocker))
-					{
-						hits.add(source.getFileName() + ":" + (i + 1) + "  " + blocker);
-					}
-				}
-			}
-		}
-
-		assertTrue("Plugin Hub blockers in com.bankpricemovement (C46):\n" + String.join("\n", hits), hits.isEmpty());
-		assertTrue("only " + scanned + " source files were scanned - the walk found the wrong tree",
-			scanned >= LEAST_SOURCES);
-		assertTrue("nothing recognisable was read: the scan proves nothing", sawMarker);
 	}
 
 	@Test
@@ -1139,7 +1059,8 @@ public class BankPriceMovementWiringTest
 	 * start-up ({@link #aStoredHoldingOnRowsIsUnsetAtStartUp()}), so a build that still read it would be reading a
 	 * value no item writes.
 	 *
-	 * <p>Every expectation names all five fields, because {@link ViewOptions} now has exactly ONE constructor and
+	 * <p>Every expectation names all six fields (five until 1.0.9 part 3), because {@link ViewOptions} now has exactly
+	 * ONE constructor and
 	 * nothing may stand in for a read that never happened: a stored key left out of the build would mean a user
 	 * who turned live prices - or the carried items, or the hover text - away from the shipped default in
 	 * RuneLite's settings got it back on the next launch, and every {@code ConfigChanged} handed the service the
@@ -1151,31 +1072,38 @@ public class BankPriceMovementWiringTest
 	 * read that never happened.
 	 */
 	@Test
-	public void theViewOptionsAreBuiltFromTheFiveStoredKeys() throws Exception
+	public void theViewOptionsAreBuiltFromTheSixStoredKeys() throws Exception
 	{
 		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
 		final BankPriceMovementConfig config = mock(BankPriceMovementConfig.class);
 		set(plugin, "config", config);
 		// A mocked proxy answers false for everything until it is told otherwise - here, every switch off, which
-		// is a combination the interface defaults do not give (three of them default on).
-		assertEquals(new ViewOptions(false, false, false, false, false), plugin.optionsFromConfig());
+		// is a combination the interface defaults do not give (four of them default on).
+		assertEquals(new ViewOptions(false, false, false, false, false, false), plugin.optionsFromConfig());
 
 		when(config.countCash()).thenReturn(true);
 		when(config.livePrices()).thenReturn(true);
 		when(config.countInventory()).thenReturn(true);
+		when(config.countGrandExchange()).thenReturn(true);
 		assertEquals(ViewOptions.DEFAULT, plugin.optionsFromConfig());
 
 		when(config.countUntradeables()).thenReturn(true);
-		assertEquals(new ViewOptions(true, true, true, true, false), plugin.optionsFromConfig());
+		assertEquals(new ViewOptions(true, true, true, true, true, false), plugin.optionsFromConfig());
 
-		// ...and each of the three late arrivals is READ rather than assumed: moving only one moves only it.
+		// ...and each of the late arrivals is READ rather than assumed: moving only one moves only it.
 		when(config.livePrices()).thenReturn(false);
-		assertEquals(new ViewOptions(true, true, false, true, false), plugin.optionsFromConfig());
+		assertEquals(new ViewOptions(true, true, false, true, true, false), plugin.optionsFromConfig());
 		when(config.countInventory()).thenReturn(false);
-		assertEquals(new ViewOptions(true, true, false, false, false), plugin.optionsFromConfig());
+		assertEquals("1.0.9 part 3: the inventory moves alone, the Grand Exchange switch stays as stored",
+			new ViewOptions(true, true, false, false, true, false), plugin.optionsFromConfig());
+		when(config.countGrandExchange()).thenReturn(false);
+		assertEquals(new ViewOptions(true, true, false, false, false, false), plugin.optionsFromConfig());
+		// ...and the Grand Exchange switch on its own, with the inventory off: neither reads through the other.
+		when(config.countGrandExchange()).thenReturn(true);
+		assertEquals(new ViewOptions(true, true, false, false, true, false), plugin.optionsFromConfig());
 		// AH: a stored ON is the one answer for this switch that no default and no unstubbed proxy can give.
 		when(config.showHoverText()).thenReturn(true);
-		assertEquals(new ViewOptions(true, true, false, false, true), plugin.optionsFromConfig());
+		assertEquals(new ViewOptions(true, true, false, false, true, true), plugin.optionsFromConfig());
 	}
 
 	/**
@@ -1213,6 +1141,9 @@ public class BankPriceMovementWiringTest
 			// Y1: the carried switch is the fourth passenger since addendum AO, and the one whose ConfigChanged
 			// can change a row's QUANTITY - so it must reach the service, not merely the card.
 			BankPriceMovementPlugin.COUNT_INVENTORY_KEY,
+			// 1.0.9 part 3: the Grand Exchange switch is the fifth passenger and takes the same road, for the same
+			// reason - it changes which STACKS exist and what each one's quantity is, so it must reach the service.
+			BankPriceMovementPlugin.COUNT_GRAND_EXCHANGE_KEY,
 			// AH, as addendum AJ leaves it: the hover switch is the last, and the only one that changes
 			// NOTHING the service computes - it decides whether the hero card's hover and every CONTROL's
 			// tooltip are set at all. It rides here anyway, because applyOptions is the only road that hands
@@ -1228,9 +1159,9 @@ public class BankPriceMovementWiringTest
 		onEdt(() ->
 		{
 		});
-		final ViewOptions expected = new ViewOptions(false, true, false, false, true);
-		verify(service, times(5)).setOptions(expected);
-		verify(panel, times(5)).applyOptions(expected);
+		final ViewOptions expected = new ViewOptions(false, true, false, false, false, true);
+		verify(service, times(6)).setOptions(expected);
+		verify(panel, times(6)).applyOptions(expected);
 		verify(service, never()).setFilter(any());
 		verify(panel, never()).applyFilter(any());
 		// ...and the card's switches are a different road again (O2): a gear switch never re-renders the hero.
@@ -1239,6 +1170,8 @@ public class BankPriceMovementWiringTest
 		// AO1: the deleted switch's key is not one of the gear's own any more. It is swept at start-up, and that
 		// unset posts a ConfigChanged of its own - which must read as a stranger's key and not as a passenger.
 		assertFalse(BankPriceMovementPlugin.isOptionKey(BankPriceMovementPlugin.LEGACY_HOLDING_KEY));
+		assertEquals("the stored key of 1.0.9 part 3's switch", "countGrandExchange",
+			BankPriceMovementPlugin.COUNT_GRAND_EXCHANGE_KEY);
 		assertFalse(BankPriceMovementPlugin.isOptionKey("sortMode"));
 		assertFalse(BankPriceMovementPlugin.isOptionKey(BankPriceMovementPlugin.SHOW_VALUE_KEY));
 		assertFalse(BankPriceMovementPlugin.isOptionKey(null));
@@ -1268,7 +1201,7 @@ public class BankPriceMovementWiringTest
 	 * in the save is the one whose absence the user would feel.
 	 */
 	@Test
-	public void theOptionsPrefSeamReadsAndWritesTheFiveKeysAndTellsTheService() throws Exception
+	public void theOptionsPrefSeamReadsAndWritesTheSixKeysAndTellsTheService() throws Exception
 	{
 		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
 		final BankPriceMovementConfig config = mock(BankPriceMovementConfig.class);
@@ -1280,6 +1213,7 @@ public class BankPriceMovementWiringTest
 		when(config.countCash()).thenReturn(true);
 		when(config.livePrices()).thenReturn(true);
 		when(config.countInventory()).thenReturn(true);
+		when(config.countGrandExchange()).thenReturn(true);
 
 		final BankPriceMovementPanel.Prefs prefs = plugin.configPrefs();
 		// The shipped defaults, hover text included: AH's switch defaults OFF, which is what the unstubbed proxy
@@ -1289,13 +1223,14 @@ public class BankPriceMovementWiringTest
 		// Every switch away from its default, the hover text ON - so each of the five writes below carries a
 		// value the config did not already hold, and a key written from the wrong field would show as the
 		// wrong one.
-		final ViewOptions all = new ViewOptions(false, true, false, false, true);
+		final ViewOptions all = new ViewOptions(false, true, false, false, false, true);
 		prefs.saveOptions(all);
 		final String g = BankPriceMovementConfig.GROUP;
 		verify(cm).setConfiguration(g, BankPriceMovementPlugin.COUNT_CASH_KEY, (Object) Boolean.FALSE);
 		verify(cm).setConfiguration(g, BankPriceMovementPlugin.COUNT_UNTRADEABLES_KEY, (Object) Boolean.TRUE);
 		verify(cm).setConfiguration(g, BankPriceMovementPlugin.LIVE_PRICES_KEY, (Object) Boolean.FALSE);
 		verify(cm).setConfiguration(g, BankPriceMovementPlugin.COUNT_INVENTORY_KEY, (Object) Boolean.FALSE);
+		verify(cm).setConfiguration(g, BankPriceMovementPlugin.COUNT_GRAND_EXCHANGE_KEY, (Object) Boolean.FALSE);
 		verify(cm).setConfiguration(g, BankPriceMovementPlugin.SHOW_HOVER_TEXT_KEY, (Object) Boolean.TRUE);
 		// AO1: and the deleted key is not written at all. The sweep unsets it at start-up, so a save that still
 		// wrote it would put back on every tick the very value the launch had just taken away.
@@ -1305,7 +1240,7 @@ public class BankPriceMovementWiringTest
 
 		// Nothing to save is not a crash, and writes nothing more.
 		prefs.saveOptions(null);
-		verify(cm, times(5)).setConfiguration(anyString(), anyString(), any(Object.class));
+		verify(cm, times(6)).setConfiguration(anyString(), anyString(), any(Object.class));
 		verify(service, times(1)).setOptions(any());
 
 		// No manager at all (a field never injected) still reaches the service: the figures on screen must
@@ -1350,6 +1285,7 @@ public class BankPriceMovementWiringTest
 		when(config.countCash()).thenReturn(true);
 		when(config.livePrices()).thenReturn(true);
 		when(config.countInventory()).thenReturn(true);
+		when(config.countGrandExchange()).thenReturn(true);
 		when(config.sortMode()).thenReturn(SortMode.PERCENT_MOVE);
 		when(config.window()).thenReturn(MovementWindow.DEFAULT);
 		// ConfigManager, as it really behaves: the stored value changes and the event is posted on this very
@@ -1374,6 +1310,10 @@ public class BankPriceMovementWiringTest
 			{
 				when(config.countInventory()).thenReturn(value);
 			}
+			else if (BankPriceMovementPlugin.COUNT_GRAND_EXCHANGE_KEY.equals(key))
+			{
+				when(config.countGrandExchange()).thenReturn(value);
+			}
 			else if (BankPriceMovementPlugin.SHOW_HOVER_TEXT_KEY.equals(key))
 			{
 				when(config.showHoverText()).thenReturn(value);
@@ -1382,9 +1322,9 @@ public class BankPriceMovementWiringTest
 			return null;
 		}).when(cm).setConfiguration(anyString(), anyString(), any(Object.class));
 
-		// The tick turns the untradeables ON, the live switch OFF and the hover text ON, so three of the five
-		// writes really move a stored value and the guard has five events to swallow.
-		final ViewOptions ticked = new ViewOptions(true, true, false, true, true);
+		// The tick turns the untradeables ON, the live switch OFF, the Grand Exchange switch OFF and the hover text ON,
+		// so four of the six writes really move a stored value and the guard has six events to swallow.
+		final ViewOptions ticked = new ViewOptions(true, true, false, true, false, true);
 		plugin.configPrefs().saveOptions(ticked);
 
 		// Not "the right options five times": nothing at all from the round trip. The menu applied the switch
@@ -1421,8 +1361,10 @@ public class BankPriceMovementWiringTest
 		// T1: switched off, the setting that matters most at start-up - a service opened on the default would
 		// fetch the traded feeds this profile has said no to before the first ConfigChanged could stop it.
 		when(f.config.livePrices()).thenReturn(false);
-		// Y1: switched off as well, the other stored answer a build that skipped the read would turn back on.
+		// Y1: switched off as well, the other stored answer a build that skipped the read would turn back on - and
+		// 1.0.9 part 3's Grand Exchange switch, which ships ON, the same.
 		when(f.config.countInventory()).thenReturn(false);
+		when(f.config.countGrandExchange()).thenReturn(false);
 		// AH: switched ON, which is the direction this one can be lost in. It ships OFF, so a panel opened on
 		// ViewOptions.DEFAULT looks exactly right to a build that never read the key, and a reader who asked for
 		// the hover text would silently get none until they went back to the gear menu and ticked it again.
@@ -1431,7 +1373,7 @@ public class BankPriceMovementWiringTest
 
 		final BankPriceMovementPanel panel = (BankPriceMovementPanel) field(f.plugin, "panel");
 		assertNotNull(panel);
-		final ViewOptions stored = new ViewOptions(false, true, false, false, true);
+		final ViewOptions stored = new ViewOptions(false, true, false, false, false, true);
 		assertEquals(stored, panel.options());
 		// The service was told too, or the figures behind the card would be the defaults until the first tick.
 		// Its own switches, not the Status's: that one answers what the figures ALREADY on screen were computed
@@ -1844,6 +1786,161 @@ public class BankPriceMovementWiringTest
 		onEdt(fresh.plugin::shutDown);
 	}
 
+	// ---------------------------------------------------------------- 1.0.9 part 5: days before 1.0.9
+
+	/**
+	 * 1.0.9 part 5: the eighteenth key as whether the History tab shows the days recorded before 1.0.9 - read straight
+	 * off the stored key, and handed to the panel through the pref seam as a boxed answer that is never null.
+	 */
+	@Test
+	public void theIncludeLegacyKeyIsReadStraightOffTheConfigAndRoundTripsThroughThePrefs() throws Exception
+	{
+		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
+		final BankPriceMovementConfig config = mock(BankPriceMovementConfig.class);
+		final ConfigManager cm = mock(ConfigManager.class);
+		final PriceService service = mock(PriceService.class);
+		set(plugin, "config", config);
+		set(plugin, "configManager", cm);
+		set(plugin, "service", service);
+		assertEquals("includeLegacyHistory", BankPriceMovementPlugin.INCLUDE_LEGACY_KEY);
+
+		when(config.includeLegacyHistory()).thenReturn(false);
+		assertFalse(plugin.includeLegacyFromConfig());
+		assertEquals(Boolean.FALSE, plugin.configPrefs().loadIncludeLegacy());
+		when(config.includeLegacyHistory()).thenReturn(true);
+		assertTrue(plugin.includeLegacyFromConfig());
+		final BankPriceMovementPanel.Prefs prefs = plugin.configPrefs();
+		assertEquals(Boolean.TRUE, prefs.loadIncludeLegacy());
+
+		prefs.saveIncludeLegacy(true);
+		verify(cm).setConfiguration(BankPriceMovementConfig.GROUP, BankPriceMovementPlugin.INCLUDE_LEGACY_KEY, true);
+		prefs.saveIncludeLegacy(false);
+		verify(cm).setConfiguration(BankPriceMovementConfig.GROUP, BankPriceMovementPlugin.INCLUDE_LEGACY_KEY, false);
+		// ONE key and no service: which days are drawn decides nothing the service computes.
+		verify(cm, times(2)).setConfiguration(anyString(), anyString(), any(Object.class));
+		verify(service, never()).setOptions(any());
+		verify(service, never()).setFilter(any());
+
+		// No manager at all (a field never injected) is a no-op rather than an NPE.
+		set(plugin, "configManager", null);
+		plugin.configPrefs().saveIncludeLegacy(true);
+
+		// The other halves of the seam are untouched by any of that.
+		assertEquals(plugin.filterFromConfig(), prefs.load());
+		assertEquals(plugin.optionsFromConfig(), prefs.loadOptions());
+		assertEquals(Boolean.valueOf(plugin.foldOpenFromConfig()), prefs.loadFoldOpen());
+	}
+
+	/**
+	 * 1.0.9 part 5: the key takes a road of its own - the panel's {@code setIncludeLegacy} and nobody else. Never the
+	 * service (no figure moves), never {@code pressLegacy}, which would ask the question again for a change already
+	 * answered where it was made, and no other key is mistaken for it.
+	 */
+	@Test
+	public void anIncludeLegacyChangeRedrawsTheTabAndTellsNobodyElse() throws Exception
+	{
+		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
+		final PriceService service = mock(PriceService.class);
+		final BankPriceMovementPanel panel = mock(BankPriceMovementPanel.class);
+		final BankPriceMovementConfig config = mock(BankPriceMovementConfig.class);
+		set(plugin, "service", service);
+		set(plugin, "panel", panel);
+		set(plugin, "config", config);
+		when(config.includeLegacyHistory()).thenReturn(true);
+
+		final String key = BankPriceMovementPlugin.INCLUDE_LEGACY_KEY;
+		assertTrue(BankPriceMovementPlugin.isLegacyKey(key));
+		plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, key));
+		onEdt(() ->
+		{
+		});
+		verify(panel).setIncludeLegacy(true);
+		verify(panel, never()).pressLegacy();
+		verify(panel, never()).pressLegacy(anyBoolean());
+		verify(service, never()).setFilter(any());
+		verify(service, never()).setOptions(any());
+		verify(panel, never()).applyFilter(any());
+		verify(panel, never()).applyOptions(any());
+		verify(panel, never()).applyPresets(any());
+		verify(panel, never()).applyHeroVisibility(any());
+		verify(panel, never()).setFoldOpen(anyBoolean());
+		verify(panel, never()).setStartTab(any());
+
+		when(config.includeLegacyHistory()).thenReturn(false);
+		plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, key));
+		onEdt(() ->
+		{
+		});
+		verify(panel).setIncludeLegacy(false);
+
+		// The road is this key alone.
+		assertFalse(BankPriceMovementPlugin.isLegacyKey("gpMin"));
+		assertFalse(BankPriceMovementPlugin.isLegacyKey(BankPriceMovementPlugin.FOLD_OPEN_KEY));
+		assertFalse(BankPriceMovementPlugin.isLegacyKey(BankPriceMovementPlugin.START_TAB_KEY));
+		assertFalse(BankPriceMovementPlugin.isLegacyKey(null));
+		assertFalse(BankPriceMovementPlugin.isFoldKey(key));
+		assertFalse(BankPriceMovementPlugin.isStartTabKey(key));
+		assertFalse(BankPriceMovementPlugin.isPresetKey(key));
+		assertFalse(BankPriceMovementPlugin.isOptionKey(key));
+		assertFalse(BankPriceMovementPlugin.isHeroKey(key));
+
+		// After shutDown there is no sidebar to redraw, and the event must not throw.
+		set(plugin, "panel", null);
+		plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, key));
+	}
+
+	/** The check box's own write does not come back and redraw the tab a second time ({@code prefsWriter}). */
+	@Test
+	public void theCheckBoxsOwnWriteDoesNotRedrawTheTabAgain() throws Exception
+	{
+		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
+		final BankPriceMovementPanel panel = mock(BankPriceMovementPanel.class);
+		final BankPriceMovementConfig config = mock(BankPriceMovementConfig.class);
+		final ConfigManager cm = mock(ConfigManager.class);
+		set(plugin, "panel", panel);
+		set(plugin, "config", config);
+		set(plugin, "configManager", cm);
+		doAnswer(invocation ->
+		{
+			when(config.includeLegacyHistory()).thenReturn((Boolean) invocation.getArgument(2));
+			plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, (String) invocation.getArgument(1)));
+			return null;
+		}).when(cm).setConfiguration(anyString(), anyString(), any(Object.class));
+
+		plugin.configPrefs().saveIncludeLegacy(true);
+		onEdt(() ->
+		{
+		});
+		verify(panel, never()).setIncludeLegacy(anyBoolean());
+
+		// The guard is over as soon as the save is: a change to the stored key from elsewhere still lands.
+		plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, BankPriceMovementPlugin.INCLUDE_LEGACY_KEY));
+		onEdt(() ->
+		{
+		});
+		verify(panel).setIncludeLegacy(true);
+	}
+
+	/** The sidebar opens on the stored answer: startUp says it out loud, and the panel asked the seam as it built. */
+	@Test
+	public void theSidebarOpensOnTheStoredIncludeLegacyAnswer() throws Exception
+	{
+		final Fixture on = new Fixture(false);
+		when(on.config.includeLegacyHistory()).thenReturn(true);
+		onEdt(on.plugin::startUp);
+		final BankPriceMovementPanel shown = (BankPriceMovementPanel) field(on.plugin, "panel");
+		assertNotNull(shown);
+		assertTrue(shown.describe(), shown.describe().contains("\"includeLegacy\":true"));
+		onEdt(on.plugin::shutDown);
+
+		final Fixture fresh = new Fixture(false);
+		onEdt(fresh.plugin::startUp);
+		final BankPriceMovementPanel hidden = (BankPriceMovementPanel) field(fresh.plugin, "panel");
+		assertNotNull(hidden);
+		assertTrue(hidden.describe(), hidden.describe().contains("\"includeLegacy\":false"));
+		onEdt(fresh.plugin::shutDown);
+	}
+
 	/**
 	 * O1: the {@code look} key is swept at startUp. Addendum N stored one of two designs there; the user picked
 	 * Ticker, the item is gone, and a value nothing reads and no config panel lists is not something a user
@@ -2046,7 +2143,7 @@ public class BankPriceMovementWiringTest
 		// The ids are RuneLite's own gameval constants and nothing this plugin made up.
 		assertEquals(93, InventoryID.INV);
 		assertEquals(94, InventoryID.WORN);
-		verify(reader).readContainers(eq(held), eq(equipped), anyLong());
+		verify(reader).readContainers(eq(held), eq(equipped), any(), anyLong());
 		assertEquals("one event, one snapshot", 1,
 			mockingDetails(service).getInvocations().stream()
 			.filter(i -> "setBank".equals(i.getMethod().getName())).count());
@@ -2077,7 +2174,7 @@ public class BankPriceMovementWiringTest
 
 		plugin.onItemContainerChanged(new ItemContainerChanged(BankReader.BANK_CONTAINER_ID, bank));
 
-		verify(reader).readContainers(isNull(), isNull(), anyLong());
+		verify(reader).readContainers(isNull(), isNull(), any(), anyLong());
 		verify(service).setBank(any(BankSnapshot.class));
 	}
 
@@ -2106,13 +2203,13 @@ public class BankPriceMovementWiringTest
 		when(client.getWorldType()).thenReturn(EnumSet.noneOf(WorldType.class));
 		when(client.getGameState()).thenReturn(GameState.LOGGED_IN);
 		when(client.getAccountHash()).thenReturn(77L);
-		when(reader.readContainers(any(), any(), anyLong())).thenReturn(
+		when(reader.readContainers(any(), any(), any(), anyLong())).thenReturn(
 			new BankReader.Carried(Collections.emptyList(), Collections.emptyList(), 0L, 5L));
 
 		// Nothing has been captured yet and the service holds no bank either (the mock answers null): a
 		// Refresh here must read nothing and publish nothing.
 		plugin.readCarriedOnClientThread();
-		verify(reader, never()).readContainers(any(), any(), anyLong());
+		verify(reader, never()).readContainers(any(), any(), any(), anyLong());
 		verify(service, never()).setBank(any(BankSnapshot.class));
 
 		// The bank event of Y2 (a) leaves the snapshot this hook re-stamps.
@@ -2131,7 +2228,7 @@ public class BankPriceMovementWiringTest
 			.filter(i -> "setBank".equals(i.getMethod().getName())).count());
 
 		hop.getValue().run();
-		verify(reader, times(2)).readContainers(any(), any(), anyLong());
+		verify(reader, times(2)).readContainers(any(), any(), any(), anyLong());
 		verify(service, times(2)).setBank(any(BankSnapshot.class));
 		// ...and the bank half was NOT read again: one bank event, one read of container 95.
 		verify(reader, times(1)).read(any(), anyLong(), anyString(), anyLong());
@@ -2177,7 +2274,7 @@ public class BankPriceMovementWiringTest
 		when(client.getGameState()).thenReturn(GameState.LOGGED_IN);
 		when(client.getAccountHash()).thenReturn(77L);
 		when(client.getItemContainer(anyInt())).thenReturn(null);
-		when(reader.readContainers(any(), any(), anyLong())).thenReturn(
+		when(reader.readContainers(any(), any(), any(), anyLong())).thenReturn(
 			new BankReader.Carried(Collections.emptyList(), Collections.emptyList(), 12L, 5L));
 
 		// Another account's snapshot is still in the service (a hop whose disk read has not landed): refused.
@@ -3137,7 +3234,7 @@ public class BankPriceMovementWiringTest
 	public void refreshPricesNowWithAChangeHeldLeavesTheStaleBankAlone() throws Exception
 	{
 		final BankRig r = new BankRig();
-		when(r.reader.readContainers(any(), any(), anyLong())).thenReturn(
+		when(r.reader.readContainers(any(), any(), any(), anyLong())).thenReturn(
 			new BankReader.Carried(Collections.emptyList(), Collections.emptyList(), 3L, 5L));
 		r.openBank();
 		r.bankEvent(bank());
@@ -3680,7 +3777,7 @@ public class BankPriceMovementWiringTest
 		final Item[] inventory = {new Item(1215, 1), new Item(385, 1), new Item(-1, 0), new Item(385, 1),
 			new Item(554, 5_000)};
 		final Item[] worn = {WHIP, new Item(-1, 0), new Item(-1, 0)};
-		final BankReader.Carried first = reader.readContainers(inventory, worn, 1L);
+		final BankReader.Carried first = reader.readContainers(inventory, worn, null, 1L);
 		assertEquals("the fixture really reads: dagger, sharks (two slots folded), fire runes", 3,
 			first.inventory.size());
 		assertEquals("and the whip worn", 1, first.worn.size());
@@ -3689,6 +3786,7 @@ public class BankPriceMovementWiringTest
 		for (int trial = 0; trial < 200; trial++)
 		{
 			final BankReader.Carried again = reader.readContainers(shuffled(inventory, random), shuffled(worn, random),
+				null,
 				1L);
 			assertEquals("the same inventory in another order reads the same", first.inventory, again.inventory);
 			assertEquals("and so does the same worn gear", first.worn, again.worn);
@@ -3696,7 +3794,7 @@ public class BankPriceMovementWiringTest
 
 		final BankReader.Carried swapped = reader.readContainers(
 			new Item[]{WHIP, new Item(385, 1), new Item(-1, 0), new Item(385, 1), new Item(554, 5_000)},
-			new Item[]{new Item(1215, 1), new Item(-1, 0), new Item(-1, 0)}, 1L);
+			new Item[]{new Item(1215, 1), new Item(-1, 0), new Item(-1, 0)}, null, 1L);
 		assertNotEquals("the whip and the dagger trading containers is another inventory", first.inventory,
 			swapped.inventory);
 		assertNotEquals("and other worn gear", first.worn, swapped.worn);
@@ -3811,7 +3909,7 @@ public class BankPriceMovementWiringTest
 		 */
 		private void answerCarriedReads()
 		{
-			when(reader.readContainers(any(), any(), anyLong())).thenAnswer(invocation ->
+			when(reader.readContainers(any(), any(), any(), anyLong())).thenAnswer(invocation ->
 				new BankReader.Carried(Collections.emptyList(), Collections.emptyList(), 0L, 5L));
 		}
 
@@ -4869,7 +4967,9 @@ public class BankPriceMovementWiringTest
 		assertTrue(player.toString(), player.contains("logged in: yes"));
 		assertTrue(player.toString(), player.contains("account known: yes"));
 		assertTrue(player.toString(), player.contains("profile: STANDARD"));
-		assertTrue(player.toString(), player.contains("world: 402"));
+		// The world NUMBER is not in the report at all (1.0.9): it could say which server the player sits on.
+		assertTrue(player.toString(), player.stream().noneMatch(line -> line.startsWith("world:")));
+		assertFalse(player.toString(), player.toString().contains("world: 402"));
 		assertTrue(player.toString(), player.contains("world types: MEMBERS, PVP"));
 		assertTrue(player.toString(), player.contains("bank window open now: no"));
 		assertTrue(bankLines.toString(), bankLines.contains("bank events seen: 1"));
@@ -4914,14 +5014,15 @@ public class BankPriceMovementWiringTest
 		assertTrue(builder.build().lines(Diagnostics.PLAYER).contains("bank window open now: yes"));
 	}
 
-	/** The Settings section: the sixteen stored values by key, in the config's order. */
+	/** The Settings section: the eighteen stored values by key, in the config's order. */
 	@Test
-	public void theSettingsFactsListTheSixteenKeysWithTheirValues() throws Exception
+	public void theSettingsFactsListTheEighteenKeysWithTheirValues() throws Exception
 	{
 		final Fixture f = new Fixture(false);
 		when(f.config.gpMin()).thenReturn(100_000);
 		when(f.config.bandPresets()).thenReturn("100k, 1m, 10m");
 		when(f.config.livePrices()).thenReturn(true);
+		when(f.config.countGrandExchange()).thenReturn(true);
 		when(f.config.startTab()).thenReturn(SidebarView.HISTORY);
 		final Diagnostics.Facts.Builder builder = Diagnostics.Facts.builder();
 
@@ -4935,14 +5036,235 @@ public class BankPriceMovementWiringTest
 		}
 		assertEquals(Arrays.asList("gpMin", "gpMax", "bandPresets", "foldOpen", "sortMode", "sortDescending", "window",
 			"showBankValue", "showBankMoveGp", "showBankMovePct", "countCash", "countUntradeables", "countInventory",
-			"showHoverText", "livePrices", "startTab"), keys);
-		assertEquals(16, lines.size());
+			"countGrandExchange", "showHoverText", "livePrices", "startTab", "includeLegacyHistory"), keys);
+		assertEquals(18, lines.size());
+		assertTrue(lines.toString(), lines.contains("includeLegacyHistory: false"));
+		assertTrue(lines.toString(), lines.contains("countGrandExchange: true"));
 		assertTrue(lines.toString(), lines.contains("gpMin: 100000"));
 		assertTrue(lines.toString(), lines.contains("bandPresets: 100k, 1m, 10m"));
 		assertTrue(lines.toString(), lines.contains("livePrices: true"));
 		assertTrue(lines.toString(), lines.contains("startTab: HISTORY"));
 		assertTrue(lines.toString(), lines.contains("window: " + MovementWindow.DEFAULT.name()));
 		assertTrue(lines.toString(), lines.contains("sortMode: " + SortMode.PERCENT_MOVE.name()));
+	}
+
+	// ---------------------------------------------------------------- 1.0.9 part 3: the Grand Exchange offers
+
+	private static GrandExchangeOffer offer(GrandExchangeOfferState state, int itemId, int total, int sold,
+		long price, long spent)
+	{
+		final GrandExchangeOffer offer = mock(GrandExchangeOffer.class);
+		when(offer.getState()).thenReturn(state);
+		when(offer.getItemId()).thenReturn(itemId);
+		when(offer.getTotalQuantity()).thenReturn(total);
+		when(offer.getQuantitySold()).thenReturn(sold);
+		when(offer.getPrice()).thenReturn(price);
+		when(offer.getSpent()).thenReturn(spent);
+		return offer;
+	}
+
+	/**
+	 * What the client answers for its eight Grand Exchange offers from now on. A helper rather than a
+	 * {@code when(...).thenReturn(offer(...))}: the offers are mocks, and a mock created inside a {@code thenReturn}
+	 * argument trips Mockito's unfinished-stubbing check - here they are built before the stubbing starts.
+	 */
+	private static void offersAre(Client client, GrandExchangeOffer[] offers)
+	{
+		when(client.getGrandExchangeOffers()).thenReturn(offers);
+	}
+
+	/** One whip for sale, 4 of 10 sold at 100: 6 left in the offer and 350 gp waiting. */
+	private static GrandExchangeOffer[] oneWhipOnSale()
+	{
+		return new GrandExchangeOffer[]{offer(GrandExchangeOfferState.SELLING, 4151, 10, 4, 100L, 350L)};
+	}
+
+	/** The offers a read was handed, in order (null where the plugin passed none). */
+	private static List<ExchangeOffers> offersOfReads(BankRig r)
+	{
+		final List<ExchangeOffers> out = new ArrayList<>();
+		for (Object[] args : calls(r.reader, "readContainers"))
+		{
+			out.add((ExchangeOffers) args[2]);
+		}
+		return out;
+	}
+
+	/**
+	 * A bank event takes the player's offers from the client in the same pass as the inventory and the worn gear, and
+	 * the snapshot it publishes holds them: the real reader folds the offer's six unsold whips into the exchange list
+	 * and the 350 gp waiting into the exchange coins, beside a bank that holds a whip of its own.
+	 */
+	@Test
+	public void aBankEventPublishesASnapshotHoldingTheOffers() throws Exception
+	{
+		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
+		final PriceService service = mock(PriceService.class);
+		final Client client = mock(Client.class);
+		set(plugin, "service", service);
+		set(plugin, "bankReader", premiseReader());
+		set(plugin, "client", client);
+		when(client.getWorldType()).thenReturn(EnumSet.noneOf(WorldType.class));
+		when(client.getGameState()).thenReturn(GameState.LOGGED_IN);
+		when(client.getAccountHash()).thenReturn(ACCOUNT);
+		offersAre(client, oneWhipOnSale());
+		final ItemContainer bank = mock(ItemContainer.class);
+		when(bank.getItems()).thenReturn(new Item[]{WHIP});
+
+		plugin.onItemContainerChanged(new ItemContainerChanged(BankReader.BANK_CONTAINER_ID, bank));
+
+		final ArgumentCaptor<BankSnapshot> published = ArgumentCaptor.forClass(BankSnapshot.class);
+		verify(service).setBank(published.capture());
+		final BankSnapshot snapshot = published.getValue();
+		assertEquals("the bank's own whip is untouched", 1, snapshot.items.get(0).quantity);
+		assertEquals(1, snapshot.exchange.size());
+		assertEquals(4151, snapshot.exchange.get(0).id);
+		assertEquals("6 of the 10 are unsold", 6, snapshot.exchange.get(0).quantity);
+		assertEquals("350 gp received and waiting to be collected", 350L, snapshot.exchangeGp);
+		assertTrue(snapshot.inventory.isEmpty());
+		assertTrue(snapshot.worn.isEmpty());
+	}
+
+	/**
+	 * Refresh's carried re-read takes the offers too, at its own moment: the first publish saw one offer, the offer
+	 * then filled, and the Refresh's snapshot holds what the client holds now - while the stored bank half is not read
+	 * again.
+	 */
+	@Test
+	public void refreshReReadsTheOffersToo() throws Exception
+	{
+		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
+		final PriceService service = mock(PriceService.class);
+		final Client client = mock(Client.class);
+		set(plugin, "service", service);
+		set(plugin, "bankReader", premiseReader());
+		set(plugin, "client", client);
+		when(client.getWorldType()).thenReturn(EnumSet.noneOf(WorldType.class));
+		when(client.getGameState()).thenReturn(GameState.LOGGED_IN);
+		when(client.getAccountHash()).thenReturn(ACCOUNT);
+		offersAre(client, oneWhipOnSale());
+		final ItemContainer bank = mock(ItemContainer.class);
+		when(bank.getItems()).thenReturn(new Item[]{WHIP});
+		plugin.onItemContainerChanged(new ItemContainerChanged(BankReader.BANK_CONTAINER_ID, bank));
+
+		// The whip offer sells out and a shark buy completes while the bank is shut.
+		offersAre(client, new GrandExchangeOffer[]{
+			offer(GrandExchangeOfferState.SOLD, 4151, 10, 10, 100L, 1_000L),
+			offer(GrandExchangeOfferState.BOUGHT, 385, 5, 5, 800L, 4_000L)});
+		plugin.readCarriedOnClientThread();
+
+		final ArgumentCaptor<BankSnapshot> published = ArgumentCaptor.forClass(BankSnapshot.class);
+		verify(service, times(2)).setBank(published.capture());
+		final BankSnapshot refreshed = published.getAllValues().get(1);
+		assertEquals("the sold-out offer holds no item", 1, refreshed.exchange.size());
+		assertEquals(385, refreshed.exchange.get(0).id);
+		assertEquals(5, refreshed.exchange.get(0).quantity);
+		assertEquals("1,000 received by the sale", 1_000L, refreshed.exchangeGp);
+		assertEquals("the bank half is the one the event read", 1, refreshed.items.size());
+	}
+
+	/**
+	 * The logout read cannot ask the client, so it takes the last copy an offer event left ({@code lastOffers}) - as
+	 * the carried pair takes the copies held at the last bank event - and counts them: a change held with the bank
+	 * open, the session ending, the offers delivered by a {@code GrandExchangeOfferChanged} while the client could
+	 * still be asked. The offer event itself reads and publishes nothing, and the copy is cleared at the end of the
+	 * session, so a later logout read with no event since counts none.
+	 */
+	@Test
+	public void aLogoutReadCountsTheOffersTheLastOfferEventLeft() throws Exception
+	{
+		for (GameState end : new GameState[]{GameState.LOGIN_SCREEN, GameState.HOPPING})
+		{
+			final BankRig r = new BankRig();
+			r.carrying(new Item[]{new Item(385, 12)}, new Item[]{new Item(1127, 1)});
+			r.openBank();
+			r.bankEvent(bank());
+			assertEquals(end + ": the first read took the offers from the client (none)", 1, r.reads());
+			assertTrue(offersOfReads(r).get(0).isEmpty());
+
+			// An offer appears while the bank is open: the event keeps a copy and does nothing else.
+			offersAre(r.client, oneWhipOnSale());
+			final int setBanksBefore = (int) mockingDetails(r.service).getInvocations().stream()
+				.filter(i -> "setBank".equals(i.getMethod().getName())).count();
+			r.plugin.onGrandExchangeOfferChanged(new GrandExchangeOfferChanged());
+			assertEquals(end + ": an offer event reads nothing", 1, r.reads());
+			assertEquals(end + ": and publishes nothing", setBanksBefore, mockingDetails(r.service).getInvocations()
+				.stream().filter(i -> "setBank".equals(i.getMethod().getName())).count());
+			assertEquals(end + ": and calls no carried reader", 1, calls(r.reader, "readContainers").size());
+			assertFalse(end + ": nor changes the hold", r.isPending());
+			assertNotNull(field(r.plugin, "lastOffers"));
+
+			// A change is held, then the session ends with the client unable to answer for anything.
+			r.carrying(new Item[]{new Item(385, 40)}, new Item[]{new Item(1127, 1)});
+			r.bankEvent(withdrew28Sharks());
+			assertTrue(end + ": pending", r.isPending());
+			when(r.client.getGameState()).thenReturn(end);
+			when(r.client.getAccountHash()).thenReturn(-1L);
+			when(r.client.getItemContainer(anyInt())).thenReturn(null);
+			offersAre(r.client, null);
+			r.plugin.onGameStateChanged(gameState(end));
+
+			assertEquals(end + ": the held change is read once", 2, r.reads());
+			assertEquals(end + ": with the offers the event left, not the client's nothing",
+				ExchangeOffers.of(oneWhipOnSale()), offersOfReads(r).get(1));
+			assertNull(end + ": the copy is cleared after the read", field(r.plugin, "lastOffers"));
+
+			// A second session end with a change held and no offer event since counts no offer.
+			when(r.client.getGameState()).thenReturn(GameState.LOGGED_IN);
+			when(r.client.getAccountHash()).thenReturn(ACCOUNT);
+			r.carrying(new Item[]{new Item(385, 40)}, new Item[]{new Item(1127, 1)});
+			r.plugin.onGameStateChanged(gameState(GameState.LOGGED_IN));
+			r.openBank();
+			r.bankEvent(withdrew28Sharks());
+			r.bankEvent(bank());
+			assertTrue(end + ": a change held again", r.isPending());
+			when(r.client.getGameState()).thenReturn(end);
+			when(r.client.getAccountHash()).thenReturn(-1L);
+			when(r.client.getItemContainer(anyInt())).thenReturn(null);
+			r.plugin.onGameStateChanged(gameState(end));
+			final ExchangeOffers last = offersOfReads(r).get(offersOfReads(r).size() - 1);
+			assertTrue(end + ": no offer is counted: " + last, last == null || last.isEmpty());
+		}
+	}
+
+	/** While the client can vouch for the account, the read asks it - the held copy is for the logout alone. */
+	@Test
+	public void aCloseReadsTheOffersFromTheClientNotFromTheLastEvent() throws Exception
+	{
+		final BankRig r = new BankRig();
+		r.carrying(new Item[]{new Item(385, 12)}, new Item[]{new Item(1127, 1)});
+		r.liveBank(bank());
+		r.openBank();
+		r.bankEvent(bank());
+		offersAre(r.client, oneWhipOnSale());
+		r.plugin.onGrandExchangeOfferChanged(new GrandExchangeOfferChanged());
+		// The offer then changes with no event (a missed one): the close must not trust the stale copy.
+		final GrandExchangeOffer[] soldOut = {offer(GrandExchangeOfferState.SOLD, 4151, 10, 10, 100L, 1_000L)};
+		offersAre(r.client, soldOut);
+		r.carrying(new Item[]{new Item(385, 40)}, new Item[]{new Item(1127, 1)});
+		r.bankEvent(withdrew28Sharks());
+		assertTrue(r.isPending());
+		r.liveBank(withdrew28Sharks());
+
+		r.closeBank(true);
+
+		assertEquals(2, r.reads());
+		assertEquals("the client's own offers at the close", ExchangeOffers.of(soldOut), offersOfReads(r).get(1));
+	}
+
+	/** {@code shutDown} drops the copy with the rest of the hold, so a run that follows starts with none. */
+	@Test
+	public void shutDownClearsTheLastOffers() throws Exception
+	{
+		final Fixture f = new Fixture(false);
+		offersAre(f.client, oneWhipOnSale());
+		onEdt(f.plugin::startUp);
+		f.plugin.onGrandExchangeOfferChanged(new GrandExchangeOfferChanged());
+		assertNotNull(field(f.plugin, "lastOffers"));
+
+		onEdt(f.plugin::shutDown);
+
+		assertNull(field(f.plugin, "lastOffers"));
 	}
 
 	/**

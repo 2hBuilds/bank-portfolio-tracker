@@ -57,6 +57,9 @@ public class BankPriceMovementConfigTest
 		// Addendum Y line Y1: the carried switch, the fourth field of the same ViewOptions since AO (it landed as
 		// the fifth) and the thirteenth key added to the group. On by default, unlike the two switches beside it.
 		"countInventory",
+		// 1.0.9 part 3: the Grand Exchange switch, the sixth field of the same ViewOptions and the seventeenth key
+		// - the player's offers counted and listed beside the bank's stacks. On by default, like the carried one.
+		"countGrandExchange",
 		// Addendum AH: it landed as the sixteenth key and the sixth field of the same ViewOptions, and is the
 		// fifteenth and the fifth since addendum AO - whether the sidebar shows hover text at all. OFF by default,
 		// alone on this page in showing LESS than the build before it. It was deleted for one day by addendum AI
@@ -65,7 +68,10 @@ public class BankPriceMovementConfigTest
 		"showHoverText",
 		// Addendum AU: the sixteenth key and the last on the page - the tab the sidebar opens on (Items unless the
 		// player chose Net Worth History). The player's choice, never the last tab used.
-		"startTab"
+		"startTab",
+		// 1.0.9 part 5: the eighteenth key and the only HIDDEN one - whether the Net Worth History tab shows the days
+		// recorded before 1.0.9. The check box on the tab is its control; the settings page does not list it.
+		"includeLegacyHistory"
 	);
 
 	/** Every zero-argument {@code @ConfigItem} method visible on the interface, inherited ones included. */
@@ -128,9 +134,10 @@ public class BankPriceMovementConfigTest
 			keys.add(m.getAnnotation(ConfigItem.class).keyName());
 		}
 		assertEquals("unexpected set of config keys", new TreeSet<>(EXPECTED_KEYS), keys);
-		// Sixteen: addendum AU's "view" (the last tab used) was deleted before it shipped and "startTab" (the player's
-		// choice) took the sixteenth place.
-		assertEquals("unexpected number of config items", 16, methods.size());
+		// Eighteen: addendum AU's "view" (the last tab used) was deleted before it shipped and "startTab" (the
+		// player's choice) took the sixteenth place; 1.0.9 part 3's "countGrandExchange" is the seventeenth and
+		// 1.0.9 part 5's hidden "includeLegacyHistory" the eighteenth.
+		assertEquals("unexpected number of config items", 18, methods.size());
 	}
 
 	/**
@@ -340,6 +347,32 @@ public class BankPriceMovementConfigTest
 	}
 
 	/**
+	 * 1.0.9 part 3: the Grand Exchange switch - its key, its words, its default (ON, like the carried switch it sits
+	 * beside) and its position, directly after "Include inventory and worn gear" and pushing the three below it down
+	 * by one. The description says WHEN the offers are read, because an offer that fills with the bank closed shows
+	 * at the next read and not at once.
+	 */
+	@Test
+	public void theGrandExchangeSwitchSitsDirectlyAfterTheCarriedOne()
+	{
+		final ConfigItem offers = item("countGrandExchange");
+		assertEquals("Include Grand Exchange offers", offers.name());
+		assertEquals(BankPriceMovementPanel.COUNT_GRAND_EXCHANGE_TEXT, offers.name());
+		assertEquals("Items in your Grand Exchange offers, and the coins committed to them or waiting to be collected,"
+			+ " count in the bank value and are listed with the bank's stacks. They are read when you close the bank"
+			+ " or press Refresh.", offers.description());
+		assertEquals(13, offers.position());
+		assertEquals(12, item("countInventory").position());
+		assertEquals(14, item("showHoverText").position());
+		assertEquals(15, item("livePrices").position());
+		assertEquals(16, item("startTab").position());
+		final BankPriceMovementConfig config = new BankPriceMovementConfig() {};
+		assertTrue("on for a fresh profile", config.countGrandExchange());
+		assertTrue("and DEFAULT carries it", ViewOptions.DEFAULT.countGrandExchange());
+		assertEquals(ViewOptions.DEFAULT, optionsOf(config));
+	}
+
+	/**
 	 * Y4 as one list: the entries of the gear menu in the order it draws them, minus the Refresh item, the preset
 	 * boxes, "Reset to default" and the OK button (which are the panel's, not config keys). The user asked for
 	 * "more layman names" and agreed these, so they are pinned in one place as well as beside their own items - a
@@ -410,17 +443,19 @@ public class BankPriceMovementConfigTest
 		assertEquals("Use live prices", live.name());
 		assertEquals("Actively traded items use the wiki's live traded prices for every figure;"
 			+ " thin items keep the daily guide price", live.description());
-		assertEquals(14, live.position());
-		// Only addendum AU's startTab (15) sits below it.
+		assertEquals(15, live.position());
+		// Only addendum AU's startTab (16) and 1.0.9 part 5's hidden includeLegacyHistory (17) sit below it.
 		for (Method m : itemMethods())
 		{
 			final ConfigItem other = m.getAnnotation(ConfigItem.class);
-			assertTrue("\"" + other.name() + "\" is drawn below the start-tab item",
-				other.position() <= item("startTab").position());
-			assertTrue("\"" + other.name() + "\" is below livePrices but is not the start-tab item",
-				other.position() <= live.position() || other.keyName().equals("startTab"));
+			assertTrue("\"" + other.name() + "\" is drawn below the legacy item",
+				other.position() <= item("includeLegacyHistory").position());
+			assertTrue("\"" + other.name() + "\" is below livePrices but is not one of the last two",
+				other.position() <= live.position() || other.keyName().equals("startTab")
+					|| other.keyName().equals("includeLegacyHistory"));
 		}
-		assertEquals(15, item("startTab").position());
+		assertEquals(16, item("startTab").position());
+		assertEquals(17, item("includeLegacyHistory").position());
 	}
 
 	/**
@@ -503,9 +538,9 @@ public class BankPriceMovementConfigTest
 			hover.description().contains("keep their own labels"));
 		assertFalse("...nor claim the item rows, which carry no hover at any setting since addendum AI",
 			hover.description().contains("row"));
-		assertEquals(13, hover.position());
-		// Directly above the item that is last on the page.
-		assertEquals(14, item("livePrices").position());
+		assertEquals(14, hover.position());
+		// Directly above the item that is second to last on the page.
+		assertEquals(15, item("livePrices").position());
 	}
 
 	/**
@@ -610,19 +645,49 @@ public class BankPriceMovementConfigTest
 	}
 
 	/**
-	 * The five view switches read off a config, in the order and arity
+	 * The six view switches read off a config, in the order and arity
 	 * {@code BankPriceMovementPlugin.optionsFromConfig()} reads them - which is the point of doing it here rather
-	 * than writing the constructor out in each test: five booleans in a row are five chances to pin the wrong
+	 * than writing the constructor out in each test: six booleans in a row are six chances to pin the wrong
 	 * round trip, and addendum AO line AO1 removed a field from the MIDDLE of that list, where a stale call
 	 * would still have compiled.
 	 */
 	private static ViewOptions optionsOf(BankPriceMovementConfig config)
 	{
 		return new ViewOptions(config.countCash(), config.countUntradeables(), config.livePrices(),
-			config.countInventory(), config.showHoverText());
+			config.countInventory(), config.countGrandExchange(), config.showHoverText());
 	}
 
 	/** The {@code @ConfigItem} of one stored key, by name; fails rather than returning null when it is gone. */
+	/**
+	 * 1.0.9 part 5: the eighteenth item - its key, its words, its position (17, the last on the page), its default
+	 * (off: the days before 1.0.9 stay hidden until the reader asks) and the one thing no other item here is: HIDDEN,
+	 * which is RuneLite's {@code ConfigItem.hidden}, so the settings page does not list it and the check box on the
+	 * History tab is the only control. Nothing else in the config is hidden.
+	 */
+	@Test
+	public void theIncludeLegacyItemIsHiddenOffAndLast()
+	{
+		final ConfigItem legacy = item("includeLegacyHistory");
+		assertEquals("Include days before v1.0.9", legacy.name());
+		assertEquals(BankPriceMovementPanel.LEGACY_TEXT, legacy.name());
+		assertEquals("Show net worth readings recorded before v1.0.9 on the Net Worth History tab."
+			+ " They did not count Grand Exchange offers.", legacy.description());
+		assertEquals(17, legacy.position());
+		assertTrue("hidden from the settings page", legacy.hidden());
+		assertFalse("off for a fresh profile", new BankPriceMovementConfig() {}.includeLegacyHistory());
+		assertEquals("the key the plugin's road and prefs name", BankPriceMovementPlugin.INCLUDE_LEGACY_KEY,
+			legacy.keyName());
+		for (Method m : itemMethods())
+		{
+			final ConfigItem other = m.getAnnotation(ConfigItem.class);
+			if (!other.keyName().equals("includeLegacyHistory"))
+			{
+				assertFalse("\"" + other.name() + "\" is listed on the settings page", other.hidden());
+				assertTrue(other.position() < legacy.position());
+			}
+		}
+	}
+
 	private static ConfigItem item(String keyName)
 	{
 		for (Method m : itemMethods())

@@ -137,6 +137,7 @@ public class BpmCommandsTest
 		// The refusal names the commands, so an operator never has to read the source to recover.
 		assertTrue(bad.get("error").getAsString(), bad.get("error").getAsString().contains("unknown command 'nope'"));
 		assertTrue(bad.get("error").getAsString().contains("window="));
+		assertTrue("1.0.9 part 5's verb is named", bad.get("error").getAsString().contains("legacy="));
 
 		assertFalse(send("").get("ok").getAsBoolean());
 		assertFalse(send("   ").get("ok").getAsBoolean());
@@ -645,32 +646,47 @@ public class BpmCommandsTest
 
 	/**
 	 * Y1/Y3: while the carried switch is on every row carries the SPLIT behind its quantity -
-	 * {@code bankQty} / {@code invQty} / {@code wornQty}, the three numbers the row's own tooltip prints as
-	 * "3 in bank, 1 in inventory, 1 worn" - and while it is off the three keys are ABSENT rather than zeroed,
-	 * because with nothing merged there is nothing split to say and 0 / 0 / 0 on every row would read as a
-	 * bank that had lost its stacks.
+	 * {@code bankQty} / {@code invQty} / {@code wornQty}, and since 1.0.9 part 3 {@code geQty}, the numbers the row's
+	 * own tooltip prints as "3 in bank, 1 in inventory, 1 worn, 2 in the Grand Exchange" - and while both the carried
+	 * switch and the Grand Exchange switch are off the four keys are ABSENT rather than zeroed, because with nothing
+	 * merged there is nothing split to say and 0 on every row would read as a bank that had lost its stacks.
 	 */
 	@Test
-	public void aRowCarriesTheSplitQuantitiesOnlyWhileTheCarriedSwitchIsOn()
+	public void aRowCarriesTheSplitQuantitiesOnlyWhileAMergingSwitchIsOn()
 	{
 		when(service.currentRows()).thenReturn(Collections.singletonList(
 			new MovementRow(4151, "Abyssal whip", 5, false, 100L, 90L, 10L, 11.1, 500L,
-				MovementRow.PriceSource.GUIDE)));
+				MovementRow.PriceSource.GUIDE, null, null, null, null, 2, 1, 0, 2)));
 
-		// The carried switch is ON in the default, so the fuller of the two readings is DEFAULT itself.
+		// Both switches are ON in the default, so the fuller of the readings is DEFAULT itself.
 		when(panel.options()).thenReturn(ViewOptions.DEFAULT);
 		final JsonObject on = ok("state").getAsJsonArray("rows").get(0).getAsJsonObject();
 		assertEquals(5, on.get("qty").getAsInt());
-		assertNotNull("the split is echoed while the switch is on", on.get("bankQty"));
+		assertNotNull("the split is echoed while the switches are on", on.get("bankQty"));
 		assertNotNull(on.get("invQty"));
 		assertNotNull(on.get("wornQty"));
+		assertEquals("1.0.9 part 3: geQty follows wornQty", 2, on.get("geQty").getAsInt());
+		assertEquals(2, on.get("bankQty").getAsInt());
+		assertEquals(1, on.get("invQty").getAsInt());
+		assertEquals(0, on.get("wornQty").getAsInt());
+		final List<String> keys = new ArrayList<>(on.keySet());
+		assertEquals("geQty directly after wornQty", keys.indexOf("wornQty") + 1, keys.indexOf("geQty"));
 
+		// Either one alone is reason enough to print the split.
 		when(panel.options()).thenReturn(ViewOptions.DEFAULT.withCountInventory(false));
+		assertNotNull("the Grand Exchange switch alone", ok("state").getAsJsonArray("rows").get(0).getAsJsonObject()
+			.get("geQty"));
+		when(panel.options()).thenReturn(ViewOptions.DEFAULT.withCountGrandExchange(false));
+		assertNotNull("the carried switch alone", ok("state").getAsJsonArray("rows").get(0).getAsJsonObject()
+			.get("bankQty"));
+
+		when(panel.options()).thenReturn(ViewOptions.DEFAULT.withCountInventory(false).withCountGrandExchange(false));
 		final JsonObject off = ok("state").getAsJsonArray("rows").get(0).getAsJsonObject();
 		assertEquals("the quantity itself never moves", 5, off.get("qty").getAsInt());
-		assertNull("nothing is split while the switch is off", off.get("bankQty"));
+		assertNull("nothing is split while both switches are off", off.get("bankQty"));
 		assertNull(off.get("invQty"));
 		assertNull(off.get("wornQty"));
+		assertNull(off.get("geQty"));
 	}
 
 	/** A row with no baseline has nothing under {@code then}/{@code gp}/{@code pct}: Gson drops the nulls. */
@@ -923,11 +939,13 @@ public class BpmCommandsTest
 		verify(panel).setOptions(ViewOptions.DEFAULT.withLivePrices(false));
 		ok("opt=inventory");
 		verify(panel).setOptions(ViewOptions.DEFAULT.withCountInventory(false));
+		ok("opt=ge");
+		verify(panel).setOptions(ViewOptions.DEFAULT.withCountGrandExchange(false));
 
 		ok("opt=all");
-		verify(panel).setOptions(new ViewOptions(true, true, true, true, false));
+		verify(panel).setOptions(new ViewOptions(true, true, true, true, true, false));
 		ok("opt=none");
-		verify(panel).setOptions(new ViewOptions(false, false, false, false, false));
+		verify(panel).setOptions(new ViewOptions(false, false, false, false, false, false));
 
 		// The toggle is against what the sidebar is USING, not against the default: from cash off, a field word
 		// turns that one switch back on. The spellings are the generous ones a URL query gets typed with.
@@ -936,7 +954,7 @@ public class BpmCommandsTest
 		// here is one neither "all" nor "none" can produce. That matters since addendum AO: with the holding
 		// switch gone, turning untradeables on from the DEFAULT lands on exactly the five values "all" does, and
 		// Mockito would see one press where this test means two.
-		final ViewOptions base = new ViewOptions(false, true, false, false, true);
+		final ViewOptions base = new ViewOptions(false, true, false, false, false, true);
 		when(panel.options()).thenReturn(base);
 		ok("opt=coins");
 		verify(panel).setOptions(base.withCountCash(true));
@@ -953,9 +971,9 @@ public class BpmCommandsTest
 		ok("opt=alch");
 		verify(panel).setOptions(base);
 
-		// Ten presses, and every one of them through the check item rather than the bare applyOptions: the
+		// Eleven presses, and every one of them through the check item rather than the bare applyOptions: the
 		// difference between the two is whether the choice is remembered.
-		verify(panel, times(10)).setOptions(any());
+		verify(panel, times(11)).setOptions(any());
 		verify(panel, never()).applyOptions(any());
 	}
 
@@ -966,20 +984,52 @@ public class BpmCommandsTest
 	 * {@code all} leaves {@code showHoverText} OFF, which is the arity addendum AH gave it and has never been a
 	 * way to turn the hovers on.
 	 *
-	 * <p>Since addendum AO each word names FIVE fields rather than six - the holding switch is deleted - and a
-	 * press that quietly left one of the remaining five standing is exactly what a positional expectation
-	 * written for the old order would have hidden.
+	 * <p>Since addendum AO each word names FIVE switches rather than six - the holding switch is deleted - and since
+	 * 1.0.9 part 3 that five includes the Grand Exchange one by name, and a press that quietly left one of them
+	 * standing is exactly what a positional expectation written for the old order would have hidden.
 	 */
 	@Test
 	public void allAndNoneReachTheLiveAndCarriedSwitchesToo()
 	{
-		when(panel.options()).thenReturn(new ViewOptions(true, true, true, true, true));
+		when(panel.options()).thenReturn(new ViewOptions(true, true, true, true, true, true));
 		ok("opt=none");
-		verify(panel).setOptions(new ViewOptions(false, false, false, false, false));
+		verify(panel).setOptions(new ViewOptions(false, false, false, false, false, false));
 
-		when(panel.options()).thenReturn(new ViewOptions(false, false, false, false, false));
+		when(panel.options()).thenReturn(new ViewOptions(false, false, false, false, false, false));
 		ok("opt=all");
-		verify(panel).setOptions(new ViewOptions(true, true, true, true, false));
+		verify(panel).setOptions(new ViewOptions(true, true, true, true, true, false));
+
+		// 1.0.9 part 3: the Grand Exchange switch is reached by both words, by name - not through the inventory's.
+		when(panel.options()).thenReturn(new ViewOptions(true, true, true, false, true, true));
+		ok("opt=off");
+		verify(panel, times(2)).setOptions(new ViewOptions(false, false, false, false, false, false));
+		when(panel.options()).thenReturn(new ViewOptions(false, false, false, true, false, true));
+		ok("opt=on");
+		verify(panel, times(2)).setOptions(new ViewOptions(true, true, true, true, true, false));
+	}
+
+	/**
+	 * 1.0.9 part 3: the Grand Exchange switch under every name an operator reaches for - the short {@code ge}, the
+	 * label's words ({@code grandexchange}, {@code exchange}, {@code offers}) and the stored key - each TOGGLING
+	 * against what the sidebar is using, so the verb is symmetrical, and none of them touching the inventory's switch.
+	 */
+	@Test
+	public void optGeTogglesTheGrandExchangeSwitchUnderEveryName()
+	{
+		final ViewOptions on = ViewOptions.DEFAULT;
+		final ViewOptions off = ViewOptions.DEFAULT.withCountGrandExchange(false);
+		for (String verb : new String[]{"ge", "grandexchange", "exchange", "offers", "countgrandexchange", " GE ",
+			"Offers"})
+		{
+			when(panel.options()).thenReturn(on);
+			ok("opt=" + verb.trim().replace(' ', '+'));
+			verify(panel).setOptions(off);
+			when(panel.options()).thenReturn(off);
+			ok("opt=" + verb.trim().replace(' ', '+'));
+			verify(panel).setOptions(on);
+			reset(panel);
+		}
+		assertTrue("and the inventory's switch is left as it was by the press", off.countInventory());
 	}
 
 	/**
@@ -1017,6 +1067,9 @@ public class BpmCommandsTest
 		assertTrue(bad.get("error").getAsString(), bad.get("error").getAsString().contains("live"));
 		// Y1: and the fifth.
 		assertTrue(bad.get("error").getAsString(), bad.get("error").getAsString().contains("inventory"));
+		// 1.0.9 part 3: and the Grand Exchange word, named exactly as the constant lists it.
+		assertTrue(bad.get("error").getAsString(), bad.get("error").getAsString().contains(
+			"cash, untradeables, live, inventory, ge, all or none"));
 		// AO1: and the word that is gone is NOT in the list - it has a sentence of its own, below.
 		assertFalse(bad.get("error").getAsString(), bad.get("error").getAsString().contains("holding"));
 		assertFalse("a bare opt names no switch", send("opt").get("ok").getAsBoolean());
@@ -1059,14 +1112,17 @@ public class BpmCommandsTest
 	 * Every answer says which of the gear's switches the sidebar is using, so a shot needs no second call - and
 	 * unlike {@code hero}, these are also the reason the figures below say what they say.
 	 *
-	 * <p>There are FIVE keys since addendum AO, not six: {@code holding} went with the switch behind it (AO1),
-	 * and the count is asserted so a key cannot be added or lost here without a test saying so.
+	 * <p>There are SIX keys since 1.0.9 part 3 - five since addendum AO, which took {@code holding} away with the
+	 * switch behind it (AO1) - and the count is asserted so a key cannot be added or lost here without a test saying
+	 * so. {@code ge} sits directly after {@code inventory}.
 	 */
 	@Test
 	public void everyAnswerEchoesTheViewSwitches()
 	{
 		final JsonObject fresh = ok("state").getAsJsonObject("options");
-		assertEquals("cash, untradeables, live, inventory, hover (AO1)", 5, fresh.entrySet().size());
+		assertEquals("cash, untradeables, live, inventory, ge, hover", 6, fresh.entrySet().size());
+		assertEquals("[cash, untradeables, live, inventory, ge, hover]", new ArrayList<>(fresh.keySet()).toString());
+		assertTrue("1.0.9 part 3: the Grand Exchange offers are counted by default", fresh.get("ge").getAsBoolean());
 		assertTrue("a panel that has not been asked reads as the default", fresh.get("cash").getAsBoolean());
 		assertFalse(fresh.get("untradeables").getAsBoolean());
 		assertTrue("live prices are on by default (T1)", fresh.get("live").getAsBoolean());
@@ -1081,8 +1137,11 @@ public class BpmCommandsTest
 		assertTrue(some.get("untradeables").getAsBoolean());
 		assertFalse(some.get("live").getAsBoolean());
 		assertTrue(some.get("inventory").getAsBoolean());
+		assertTrue(some.get("ge").getAsBoolean());
 		assertFalse(some.get("hover").getAsBoolean());
 		assertNull(some.get("holding"));
+		when(panel.options()).thenReturn(ViewOptions.DEFAULT.withCountGrandExchange(false));
+		assertFalse(ok("state").getAsJsonObject("options").get("ge").getAsBoolean());
 	}
 
 	/** Q7: there is no {@code gear} verb - the menu is a Swing popup, and {@code shot=} is how it is looked at. */
@@ -1372,6 +1431,208 @@ public class BpmCommandsTest
 		{
 			MovementRowPanelTest.onEdt(() -> real.get().stop());
 		}
+	}
+
+	// ---------------------------------------------------------------- 1.0.9 part 5: days before 1.0.9
+
+	/**
+	 * 1.0.9 part 5: {@code legacy=} presses the History tab's check box through its own road - {@code pressLegacy(boolean)}
+	 * for the two states, {@code pressLegacy()} for the gesture - the way {@code fold=} presses the fold, which is the
+	 * only road that REMEMBERS the choice and, turning it ON, asks the click's own question. The two states are
+	 * idempotent because the panel writes and asks nothing when nothing changed.
+	 */
+	@Test
+	public void legacyPressesTheCheckBoxesOwnRoad()
+	{
+		ok("legacy=on");
+		verify(panel, times(1)).pressLegacy(true);
+		ok("legacy=off");
+		verify(panel, times(1)).pressLegacy(false);
+		ok("legacy=off");
+		verify(panel, times(2)).pressLegacy(false);
+
+		// The gesture is the click itself and goes through the method the box calls.
+		ok("legacy=toggle");
+		verify(panel, times(1)).pressLegacy();
+
+		// The road is the box's and nothing else: setIncludeLegacy is the ConfigChanged road and remembers nothing.
+		verify(panel, never()).setIncludeLegacy(anyBoolean());
+		verify(panel, never()).pressFold(anyBoolean());
+		verify(panel, never()).toggleFold();
+	}
+
+	/** Anything but the three words is refused with the box left exactly as it was, and the refusal NAMES them. */
+	@Test
+	public void anUnknownLegacyWordIsRefusedAndPressesNothing()
+	{
+		for (String bad : new String[]{"maybe", "yes", "1d", "include?", "-"})
+		{
+			final JsonObject r = send("legacy=" + bad);
+			assertFalse("'" + bad + "' must be refused", r.get("ok").getAsBoolean());
+			assertEquals("legacy= wants on, off or toggle, not '" + bad + "'", r.get("error").getAsString());
+		}
+		final JsonObject bare = send("legacy");
+		assertFalse(bare.get("ok").getAsBoolean());
+		assertEquals("legacy= wants on, off or toggle, not ''", bare.get("error").getAsString());
+
+		verify(panel, never()).pressLegacy(anyBoolean());
+		verify(panel, never()).pressLegacy();
+		verify(panel, never()).setIncludeLegacy(anyBoolean());
+
+		// ...while the words themselves are taken whatever case and spacing they arrive in.
+		ok("legacy= OFF ");
+		verify(panel, times(1)).pressLegacy(false);
+		ok("LEGACY=Toggle");
+		verify(panel, times(1)).pressLegacy();
+	}
+
+	/**
+	 * On a REAL panel over a status whose record holds days before 1.0.9: {@code state.panel.includeLegacy} and
+	 * {@code state.panel.legacyDays} are where the answer reads back, {@code state.bankHistory.freshFrom} is the
+	 * record's own marker, and the prompt is asked ONLY for turning it on (here answered yes, then no).
+	 */
+	@Test
+	public void theLegacyVerbMovesTheRealPanelAndTheEchoesFollow() throws Exception
+	{
+		final java.time.LocalDate day = java.time.LocalDate.of(2026, 9, 28);
+		final java.util.List<BankHistoryPoint> points = new java.util.ArrayList<>();
+		for (int back = 5; back >= 0; back--)
+		{
+			final long[] cells = new long[BankHistoryPoint.CELLS];
+			cells[BankHistoryPoint.BANK_TRADEABLE] = 1_000_000L + back;
+			final long at = day.minusDays(back).atTime(12, 0).atZone(java.time.ZoneId.systemDefault()).toInstant()
+				.toEpochMilli();
+			points.add(new BankHistoryPoint(day.minusDays(back), at, at, cells, null));
+		}
+		final BankHistorySeries record = BankHistorySeries.of(points).withFreshFrom(day.minusDays(1));
+		final PriceService.Status seeded = status();
+		when(seeded.problemKind()).thenReturn(PriceService.ProblemKind.NONE);
+		when(seeded.bankHistory()).thenReturn(record);
+		when(service.currentStatus()).thenReturn(seeded);
+		when(service.currentRows()).thenReturn(Collections.emptyList());
+		final java.util.List<String> asked = new java.util.ArrayList<>();
+		final AtomicBoolean answer = new AtomicBoolean(true);
+		final AtomicReference<BankPriceMovementPanel> real = new AtomicReference<>();
+		MovementRowPanelTest.onEdt(() ->
+		{
+			real.set(new BankPriceMovementPanel(mock(ItemManager.class), service, prefs(), text -> { }, question ->
+			{
+				asked.add(question);
+				return answer.get();
+			}));
+			real.get().setClock(() -> day.atTime(12, 0).atZone(java.time.ZoneId.systemDefault()).toInstant()
+				.toEpochMilli());
+		});
+		final BpmCommands bridge = new BpmCommands(real.get(), service, gson, account(), shotDir(), showing::get);
+		try
+		{
+			JsonObject state = ok(bridge, "view=history");
+			assertFalse(state.getAsJsonObject("panel").get("includeLegacy").getAsBoolean());
+			assertTrue("the record holds days before 1.0.9", state.getAsJsonObject("panel").get("legacyDays").getAsBoolean());
+			assertEquals("the record's marker", "2026-09-27", state.getAsJsonObject("bankHistory").get("freshFrom")
+				.getAsString());
+			assertEquals("only the fresh days are drawn", 2, state.getAsJsonObject("bankHistory").get("readings").getAsInt());
+
+			state = ok(bridge, "legacy=on");
+			assertTrue(state.getAsJsonObject("panel").get("includeLegacy").getAsBoolean());
+			assertEquals(1, asked.size());
+			assertEquals(BankPriceMovementPanel.LEGACY_ASK, asked.get(0));
+			assertEquals("every reading is drawn", 6, state.getAsJsonObject("bankHistory").get("readings").getAsInt());
+
+			state = ok(bridge, "legacy=on");
+			assertEquals("the same state again asks nothing", 1, asked.size());
+			state = ok(bridge, "legacy=off");
+			assertFalse(state.getAsJsonObject("panel").get("includeLegacy").getAsBoolean());
+			assertEquals("turning it off asks nothing", 1, asked.size());
+			assertEquals(2, state.getAsJsonObject("bankHistory").get("readings").getAsInt());
+
+			answer.set(false);
+			state = ok(bridge, "legacy=toggle");
+			assertEquals("a toggle to on asks", 2, asked.size());
+			assertFalse("declined: it stays off", state.getAsJsonObject("panel").get("includeLegacy").getAsBoolean());
+
+			// A refusal does not move it, and the state comes back all the same.
+			assertFalse(reply(bridge, "legacy=maybe").get("ok").getAsBoolean());
+			assertEquals(2, asked.size());
+		}
+		finally
+		{
+			MovementRowPanelTest.onEdt(() -> real.get().stop());
+		}
+	}
+
+	// ---------------------------------------------------------------- 1.0.9 part 4: the search box
+
+	/**
+	 * 1.0.9 part 4: {@code search=<text>} presses the real panel's box through the road every keystroke takes, the text
+	 * goes INTO the box so a shot shows what a script typed, and the answer reads back as {@code state.panel.search}
+	 * (the trimmed text) and {@code state.panel.matching} (the rows shown) - while {@code state.rows} and
+	 * {@code state.panel.total} stay the service's published list, so the pair is the narrowing. {@code search=} with
+	 * nothing clears, and no text is ever refused: one that matches nothing is a "No items match" card, not an error.
+	 */
+	@Test
+	public void searchPressesTheRealPanelsBoxAndTheEchoFollows() throws Exception
+	{
+		final PriceService.Status seeded = status();
+		// A real panel reads the problem's kind; the shared fixture is a bare mock and answers null for it.
+		when(seeded.problemKind()).thenReturn(PriceService.ProblemKind.NONE);
+		when(service.currentStatus()).thenReturn(seeded);
+		when(service.currentRows()).thenReturn(Arrays.asList(
+			new MovementRow(1, "Rune platebody", 1, false, 40_000L, 39_000L, 1_000L, 2.5d, 40_000L, null),
+			new MovementRow(2, "Runite ore", 9, true, 11_000L, 10_000L, 1_000L, 10.0d, 99_000L, null),
+			new MovementRow(3, "Dragon claws", 1, false, 50_000_000L, 49_000_000L, 1_000_000L, 2.0d, 50_000_000L, null)));
+		final AtomicReference<BankPriceMovementPanel> real = new AtomicReference<>();
+		MovementRowPanelTest.onEdt(() -> real.set(new BankPriceMovementPanel(mock(ItemManager.class), service,
+			prefs())));
+		final BpmCommands bridge = new BpmCommands(real.get(), service, gson, account(), shotDir(), showing::get);
+		try
+		{
+			JsonObject state = ok(bridge, "state");
+			assertEquals("", state.getAsJsonObject("panel").get("search").getAsString());
+			assertEquals(3, state.getAsJsonObject("panel").get("matching").getAsInt());
+
+			state = ok(bridge, "search=rune");
+			assertEquals("rune", state.getAsJsonObject("panel").get("search").getAsString());
+			assertEquals(1, state.getAsJsonObject("panel").get("matching").getAsInt());
+			assertEquals("total is still the published rows", 3, state.getAsJsonObject("panel").get("total").getAsInt());
+			assertEquals("state.rows is the service's list, not the narrowed one", 3, state.getAsJsonArray("rows").size());
+			final AtomicReference<String> typed = new AtomicReference<>();
+			MovementRowPanelTest.onEdt(() -> typed.set(real.get().searchField().getText()));
+			assertEquals("the box holds what the script typed", "rune", typed.get());
+
+			state = ok(bridge, " SEARCH = RUN ");
+			assertEquals("the verb and the text are trimmed and the match ignores case", "RUN",
+				state.getAsJsonObject("panel").get("search").getAsString());
+			assertEquals(2, state.getAsJsonObject("panel").get("matching").getAsInt());
+
+			state = ok(bridge, "search=nothing like it");
+			assertEquals("never refused", 0, state.getAsJsonObject("panel").get("matching").getAsInt());
+			assertEquals(BankPriceMovementPanel.CARD_EMPTY, state.getAsJsonObject("panel").get("card").getAsString());
+
+			state = ok(bridge, "search=");
+			assertEquals("search= with nothing clears", "", state.getAsJsonObject("panel").get("search").getAsString());
+			assertEquals(3, state.getAsJsonObject("panel").get("matching").getAsInt());
+			assertEquals(BankPriceMovementPanel.CARD_LIST, state.getAsJsonObject("panel").get("card").getAsString());
+			MovementRowPanelTest.onEdt(() -> typed.set(real.get().searchField().getText()));
+			assertEquals("...and empties the box", "", typed.get());
+
+			ok(bridge, "search=ore");
+			state = ok(bridge, "search");
+			assertEquals("a bare search clears too", 3, state.getAsJsonObject("panel").get("matching").getAsInt());
+		}
+		finally
+		{
+			MovementRowPanelTest.onEdt(() -> real.get().stop());
+		}
+	}
+
+	/** The unknown-command answer names {@code search=} beside the other verbs, so an operator never reads the source. */
+	@Test
+	public void theUnknownCommandAnswerNamesSearch()
+	{
+		final String error = send("nope").get("error").getAsString();
+		assertTrue(error, error.contains("search="));
+		assertTrue("beside the fold verb it sits after", error.indexOf("fold=") < error.indexOf("search="));
 	}
 
 	/**

@@ -2,6 +2,7 @@ package com.bankpricemovement;
 
 import java.awt.Color;
 import java.awt.image.BufferedImage;
+import java.util.Arrays;
 import net.runelite.client.ui.ColorScheme;
 import org.junit.Test;
 import static org.junit.Assert.assertEquals;
@@ -90,6 +91,22 @@ public class NavIconTest
 		final int was = second.getRGB(15, 0);
 		first.setRGB(15, 0, Color.WHITE.getRGB());
 		assertEquals("the two share no raster", was, second.getRGB(15, 0));
+	}
+
+	/**
+	 * The whole 16 x 16, pinned as one number: {@link Arrays#hashCode(int[])} over the ARGB of every pixel, row by row.
+	 * Computed on the code as it stood before the coin moved out into {@code CoinGlyph}, so the extraction is proved
+	 * to have changed not one pixel - the antialiased rim included, which the per-pixel checks above leave free. A
+	 * deliberate redraw of the icon updates this constant in the same commit; nothing else should.
+	 */
+	private static final int ICON_CHECKSUM = 966175792;
+
+	@Test
+	public void theWholeIconIsThePixelsItWasBeforeTheCoinMovedOut()
+	{
+		final BufferedImage img = NavIcon.create();
+		final int[] pixels = img.getRGB(0, 0, NavIcon.SIZE, NavIcon.SIZE, null, 0, NavIcon.SIZE);
+		assertEquals("the 16 x 16 ARGB checksum", ICON_CHECKSUM, Arrays.hashCode(pixels));
 	}
 
 	/** How many pixels are not fully transparent. */

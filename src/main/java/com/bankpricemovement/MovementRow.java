@@ -24,7 +24,9 @@ import javax.annotation.Nullable;
  * carries the whole of what the player owns of that item - {@link #quantity()} is the bank's, the inventory's and
  * the worn gear's added - and {@link #bankQuantity()}, {@link #inventoryQuantity()} and {@link #wornQuantity()} say
  * where it is, for the one hover line that names the parts ("3 in bank, 1 in inventory, 1 worn"). All three are 0
- * with the switch off, which is what makes such a row byte-identical to the pre-Y one.
+ * with the switch off, which is what makes such a row byte-identical to the pre-Y one. Since 1.0.9 part 3 the row
+ * can hold a fourth part, the items in the player's Grand Exchange offers ({@link #exchangeQuantity()}, "2 in the
+ * Grand Exchange"), added into {@link #quantity()} while "Include Grand Exchange offers" is on and 0 otherwise.
  *
  * <p>{@link #deltaGp()} and {@link #deltaPct()} are set together or not at all, and only for a GUIDE row with
  * both ends present (contract C8 as rewritten by K13) - or, since addendum R, for a {@link PriceSource#PARTS} row,
@@ -246,13 +248,15 @@ public final class MovementRow
 	private final LiveFacts liveFacts;
 	/**
 	 * Where the {@link #quantity} is (addendum Y, line Y3): how many of it the BANK holds, how many are in the
-	 * INVENTORY and how many are WORN. All three are 0 on every row computed with "Include inventory and worn gear"
-	 * off - which is what keeps such a row byte-identical to the pre-Y one - and they add up to {@link #quantity}
-	 * while it is on.
+	 * INVENTORY, how many are WORN, and - since 1.0.9 part 3 - how many are in the Grand Exchange OFFERS. All four are
+	 * 0 on every row computed with neither "Include inventory and worn gear" nor "Include Grand Exchange offers" on -
+	 * which is what keeps such a row byte-identical to the pre-Y one - and they add up to {@link #quantity} while
+	 * either is.
 	 */
 	private final int bankQuantity;
 	private final int inventoryQuantity;
 	private final int wornQuantity;
+	private final int exchangeQuantity;
 
 	/**
 	 * @param id           canonical item id
@@ -343,6 +347,24 @@ public final class MovementRow
 		@Nullable final Map<MovementWindow, LocalDate> windowDays, @Nullable final LiveFacts liveFacts,
 		final int bankQuantity, final int inventoryQuantity, final int wornQuantity)
 	{
+		this(id, name, quantity, stackable, unitPrice, thenPrice, deltaGp, deltaPct, holdingValue, source, parts,
+			windowSources, windowDays, liveFacts, bankQuantity, inventoryQuantity, wornQuantity, 0);
+	}
+
+	/**
+	 * The same, also saying how many are in the Grand Exchange offers (1.0.9 part 3). The arity above is the
+	 * pre-part-3 one, kept so every caller that knows nothing of the offers keeps compiling AND keeps its meaning: it
+	 * delegates with 0 there, which is exactly what a row computed with "Include Grand Exchange offers" off carries.
+	 *
+	 * @param exchangeQuantity how many are in the Grand Exchange offers; 0 while the switch is off
+	 */
+	public MovementRow(final int id, final String name, final int quantity, final boolean stackable,
+		final Long unitPrice, final Long thenPrice, final Long deltaGp, final Double deltaPct,
+		final long holdingValue, final PriceSource source, @Nullable final List<BankItem.Part> parts,
+		@Nullable final Map<MovementWindow, PriceSource> windowSources,
+		@Nullable final Map<MovementWindow, LocalDate> windowDays, @Nullable final LiveFacts liveFacts,
+		final int bankQuantity, final int inventoryQuantity, final int wornQuantity, final int exchangeQuantity)
+	{
 		this.id = id;
 		this.name = name == null ? "" : name;
 		this.quantity = quantity;
@@ -362,6 +384,7 @@ public final class MovementRow
 		this.bankQuantity = Math.max(0, bankQuantity);
 		this.inventoryQuantity = Math.max(0, inventoryQuantity);
 		this.wornQuantity = Math.max(0, wornQuantity);
+		this.exchangeQuantity = Math.max(0, exchangeQuantity);
 	}
 
 	/** One defensive copy, null keys and values dropped; an empty map is stored as null - the pre-T shape. */
@@ -405,9 +428,10 @@ public final class MovementRow
 	 * How many of {@link #quantity()} the BANK holds (addendum Y, line Y3), or 0 on a row computed with "Include
 	 * inventory and worn gear" off - which is every row of addenda K to W.
 	 *
-	 * <p>The three split figures are what the row's hover names ("3 in bank, 1 in inventory, 1 worn"), and they add
-	 * up to {@link #quantity()} whenever any of them is non-zero. A stack the player only WEARS answers 0 here, and
-	 * that is not the same answer as the switch being off - {@link #split()} is the test for that.
+	 * <p>The four split figures are what the row's hover names ("3 in bank, 1 in inventory, 1 worn, 2 in the Grand
+	 * Exchange"), and they add up to {@link #quantity()} whenever any of them is non-zero. A stack the player only
+	 * WEARS answers 0 here, and that is not the same answer as the switch being off - {@link #split()} is the test for
+	 * that.
 	 */
 	public int bankQuantity()
 	{
@@ -427,23 +451,33 @@ public final class MovementRow
 	}
 
 	/**
+	 * How many of {@link #quantity()} are in the player's Grand Exchange OFFERS (1.0.9 part 3) - unsold in a sell
+	 * offer, bought and not yet collected in a buy offer; 0 while "Include Grand Exchange offers" is off.
+	 */
+	public int exchangeQuantity()
+	{
+		return exchangeQuantity;
+	}
+
+	/**
 	 * Whether this row knows where its quantity is - true exactly when it was computed with "Include inventory and
-	 * worn gear" on. A row without the split prints no hover line about it (Y3), which is what a bank-only row did
-	 * before addendum Y and what one still does with the switch off.
+	 * worn gear" or "Include Grand Exchange offers" on and something was merged. A row without the split prints no
+	 * hover line about it (Y3), which is what a bank-only row did before addendum Y and what one still does with the
+	 * switches off.
 	 */
 	public boolean split()
 	{
-		return bankQuantity > 0 || inventoryQuantity > 0 || wornQuantity > 0;
+		return bankQuantity > 0 || inventoryQuantity > 0 || wornQuantity > 0 || exchangeQuantity > 0;
 	}
 
 	/**
 	 * Whether the whole stack is in the bank - the test the row's hover line is drawn on: it is printed only while
-	 * the switch is on AND something is carried or worn (Y3), because "3 in bank" alone tells a reader nothing they
-	 * cannot see. True for a row with no split at all, which is what a switched-off row is.
+	 * something is carried, worn or in an offer (Y3), because "3 in bank" alone tells a reader nothing they cannot
+	 * see. True for a row with no split at all, which is what a switched-off row is.
 	 */
 	public boolean allInBank()
 	{
-		return inventoryQuantity == 0 && wornQuantity == 0;
+		return inventoryQuantity == 0 && wornQuantity == 0 && exchangeQuantity == 0;
 	}
 
 	public boolean stackable()
@@ -551,29 +585,32 @@ public final class MovementRow
 
 		return new MovementRow(id, name, quantity, stackable, unitPrice, thenPrice, deltaGp, deltaPct, holdingValue,
 			PriceSource.PARTS, parts, windowSources, windowDays, liveFacts, bankQuantity, inventoryQuantity,
-			wornQuantity);
+			wornQuantity, exchangeQuantity);
 	}
 
 	/**
 	 * This same row, saying where its quantity is (addendum Y, line Y3) - the last thing the service does to a row
 	 * while "Include inventory and worn gear" is on, after every other {@code as*} copy, so nothing can drop it.
 	 *
-	 * <p>Every figure is untouched: the split says where the stack lives, never what it is worth. Three zeros answer
-	 * this row unchanged, which is what the switch being off hands it.
+	 * <p>Every figure is untouched: the split says where the stack lives, never what it is worth. Four zeros answer
+	 * this row unchanged, which is what the switches being off hand it.
 	 *
 	 * @param bankQuantity      how many the bank holds
 	 * @param inventoryQuantity how many are in the inventory
 	 * @param wornQuantity      how many are worn
+	 * @param exchangeQuantity  how many are in the Grand Exchange offers
 	 */
-	public MovementRow withSplit(final int bankQuantity, final int inventoryQuantity, final int wornQuantity)
+	public MovementRow withSplit(final int bankQuantity, final int inventoryQuantity, final int wornQuantity,
+		final int exchangeQuantity)
 	{
-		if (bankQuantity <= 0 && inventoryQuantity <= 0 && wornQuantity <= 0)
+		if (bankQuantity <= 0 && inventoryQuantity <= 0 && wornQuantity <= 0 && exchangeQuantity <= 0)
 		{
 			return this;
 		}
 
 		return new MovementRow(id, name, quantity, stackable, unitPrice, thenPrice, deltaGp, deltaPct, holdingValue,
-			source, parts, windowSources, windowDays, liveFacts, bankQuantity, inventoryQuantity, wornQuantity);
+			source, parts, windowSources, windowDays, liveFacts, bankQuantity, inventoryQuantity, wornQuantity,
+			exchangeQuantity);
 	}
 
 	/**
@@ -700,7 +737,7 @@ public final class MovementRow
 		return new MovementRow(id, name, quantity, stackable, unit, thenPrice, deltaGp, deltaPct,
 			MovementMath.holdingValue(unit, quantity),
 			source == PriceSource.PARTS ? PriceSource.PARTS : PriceSource.LIVE, parts, windowSources, windowDays,
-			facts, bankQuantity, inventoryQuantity, wornQuantity);
+			facts, bankQuantity, inventoryQuantity, wornQuantity, exchangeQuantity);
 	}
 
 	/**
@@ -718,7 +755,8 @@ public final class MovementRow
 		}
 
 		return new MovementRow(id, name, quantity, stackable, unitPrice, thenPrice, deltaGp, deltaPct, holdingValue,
-			source, parts, windowSources, windowDays, facts, bankQuantity, inventoryQuantity, wornQuantity);
+			source, parts, windowSources, windowDays, facts, bankQuantity, inventoryQuantity, wornQuantity,
+			exchangeQuantity);
 	}
 
 	/**
@@ -765,7 +803,8 @@ public final class MovementRow
 			// different rows, and the "the switch off is byte-identical" test compares whole rows.
 			&& bankQuantity == other.bankQuantity
 			&& inventoryQuantity == other.inventoryQuantity
-			&& wornQuantity == other.wornQuantity;
+			&& wornQuantity == other.wornQuantity
+			&& exchangeQuantity == other.exchangeQuantity;
 	}
 
 	@Override
@@ -773,7 +812,7 @@ public final class MovementRow
 	{
 		return Objects.hash(id, name, quantity, stackable, unitPrice, thenPrice, deltaGp, deltaPct,
 			holdingValue, source, parts, windowSources, windowDays, liveFacts, bankQuantity, inventoryQuantity,
-			wornQuantity);
+			wornQuantity, exchangeQuantity);
 	}
 
 	@Override
@@ -793,7 +832,8 @@ public final class MovementRow
 			+ (windowDays == null ? "" : ", windowDays=" + windowDays)
 			+ (liveFacts == null ? "" : ", live=" + liveFacts)
 			// Printed only when there IS a split, so a row computed with the switch off reads exactly as it did.
-			+ (split() ? ", bank=" + bankQuantity + ", inventory=" + inventoryQuantity + ", worn=" + wornQuantity : "")
+			+ (split() ? ", bank=" + bankQuantity + ", inventory=" + inventoryQuantity + ", worn=" + wornQuantity
+				+ (exchangeQuantity > 0 ? ", exchange=" + exchangeQuantity : "") : "")
 			+ '}';
 	}
 }

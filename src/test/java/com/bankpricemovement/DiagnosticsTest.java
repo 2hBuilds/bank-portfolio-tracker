@@ -46,8 +46,33 @@ public class DiagnosticsTest
 		tokyo.note("x");
 
 		assertTrue(notes(report(tokyo)).contains("23:05:09 x"));
-		assertTrue(report(tokyo).contains("time zone: Asia/Tokyo\n"));
+		assertTrue(report(tokyo).contains("utc offset: UTC+09:00\n"));
 		assertTrue(report(tokyo).contains("local time: 2026-09-30 23:05:09\n"));
+	}
+
+	/**
+	 * The report says how far the player's clock is from UTC and never which place they are in: a zone's NAME can
+	 * narrow a person down to a country or a city, its offset only to a band of the map.
+	 */
+	@Test
+	public void theReportNamesTheOffsetFromUtcAndNeverTheZone()
+	{
+		final String tokyo = report(new Diagnostics(clock::get, ZoneId.of("Asia/Tokyo")));
+		assertTrue(tokyo, tokyo.contains("\nutc offset: UTC+09:00\n"));
+		assertFalse("the zone's name is not in the report: " + tokyo, tokyo.contains("Tokyo"));
+		assertFalse("the old line is gone: " + tokyo, tokyo.contains("time zone"));
+
+		final String kolkata = report(new Diagnostics(clock::get, ZoneId.of("Asia/Kolkata")));
+		assertTrue(kolkata, kolkata.contains("\nutc offset: UTC+05:30\n"));
+		assertFalse(kolkata, kolkata.contains("Kolkata"));
+
+		final String utc = report(diagnostics);
+		assertTrue(utc, utc.contains("\nutc offset: UTC+00:00\n"));
+
+		// A zone west of Greenwich, at the report's own clock (30 Sep 2026, daylight time in New York).
+		final String newYork = report(new Diagnostics(clock::get, ZoneId.of("America/New_York")));
+		assertTrue(newYork, newYork.contains("\nutc offset: UTC-04:00\n"));
+		assertFalse(newYork, newYork.contains("New_York"));
 	}
 
 	@Test
@@ -235,7 +260,7 @@ public class DiagnosticsTest
 	{
 		final String report = diagnostics.text(fullFacts(), "v", Collections.emptyList());
 
-		assertTrue(report, report.contains("\nPlayer\nlogged in: yes\naccount known: yes\nprofile: STANDARD\nworld: 402\n"
+		assertTrue(report, report.contains("\nPlayer\nlogged in: yes\naccount known: yes\nprofile: STANDARD\n"
 			+ "world types: MEMBERS, PVP\nbank window open now: no\n"));
 		assertTrue(report, report.contains("bank events seen: 12\nbank events held: 3\nbank reads made: 4\nbank events dropped: 0\n"));
 		assertTrue(report, report.contains("\nSettings\ngpMin: 0\n"));
@@ -339,7 +364,6 @@ public class DiagnosticsTest
 		final Diagnostics.Facts.Builder b = Diagnostics.Facts.builder();
 		b.loggedIn(true).accountKnown(true);
 		b.line(Diagnostics.PLAYER, "profile", "STANDARD");
-		b.line(Diagnostics.PLAYER, "world", "402");
 		b.line(Diagnostics.PLAYER, "world types", "MEMBERS, PVP");
 		b.line(Diagnostics.PLAYER, "bank window open now", "no");
 		b.bankEvents(12, 3, 4, 0);

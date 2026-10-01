@@ -167,6 +167,111 @@ public class BankHistorySeriesTest
 		assertFalse(a.toString().isEmpty());
 	}
 
+	// ---- 1.0.9 part 5: the fresh start
+
+	private static BankHistorySeries fiveDays()
+	{
+		return BankHistorySeries.of(Arrays.asList(p(sep(1), 1, 1), p(sep(2), 2, 2), p(sep(3), 3, 3), p(sep(4), 4, 4),
+			p(sep(5), 5, 5)));
+	}
+
+	@Test
+	public void aSeriesFromOfHasNoFreshStartAndNoLegacyDays()
+	{
+		final BankHistorySeries s = fiveDays();
+		assertNull(s.freshFrom());
+		assertFalse(s.hasLegacyDays());
+		assertSame(s, s.fromFresh());
+		assertNull(BankHistorySeries.EMPTY.freshFrom());
+		assertFalse(BankHistorySeries.EMPTY.hasLegacyDays());
+	}
+
+	@Test
+	public void theFreshStartIsCarriedByEveryCopy()
+	{
+		final BankHistorySeries s = fiveDays().withFreshFrom(sep(3));
+		assertEquals(sep(3), s.freshFrom());
+		assertEquals(sep(3), s.with(p(sep(6), 6, 6)).freshFrom());
+		assertEquals(sep(3), s.with(p(sep(2), 22, 22)).freshFrom());
+		assertEquals(sep(3), s.upTo(sep(4)).freshFrom());
+		assertEquals(sep(3), s.upTo(sep(9)).freshFrom());
+		assertEquals(sep(3), s.with(null).freshFrom());
+		assertEquals(BankHistorySeries.of(s.points()).withFreshFrom(sep(3)), s);
+
+		final BankHistorySeries all = fiveDays().withFreshFrom(LocalDate.MAX);
+		assertEquals(LocalDate.MAX, all.freshFrom());
+		assertEquals(LocalDate.MAX, all.with(p(sep(6), 6, 6)).freshFrom());
+		assertEquals(LocalDate.MAX, all.upTo(sep(2)).freshFrom());
+	}
+
+	@Test
+	public void withFreshFromSetsAndClearsAndEmptyHasNothingToHide()
+	{
+		final BankHistorySeries s = fiveDays();
+		assertSame(s, s.withFreshFrom(null));
+		final BankHistorySeries cut = s.withFreshFrom(sep(2));
+		assertEquals(sep(2), cut.freshFrom());
+		assertNull(cut.withFreshFrom(null).freshFrom());
+		assertSame(cut, cut.withFreshFrom(sep(2)));
+		assertSame(BankHistorySeries.EMPTY, BankHistorySeries.EMPTY.withFreshFrom(LocalDate.MAX));
+		assertSame(BankHistorySeries.EMPTY, BankHistorySeries.EMPTY.withFreshFrom(sep(1)));
+		assertNull(BankHistorySeries.EMPTY.with(p(sep(1), 1, 1)).freshFrom());
+	}
+
+	@Test
+	public void fromFreshKeepsTheDaysAtOrAfterTheFreshStart()
+	{
+		final BankHistorySeries cut = fiveDays().withFreshFrom(sep(3)).fromFresh();
+		assertEquals(Arrays.asList(sep(3), sep(4), sep(5)), days(cut));
+		assertNull("the cut series has no legacy days of its own", cut.freshFrom());
+		assertFalse(cut.hasLegacyDays());
+
+		// The day a fresh start names is itself fresh, and so is every later one.
+		assertEquals(Arrays.asList(sep(5)), days(fiveDays().withFreshFrom(sep(5)).fromFresh()));
+		// A fresh start at or before the first day cuts nothing.
+		assertEquals(days(fiveDays()), days(fiveDays().withFreshFrom(sep(1)).fromFresh()));
+		assertEquals(days(fiveDays()), days(fiveDays().withFreshFrom(LocalDate.of(2020, 1, 1)).fromFresh()));
+		// A fresh start after the last day leaves nothing.
+		assertSame(BankHistorySeries.EMPTY, fiveDays().withFreshFrom(sep(6)).fromFresh());
+	}
+
+	@Test
+	public void everyDayLegacyIsCutToNothing()
+	{
+		final BankHistorySeries all = fiveDays().withFreshFrom(LocalDate.MAX);
+		assertSame(BankHistorySeries.EMPTY, all.fromFresh());
+		assertEquals(5, all.size());
+		assertEquals("the whole series is still there to be shown on request", fiveDays().points(), all.points());
+	}
+
+	@Test
+	public void hasLegacyDaysNeedsAFreshStartAndADayBeforeIt()
+	{
+		assertFalse(fiveDays().hasLegacyDays());
+		assertTrue(fiveDays().withFreshFrom(sep(3)).hasLegacyDays());
+		assertTrue(fiveDays().withFreshFrom(sep(2)).hasLegacyDays());
+		assertTrue(fiveDays().withFreshFrom(LocalDate.MAX).hasLegacyDays());
+		assertFalse("nothing lies before the first day", fiveDays().withFreshFrom(sep(1)).hasLegacyDays());
+		assertFalse(fiveDays().withFreshFrom(LocalDate.of(2020, 1, 1)).hasLegacyDays());
+		assertFalse(BankHistorySeries.EMPTY.withFreshFrom(LocalDate.MAX).hasLegacyDays());
+	}
+
+	@Test
+	public void equalityIncludesTheFreshStart()
+	{
+		final BankHistorySeries plain = fiveDays();
+		final BankHistorySeries cutAt3 = fiveDays().withFreshFrom(sep(3));
+		assertNotEquals(plain, cutAt3);
+		assertNotEquals(cutAt3, fiveDays().withFreshFrom(sep(4)));
+		assertNotEquals(cutAt3, fiveDays().withFreshFrom(LocalDate.MAX));
+		assertEquals(cutAt3, fiveDays().withFreshFrom(sep(3)));
+		assertEquals(cutAt3.hashCode(), fiveDays().withFreshFrom(sep(3)).hashCode());
+		assertNotEquals(plain.hashCode(), cutAt3.hashCode());
+		assertTrue(cutAt3.toString().contains("freshFrom=2026-09-03"));
+		assertTrue(fiveDays().withFreshFrom(LocalDate.MAX).toString().contains("freshFrom=all"));
+		assertFalse(plain.toString().contains("freshFrom"));
+	}
+
 	static List<LocalDate> days(final BankHistorySeries s)
 	{
 		final List<LocalDate> days = new ArrayList<>();

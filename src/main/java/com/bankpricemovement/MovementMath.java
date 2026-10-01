@@ -257,6 +257,66 @@ public final class MovementMath
 	}
 
 	/**
+	 * Whether an item's name holds the text the reader typed into the search box (1.0.9 part 4): any PART of the
+	 * name, whatever the case, so "run" finds both "Rune platebody" and "Runite ore" and "ite o" finds the second - a
+	 * reader looking for an item rarely remembers how its name begins.
+	 *
+	 * <p>The query is trimmed first, because a space typed after a word is a slip rather than a request, and a
+	 * blank one - nothing typed, or only spaces - matches every name, so an emptied box brings the whole list
+	 * back. A row with no name matches nothing: there is no text to find the query in, and a search is for
+	 * finding names.
+	 *
+	 * @param name  the item's name; null matches nothing
+	 * @param query what was typed; null reads as blank
+	 */
+	public static boolean matches(@Nullable final String name, @Nullable final String query)
+	{
+		final String wanted = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
+		if (wanted.isEmpty())
+		{
+			return true;
+		}
+
+		return name != null && name.toLowerCase(Locale.ROOT).contains(wanted);
+	}
+
+	/**
+	 * The rows whose names {@linkplain #matches match} what the reader typed, in the order they came (1.0.9 part 4).
+	 *
+	 * <p>This narrows rows the panel already holds and never asks the service for anything: the service keeps
+	 * only the band's rows and a filter change there is a full recompute with a hop to the client thread, which a
+	 * keystroke must never cause. So the band, the sort and the prices are exactly what they were, and the list
+	 * simply gets shorter.
+	 *
+	 * <p>A blank query answers the SAME list instance it was given, so a box nobody has typed in costs one
+	 * comparison and not a copy of every row.
+	 *
+	 * @param rows  the rows to narrow; null reads as empty
+	 * @param query what was typed; null reads as blank
+	 * @return the rows given when the query is blank, otherwise a new unmodifiable list
+	 */
+	public static List<MovementRow> search(final List<MovementRow> rows, @Nullable final String query)
+	{
+		final List<MovementRow> held = rows == null ? Collections.<MovementRow>emptyList() : rows;
+		final String wanted = query == null ? "" : query.trim();
+		if (wanted.isEmpty())
+		{
+			return held;
+		}
+
+		final List<MovementRow> kept = new ArrayList<>();
+		for (final MovementRow row : held)
+		{
+			if (row != null && matches(row.name(), wanted))
+			{
+				kept.add(row);
+			}
+		}
+
+		return Collections.unmodifiableList(kept);
+	}
+
+	/**
 	 * The order one sort puts rows in (contract C9).
 	 *
 	 * <p>Two rules beyond "compare the key": a row WITHOUT the key - no move to speak of, or no price - is

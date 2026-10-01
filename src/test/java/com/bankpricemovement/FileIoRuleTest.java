@@ -31,55 +31,58 @@ import static org.junit.Assert.fail;
  * directory. The moment a {@code java.io.File} or a {@code java.nio.file.Path} appears in the shipped package
  * that property is gone, and nothing but a reviewer's eye would notice.
  *
- * <p>So this test fails the build instead, and it would have failed loudly on the morning of 2026-09-20, before
- * the port. {@code PriceStore} took a {@code java.io.File} directory and answered {@code File} targets, read
- * them with {@code Files.readAllBytes} and replaced them through {@code newBufferedWriter} and a
- * {@code Files.move} - its own comments still name all three, as history - and {@code BpmCommands.writeShot}
- * answered a {@code File} and handed it straight to {@code ImageIO.write}. That is four separate rules below,
- * and none of them had anything watching it.
+ * <p>So this test fails the build instead. The mistake is easy to make and invisible to the compiler: a store that
+ * takes a {@code java.io.File} directory and answers {@code File} targets, reads them with
+ * {@code Files.readAllBytes} and replaces them through {@code newBufferedWriter} and a {@code Files.move}, or a dev
+ * helper that answers a {@code File} and hands it straight to {@code ImageIO.write}. That is four separate rules
+ * below, and before this test none of them had anything watching it.
  *
- * <p><b>Comments and strings are blanked before anything is matched</b>, because this package documents the
- * rules it obeys. {@code BpmCommands} explains in a comment why it does <em>not</em> use "ImageIO's File
- * overload", and {@code PriceStore}'s javadoc says its whole-file read "is what {@code Files.readAllBytes} did
- * before addendum AD". Both are correct code describing itself, and a raw substring scan would red-fail on them
- * - which trains the next author to delete the explanation rather than the mistake. A banned name inside a
- * string literal is blanked for the same reason: it is data, not a call. {@link #scrub} does the blanking, and
- * it is exercised by hand below so the scan cannot quietly stop seeing things.
+ * <p><b>Comments and strings are blanked before anything is matched</b>, because a package documents the rules it
+ * obeys. A class may explain in a comment why it does <em>not</em> use "ImageIO's File overload", or say that its
+ * whole-file read "is what {@code Files.readAllBytes} did" before a port. Both are correct code describing itself,
+ * and a raw substring scan would red-fail on them - which trains the next author to delete the explanation rather
+ * than the mistake. A banned name inside a string literal is blanked for the same reason: it is data, not a call.
+ * {@link #scrub} does the blanking, and it is exercised by hand below so the scan cannot quietly stop seeing
+ * things.
  *
- * <p><b>Scope: {@code com.bankpricemovement} ONLY.</b> This workspace also holds {@code com.lootandbeam} and
- * {@code com.osrslos}, which are different plugins that are not being submitted and still use {@code java.io}
- * throughout. Do not widen the walk to {@code src/main/java} - it would turn the suite red over code this rule
- * does not reach, and the honest fix would then be to delete the test. One package is submitted; one package is
- * held to the rule.
+ * <p><b>Written to be copied.</b> This file is the same in every 2hBuilds plugin, with nothing changed but its
+ * {@code package} line: the folder it scans is the one named by the package it is in, and it names no class of the
+ * plugin it sits in. What a plugin wants to hold ITSELF to beyond this - a floor on the file count, files that must
+ * be among those read - lives in a test of that plugin's own. The floor here is one source file, the guard against
+ * a walk that read nothing.
+ *
+ * <p><b>Scope: ONE package.</b> The workspace may also hold other plugins' packages, which are different plugins
+ * that are not being submitted and may still use {@code java.io}. Do not widen the walk to {@code src/main/java} -
+ * it would turn the suite red over code this rule does not reach, and the honest fix would then be to delete the
+ * test. One package is submitted; one package is held to the rule.
  *
  * <p><b>What it guarantees, and what it cannot.</b> The scan reads the shipped source as TEXT and matches names
- * on word boundaries. What it therefore guarantees is exactly this: no file in {@code com.bankpricemovement}, at
+ * on word boundaries. What it therefore guarantees is exactly this: no file in the package, at
  * any depth, NAMES one of the APIs listed in {@link #RULES} in code - and the five shapes that hide a name are
  * pinned by hand in {@link #aBannedNameIsCaughtHoweverItIsWritten()} (fully qualified with no import, a wildcard
  * import, a static import, a nested or anonymous class, and an identifier written with a unicode escape).
  *
  * <p>It does not type-check and it does not follow calls, so an API that takes a file NAME as a {@code String}
  * and never mentions {@code File}, {@code Path} or {@code Files} goes straight past it: {@code new
- * PrintWriter("bank.json")} and {@code new Formatter(name)} each open a file on disk while naming nothing this
+ * PrintWriter("data.json")} and {@code new Formatter(name)} each open a file on disk while naming nothing this
  * test knows, as would {@code Runtime.getRuntime().exec(...)} or {@code System.load(...)}. Catching those would
  * mean type-checking the package, which is the compiler's job and not this one's. Two more are recorded here
  * rather than defended against: a unicode escape that decodes to a quote or to a slash can move where the
  * compiler thinks a string literal or a comment ENDS, which {@link #scrub} does not model, and anything reached
  * by reflection is invisible to a text scan. Both are work done to defeat this test rather than a mistake made
  * while writing the plugin, and the mistake is what this test is aimed at - it is the mistake that actually
- * happened, in four places, before addendum AD. The rest is the reviewer's eye and {@link PriceStoreTest},
- * which drives the real store over a temporary folder and would notice bytes landing outside it.
+ * happened, in four places, before the port to {@code Filepath}. The rest is the reviewer's eye and the plugin's own
+ * tests of its store, which drive it over a temporary folder and would notice bytes landing outside it.
  *
  * <p><b>This test file itself imports {@code java.nio.file}</b>, which is exactly what it forbids next door.
  * That is not a loophole: the Hub never sees {@code src/test} (it is neither packaged nor scanned), a test has
  * no plugin instance to get a {@code Filepath} from, and reading the shipped source off disk is the one thing
- * this test is for. {@link TestFilepaths} makes the same argument for {@code Filepath.Unchecked}.
+ * this test is for. A test helper that uses {@code Filepath.Unchecked} makes the same argument.
  */
 public class FileIoRuleTest
 {
 	/** Where the shipped plugin lives, relative to the project root the tests run from. */
-	private static final List<String> PACKAGE_PATH =
-		Arrays.asList("src", "main", "java", "com", "bankpricemovement");
+	private static final List<String> PACKAGE_PATH = packagePath();
 
 	/**
 	 * How far up from the working directory {@link #packageRoot()} will look. Gradle runs tests with the
@@ -89,23 +92,12 @@ public class FileIoRuleTest
 	private static final int SEARCH_PARENTS = 4;
 
 	/**
-	 * A floor on the walk. The package has 32 sources today and its surface is frozen (addendum AB), so a floor
-	 * of 30 leaves room for one class being merged into another while still refusing a walk that quietly lost a
-	 * tenth of the package. The floor was 25 until the addendum AD review: a walk that silently dropped seven
-	 * files - a quarter of the plugin, {@code PriceStore} among them - would have passed green, which is the one
-	 * way this test can lie.
+	 * A floor on the walk: one source. A scan that read nothing passes every rule, so a package with no source to read
+	 * fails here rather than going green. A plugin that wants a stronger floor than this - a count near its own size, the
+	 * names of the classes that do its file work - holds itself to it in a test of its own, never in this file, which
+	 * stays the same in every plugin.
 	 */
-	private static final int LEAST_SOURCES = 30;
-
-	/**
-	 * The files that must be among the ones read, by name. A count alone cannot tell a complete walk from one
-	 * that found thirty of the wrong files, and these three are where every byte of the plugin's I/O lives:
-	 * {@code PriceStore} owns the data directory and every load and save, {@code BpmCommands} writes the dev
-	 * bridge's PNGs, and {@code BankPriceMovementPlugin} is the seam that hands each of them its
-	 * {@code Filepath}. If the walk ever stops reaching one of the three, the suite says which one.
-	 */
-	private static final List<String> MUST_SCAN = Collections.unmodifiableList(Arrays.asList(
-		"PriceStore.java", "BpmCommands.java", "BankPriceMovementPlugin.java"));
+	private static final int LEAST_SOURCES = 1;
 
 	/**
 	 * A stand-in package tree for {@link #theWalkReachesASubPackage()}, and the only thing in this file that
@@ -176,7 +168,7 @@ public class FileIoRuleTest
 			"Filepath.openOutputStream(StandardOpenOption...)"),
 		new Rule("\\bRandomAccessFile\\b", "java.io.RandomAccessFile",
 			"nothing - Filepath has no random access on purpose; read the file whole and replace it whole,"
-				+ " the way PriceStore.writeAtomic does"),
+				+ " writing a sibling temp file and moving it into place"),
 		new Rule("\\bFiles\\b", "java.nio.file.Files",
 			"the Filepath method for the same job: exists(), isDirectory(), createDirectories(), delete(),"
 				+ " deleteIfExists(), moveTo(), walk(), openInputStream(), openOutputStream(), write()"),
@@ -191,15 +183,15 @@ public class FileIoRuleTest
 		new Rule("\\bPLUGIN_DATA\\b", "RuneLite.PLUGIN_DATA",
 			"Plugin.getPluginDirectory() - the plugin is handed its own directory, it does not go looking"),
 		new Rule("\\bUnchecked\\b", "Filepath.Unchecked",
-			"the Filepath the plugin was handed (PriceStore.Directory is the seam). Unchecked escapes the"
+			"the Filepath the plugin was handed handed by Plugin.getPluginDirectory(). Unchecked escapes the"
 				+ " sandbox, and RuneLite's own javadoc says using it stops a Hub plugin being reviewed"
-				+ " automatically. It is allowed in src/test only - see TestFilepaths"),
+				+ " automatically. It is allowed in src/test only, where there is no plugin to hand out a Filepath"),
 		// Qualified on purpose. Filepath has a createTempFile(prefix, suffix) of its OWN, which makes the temp
 		// file inside the sandbox and is exactly right; a bare \bcreateTempFile\b would refuse the correct call
 		// along with the wrong one.
 		new Rule("\\bFile\\s*\\.\\s*createTempFile\\b", "File.createTempFile",
 			"Filepath.createTempFile(prefix, suffix) inside your own directory, or a temp NAME moved into"
-				+ " place - PriceStore.writeAtomic"),
+				+ " place"),
 		new Rule("import\\s+java\\.io\\s*\\.\\s*\\*", "a wildcard import of java.io",
 			"named imports, so this rule can tell java.io.IOException from java.io.File"),
 		new Rule("import\\s+java\\.nio\\.file\\s*\\.\\s*\\*", "a wildcard import of java.nio.file",
@@ -212,7 +204,7 @@ public class FileIoRuleTest
 		// which sees the file as written. Rather than decode them - which would mean writing half a lexer - the
 		// package is simply not allowed to write one in code. It never needs to: the plugin's identifiers are
 		// ASCII. String and character literals are blanked before this runs, so a genuine escape inside one
-		// (GuideSnapshot's non-breaking space, BankPriceMovementPanel's format string) is untouched, and an
+		// (a non-breaking space, a format string) is untouched, and an
 		// escape inside a literal is a known limit named in this class's javadoc rather than a rule.
 		new Rule("\\\\u+[0-9a-fA-F]{4}", "a unicode escape in code",
 			"the plain ASCII name. An escaped identifier - '\\u0046ile' is 'File' by the time javac reads it -"
@@ -233,13 +225,12 @@ public class FileIoRuleTest
 	// ---------------------------------------------------------------- the real scan
 
 	/**
-	 * Every shipped source of {@code com.bankpricemovement}, held to every rule above.
+	 * Every shipped source of the package, held to every rule above.
 	 *
-	 * <p>Two guards against a vacuous pass, because the only way this test can lie is by scanning less than it
-	 * claims to: the file count against {@link #LEAST_SOURCES}, and every name in {@link #MUST_SCAN} - the three
-	 * classes that do the plugin's file work - being among the files actually read. A walk that finds the wrong
-	 * tree fails in {@link #packageRoot()} before either of them, and one that reads only the top of the right
-	 * tree is what {@link #theWalkReachesASubPackage()} rules out.
+	 * <p>A guard against a vacuous pass, because the only way this test can lie is by scanning less than it claims
+	 * to: the file count against {@link #LEAST_SOURCES}. A walk that finds the wrong tree fails in
+	 * {@link #packageRoot()} before it, and one that reads only the top of the right tree is what
+	 * {@link #theWalkReachesASubPackage()} rules out.
 	 */
 	@Test
 	public void theShippedPackageDoesNoDirectFileIo() throws IOException
@@ -252,49 +243,19 @@ public class FileIoRuleTest
 			+ " and a scan of a fraction of the package proves nothing about the rest",
 			sources.size() >= LEAST_SOURCES);
 
-		final List<String> names = new ArrayList<>();
 		final List<String> hits = new ArrayList<>();
 		for (final Path source : sources)
 		{
-			final String name = source.getFileName().toString();
-			names.add(name);
-			hits.addAll(findings(name, read(source)));
+			hits.addAll(findings(source.getFileName().toString(), read(source)));
 		}
 
-		for (final String must : MUST_SCAN)
-		{
-			assertTrue(must + " was not among the " + names.size() + " files scanned under "
-				+ root.toAbsolutePath() + " - this test cannot vouch for a file it never read, and that one"
-				+ " does file I/O", names.contains(must));
-		}
-
-		assertTrue("Direct file I/O in com.bankpricemovement. The Plugin Hub requires every byte to go through"
+		assertTrue("Direct file I/O in " + packageName() + ". The Plugin Hub requires every byte to go through"
 			+ " net.runelite.client.util.Filepath (templateplugin/AGENTS.md), and each line below names what to"
 			+ " write instead:\n\n" + String.join("\n", hits) + "\n", hits.isEmpty());
 	}
 
 	/**
-	 * The port is really in place, not merely undetectable. Absence of the banned names would also be
-	 * satisfied by a class that does no I/O at all, or by one that got it through a helper somewhere else, so
-	 * the two classes that own the plugin's files are asked to name {@code Filepath} out loud.
-	 */
-	@Test
-	public void theStoreAndTheBridgeImportFilepath() throws IOException
-	{
-		final Path root = packageRoot();
-		final Pattern imported = Pattern.compile("import\\s+net\\.runelite\\.client\\.util\\.Filepath\\s*;");
-		for (final String name : Arrays.asList("PriceStore.java", "BpmCommands.java"))
-		{
-			final String code = scrub(read(root.resolve(name)), false);
-			assertTrue(name + " does not import net.runelite.client.util.Filepath - either the port was undone"
-				+ " or its file work moved somewhere this test does not look",
-				imported.matcher(code).find());
-		}
-	}
-
-	/**
-	 * The walk is by DEPTH, not a directory listing. Nothing in {@code com.bankpricemovement} sits in a
-	 * sub-package today, but a sub-package would be shipped in the jar exactly like the rest of it, so a walk
+	 * The walk is by DEPTH, not a directory listing. A plugin's package may sit flat today, but a sub-package would be shipped in the jar exactly like the rest of it, so a walk
 	 * that read only the top level would leave the next author a corner where no rule looks. Proved over a
 	 * temporary tree rather than the real one, because the real one cannot demonstrate depth it does not have.
 	 */
@@ -347,9 +308,9 @@ public class FileIoRuleTest
 	}
 
 	/**
-	 * This package writes the rules down in its own comments - {@code BpmCommands} explains why it avoids
-	 * "ImageIO's File overload", {@code PriceStore} says its read "is what {@code Files.readAllBytes} did".
-	 * Both are correct code, and failing them would teach the next author to delete the explanation.
+	 * A package writes the rules down in its own comments - one class explains why it avoids "ImageIO's File
+	 * overload", another says its read "is what {@code Files.readAllBytes} did". Both are correct code, and failing
+	 * them would teach the next author to delete the explanation.
 	 */
 	@Test
 	public void aBannedNameInACommentDoesNotCount()
@@ -443,10 +404,10 @@ public class FileIoRuleTest
 
 	/**
 	 * The near-misses, one pair at a time. Each left-hand name must be caught and each right-hand name must
-	 * not, and both halves of every pair really appear in the shipped package: {@code PriceStore} imports
-	 * {@code java.io.IOException}, {@code NoSuchFileException}, {@code FileAlreadyExistsException},
+	 * not, and both halves of every pair really appear in a plugin that stores files through {@code Filepath}: it
+	 * imports {@code java.io.IOException}, {@code NoSuchFileException}, {@code FileAlreadyExistsException},
 	 * {@code AtomicMoveNotSupportedException} and {@code StandardCopyOption}, and holds {@code Filepath}
-	 * fields. If the boundaries ever slip, the suite goes red here rather than on thirty-two innocent files.
+	 * fields. If the boundaries ever slip, the suite goes red here rather than on a package of innocent files.
 	 */
 	@Test
 	public void theExactPairsTheRuleMustSeparate()
@@ -488,7 +449,7 @@ public class FileIoRuleTest
 		// FileTime - and every one of them is the sandboxed way to do the thing the rule above bans.
 		allowed("import net.runelite.client.util.Filepath;");
 		allowed("\tprivate Filepath dir; void go() { dir.getFileName(); dir.join(\"a\"); }");
-		allowed("\tvoid go() throws Exception { dir.createTempFile(\"bpm\", \".tmp\"); }");
+		allowed("\tvoid go() throws Exception { dir.createTempFile(\"data\", \".tmp\"); }");
 		allowed("\tvoid go() throws Exception { dir.openFileChannel(StandardOpenOption.READ); }");
 		allowed("import java.nio.file.FileVisitOption;");
 		allowed("import java.nio.file.attribute.FileTime;");
@@ -537,7 +498,7 @@ public class FileIoRuleTest
 		banned("\tvoid go() { \\u0046iles.delete(p); }", "a unicode escape in code");
 
 		// And the legitimate escapes the package really contains, which live inside literals and must not fire:
-		// GuideSnapshot's non-breaking space and BankPriceMovementPanel's format string.
+		// a non-breaking space and a format string.
 		allowed("\tprivate static final Pattern WS = Pattern.compile(\"[\\\\s\\\\u00A0]+\");");
 		allowed("\tvoid go(char c) { sb.append(String.format(\"\\\\u%04x\", (int) c)); }");
 	}
@@ -591,7 +552,7 @@ public class FileIoRuleTest
 	@Test
 	public void everyMessageNamesTheFileTheLineTheTextAndTheFix()
 	{
-		final List<String> hits = findings("PriceStore.java", sample(
+		final List<String> hits = findings("Store.java", sample(
 			"class A",
 			"{",
 			"\tprivate static final File DIR = defaultDir();",
@@ -599,7 +560,7 @@ public class FileIoRuleTest
 		assertEquals("one line, one hit: " + hits, 1, hits.size());
 
 		final String message = hits.get(0);
-		assertTrue("no file name: " + message, message.contains("PriceStore.java"));
+		assertTrue("no file name: " + message, message.contains("Store.java"));
 		assertTrue("no line number: " + message, message.contains(":3"));
 		assertTrue("does not say what was found: " + message, message.contains("java.io.File"));
 		assertTrue("does not quote the line: " + message, message.contains("private static final File DIR"));
@@ -708,7 +669,7 @@ public class FileIoRuleTest
 	}
 
 	/**
-	 * One hit, in the shape the failure message promises: {@code PriceStore.java:12  what was found}, the line
+	 * One hit, in the shape the failure message promises: {@code Store.java:12  what was found}, the line
 	 * and then the replacement on its own indented line. The index comes from the SCRUBBED text and is used
 	 * against the ORIGINAL, which is sound because {@link #scrub} never moves a character.
 	 */
@@ -849,7 +810,25 @@ public class FileIoRuleTest
 	// ---------------------------------------------------------------- plumbing
 
 	/**
-	 * {@code src/main/java/com/bankpricemovement}, found from the working directory or one of its first few
+	 * {@code src/main/java} and then this test's own package, folder by folder: derived from the package the class is
+	 * in, so the same file scans {@code com.zenbank} when it is copied there with only its {@code package} line changed.
+	 */
+	private static List<String> packagePath()
+	{
+		final List<String> path = new ArrayList<>(Arrays.asList("src", "main", "java"));
+		path.addAll(Arrays.asList(packageName().split("\\.")));
+		return Collections.unmodifiableList(path);
+	}
+
+	/** The name of the package this test is in, e.g. {@code com.zenbank}. */
+	private static String packageName()
+	{
+		final String name = FileIoRuleTest.class.getName();
+		return name.substring(0, name.lastIndexOf('.'));
+	}
+
+	/**
+	 * {@code src/main/java/<this test's package>}, found from the working directory or one of its first few
 	 * parents. Fails loudly rather than returning nothing: a scan that finds no files passes every rule, and a
 	 * test that passes by scanning nothing is worse than no test at all.
 	 */

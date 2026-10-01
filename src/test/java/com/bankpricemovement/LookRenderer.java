@@ -81,10 +81,22 @@ import static org.mockito.Mockito.when;
  * {@code ticker-hidden-2026-09-20-AK.png} to the byte; without it, neither matches while the picture is the
  * same), so a comparison against them has to be taken the same way.
  *
- * <p><b>The current pins are {@code docs/handoff/lab/ticker-{,hidden-,options-,live-}2026-09-28-AU.png}</b>
- * (addendum AU): the AV pictures with the Items | Net Worth History strip inserted under the card - everything under it
- * {@link #STRIP_HEIGHT} px lower, the pictures that much taller, and nothing else changed, which
- * {@code ViewStripPicturesTest} measures against the AV files themselves.
+ * <p><b>The current pins are {@code docs/handoff/lab/ticker-{,hidden-,options-,live-}2026-10-01-C.png}</b> (1.0.9 part 4,
+ * the search box): the B pictures below with the box above the first row - {@link #SEARCH_ROW_HEIGHT} px of header
+ * inserted under the fold, everything under it that much lower, the pictures that much taller, and nothing else changed,
+ * which {@code ViewStripPicturesTest} measures against the B files themselves. The History pictures
+ * ({@link #HISTORY_FILE} and its three) have no search box and are untouched.
+ *
+ * <p>The B pins before them ({@code ticker-{,hidden-,options-,live-}2026-09-30-B.png}, 1.0.9, the support pair): the AU
+ * pictures below with the Discord mark beside the settings icon in the card's top row and the Refresh link moved down
+ * to the number's row - the card's top two rows and nothing else, every pixel row from the number row down and every
+ * row above the card identical, which {@code ViewStripPicturesTest} measured against the AU files themselves. The
+ * History pictures ({@link #HISTORY_FILE} and its three) moved the same way, and are still pinned as B.
+ *
+ * <p>The AU pins before them ({@code ticker-{,hidden-,options-,live-}2026-09-28-AU.png}, addendum AU): the AV pictures
+ * with the Items | Net Worth History strip inserted under the card - everything under it {@link #STRIP_HEIGHT} px lower,
+ * the pictures that much taller, and nothing else changed, which {@code ViewStripPicturesTest} measures against the AV
+ * files themselves. They stay as history, like every pin here.
  *
  * <p>The AV pins before them ({@code ticker-{,hidden-,options-,live-}2026-09-28-AV.png}, addendum AV): the default
  * fixture gained its Crystal body, so the ticker, hidden and live pictures are the AR ones with that row inserted
@@ -128,8 +140,13 @@ public final class LookRenderer
 	 * picture moved down and nothing else - the list keeps its height and the ground under its last row stays what it
 	 * was (measured, the column's 6 px bottom margin included: 62 px on the ticker and live pictures, 107 on the hidden
 	 * one, 121 on the options one).
+	 *
+	 * <p>And {@link #SEARCH_ROW_HEIGHT} taller again since 1.0.9 part 4 (1189 -> 1209), for the same reason and by the
+	 * same rule: the search box went into the header above the first row, and the picture grows by exactly what the header
+	 * did, so the list keeps its height and the ground under its last row stays what it was.
 	 */
-	public static final int HEIGHT = 1080 + MovementRowPanel.ROW_HEIGHT + 3 + LookRenderer.STRIP_HEIGHT;
+	public static final int HEIGHT = 1080 + MovementRowPanel.ROW_HEIGHT + 3 + LookRenderer.STRIP_HEIGHT
+		+ LookRenderer.SEARCH_ROW_HEIGHT;
 	/**
 	 * The Items | Net Worth History strip's own height at this width, MEASURED in Swing (addendum AU; the contract's
 	 * section 10): the {@link BankPriceMovementPanel#ROW_GAP} of air under the card, the {@link Widgets#TOGGLE_HEIGHT}
@@ -140,6 +157,16 @@ public final class LookRenderer
 	 * caption's 15 px line), and the control row under it keeps its own 6 px gap.
 	 */
 	public static final int STRIP_HEIGHT = 44;
+	/**
+	 * What the search box added to the header, MEASURED in Swing (1.0.9 part 4): {@link BankPriceMovementPanel#SEARCH_GAP}
+	 * of air over a box as tall as the Min / Max boxes - 16 px, the field's own preferred height - which is the distance
+	 * everything under the fold moved when the box went in. The air UNDER the box is not part of it: that 4 px is the
+	 * header's own bottom padding, which stood between the fold and the first row before the box did and still does, so
+	 * the box stands 4 px over the first row and the row has moved by the box and the air over it and no more. Pinned as
+	 * {@link #STRIP_HEIGHT} is, by {@code ViewStripPicturesTest}: a row that grew fails there rather than quietly squeezing
+	 * the picture.
+	 */
+	public static final int SEARCH_ROW_HEIGHT = 20;
 	/**
 	 * The fold's own height at this width, measured (addendum AA, line AA3): the chip strip over the field row,
 	 * with the fold's padding - and therefore the distance everything under the control row moved when the fold
@@ -498,13 +525,13 @@ public final class LookRenderer
 	// ---------------------------------------------------------------- the whole sidebar in History (addendum AU)
 
 	/** The History pictures, by the names they are pinned under in {@code docs/handoff/lab/}. */
-	public static final String HISTORY_FILE = "history-2026-09-28-AU.png";
+	public static final String HISTORY_FILE = "history-2026-09-30-B.png";
 	/** Day one: the one reading, today's (plan 7.5 item 3: the one point, its readout, its row, no sentence). */
-	public static final String HISTORY_ONE_FILE = "history-one-2026-09-28-AU.png";
+	public static final String HISTORY_ONE_FILE = "history-one-2026-09-30-B.png";
 	/** No reading yet: the card's two History lines a dash each (ruling 9.7), the view its one sentence. */
-	public static final String HISTORY_EMPTY_FILE = "history-empty-2026-09-28-AU.png";
+	public static final String HISTORY_EMPTY_FILE = "history-empty-2026-09-30-B.png";
 	/** The 40-day fixture with the card's three figures hidden (O3 in History: the card shrinks exactly as in Items). */
-	public static final String HISTORY_HIDDEN_FILE = "history-hidden-2026-09-28-AU.png";
+	public static final String HISTORY_HIDDEN_FILE = "history-hidden-2026-09-30-B.png";
 	/** The card's lit chip in every History picture: 30d, mock 5's own. */
 	public static final MovementWindow HISTORY_WINDOW = MovementWindow.D30;
 	/**

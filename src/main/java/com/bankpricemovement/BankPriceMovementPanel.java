@@ -1,28 +1,32 @@
 package com.bankpricemovement;
 
 import com.bankpricemovement.PriceService.Status;
+import java.awt.AWTEvent;
 import java.awt.BasicStroke;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Container;
-import java.awt.Cursor;
 import java.awt.FlowLayout;
 import java.awt.FontMetrics;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
+import java.awt.GridBagLayout;
 import java.awt.GridLayout;
+import java.awt.KeyboardFocusManager;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
 import java.awt.Toolkit;
 import java.awt.Window;
 import java.awt.datatransfer.StringSelection;
+import java.awt.event.AWTEventListener;
+import java.awt.event.ActionEvent;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
-import java.awt.event.MouseAdapter;
+import java.awt.event.KeyEvent;
 import java.awt.event.MouseEvent;
 import java.awt.geom.RoundRectangle2D;
 import java.text.ParseException;
@@ -46,6 +50,7 @@ import java.util.WeakHashMap;
 import java.util.function.Consumer;
 import java.util.function.LongSupplier;
 import javax.annotation.Nullable;
+import javax.swing.AbstractAction;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.ButtonGroup;
@@ -60,6 +65,7 @@ import javax.swing.JPopupMenu;
 import javax.swing.JRadioButtonMenuItem;
 import javax.swing.JScrollBar;
 import javax.swing.JScrollPane;
+import javax.swing.KeyStroke;
 import javax.swing.ScrollPaneConstants;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
@@ -67,6 +73,8 @@ import javax.swing.Timer;
 import javax.swing.border.CompoundBorder;
 import javax.swing.border.EmptyBorder;
 import javax.swing.border.MatteBorder;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import javax.swing.event.PopupMenuEvent;
 import javax.swing.event.PopupMenuListener;
 import net.runelite.client.game.ItemManager;
@@ -75,6 +83,7 @@ import net.runelite.client.ui.DynamicGridLayout;
 import net.runelite.client.ui.PluginPanel;
 import net.runelite.client.ui.components.PluginErrorPanel;
 import net.runelite.client.util.AsyncBufferedImage;
+import net.runelite.client.util.LinkBrowser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -98,14 +107,22 @@ import org.slf4j.LoggerFactory;
  * ---------------------------------------------
  * [ All | 100k+ | 1m+ | 10m+ ]  [min gp] [max gp] x  the price fold, while open
  * Refreshed 12 s ago - wait                      the problem row, while there is one
+ * [ Search items                              ]   the search box over the first row (1.0.9 part 4)
  * </pre>
  *
  * <p><b>The header</b> is a {@code DynamicGridLayout} column whose rows are ADDED and REMOVED, never hidden
- * (playbook 7.5): the hero card, the control row, the fold while open and the problem row while there is one
- * - and with no bank loaded (the LOGIN and NO_BANK cards) it is emptied, because there is nothing to value or
+ * (playbook 7.5): the hero card, the control row, the fold while open, the problem row while there is one and, last,
+ * the search box - and with no bank loaded (the LOGIN and NO_BANK cards) it is emptied, because there is nothing to value or
  * order. The four sort COLUMNS ({@link SortMode}) live in one {@link JPopupMenu}; the price fold carries
  * its presets; the "Show &lt;remainder&gt; more" row sits under the rows; the EMPTY card offers "Clear price
  * range" when a band hid everything.
+ *
+ * <p><b>The search box</b> (1.0.9 part 4: "It was hard to find a specific item") narrows the list to the rows whose
+ * names hold what is typed. It cuts down the rows this panel ALREADY holds ({@link #applySearch}) - the service keeps
+ * only the band's rows, and a recompute with a hop to the client thread is not a thing a keystroke may cost - so the
+ * band, the sort and the prices are untouched, the count reads the rows shown against the bank's items, and a search
+ * that leaves nothing is its own EMPTY card ({@link #NO_MATCH_TEXT}). The text is session state: no config key, not
+ * remembered, never logged and never in the troubleshooting report.
  *
  * <p><b>Two views since addendum AU</b> ({@code docs/handoff/plan-AU-history-2026-09-27.md} section 7.2, the phase-0
  * contract's sections 6-7 and amendments 9.6-9.15). An "Items | Net Worth History" toggle with one grey caption line
@@ -170,6 +187,13 @@ import org.slf4j.LoggerFactory;
  * ({@link #pressFold}) writes what it left behind, and the settings page's own change arrives at
  * {@link #setFoldOpen}. Nothing about the fold's CONTENTS moved: the chips, the two fields, their red rule and
  * the band button's text are addendum Z's, to the pixel.
+ *
+ * <p><b>The Net Worth History tab hides the days before 1.0.9</b> (1.0.9 part 5). Readings recorded by an older build did
+ * not count the Grand Exchange offers, so for a player who keeps much of their bank on offer they read low. The panel
+ * hands the History view and the card the record cut to the days recorded since ({@link #visibleHistory} - the one place
+ * the cut is made), and, while the record holds days before it, draws one check box under the tab's caption,
+ * "Include days before v1.0.9" ({@link #pressLegacy()}), which shows them again after a question
+ * ({@link LegacyPrompt}). Nothing is deleted: the days stay in the file whatever the box says.
  *
  * <p><b>The view switches are not the card's.</b> {@link HeroVisibility} says what is PAINTED and costs the
  * service nothing; {@link ViewOptions} says what the figures MEAN - which price series an actively traded stack
@@ -278,10 +302,11 @@ public class BankPriceMovementPanel extends PluginPanel
 
 		/**
 		 * The saved view switches - the config's {@code countCash} / {@code countUntradeables} (addendum Q,
-		 * line Q3), {@code livePrices} (addendum T, line T1), {@code countInventory} (addendum Y, line Y1) and
-		 * {@code showHoverText} (addendum AH); null reads as {@link ViewOptions#DEFAULT}.
+		 * line Q3), {@code livePrices} (addendum T, line T1), {@code countInventory} (addendum Y, line Y1),
+		 * {@code countGrandExchange} (1.0.9 part 3) and {@code showHoverText} (addendum AH); null reads as
+		 * {@link ViewOptions#DEFAULT}.
 		 *
-		 * <p>Five keys, ONE value: a switch is added to {@link ViewOptions} and to the plugin's implementation of
+		 * <p>Six keys, ONE value: a switch is added to {@link ViewOptions} and to the plugin's implementation of
 		 * this pair, and every reader of the menu, the card and the rows follows without a new seam. A switch can
 		 * leave the same way - addendum AO deleted {@code holdingOnRows}, which Q3 had added here, once addendum
 		 * AN's three-line row printed both of its readings at once and left it choosing nothing.
@@ -366,6 +391,36 @@ public class BankPriceMovementPanel extends PluginPanel
 		default void saveStartTab(SidebarView tab)
 		{
 		}
+
+		/**
+		 * Whether the Net Worth History tab shows the days recorded before 1.0.9 - the config's
+		 * {@code includeLegacyHistory} (1.0.9 part 5). Null reads as false: nothing stored is the shipped default, the
+		 * days before 1.0.9 hidden, and the answer for the headless renderer and a throwaway test seam.
+		 */
+		@Nullable
+		default Boolean loadIncludeLegacy()
+		{
+			return null;
+		}
+
+		/** Writes the state the tab's check box was left in, so the stored config follows (1.0.9 part 5). */
+		default void saveIncludeLegacy(boolean include)
+		{
+		}
+	}
+
+	/**
+	 * The one question the History tab asks (1.0.9 part 5): asked when the reader turns "Include days before v1.0.9" ON,
+	 * answered yes or no. A seam so the tests answer it without a window; the client's is {@link LegacyDialog}, a small
+	 * modal dialog owned by this panel's window.
+	 */
+	interface LegacyPrompt
+	{
+		/**
+		 * @param question the whole sentence to put to the reader ({@link #LEGACY_ASK})
+		 * @return true when the reader chose to go ahead; false for Cancel, Escape or a closed window
+		 */
+		boolean ask(String question);
 	}
 
 	/** Rows built per page (contract C32, design D11). */
@@ -389,6 +444,16 @@ public class BankPriceMovementPanel extends PluginPanel
 	public static final String ITEMS_CAPTION = "Item price changes";
 	/** ...and while the History view is (the user's final words, 2026-09-28). */
 	public static final String HISTORY_CAPTION = "Bank net worth history";
+	/**
+	 * The check box under the History caption (1.0.9 part 5), drawn only while the series holds days recorded before
+	 * 1.0.9. Those readings did not count the Grand Exchange offers, so the tab hides them until the reader asks.
+	 */
+	public static final String LEGACY_TEXT = "Include days before v1.0.9";
+	/** Its hover, behind "Show hover text" like every sentence hover here: one line, and the reason in it. */
+	public static final String LEGACY_TIP = "Days before v1.0.9 did not count open G.E. orders.";
+	/** What the reader is asked when they turn it ON; the dialog's two buttons are "Include" and "Cancel". */
+	public static final String LEGACY_ASK = "Days before v1.0.9 did not count open G.E. orders, so their net worth totals"
+		+ " may read low. Include them anyway?";
 
 	public static final String TITLE = "2h Bank Portfolio Tracker";
 	public static final String LOGIN_TEXT = "Log in to load your bank";
@@ -479,8 +544,8 @@ public class BankPriceMovementPanel extends PluginPanel
 	static final Color GLOW_COLOUR = Widgets.move(1, Widgets.Kind.FIGURE);
 	/** The gear menu's first entry - the second home of Refresh (N 3.1, O4; the gear's since Q2). */
 	public static final String REFRESH_MENU_TEXT = "Refresh prices now";
-	/** The gear's tooltip (Q1): one word, because the menu under it says the rest. */
-	public static final String OPTIONS_TIP = "Options";
+	/** Where the fourth mark of the menu's header goes (1.0.9): this plugin's repository, handed to {@link SupportLinks}. */
+	public static final String GITHUB_URL = "https://github.com/2hBuilds/bank-portfolio-tracker";
 	/**
 	 * How long after the gear menu closes a press on the GEAR opens nothing (addendum AB, line AB1;
 	 * {@code docs/bank-price-movement-addendum-AB-2026-09-13.md}) - the width of the toggle's second half.
@@ -531,6 +596,14 @@ public class BankPriceMovementPanel extends PluginPanel
 	 */
 	public static final String COUNT_INVENTORY_TEXT = "Include inventory and worn gear";
 	/**
+	 * The group's fifth item since 1.0.9 part 3, directly after the inventory's: whether what the player has in the
+	 * Grand Exchange's eight offers - items unsold, items bought and not collected, and the coins committed to or
+	 * waiting in them - is counted in the bank value and listed beside the bank's own stacks. It follows the
+	 * inventory switch because it is the same kind of thing (a place the player's worth can be that is not the
+	 * bank) and takes the same "Include" verb.
+	 */
+	public static final String COUNT_GRAND_EXCHANGE_TEXT = "Include Grand Exchange offers";
+	/**
 	 * The group's FIRST item since addendum T (line T1;
 	 * {@code docs/bank-price-movement-addendum-T-2026-09-12.md}), named as its config item is: which PRICE SERIES
 	 * the figures are read from. It leads the group because it is the switch the other three qualify - what a stack
@@ -555,6 +628,13 @@ public class BankPriceMovementPanel extends PluginPanel
 	 */
 	public static final String COUNT_INVENTORY_TIP = "Items in your inventory and worn gear count in the bank value "
 		+ "and are listed with the bank's stacks. They are read when you close the bank or press Refresh.";
+	/**
+	 * The Grand Exchange item's hover (1.0.9 part 3): one sentence, behind the hover switch like the other check
+	 * items'. It says what is counted; the config item's description carries the longer one, with the moments the
+	 * offers are read.
+	 */
+	public static final String COUNT_GRAND_EXCHANGE_TIP = "Items you are selling or have bought, and the coins "
+		+ "committed to or waiting in your offers, count in the bank value.";
 	/**
 	 * The caption of the gear menu's last row (addendum Z, line Z2;
 	 * {@code docs/bank-price-movement-addendum-Z-2026-09-13.md}): the three quick bands the price fold offers,
@@ -613,22 +693,12 @@ public class BankPriceMovementPanel extends PluginPanel
 	/** Its hover: the two things the press does, in the order it does them (AB2). */
 	public static final String OK_TIP = "Close this menu; the price ranges above are saved first";
 	/**
-	 * The menu's header (1.0.8): which plugin and which build, two grey lines over a rule of their own at the top of
-	 * the menu - the lines a player reads out when they report a problem. Plain text: not clickable, no hover.
-	 * {@link Version#CURRENT} is the one place the number is written. (One line at the bottom, "2h Bank Portfolio
-	 * Tracker 1.0.8", until the user split it and moved it to the top on the third local look, 2026-09-30.)
+	 * The menu's header (1.0.8): which plugin and which build, over a row of marks, drawn by {@link SupportLinks#header}
+	 * from this name and {@link Version#CURRENT} - the one place the number is written. (One line at the bottom, "2h
+	 * Bank Portfolio Tracker 1.0.8", until the user split it and moved it to the top on the third local look,
+	 * 2026-09-30; the version line's grey and the title's size now live with the header in {@link SupportLinks}.)
 	 */
 	public static final String VERSION_NAME_TEXT = "2h Bank Portfolio Tracker";
-	/** The part of {@link #VERSION_NAME_TEXT} drawn in the brand orange: the 2hBuilds mark, as on the sidebar icon. */
-	public static final String VERSION_MARK_TEXT = "2h";
-	public static final String VERSION_TEXT = "Version " + Version.CURRENT;
-	/**
-	 * The version line's grey: a shade darker than the captions' {@link ColorScheme#LIGHT_GRAY_COLOR} (165), still
-	 * about 4.6 : 1 against the menu's ground - "slightly darker gray, still legible" (the user, 2026-09-30).
-	 */
-	static final Color HEADER_GREY = new Color(135, 135, 135);
-	/** The header's title face: bold, one size up from the menu's 12 px (the user's pick from six drawn choices). */
-	static final int HEADER_TITLE_SIZE = 13;
 	private static final DateTimeFormatter CLOCK_SECONDS = DateTimeFormatter.ofPattern("HH:mm:ss", Locale.ROOT);
 	/**
 	 * The menu item that opens the troubleshooting window (1.0.8), after the start-tab dots: it runs a few checks, says
@@ -682,6 +752,22 @@ public class BankPriceMovementPanel extends PluginPanel
 	public static final String SORT_BUTTON_TIP = "Change sorting";
 	/** The band button's tooltip while no band is set (N 3.3). */
 	public static final String BAND_TIP = "Show only items in a price range";
+	/** What the search box reads, in grey, while it is empty and not being typed in (1.0.9 part 4). */
+	public static final String SEARCH_PLACEHOLDER = "Search items";
+	/** The search box's hover, behind "Show hover text" like every sentence-class hover here (1.0.9 part 4). */
+	static final String SEARCH_TIP = "Type part of an item's name to show only the matching rows.";
+	/**
+	 * The EMPTY card's title when the search matched nothing though the list has rows (1.0.9 part 4): the band's
+	 * {@link #EMPTY_TEXT} names a price range and a clear-range button, neither of which is the way out of this - the
+	 * way out is the box, which is right there above it.
+	 */
+	public static final String NO_MATCH_TEXT = "No items match";
+	/**
+	 * How much of the typed text the no-match card quotes back: it is the player's own and could be any length, and the
+	 * card's description wraps only at spaces, so a long run of letters would otherwise push the card wider than the
+	 * sidebar.
+	 */
+	private static final int NO_MATCH_QUOTE_MAX = 40;
 	/** The hero card's caption (N 3.1, 4.2). */
 	public static final String VALUE_TITLE = "Bank value";
 	/** What the card's hover puts after the exact figure, so the number on its own names its unit (AF). */
@@ -773,6 +859,14 @@ public class BankPriceMovementPanel extends PluginPanel
 	/** The control row's content height (N 3.3) and the gap above it (N section 3 §3). */
 	static final int CONTROL_HEIGHT = 22;
 	static final int ROW_GAP = 6;
+	/**
+	 * The air above and below the search box, in px (1.0.9 part 4; the user's pick S2 from drawn choices): 4 over it,
+	 * between what precedes it and its top border, and 4 under it, between its bottom border and the first row. The
+	 * air under it is the header's own bottom padding ({@link #GAP}), which has always stood between the header's last
+	 * row and the list - so the box takes the place of nothing and the list does not move relative to it - and the air
+	 * over it is the row's own top padding. The two are equal by value, and the panel's test measures both.
+	 */
+	static final int SEARCH_GAP = 4;
 	/** The "Show n more" row (N section 3 §5). */
 	static final int SHOW_MORE_HEIGHT = 26;
 	/**
@@ -814,6 +908,8 @@ public class BankPriceMovementPanel extends PluginPanel
 	private final ItemManager itemManager;
 	private final PriceService service;
 	private final Prefs prefs;
+	/** The support pair and the menu's header (1.0.9): built once, in the constructor. */
+	private final SupportLinks support;
 	private final PriceService.Listener listener;
 
 	// ---- header (built once, in buildHeader)
@@ -827,8 +923,10 @@ public class BankPriceMovementPanel extends PluginPanel
 	private JCheckBoxMenuItem livePricesItem;
 	private JCheckBoxMenuItem countCashItem;
 	private JCheckBoxMenuItem countUntradeablesItem;
-	/** The group's fourth item since addendum Y (Y1), and its last since AO: the inventory and the worn gear. */
+	/** The group's fourth item since addendum Y (Y1): the inventory and the worn gear. */
 	private JCheckBoxMenuItem countInventoryItem;
+	/** The group's fifth item and its last since 1.0.9 part 3: the Grand Exchange offers. */
+	private JCheckBoxMenuItem countGrandExchangeItem;
 	/**
 	 * AH: a plain {@link JMenuItem} carrying a DRAWN box rather than a {@link JCheckBoxMenuItem}, because this
 	 * switch ships OFF and RuneLite paints an unticked check item blank - which beside a label is
@@ -903,6 +1001,13 @@ public class BankPriceMovementPanel extends PluginPanel
 	private JLabel clearLabel;
 	private final Widgets.PlaceholderField minField;
 	private final Widgets.PlaceholderField maxField;
+	/**
+	 * The box above the item list (1.0.9 part 4), built beside the gp fields above and mounted by {@link #searchRow}.
+	 * Typing narrows the rows this panel already holds ({@link #matching}); nothing here asks the service for anything.
+	 */
+	private final Widgets.PlaceholderField searchField;
+	/** What stands between the header's last row and the list in Items: {@link #SEARCH_GAP} of air over {@link #searchField}. */
+	private JPanel searchRow;
 	private JLabel problemLabel;
 	/**
 	 * Addendum AU's strip under the card, in both views while a bank is loaded: the {@link #viewToggle} over the
@@ -913,6 +1018,14 @@ public class BankPriceMovementPanel extends PluginPanel
 	private Widgets.Toggle viewToggle;
 	/** {@link #ITEMS_CAPTION} or {@link #HISTORY_CAPTION}, grey, one line. */
 	private JLabel viewCaption;
+	/**
+	 * 1.0.9 part 5: the "Include days before v1.0.9" check box, in the header directly under {@link #viewStrip} - and
+	 * in the tree ONLY while the History tab shows and the series holds legacy days ({@link #syncHeader}); with none it
+	 * is not there at all, so a bank that never had such days draws the tab it always did.
+	 */
+	private JLabel legacyRow;
+	/** {@link #legacyRow} at the head of a row of its own, so only the words and the box answer a click, not the width. */
+	private JPanel legacyHolder;
 	/** The sort menu that is open, if any - one at a time (the BeamPickerPopup idiom). */
 	@Nullable
 	private JPopupMenu sortMenu;
@@ -973,6 +1086,21 @@ public class BankPriceMovementPanel extends PluginPanel
 	/** The three quick bands the fold's chips offer and the gear menu's boxes edit (Z1); never null. */
 	private BandPresets presets;
 	private List<MovementRow> rows = Collections.emptyList();
+	/**
+	 * What the reader has typed into the search box, trimmed; never null, "" for no search (1.0.9 part 4). Session state
+	 * and nothing more: it is not a config key and is not remembered, and it is kept across a tab switch and a publish
+	 * because it is the reader's, not the list's.
+	 */
+	private String search = "";
+	/**
+	 * {@link #rows} after the search - what the pages are built from and what "n items" counts as shown (1.0.9 part 4).
+	 * The very same list instance while there is no search, so a panel nobody has searched in holds one list and not two.
+	 * {@link #rows} itself stays what the service published: {@code total} and the troubleshooting report's row count
+	 * still mean the bank's rows under the band, and a narrowing is never mistaken for the service having sent fewer.
+	 */
+	private List<MovementRow> matching = Collections.emptyList();
+	/** Set while {@link #applySearch} writes the box itself, so the document listener does not answer its own write. */
+	private boolean settingSearch;
 	@Nullable
 	private Status status;
 	/** The sprites this panel has asked for, by {@code ItemManager}'s key; see {@link #image}. */
@@ -1059,6 +1187,15 @@ public class BankPriceMovementPanel extends PluginPanel
 	private int rebuilds;
 	private String card = CARD_LOGIN;
 	private boolean foldOpen;
+	/**
+	 * 1.0.9 part 5: whether the History tab shows the days recorded before 1.0.9. Off unless the reader turned it on;
+	 * {@link #visibleHistory} is the one place that reads it.
+	 */
+	private boolean includeLegacy;
+	/** The question {@link #pressLegacy(boolean)} asks; never null. */
+	private final LegacyPrompt legacyPrompt;
+	/** Set while the question is open, so a second press (a script's) cannot open a second dialog on top of it. */
+	private boolean askingLegacy;
 	/** Which of the two views is showing (addendum AU); never null. */
 	private SidebarView view = SidebarView.ITEMS;
 	/** Set while {@link #applyFilter} repaints the widgets, so the change is not saved a second time. */
@@ -1067,10 +1204,32 @@ public class BankPriceMovementPanel extends PluginPanel
 
 	public BankPriceMovementPanel(ItemManager itemManager, PriceService service, Prefs prefs)
 	{
+		this(itemManager, service, prefs, LinkBrowser::browse);
+	}
+
+	/** @param browser what the brand marks hand their URL to; the tests record, the client browses */
+	BankPriceMovementPanel(ItemManager itemManager, PriceService service, Prefs prefs, Consumer<String> browser)
+	{
+		this(itemManager, service, prefs, browser, null);
+	}
+
+	/**
+	 * @param browser what the brand marks hand their URL to; the tests record, the client browses
+	 * @param prompt  what the History tab's "Include days before v1.0.9" asks when it is turned on (1.0.9 part 5); the
+	 *                tests answer it, the client (null) shows {@link LegacyDialog} over this panel's window
+	 */
+	BankPriceMovementPanel(ItemManager itemManager, PriceService service, Prefs prefs, Consumer<String> browser,
+		@Nullable LegacyPrompt prompt)
+	{
 		super(false);
 		this.itemManager = Objects.requireNonNull(itemManager, "itemManager");
 		this.service = Objects.requireNonNull(service, "service");
 		this.prefs = Objects.requireNonNull(prefs, "prefs");
+		this.legacyPrompt = prompt != null ? prompt
+			: question -> LegacyDialog.ask(SwingUtilities.getWindowAncestor(this), question);
+		// The panel's own close of the settings menu is the hook a pressed header mark ends with; closeGearMenu reads the
+		// menu lazily, so handing it over before the menu exists is fine.
+		this.support = new SupportLinks(VERSION_NAME_TEXT, Version.CURRENT, GITHUB_URL, browser, this::closeGearMenu);
 
 		setLayout(new BorderLayout());
 		setBackground(ColorScheme.DARK_GRAY_COLOR);
@@ -1097,11 +1256,21 @@ public class BankPriceMovementPanel extends PluginPanel
 		final SidebarView savedStartTab = prefs.loadStartTab();
 		startTab = savedStartTab == null ? SidebarView.ITEMS : savedStartTab;
 		view = startTab;
+		// 1.0.9 part 5: before buildHeader and renderAll, so the first publish is drawn once, in the cut the reader
+		// chose. Null is "nothing stored", which is the days before 1.0.9 hidden.
+		final Boolean savedLegacy = prefs.loadIncludeLegacy();
+		includeLegacy = savedLegacy != null && savedLegacy;
 
 		// The two gp fields: applied on Enter and on focus lost; a text that does not parse turns the field red
 		// and changes nothing.
 		minField = boundField(true);
 		maxField = boundField(false);
+		// 1.0.9 part 4: the search box, before buildHeader below for the reason the two fields are - the header's rows
+		// are built from it.
+		searchField = searchBox();
+		// A press anywhere but on the box that owns the focus takes the focus off it (dropFieldFocusOnPressOutside);
+		// taken back by stop().
+		Toolkit.getDefaultToolkit().addAWTEventListener(focusDropper, AWTEvent.MOUSE_EVENT_MASK);
 
 		header = Widgets.column(0);
 		header.setBorder(new EmptyBorder(MARGIN, MARGIN, GAP, MARGIN));
@@ -1112,13 +1281,15 @@ public class BankPriceMovementPanel extends PluginPanel
 		// shows and hides, so PluginErrorPanel.setContent (which calls setVisible(true), :73) can rewrite the
 		// EMPTY card's description later without un-hiding it.
 		loginGearLabel = settingsGear();
-		loginCard = messageCard(LOGIN_TEXT, "Your last bank is remembered once you have opened it", loginGearLabel);
+		loginCard = messageCard(LOGIN_TEXT, "Your last bank is remembered once you have opened it",
+			support.supportPair(loginGearLabel));
 		// The capture is driven by ItemContainerChanged on the bank container, which the server sends when the
 		// bank interface OPENS and again on every deposit and withdrawal (ItemContainerChanged.java:30-38) - so
 		// the list fills while the bank is on screen, and the old wording described something the plugin does not
 		// do. The sidebar sits outside the game canvas, so the reader watches it happen.
 		noBankGearLabel = settingsGear();
-		noBankCard = messageCard(NO_BANK_TEXT, "The list fills as soon as you open your bank", noBankGearLabel);
+		noBankCard = messageCard(NO_BANK_TEXT, "The list fills as soon as you open your bank",
+			support.supportPair(noBankGearLabel));
 		emptyMessage = new PluginErrorPanel();
 		typeMessage(emptyMessage);
 		emptyMessage.setContent(EMPTY_TEXT, "");
@@ -1236,7 +1407,7 @@ public class BankPriceMovementPanel extends PluginPanel
 
 	/**
 	 * Builds every header widget once: the window strip, the hero card around it, the card's menu, the
-	 * control row, the fold and the problem row. The header column itself is permanent and
+	 * control row, the fold, the problem row and the search row (1.0.9 part 4). The header column itself is permanent and
 	 * {@link #syncHeader} puts the right rows into it.
 	 */
 	private void buildHeader()
@@ -1266,23 +1437,32 @@ public class BankPriceMovementPanel extends PluginPanel
 		heroMenu = buildHeroMenu();
 
 		viewStrip = buildViewStrip();
+		legacyRow = buildLegacyRow();
 		controlRow = buildControlRow();
 		fold = buildFold();
 		problemLabel = buildProblemLabel();
+		searchRow = buildSearchRow();
 	}
 
 	/**
-	 * The hero card (N 4.2): the caption row ("Bank value" WEST, the "Refresh" link EAST), the total line (the
-	 * figure WEST, the options gear EAST), the move line (triangle, gp, percent), the window strip, the
-	 * provenance footnote and - last, under it - the update line (S1). Which of the total and the move line are
-	 * IN the card is {@link #syncHero}'s business (O3); every line is built here so a switch never rebuilds
-	 * anything.
+	 * The hero card (N 4.2): the caption row ("Bank value" WEST, the Discord mark and the settings icon EAST), the
+	 * total line (the figure WEST, the "Refresh" link EAST), the move line (triangle, gp, percent), the window
+	 * strip, the provenance footnote and - last, under it - the update line (S1). Which of the total and the move
+	 * line are IN the card is {@link #syncHero}'s business (O3); every line is built here so a switch never
+	 * rebuilds anything.
 	 *
-	 * <p><b>The gear rides the total's line</b> (Q1) rather than taking one of its own, so the card gains no
-	 * height for it, and it sits directly under the "Refresh" link one line above - the card's two controls in
-	 * one column at its right edge. It is the one part of the card that is drawn whatever the three hero
-	 * switches say: with the total hidden the LINE stays and the gear sits on it alone, because a settings
-	 * control that can be switched off by a setting is a control a reader cannot get back to.
+	 * <p><b>The support pair</b> (1.0.9, the 2hBuilds template - the user's pick from drawn choices on this very
+	 * card): the top-right corner of every card holds the Discord mark and the settings icon side by side, the
+	 * settings icon right-most, and the Refresh link, which used to be the corner, moves to the row under them, beside
+	 * the number, where the settings icon sat from addendum Q until now. So the ring that breathes round the link
+	 * while a bank change is held ({@link #paintRing}) breathes in open space. The two swapped rows, and the card is
+	 * exactly as tall as it was, with or without the number: the top row is the pair's 16 px where the link made it
+	 * 19, and the number keeps the 3 px the row gave up as air over it, so the number stands where it stood and
+	 * everything under it stays where it was.
+	 *
+	 * <p><b>The settings icon is the one part of the card that is drawn whatever the three hero switches say</b>
+	 * (Q1) - it rides the caption row, which is never removed - because a settings control that can be switched off by
+	 * a setting is a control a reader cannot get back to.
 	 */
 	private JPanel buildHero()
 	{
@@ -1304,11 +1484,16 @@ public class BankPriceMovementPanel extends PluginPanel
 		// A plain inset again since AS7: the ring that breathes round the link while the bank has changed under it
 		// reaches outside the link's box, where no border of the link can draw, so the CARD paints it (HeroCard).
 		refreshLabel.setBorder(new EmptyBorder(2, ROW_GAP, 2, 0));
-		captionRow = transparentBar(ROW_GAP, captionLabel, null, refreshLabel);
+		gearLabel = settingsGear();
+		captionRow = transparentBar(ROW_GAP, captionLabel, null, support.supportPair(gearLabel));
 
 		totalLabel = Widgets.label("0", Widgets.sansBold(28), Color.WHITE);
-		gearLabel = settingsGear();
-		totalRow = transparentBar(ROW_GAP, totalLabel, null, gearLabel);
+		// The top row is shorter than it was - the pair's height, where the link made it the link's - and the number
+		// takes the difference as air over it, so the two rows together are what they were and the number stands where it
+		// stood. It is the LABEL's air and not the row's, so a card with the number switched off is as tall as before too.
+		totalLabel.setBorder(new EmptyBorder(refreshLabel.getPreferredSize().height - captionRow.getPreferredSize().height,
+			0, 0, 0));
+		totalRow = transparentBar(ROW_GAP, totalLabel, null, refreshHolder());
 
 		triangleLabel = new JLabel();
 		deltaLabel = Widgets.label("", Widgets.sansBold(18), ColorScheme.LIGHT_GRAY_COLOR);
@@ -1340,7 +1525,7 @@ public class BankPriceMovementPanel extends PluginPanel
 		card.add(stripHolder);
 		card.add(footnoteLabel);
 		card.add(updateLabel);
-		// Neither the gear nor the update line is a tip target: each keeps its own tooltip. A settings control
+		// Neither the settings icon nor the update line is a tip target: each keeps its own tooltip. A settings control
 		// that explained the bank's sums on hover would be the one thing on the card that does not say what it
 		// does, and the update line's whole point is the sentence behind IT (S2).
 		heroTipTargets.addAll(Arrays.asList(card, captionRow, captionLabel, totalRow, totalLabel, moveLine,
@@ -1383,7 +1568,7 @@ public class BankPriceMovementPanel extends PluginPanel
 		// 1.0.8: the header - which plugin and which build - behind a rule of its own, so the OK row stays the menu's
 		// last thing (the user, on the third local look, 2026-09-30: "makes sense for the reset to default and ok
 		// buttons to be the bottom most things").
-		menu.add(buildVersionRow());
+		menu.add(support.header());
 		menu.addSeparator();
 		final JMenuItem refresh = new JMenuItem(REFRESH_MENU_TEXT);
 		refresh.setFont(Widgets.sans(12));
@@ -1405,13 +1590,16 @@ public class BankPriceMovementPanel extends PluginPanel
 			on -> setOptions(options.withCountUntradeables(on)));
 		countInventoryItem = checkItem(COUNT_INVENTORY_TEXT, COUNT_INVENTORY_TIP,
 			on -> setOptions(options.withCountInventory(on)));
+		countGrandExchangeItem = checkItem(COUNT_GRAND_EXCHANGE_TEXT, COUNT_GRAND_EXCHANGE_TIP,
+			on -> setOptions(options.withCountGrandExchange(on)));
 		// T1: first of the group, before the two of addendum Q - the series the figures are read from, then what
 		// is counted. Y1's switch is the third thing COUNTED, so it lands directly after the untradeables, and
-		// since addendum AO it is the last of them.
+		// 1.0.9 part 3's Grand Exchange switch, the fourth, directly after it and last of them.
 		menu.add(livePricesItem);
 		menu.add(countCashItem);
 		menu.add(countUntradeablesItem);
 		menu.add(countInventoryItem);
+		menu.add(countGrandExchangeItem);
 		// AU: a group of its own - the caption and two dots. Choosing one writes the setting for the NEXT start and
 		// does not switch the tab that is showing. Plain radio items, so the menu closes on a choice as the check
 		// switches above do.
@@ -1680,35 +1868,6 @@ public class BankPriceMovementPanel extends PluginPanel
 	}
 
 	/**
-	 * The menu's header (1.0.8): the title line - {@link #VERSION_MARK_TEXT} in the brand orange and the rest of
-	 * {@link #VERSION_NAME_TEXT} in white, both bold at {@link #HEADER_TITLE_SIZE} px, two labels side by side because
-	 * one label has one colour - over {@link #VERSION_TEXT} in {@link #HEADER_GREY} at the menu's own 12 px; every
-	 * line's text at its left edge like the captions below (the same column layout and the same inset), no hover, no
-	 * click. The user's pick from six drawn choices (2026-09-30), after the block had been one grey 10 px line at the
-	 * bottom, then two grey lines, then the header.
-	 */
-	private JPanel buildVersionRow()
-	{
-		final JPanel row = Widgets.column(0);
-		row.setOpaque(false);
-		row.setBorder(new EmptyBorder(2, ROW_GAP, 2, ROW_GAP));
-		final JPanel title = new JPanel();
-		title.setLayout(new BoxLayout(title, BoxLayout.X_AXIS));
-		title.setOpaque(false);
-		title.setAlignmentX(Component.LEFT_ALIGNMENT);
-		title.add(Widgets.label(VERSION_MARK_TEXT, Widgets.sansBold(HEADER_TITLE_SIZE), ColorScheme.BRAND_ORANGE));
-		title.add(Widgets.label(VERSION_NAME_TEXT.substring(VERSION_MARK_TEXT.length()),
-			Widgets.sansBold(HEADER_TITLE_SIZE), Color.WHITE));
-		title.add(Box.createHorizontalGlue());
-		row.add(title);
-		final JLabel version = Widgets.label(VERSION_TEXT, Widgets.sans(12), HEADER_GREY);
-		version.setHorizontalAlignment(SwingConstants.LEFT);
-		version.setAlignmentX(Component.LEFT_ALIGNMENT);
-		row.add(version);
-		return row;
-	}
-
-	/**
 	 * The gear menu's last row (addendum AB, line AB2): a horizontal glue and, pushed to the right end of the menu
 	 * by it, one small button reading {@link #OK_TEXT}.
 	 *
@@ -1951,6 +2110,29 @@ public class BankPriceMovementPanel extends PluginPanel
 	}
 
 	/**
+	 * The "Include days before v1.0.9" check box (1.0.9 part 5), built once and set into {@link #legacyHolder}: one 11 px
+	 * grey line, the box drawn by {@link Widgets#checkBox} on a plain label as the hover switch's menu item draws its own,
+	 * pressing {@link #pressLegacy()}. Its row has the control row's own gap above it and the same under it (the header's
+	 * bottom margin makes up the rest of the six), and its text starts where the caption's does.
+	 *
+	 * <p>The hover is one sentence, {@link #LEGACY_TIP}, behind "Show hover text" like every other here. There is no
+	 * second line: the reason is the question's, asked when the box is turned on.
+	 */
+	private JLabel buildLegacyRow()
+	{
+		final JLabel label = Widgets.linkLabel(LEGACY_TEXT, Widgets.sans(11), ColorScheme.LIGHT_GRAY_COLOR,
+			ColorScheme.BRAND_ORANGE, this::pressLegacy);
+		label.setIcon(Widgets.checkBox(includeLegacy));
+		label.setIconTextGap(ICON_GAP);
+		setHover(label, LEGACY_TIP);
+		legacyHolder = new JPanel(new BorderLayout());
+		legacyHolder.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		legacyHolder.setBorder(new EmptyBorder(ROW_GAP, GAP, 2, GAP));
+		legacyHolder.add(label, BorderLayout.WEST);
+		return label;
+	}
+
+	/**
 	 * The problem row (N 3.6): one 12 px line, its height taken from a probe so it never collapses while
 	 * empty, fitted to the width with the whole sentence as its tooltip.
 	 */
@@ -1989,60 +2171,218 @@ public class BankPriceMovementPanel extends PluginPanel
 		return field;
 	}
 
+	/** The key the search box's Escape is bound under in its action map (1.0.9 part 4). */
+	private static final String CLEAR_SEARCH = "clearSearch";
+
+	/**
+	 * The search box (1.0.9 part 4): the Min / Max boxes' own look through {@link Widgets#searchField}, reading
+	 * {@link #SEARCH_PLACEHOLDER} in grey while it is empty, with the hover on the panel AND the text field for the
+	 * reason {@link #boundField} gives - the field is the mouse target inside its panel (playbook 7.5).
+	 *
+	 * <p>It answers EVERY change of its text, a character at a time, because the answer costs nothing: the list is
+	 * narrowed from the rows this panel already holds ({@link #applySearch}), with no trip to the service and no
+	 * recompute. Enter does the same at once, which after a keystroke has already been done, so it changes nothing more;
+	 * Escape clears the box, and the clearing is itself a change of text and so clears the search. There is no clear
+	 * button and no magnifier - the user chose the plain box.
+	 *
+	 * <p><b>Nothing here ever takes the focus</b> (addendum Z's Z6 rule): not building, not the sidebar being shown, not
+	 * the tab changing. A caret that appears in a box nobody clicked is a box that eats the next keystroke - a hotkey
+	 * the player meant for the game. Only the reader's own click puts it there.
+	 */
+	private Widgets.PlaceholderField searchBox()
+	{
+		final Widgets.PlaceholderField field = Widgets.searchField(SEARCH_PLACEHOLDER);
+		setHover(field, SEARCH_TIP);
+		setHover(field.getTextField(), SEARCH_TIP);
+		final DocumentListener typing = new DocumentListener()
+		{
+			@Override
+			public void insertUpdate(DocumentEvent e)
+			{
+				typed();
+			}
+
+			@Override
+			public void removeUpdate(DocumentEvent e)
+			{
+				typed();
+			}
+
+			@Override
+			public void changedUpdate(DocumentEvent e)
+			{
+				typed();
+			}
+
+			private void typed()
+			{
+				// Not while applySearch is writing the box itself: it is the one asking, and it carries on by itself.
+				if (!settingSearch)
+				{
+					applySearch(field.getText());
+				}
+			}
+		};
+		field.getTextField().getDocument().addDocumentListener(typing);
+		field.addActionListener(e -> applySearch(field.getText()));
+		field.getTextField().getInputMap(JComponent.WHEN_FOCUSED)
+			.put(KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), CLEAR_SEARCH);
+		field.getTextField().getActionMap().put(CLEAR_SEARCH, new AbstractAction()
+		{
+			@Override
+			public void actionPerformed(ActionEvent e)
+			{
+				field.setText("");
+			}
+		});
+		return field;
+	}
+
+	/**
+	 * Hears every mouse press in the client, so a press on a label, a row or a panel - none of which can take the
+	 * focus - can still take it off a text box (1.0.9 part 4, from the user's first look at the search box: "once
+	 * the typing box is selected it stays selected even when i click off of it"). Installed as the panel is built,
+	 * removed by {@link #stop()}.
+	 */
+	private final AWTEventListener focusDropper = this::dropFieldFocusOnPressOutside;
+
+	/**
+	 * A mouse press anywhere in the client: when one of this panel's text boxes - the search box, Min or Max - owns
+	 * the focus and the press is not on that box, the focus is taken off it. Swing moves the focus only to a
+	 * component that can take it, and nothing else in this sidebar can, so without this a click anywhere but the game
+	 * left the caret blinking in the box and the box eating the next keystroke. The box then loses the focus the way
+	 * it would to any other control: Min and Max apply their bound on it ({@link #boundField}), the search box has
+	 * nothing left to do. A press on another control that can take the focus - a button, the game's canvas - is
+	 * unchanged: the focus is cleared here first and that control then asks for it itself.
+	 */
+	private void dropFieldFocusOnPressOutside(final AWTEvent event)
+	{
+		if (event.getID() != MouseEvent.MOUSE_PRESSED)
+		{
+			return;
+		}
+		final KeyboardFocusManager focus = KeyboardFocusManager.getCurrentKeyboardFocusManager();
+		if (pressLeavesField(focus.getFocusOwner(), event.getSource()))
+		{
+			focus.clearFocusOwner();
+		}
+	}
+
+	/**
+	 * Whether a press on {@code source} takes the focus off {@code owner}: true exactly when the owner is the text
+	 * field of one of this panel's three boxes and the press is not inside that box's own panel. Pure, so the test
+	 * can ask it without a focus owner, which a headless JVM cannot have.
+	 */
+	boolean pressLeavesField(@Nullable final Component owner, @Nullable final Object source)
+	{
+		final Widgets.PlaceholderField field = fieldOwning(owner);
+		if (field == null)
+		{
+			return false;
+		}
+		return !(source instanceof Component) || !SwingUtilities.isDescendingFrom((Component) source, field);
+	}
+
+	/** The box whose text field {@code owner} is, or null when it is none of the three. */
+	@Nullable
+	private Widgets.PlaceholderField fieldOwning(@Nullable final Component owner)
+	{
+		if (owner == null)
+		{
+			return null;
+		}
+		for (final Widgets.PlaceholderField field : new Widgets.PlaceholderField[]{searchField, minField, maxField})
+		{
+			if (owner == field.getTextField())
+			{
+				return field;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * The search box's row (1.0.9 part 4): the box, a row cell wide ({@link #W}) and as tall as the Min / Max boxes - the
+	 * field's own preferred height, which is the same builder's - under {@link #SEARCH_GAP} of air. It is the last row of
+	 * the Items header ({@link #syncHeader}), so the air under the box is the header's own bottom padding
+	 * ({@link #GAP}, equal by value) and the box stands exactly {@link #SEARCH_GAP} over the first row. Its edges are
+	 * the row cells' edges: the header and the list both keep {@link #MARGIN} each side, and the header gives back the
+	 * list's scrollbar gutter ({@link #syncGutter}).
+	 */
+	private JPanel buildSearchRow()
+	{
+		final JPanel row = new JPanel(new BorderLayout());
+		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		row.setBorder(new EmptyBorder(SEARCH_GAP, 0, 0, 0));
+		row.add(searchField, BorderLayout.CENTER);
+		Widgets.fixed(row, W, SEARCH_GAP + searchField.getPreferredSize().height);
+		return row;
+	}
+
 	/**
 	 * An icon-only control: grey at rest, {@code hot} while the mouse is over it, a LEFT press runs
 	 * {@code onClick} ({@link Widgets#isPress}: a right-button press is a menu gesture everywhere in this
-	 * sidebar, never a press).
+	 * sidebar, never a press). Its {@code tooltip} is a SENTENCE-class hover like every other in this panel: it goes
+	 * through {@link #setHover}, so "Show hover text" governs it. The icons that name themselves in one word go
+	 * through {@link SupportLinks#namedIconButton} instead.
 	 */
 	/** Not static since AH3 - see {@link #checkItem}. */
 	private JLabel iconButton(ImageIcon rest, ImageIcon hot, String tooltip, Runnable onClick)
 	{
-		final JLabel label = new JLabel(rest);
+		final JLabel label = SupportLinks.pressable(rest, hot, onClick);
 		setHover(label, tooltip);
-		label.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-		label.addMouseListener(new MouseAdapter()
-		{
-			@Override
-			public void mousePressed(MouseEvent e)
-			{
-				if (Widgets.isPress(e))
-				{
-					onClick.run();
-				}
-			}
-
-			@Override
-			public void mouseEntered(MouseEvent e)
-			{
-				label.setIcon(hot);
-			}
-
-			@Override
-			public void mouseExited(MouseEvent e)
-			{
-				label.setIcon(rest);
-			}
-		});
 		return label;
 	}
 
 	/**
-	 * One settings gear: the drawn gear, grey at rest and orange under the mouse, "Options" for a hover, and a LEFT
-	 * press opens {@link #heroMenu} under IT ({@link #openGearMenu}) - the hero card's, and the one on each message
-	 * card, which is why every gear is built here and each passes itself as the menu's anchor.
+	 * One settings gear: the drawn gear, grey at rest and orange under the mouse, {@link SupportLinks#SETTINGS_TIP} for an
+	 * always-on hover, and a LEFT press opens {@link #heroMenu} under IT ({@link #openGearMenu}) - the hero card's, and
+	 * the one on each message card, which is why every gear is built here and each passes itself as the menu's anchor.
 	 *
-	 * <p>The inset on its left and above and below is the same 6 px of hit area the Refresh link above it buys, on
-	 * the side the pointer arrives from: a 12 px glyph is a 12 px target otherwise, and this one is a settings
-	 * button and not a decoration.
+	 * <p>The inset on its left and above and below is the same 6 px of hit area the Refresh link buys, on the side the
+	 * pointer arrives from: a 12 px glyph is a 12 px target otherwise, and this one is a settings button and not a
+	 * decoration.
 	 */
 	private JLabel settingsGear()
 	{
-		// The press needs the label it belongs to, which does not exist until iconButton has returned it.
+		// The press needs the label it belongs to, which does not exist until SupportLinks.namedIconButton has returned it.
 		final JLabel[] self = new JLabel[1];
-		self[0] = iconButton(Widgets.gearIcon(Widgets.GEAR_SIZE, ColorScheme.LIGHT_GRAY_COLOR),
-			Widgets.gearIcon(Widgets.GEAR_SIZE, ColorScheme.BRAND_ORANGE), OPTIONS_TIP, () -> openGearMenu(self[0]));
-		self[0].setBorder(new EmptyBorder(2, ROW_GAP, 2, 0));
+		self[0] = SupportLinks.namedIconButton(Widgets.gearIcon(Widgets.GEAR_SIZE, ColorScheme.LIGHT_GRAY_COLOR),
+			Widgets.gearIcon(Widgets.GEAR_SIZE, ColorScheme.BRAND_ORANGE), SupportLinks.SETTINGS_TIP,
+			() -> openGearMenu(self[0]));
+		self[0].setBorder(SupportLinks.iconBorder());
 		return self[0];
+	}
+
+	/**
+	 * The Refresh link's place on the total's line (1.0.9): a holder that centres the link in the line's height at its
+	 * own size. A bare link at the EAST of a {@link BorderLayout} would be stretched to the line's 34 px, and the ring
+	 * that breathes round it ({@link #glowBox}) follows the link's bounds - a 34 px tall ring round a 15 px word. The
+	 * holder is exactly as wide as the link, so the link still ends at the card's right padding and its texts
+	 * ("Refreshing...", "Up to date") grow leftward, into the open ground beside the number.
+	 */
+	private JPanel refreshHolder()
+	{
+		final JPanel holder = new JPanel(new GridBagLayout());
+		holder.setOpaque(false);
+		holder.add(refreshLabel);
+		return holder;
+	}
+
+	/**
+	 * How wide the total's line must leave the Refresh link, in px: the widest of the link's three texts
+	 * ({@link RefreshPhase}) with its insets, so the number never runs under "Refreshing..." however long the link is
+	 * talking. Measured with the link's own font, like every fit in this panel.
+	 */
+	private int refreshReserve()
+	{
+		final FontMetrics fm = refreshLabel.getFontMetrics(refreshLabel.getFont());
+		int widest = 0;
+		for (RefreshPhase phase : RefreshPhase.values())
+		{
+			widest = Math.max(widest, fm.stringWidth(phase.text));
+		}
+		return widest + refreshLabel.getInsets().left + refreshLabel.getInsets().right;
 	}
 
 	/** {@link Widgets#bar} on a see-through ground, for the rows inside the hero card. */
@@ -2055,17 +2395,18 @@ public class BankPriceMovementPanel extends PluginPanel
 	}
 
 	/**
-	 * A message card: the message in the middle as it always was, and {@code gear} at the right end of a bar of its
-	 * own above it. The hero card, which carries the settings gear, is not drawn at the login and no-bank cards, and
-	 * the user's reason for this bar was that a player who gets no further into the plugin than one of them has
-	 * otherwise no way to "troubleshoot if this is as far as they load into the plugin".
+	 * A message card: the message in the middle as it always was, and {@code pair} - the Discord mark and the settings
+	 * gear ({@link SupportLinks#supportPair}, 1.0.9) - at the right end of a bar of its own above it. The hero card, which carries
+	 * the settings gear, is not drawn at the login and no-bank cards, and the user's reason for this bar was that a
+	 * player who gets no further into the plugin than one of them has otherwise no way to "troubleshoot if this is as
+	 * far as they load into the plugin".
 	 */
-	private static JPanel messageCard(String title, String description, JLabel gear)
+	private static JPanel messageCard(String title, String description, JComponent pair)
 	{
 		final PluginErrorPanel message = new PluginErrorPanel();
 		typeMessage(message);
 		message.setContent(title, description);
-		final JPanel bar = transparentBar(ROW_GAP, null, null, gear);
+		final JPanel bar = transparentBar(ROW_GAP, null, null, pair);
 		bar.setBorder(new EmptyBorder(MARGIN, 0, 0, MARGIN));
 		final JPanel card = new JPanel(new BorderLayout());
 		card.setOpaque(false);
@@ -2260,12 +2601,14 @@ public class BankPriceMovementPanel extends PluginPanel
 	public void stop()
 	{
 		stopped = true;
+		Toolkit.getDefaultToolkit().removeAWTEventListener(focusDropper);
 		closeMenus();
 		clearRefreshAck();
 		stopGlow();
 		bankRefresh = null;
 		service.removeListener(listener);
 		rows = Collections.emptyList();
+		matching = Collections.emptyList();
 		pendingPublish = false;
 		pendingRows = null;
 		pendingStatus = null;
@@ -2396,7 +2739,7 @@ public class BankPriceMovementPanel extends PluginPanel
 		replaceChildren(moveLine, parts);
 	}
 
-	/** Ticks the eight menu items to the switches; {@code setSelected} fires no action, so nothing is written. */
+	/** Ticks the nine menu items to the switches; {@code setSelected} fires no action, so nothing is written. */
 	private void syncHeroMenu()
 	{
 		showValueItem.setSelected(heroVisibility.value());
@@ -2406,6 +2749,7 @@ public class BankPriceMovementPanel extends PluginPanel
 		countCashItem.setSelected(options.countCash());
 		countUntradeablesItem.setSelected(options.countUntradeables());
 		countInventoryItem.setSelected(options.countInventory());
+		countGrandExchangeItem.setSelected(options.countGrandExchange());
 		// AH: not a check item, so it is the ICON that carries the state - redrawn here rather than toggled,
 		// which is what keeps it right when the switch is changed from RuneLite's settings page.
 		showHoverTextItem.setIcon(Widgets.checkBox(options.showHoverText()));
@@ -2868,6 +3212,58 @@ public class BankPriceMovementPanel extends PluginPanel
 	{
 		changeFilter(filter.withGpMin(Math.max(0L, min)).withGpMax(Math.max(0L, max)));
 		renderBounds();
+	}
+
+	/**
+	 * What the box says, as the reader's own words: narrows the list to the rows whose names hold {@code text} (1.0.9
+	 * part 4) - every change of the box's text comes here, Enter does too, and the bridge's {@code search=} takes this
+	 * same road. The text is written into the box first when it is not already there, so a picture shows what a script
+	 * typed.
+	 *
+	 * <p><b>It narrows what the panel holds and never asks the service.</b> The service keeps only the band's rows, and a
+	 * change of filter there is a recompute with a hop to the client thread, which a keystroke must never be. So
+	 * {@link MovementMath#search} cuts {@link #rows} down to {@link #matching}, the pages are built again from that, and
+	 * the band, the sort and the prices are what they were. The reader asked for another list, so the first page is shown
+	 * from the top and the bank hold is lifted ({@link #liftBankHold}) as a band's change lifts it - a list that does
+	 * not answer the box until the bank closes would be a box that does nothing.
+	 *
+	 * <p>Text that trims to what is already searched changes nothing - a space typed after a word, or Enter after the
+	 * keystroke that did the work - so the list is not built twice for one wish. Nothing is remembered: the search is
+	 * not a setting, and nothing is written. And the text is the player's: it is never logged and never in the
+	 * troubleshooting report.
+	 */
+	void applySearch(@Nullable String text)
+	{
+		if (stopped)
+		{
+			return;
+		}
+		final String typed = text == null ? "" : text;
+		if (!searchField.getText().equals(typed))
+		{
+			settingSearch = true;
+			try
+			{
+				searchField.setText(typed);
+			}
+			finally
+			{
+				settingSearch = false;
+			}
+		}
+		final String wanted = typed.trim();
+		if (wanted.equals(search))
+		{
+			return;
+		}
+		search = wanted;
+		liftBankHold();
+		matching = MovementMath.search(rows, search);
+		rebuildRows(true);
+		// The band button's hover counts the rows shown, and the card under the header follows the list: a search that
+		// leaves nothing is the empty card, one that is cleared brings the list back.
+		renderControl();
+		showCard(chooseCard());
 	}
 
 	/**
@@ -3717,11 +4113,11 @@ public class BankPriceMovementPanel extends PluginPanel
 		final Color textColour = history ? Widgets.move(sign, Widgets.Kind.FIGURE) : moveTextColor(move);
 		hero.setBorder(Widgets.card(history ? Widgets.move(sign, Widgets.Kind.EDGE) : edgeColor(move)));
 
-		// The total shares its line with the gear (Q1), so what it may take is the card's inner width less the
-		// gear and the BorderLayout gap either side of the pair - measured off the gear rather than assumed, the
-		// way the band button is measured off the sort button one row down.
+		// The total shares its line with the Refresh link (1.0.9; it was the settings gear from Q1 until then), so what
+		// it may take is the card's inner width less the link's widest text and the BorderLayout gap - measured off the
+		// link rather than assumed, the way the band button is measured off the sort button one row down.
 		Widgets.setFitted(totalLabel, MovementMath.formatGp(summary.valueNow()),
-			CARD_INNER - gearLabel.getPreferredSize().width - 2 * ROW_GAP);
+			CARD_INNER - refreshReserve() - ROW_GAP);
 		adoptFittedHover(totalLabel);
 		if (history ? change == null : move == null)
 		{
@@ -3954,7 +4350,11 @@ public class BankPriceMovementPanel extends PluginPanel
 		final int total = status == null ? 0 : status.bankItems();
 		final PortfolioSummary summary = portfolio();
 		final int unpriced = Math.max(0, summary.itemsTotal() - summary.itemsPriced());
-		return rows.size() + (total > rows.size() ? " of " + total : "") + (rows.size() == 1 ? " item" : " items")
+		// 1.0.9 part 4: the rows SHOWN - after the search - against the bank's total, "1 of 13 items" with "rune" typed.
+		// The noun agrees with the last number said, so "1 item" is the one case of a lone row out of a lone item.
+		final int listed = matching.size();
+		final boolean ofTotal = total > listed;
+		return listed + (ofTotal ? " of " + total : "") + (!ofTotal && listed == 1 ? " item" : " items")
 			+ (unpriced > 0 ? ", " + unpriced + " with no guide price" : "");
 	}
 
@@ -3971,14 +4371,16 @@ public class BankPriceMovementPanel extends PluginPanel
 
 	/**
 	 * Puts the right rows into the header column, in order, and nothing else: the hero card (the chips are
-	 * inside it), the Items | Net Worth History strip (AU), then - in Items only - the control row and the fold while
-	 * open, and the problem row while there is a problem in both views - all of them only while a bank is loaded (N
+	 * inside it), the Items | Net Worth History strip (AU), then - in History only, while the record holds days before
+	 * 1.0.9 - the check box that shows them (1.0.9 part 5), then - in Items only - the control row and the fold while
+	 * open, and the problem row while there is a problem in both views, and - in Items only, last - the search box
+	 * (1.0.9 part 4) - all of them only while a bank is loaded (N
 	 * section 3 §3: LOGIN and NO_BANK empty the header). Rows are added and removed, never hidden (playbook 7.5), and
 	 * nothing is touched when the set is already right, so a status-only publish causes no flicker (C30).
 	 */
 	private void syncHeader()
 	{
-		final List<Component> want = new ArrayList<>(5);
+		final List<Component> want = new ArrayList<>(6);
 		if (bankLoaded())
 		{
 			want.add(hero);
@@ -3986,6 +4388,12 @@ public class BankPriceMovementPanel extends PluginPanel
 			// only in Items, where there is a list for them to order and band. foldOpen is kept, not written, so the
 			// fold comes back as the reader left it.
 			want.add(viewStrip);
+			// 1.0.9 part 5: under the caption, in the History tab only, and only while the record holds days recorded
+			// before 1.0.9 - not hidden otherwise, absent, like every row of this header.
+			if (view == SidebarView.HISTORY && legacyDaysPresent())
+			{
+				want.add(legacyHolder);
+			}
 			if (view == SidebarView.ITEMS)
 			{
 				want.add(controlRow);
@@ -3997,6 +4405,12 @@ public class BankPriceMovementPanel extends PluginPanel
 			if (!problemText().isEmpty())
 			{
 				want.add(problemLabel);
+			}
+			// 1.0.9 part 4: the search box, in Items only and LAST, so it stands directly over the first row of the list
+			// whatever the rows above it are. The History view has no list of items to search and so no box.
+			if (view == SidebarView.ITEMS)
+			{
+				want.add(searchRow);
 			}
 		}
 		// The flag covers the one case the diff above cannot: the fold genuinely leaving (the bank went away, or
@@ -4175,14 +4589,117 @@ public class BankPriceMovementPanel extends PluginPanel
 	{
 		if (view == SidebarView.HISTORY && status != null)
 		{
-			historyView.show(status.bankHistory(), status.options());
+			historyView.show(visibleHistory(), status.options());
 		}
 	}
 
-	/** What the History view says about itself, for the bridge's {@code state.bankHistory} (amendment 9.11). */
+	/**
+	 * What the History view says about itself, for the bridge's {@code state.bankHistory} (amendment 9.11), and - 1.0.9
+	 * part 5 - the record's {@code freshFrom}: the ISO date of the first day recorded by 1.0.9, {@code "all"} when every
+	 * day in the file was recorded before it, and null (left out of the answer) when none was.
+	 */
 	public LinkedHashMap<String, Object> bankHistoryState()
 	{
-		return historyView.describe();
+		final LinkedHashMap<String, Object> map = historyView.describe();
+		final BankHistorySeries record = status == null ? null : status.bankHistory();
+		final LocalDate fresh = record == null ? null : record.freshFrom();
+		map.put("freshFrom", fresh == null ? null : LocalDate.MAX.equals(fresh) ? "all" : fresh.toString());
+		return map;
+	}
+
+	/**
+	 * The series the History tab and the card are drawn from (1.0.9 part 5) - the ONE place the days before 1.0.9 are
+	 * cut away. The last-drawn status's record, without those days unless the reader asked for them; neither the view
+	 * nor the card has a switch of its own, they draw whatever series they are handed. A mocked status answers null,
+	 * which reads as empty (amendment 9.2).
+	 */
+	private BankHistorySeries visibleHistory()
+	{
+		final BankHistorySeries record = status == null ? null : status.bankHistory();
+		if (record == null)
+		{
+			return BankHistorySeries.EMPTY;
+		}
+		return includeLegacy ? record : record.fromFresh();
+	}
+
+	/** Whether the last-drawn status's record holds a day recorded before 1.0.9 - what puts the check box in the header. */
+	private boolean legacyDaysPresent()
+	{
+		final BankHistorySeries record = status == null ? null : status.bankHistory();
+		return record != null && record.hasLegacyDays();
+	}
+
+	/**
+	 * The check box's click (1.0.9 part 5): flips "Include days before v1.0.9". Turning it ON asks first
+	 * ({@link #LEGACY_ASK}); turning it off asks nothing.
+	 */
+	public void pressLegacy()
+	{
+		pressLegacy(!includeLegacy);
+	}
+
+	/**
+	 * The check box, said as the state it aims at - the click above and the bridge's {@code legacy=on|off} both come
+	 * here (1.0.9 part 5). The same state again does nothing. Aiming at ON puts the question to the reader through the
+	 * {@link LegacyPrompt}; "Cancel" leaves the box off and unticked and writes nothing. Whatever is chosen is written
+	 * through {@link Prefs#saveIncludeLegacy}, so the stored config follows - the round trip {@link #pressFold} makes -
+	 * and a stopped panel writes nothing (contract C33).
+	 */
+	public void pressLegacy(boolean include)
+	{
+		if (stopped || include == includeLegacy || askingLegacy)
+		{
+			return;
+		}
+		if (include)
+		{
+			askingLegacy = true;
+			final boolean agreed;
+			try
+			{
+				agreed = legacyPrompt.ask(LEGACY_ASK);
+			}
+			finally
+			{
+				askingLegacy = false;
+			}
+			if (!agreed || stopped)
+			{
+				renderLegacy();
+				return;
+			}
+		}
+		setIncludeLegacy(include);
+		if (!updating)
+		{
+			prefs.saveIncludeLegacy(include);
+		}
+	}
+
+	/**
+	 * The state of the check box changed under us - the plugin's {@code ConfigChanged} for {@code includeLegacyHistory}
+	 * or startUp's seed (1.0.9 part 5) - so the tab and the card are drawn from {@link #visibleHistory} again and nothing
+	 * else happens: no question (the answer was given where the change was made), no write back, no service call. The
+	 * same state again redraws what it drew.
+	 */
+	public void setIncludeLegacy(boolean include)
+	{
+		if (stopped)
+		{
+			return;
+		}
+		includeLegacy = include;
+		renderLegacy();
+		renderChips();
+		renderValue();
+		showHistory();
+	}
+
+	/** The box ticked to the switch. */
+	private void renderLegacy()
+	{
+		legacyRow.setIcon(Widgets.checkBox(includeLegacy));
 	}
 
 	/**
@@ -4210,8 +4727,7 @@ public class BankPriceMovementPanel extends PluginPanel
 	 */
 	private BankHistorySeries drawnHistory(LocalDate today)
 	{
-		final BankHistorySeries s = status == null ? null : status.bankHistory();
-		return (s == null ? BankHistorySeries.EMPTY : s).upTo(today);
+		return visibleHistory().upTo(today);
 	}
 
 	/**
@@ -4511,6 +5027,8 @@ public class BankPriceMovementPanel extends PluginPanel
 		if (rebuild)
 		{
 			rows = safe;
+			// 1.0.9 part 4: a publish during a search keeps the narrowing - the new rows are narrowed by what is typed.
+			matching = MovementMath.search(rows, search);
 			list = next;
 			rebuildRows(newList);
 		}
@@ -4557,7 +5075,7 @@ public class BankPriceMovementPanel extends PluginPanel
 		final int keepScroll = newList ? 0 : bar.getValue();
 		rowsColumn.removeAll();
 		shown = 0;
-		for (int page = 0; page < keepPages && shown < rows.size(); page++)
+		for (int page = 0; page < keepPages && shown < matching.size(); page++)
 		{
 			addPage();
 		}
@@ -4623,10 +5141,10 @@ public class BankPriceMovementPanel extends PluginPanel
 	/** Builds the next page of rows (contract C32: never every row at once). */
 	private void addPage()
 	{
-		final int end = Math.min(rows.size(), shown + ROWS_PER_PAGE);
+		final int end = Math.min(matching.size(), shown + ROWS_PER_PAGE);
 		for (int i = shown; i < end; i++)
 		{
-			final MovementRow row = rows.get(i);
+			final MovementRow row = matching.get(i);
 			rowsColumn.add(new MovementRowPanel(row, image(row), list.window, list.thenDay, options, expandedRows));
 		}
 		shown = end;
@@ -4717,7 +5235,7 @@ public class BankPriceMovementPanel extends PluginPanel
 			historyView.showMore();
 			return;
 		}
-		if (shown >= rows.size())
+		if (shown >= matching.size())
 		{
 			return;
 		}
@@ -4737,9 +5255,9 @@ public class BankPriceMovementPanel extends PluginPanel
 	private void updateShowMore()
 	{
 		listColumn.remove(showMoreRow);
-		if (shown < rows.size())
+		if (shown < matching.size())
 		{
-			final int remainder = rows.size() - shown;
+			final int remainder = matching.size() - shown;
 			showMoreLabel.setText(showMoreText(remainder));
 			setHover(showMoreLabel, "Build the next " + Math.min(remainder, ROWS_PER_PAGE) + " rows");
 			listColumn.add(showMoreRow);
@@ -5099,7 +5617,8 @@ public class BankPriceMovementPanel extends PluginPanel
 		{
 			return CARD_HISTORY;
 		}
-		return rows.isEmpty() ? CARD_EMPTY : CARD_LIST;
+		// 1.0.9 part 4: the rows SHOWN, so a search that matches nothing is an empty list like a band that does.
+		return matching.isEmpty() ? CARD_EMPTY : CARD_LIST;
 	}
 
 	private void showCard(String name)
@@ -5127,7 +5646,14 @@ public class BankPriceMovementPanel extends PluginPanel
 	{
 		final boolean noTradeables = status != null && status.bankItems() == 0;
 		final boolean band = bandOn();
-		if (noTradeables)
+		// 1.0.9 part 4: rows the service published and a search that took them all away. Said first, because it is the
+		// nearer cause - the band, if any, left rows - and with no button of its own: the box that did it is right above.
+		final boolean searchedAway = !rows.isEmpty() && matching.isEmpty();
+		if (searchedAway)
+		{
+			emptyMessage.setContent(NO_MATCH_TEXT, "\"" + Widgets.escapeHtml(searchQuote()) + "\"");
+		}
+		else if (noTradeables)
 		{
 			emptyMessage.setContent(NO_TRADEABLES_TEXT, "Only Grand Exchange items have a guide price");
 		}
@@ -5139,7 +5665,7 @@ public class BankPriceMovementPanel extends PluginPanel
 		{
 			emptyMessage.setContent(EMPTY_TEXT, bandDescription(filter.gpMin(), filter.gpMax()));
 		}
-		final boolean wantButton = band && !noTradeables;
+		final boolean wantButton = band && !noTradeables && !searchedAway;
 		if (wantButton != (clearBandRow.getParent() == emptyColumn))
 		{
 			if (wantButton)
@@ -5153,6 +5679,24 @@ public class BankPriceMovementPanel extends PluginPanel
 			emptyColumn.revalidate();
 			emptyColumn.repaint();
 		}
+	}
+
+	/**
+	 * The typed text as the no-match card quotes it back: the search, cut to {@link #NO_MATCH_QUOTE_MAX} characters with
+	 * "..." when it is longer (not through a surrogate pair), and not yet escaped for HTML.
+	 */
+	private String searchQuote()
+	{
+		if (search.length() <= NO_MATCH_QUOTE_MAX)
+		{
+			return search;
+		}
+		int end = NO_MATCH_QUOTE_MAX;
+		if (Character.isHighSurrogate(search.charAt(end - 1)))
+		{
+			end--;
+		}
+		return search.substring(0, end) + "...";
 	}
 
 	/**
@@ -5233,6 +5777,8 @@ public class BankPriceMovementPanel extends PluginPanel
 			+ "\",\"descending\":" + filter.descending()
 			+ ",\"gpMin\":" + filter.gpMin()
 			+ ",\"gpMax\":" + filter.gpMax()
+			+ ",\"search\":" + json(search)
+			+ ",\"matching\":" + matching.size()
 			+ ",\"minInvalid\":" + Widgets.isMarkedInvalid(minField)
 			+ ",\"maxInvalid\":" + Widgets.isMarkedInvalid(maxField)
 			+ ",\"status\":" + json(statusText())
@@ -5253,6 +5799,8 @@ public class BankPriceMovementPanel extends PluginPanel
 			+ ",\"countText\":" + json(bandTarget.getText())
 			+ ",\"bandOn\":" + bandOn()
 			+ ",\"foldOpen\":" + foldOpen
+			+ ",\"includeLegacy\":" + includeLegacy
+			+ ",\"legacyDays\":" + legacyDaysPresent()
 			+ ",\"presets\":" + numbers(presets.mins())
 			+ ",\"presetLabels\":" + texts(presetLabels())
 			+ ",\"problemText\":" + json(problemText())
@@ -5541,6 +6089,12 @@ public class BankPriceMovementPanel extends PluginPanel
 		return countInventoryItem;
 	}
 
+	/** The menu's "Include Grand Exchange offers" check item (1.0.9 part 3). */
+	JCheckBoxMenuItem countGrandExchangeItem()
+	{
+		return countGrandExchangeItem;
+	}
+
 	/** The menu's box row: the "Preset price ranges" caption over the three boxes (Z2, Z7, AB3). */
 	JPanel presetRow()
 	{
@@ -5711,6 +6265,12 @@ public class BankPriceMovementPanel extends PluginPanel
 		return foldOpen;
 	}
 
+	/** The "Include days before v1.0.9" check box (1.0.9 part 5), whether or not it is in the header right now. */
+	JLabel legacyRow()
+	{
+		return legacyRow;
+	}
+
 	/** The fold's chip {@code i}: "All", then the three presets smallest first (Z3). */
 	JLabel presetCell(int i)
 	{
@@ -5726,6 +6286,12 @@ public class BankPriceMovementPanel extends PluginPanel
 	Widgets.PlaceholderField minField()
 	{
 		return minField;
+	}
+
+	/** The search box above the item list (1.0.9 part 4); the tests type into its document and read its bounds. */
+	Widgets.PlaceholderField searchField()
+	{
+		return searchField;
 	}
 
 	Widgets.PlaceholderField maxField()

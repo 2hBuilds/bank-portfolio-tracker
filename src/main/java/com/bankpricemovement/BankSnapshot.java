@@ -20,6 +20,11 @@ import java.util.Objects;
  * a bank visit - the same reasoning that keeps {@link #currencyGp} and every untradeable stack in every capture.
  * Older files have none of it and read as "carrying nothing".
  *
+ * <p>Since 1.0.9 part 3 it carries a third such part, what was in the player's Grand Exchange offers at that same
+ * read ({@link #exchange}, the stacks, and {@link #exchangeGp}, the coins), stamped by the same
+ * {@link #carriedAtMillis} because it is read at the same moment. A file written before it has none of that and
+ * reads as "nothing in the Grand Exchange".
+ *
  * <p>The account hash and profile type are stored INSIDE the file as well as in its name
  * ({@code bank-<accountHash>-<profileType>.json}, contract C17) so a file that has been renamed or copied can
  * still be told apart from the current account - the service checks them before showing a snapshot as this
@@ -95,6 +100,16 @@ public class BankSnapshot
 	public List<BankItem> worn;
 
 	/**
+	 * The stacks in the player's Grand Exchange OFFERS at that same read (1.0.9 part 3), by the same rules: the
+	 * items still unsold in a sell offer and the items bought and not yet collected in a buy offer, one stack per
+	 * canonical id. Never null after {@link #normalize()}; EMPTY in every {@code bank-*.json} written before this
+	 * part, which reads as "nothing in the Grand Exchange". Read WHATEVER "Include Grand Exchange offers" says, for
+	 * the reason {@link #inventory} is - the switch acts only when the service adds up, so the History keeps what the
+	 * offers held.
+	 */
+	public List<BankItem> exchange;
+
+	/**
 	 * What the coins and platinum tokens the player was CARRYING are worth, in gp - the carried twin of
 	 * {@link #currencyGp}, kept apart from it so that turning "Include inventory and worn gear" off takes exactly
 	 * the carried cash back out of the bank value and leaves the bank's own alone. 0 in a file written before
@@ -103,8 +118,16 @@ public class BankSnapshot
 	public long carriedGp;
 
 	/**
-	 * When the two carried containers were read, epoch millis; 0 means "never" - which is what a pre-Y file and a
-	 * snapshot captured with no client logged in both say.
+	 * What the player's Grand Exchange offers hold in COINS, in gp (1.0.9 part 3): the coins committed to buy offers
+	 * and the coins received by sell offers and not yet collected - {@link ExchangeOffers#cashGp()} - kept apart from
+	 * {@link #carriedGp} so that turning "Include Grand Exchange offers" off takes exactly these back out. 0 in a file
+	 * written before this part.
+	 */
+	public long exchangeGp;
+
+	/**
+	 * When the carried containers and the offers were read, epoch millis; 0 means "never" - which is what a pre-Y
+	 * file and a snapshot captured with no client logged in both say.
 	 *
 	 * <p>Its own stamp rather than {@link #capturedAtMillis}, because the two really are read at different moments:
 	 * Refresh re-reads what the player carries and republishes the STORED bank beside it (Y2), so the footnote's
@@ -118,6 +141,7 @@ public class BankSnapshot
 		profileType = DEFAULT_PROFILE_TYPE;
 		inventory = new ArrayList<>();
 		worn = new ArrayList<>();
+		exchange = new ArrayList<>();
 	}
 
 	public BankSnapshot(final List<BankItem> items, final long capturedAtMillis, final long accountHash,
@@ -134,7 +158,9 @@ public class BankSnapshot
 	}
 
 	/**
-	 * The full shape since addendum Y: a bank part and a carried part, each with its own cash and its own clock.
+	 * The shape of addendum Y: a bank part and a carried part, each with its own cash and its own clock, and nothing
+	 * in the Grand Exchange (an empty list and 0). Kept so a snapshot built without offers - the render fixtures, the
+	 * tests - is spelled as it always was.
 	 *
 	 * @param inventory       the inventory's stacks; null becomes an empty list
 	 * @param worn            the worn gear's stacks; null becomes an empty list
@@ -145,6 +171,25 @@ public class BankSnapshot
 		final String profileType, final long currencyGp, final List<BankItem> inventory, final List<BankItem> worn,
 		final long carriedGp, final long carriedAtMillis)
 	{
+		this(items, capturedAtMillis, accountHash, profileType, currencyGp, inventory, worn, Collections.emptyList(),
+			carriedGp, 0L, carriedAtMillis);
+	}
+
+	/**
+	 * The full shape since 1.0.9 part 3: a bank part, a carried part and the Grand Exchange offers, with their cash
+	 * and one clock for the two that are read together.
+	 *
+	 * @param inventory       the inventory's stacks; null becomes an empty list
+	 * @param worn            the worn gear's stacks; null becomes an empty list
+	 * @param exchange        the stacks in the Grand Exchange offers; null becomes an empty list
+	 * @param carriedGp       the coins and platinum tokens in hand, in gp
+	 * @param exchangeGp      the coins the offers hold, in gp
+	 * @param carriedAtMillis when the carried containers and the offers were read; 0 = never
+	 */
+	public BankSnapshot(final List<BankItem> items, final long capturedAtMillis, final long accountHash,
+		final String profileType, final long currencyGp, final List<BankItem> inventory, final List<BankItem> worn,
+		final List<BankItem> exchange, final long carriedGp, final long exchangeGp, final long carriedAtMillis)
+	{
 		this.items = items;
 		this.capturedAtMillis = capturedAtMillis;
 		this.accountHash = accountHash;
@@ -152,14 +197,17 @@ public class BankSnapshot
 		this.currencyGp = currencyGp;
 		this.inventory = inventory == null ? Collections.<BankItem>emptyList() : inventory;
 		this.worn = worn == null ? Collections.<BankItem>emptyList() : worn;
+		this.exchange = exchange == null ? Collections.<BankItem>emptyList() : exchange;
 		this.carriedGp = carriedGp;
+		this.exchangeGp = exchangeGp;
 		this.carriedAtMillis = carriedAtMillis;
 	}
 
 	/**
 	 * This same BANK with a fresh carried part (addendum Y, line Y2) - what Refresh publishes: the stored stacks,
-	 * their capture time, their cash and their account untouched, and the inventory, the worn gear, the carried cash
-	 * and the carried clock replaced by what the client has just been asked for.
+	 * their capture time, their cash and their account untouched, and the inventory, the worn gear, the Grand Exchange
+	 * offers (1.0.9 part 3), the carried cash, the offers' coins and the carried clock replaced by what the client has
+	 * just been asked for.
 	 *
 	 * <p>A copy rather than a mutation, because the snapshot the service holds is handed to the executor and the
 	 * EDT and must never change under them; the item list is shared by reference, which is safe for the same reason
@@ -172,7 +220,7 @@ public class BankSnapshot
 	{
 		final BankReader.Carried next = carried == null ? BankReader.Carried.EMPTY : carried;
 		return new BankSnapshot(items, capturedAtMillis, accountHash, profileType, currencyGp, next.inventory,
-			next.worn, next.carriedGp, next.readAtMillis);
+			next.worn, next.exchange, next.carriedGp, next.exchangeGp, next.readAtMillis);
 	}
 
 	/**
@@ -219,12 +267,15 @@ public class BankSnapshot
 		return accountHash == other.accountHash
 			&& currencyGp == other.currencyGp
 			&& carriedGp == other.carriedGp
+			&& exchangeGp == other.exchangeGp
 			&& Objects.equals(profileType, other.profileType)
 			&& Objects.equals(items, other.items)
 			// Y2: what the player carries is content too, or a Refresh that found a different inventory would leave
-			// the file saying the old one - and the next launch would draw a bank nobody has.
+			// the file saying the old one - and the next launch would draw a bank nobody has. The Grand Exchange offers
+			// are content for the same reason (1.0.9 part 3): a Refresh that found a different offer must publish.
 			&& Objects.equals(inventory, other.inventory)
-			&& Objects.equals(worn, other.worn);
+			&& Objects.equals(worn, other.worn)
+			&& Objects.equals(exchange, other.exchange);
 	}
 
 	/**
@@ -244,6 +295,9 @@ public class BankSnapshot
 		// which is the truth about a capture made before the plugin ever looked.
 		inventory = cleaned(inventory);
 		worn = cleaned(worn);
+		// 1.0.9 part 3: a file written before the Grand Exchange offers were read has no such list either, and reads as
+		// "nothing in the Grand Exchange".
+		exchange = cleaned(exchange);
 
 		if (profileType == null || profileType.isEmpty())
 		{
@@ -265,6 +319,11 @@ public class BankSnapshot
 		if (carriedGp < 0)
 		{
 			carriedGp = 0;
+		}
+
+		if (exchangeGp < 0)
+		{
+			exchangeGp = 0;
 		}
 
 		if (carriedAtMillis < 0)
@@ -337,18 +396,22 @@ public class BankSnapshot
 		result = 31 * result + (inventory == null ? 0 : inventory.hashCode());
 		result = 31 * result + (worn == null ? 0 : worn.hashCode());
 		result = 31 * result + (int) (carriedGp ^ (carriedGp >>> 32));
+		result = 31 * result + (exchange == null ? 0 : exchange.hashCode());
+		result = 31 * result + (int) (exchangeGp ^ (exchangeGp >>> 32));
 		return result;
 	}
 
 	/**
 	 * The carried part is printed only when there IS one, so a bank captured before addendum Y - and every bank of a
-	 * player with the switch off - reads exactly as it did.
+	 * player with the switch off - reads exactly as it did; the Grand Exchange part (1.0.9 part 3) likewise only when
+	 * the offers held something.
 	 */
 	@Override
 	public String toString()
 	{
 		final int held = inventory == null ? 0 : inventory.size();
 		final int equipped = worn == null ? 0 : worn.size();
+		final int offered = exchange == null ? 0 : exchange.size();
 		return "BankSnapshot{items=" + (items == null ? 0 : items.size())
 			+ ", capturedAtMillis=" + capturedAtMillis
 			+ ", accountHash=" + accountHash
@@ -356,6 +419,7 @@ public class BankSnapshot
 			+ ", currencyGp=" + currencyGp
 			+ (held == 0 && equipped == 0 && carriedGp == 0L
 				? ""
-				: ", inventory=" + held + ", worn=" + equipped + ", carriedGp=" + carriedGp) + '}';
+				: ", inventory=" + held + ", worn=" + equipped + ", carriedGp=" + carriedGp)
+			+ (offered == 0 && exchangeGp == 0L ? "" : ", exchange=" + offered + ", exchangeGp=" + exchangeGp) + '}';
 	}
 }

@@ -1,0 +1,18 @@
+{
+  "kitVersion": "2026.09.30.3",
+  "package": "com.bankpricemovement",
+  "files": {
+    "src/main/java/com/bankpricemovement/CoinGlyph.java": "affd9ffdf6cb3da3ac16bd451276f647c0c2b7436aa06da1dd12269ff5b0d5d9",
+    "src/main/java/com/bankpricemovement/SupportLinks.java": "782de6af9bc2532656ac2e6857ed6d0caa1e426f1a43171dd034f9d77a085925",
+    "src/main/resources/com/bankpricemovement/discord_12.png": "82a1ceb33e5dadb051830cd6d3346d9e34fd7dce733ed1fe1c7256fd794a84b2",
+    "src/main/resources/com/bankpricemovement/discord_16.png": "86ab463e33959b5a1f5b9fa78ea40c29c5e51d753fa7803f159268056eafb30c",
+    "src/main/resources/com/bankpricemovement/github_16.png": "c68c2df92920e0b18712e391cca13f49890e2de29de964ca628dd27300496bcf",
+    "src/main/resources/com/bankpricemovement/x_16.png": "4fe6e82293f2914b63bc97460baf8fe0882cca5757968e672853ecc5b04e4f17",
+    "src/test/java/com/bankpricemovement/FileIoRuleTest.java": "45dc8d68933258d2aa2e54e37ed115f765702541a967a9df612844a1678cfda8",
+    "src/test/java/com/bankpricemovement/HubApiGuardTest.java": "3006258844cff9477f13d38d7f17eccdf81397af01bf9e08bfb13cb356d7918c",
+    "src/test/java/com/bankpricemovement/KitSyncTest.java": "7dc0255cbc842261d38a33dd7aae22cfec2310601f0ab284ee0ff6e49806a082",
+    "src/test/java/com/bankpricemovement/NoReflectionRuleTest.java": "f036c2d0a84a533a3e97eabcbf42cfe7279aa884d3e770a84969919fa904605b",
+    "src/test/java/com/bankpricemovement/NoTestOnlyMembersRuleTest.java": "c58e3f45b757130fd4a9c2aac46cb5c23cebf5aa7eda50dd394f97be2557d728",
+    "src/test/java/com/bankpricemovement/SupportLinksTest.java": "df67e719e3a42c288fab5fb276178bae9108eafc3f8c2a510422fa0dc1a77c61"
+  }
+}

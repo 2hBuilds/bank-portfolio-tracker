@@ -181,7 +181,8 @@ import net.runelite.client.util.LinkBrowser;
  * <li><b>Inventory and worn gear</b> (addendum Y, line Y3). Nothing on the FACE moves: a merged stack is one row
  * with the combined quantity, which is what the row would have drawn had the bank held them all. The tooltip is
  * where the merge is explained, in one line under the holding ({@link #splitLine}), and only on a row that is not
- * entirely in the bank.</li>
+ * entirely in the bank. Since 1.0.9 part 3 the line can end with the items in the player's Grand Exchange offers
+ * ("2 in the Grand Exchange"), under "Include Grand Exchange offers".</li>
  * </ul>
  *
  * <p>EDT only, like every Swing component.
@@ -292,14 +293,16 @@ public class MovementRowPanel extends JPanel
 	 */
 	public static final String LIVE_NOT_USED_PREFIX = "Guide price - live not used: ";
 	/**
-	 * The three places a merged stack can be, as the split line names them (addendum Y, line Y3;
+	 * The places a merged stack can be, as the split line names them (addendum Y, line Y3;
 	 * {@code docs/bank-price-movement-addendum-Y-2026-09-13.md}). Each is a suffix on its own figure, so the line
-	 * reads "3 in bank, 1 in inventory, 1 worn" - "worn" without a preposition because that is the word the game's
-	 * own tab uses and "in worn gear" reads like a fourth container.
+	 * reads "3 in bank, 1 in inventory, 1 worn, 2 in the Grand Exchange" - "worn" without a preposition because that
+	 * is the word the game's own tab uses and "in worn gear" reads like a fourth container. The Grand Exchange is
+	 * the fourth place (1.0.9 part 3), named in full because "in exchange" is not a phrase a player uses.
 	 */
 	public static final String IN_BANK = " in bank";
 	public static final String IN_INVENTORY = " in inventory";
 	public static final String WORN = " worn";
+	public static final String IN_EXCHANGE = " in the Grand Exchange";
 
 	/**
 	 * The card's padding inside the coloured edge (N section 3 §4): 213 - 3 - 3 - 6 = 201 px of inner width.
@@ -518,8 +521,9 @@ public class MovementRowPanel extends JPanel
 	 *                {@code livePrices} reaches the TOOLTIP
 	 *                ({@link #tooltip(MovementRow, MovementWindow, LocalDate, ViewOptions)}): a live row paints
 	 *                exactly as a guide row does (T6), so the face still reads only the one switch. Addendum Y's
-	 *                {@code countInventory} is the third that reaches the tooltip alone (Y3) - a merged stack is
-	 *                drawn as the one stack it is, and only the hover says where it is
+	 *                {@code countInventory} is the third that reaches the tooltip alone (Y3), and since 1.0.9 part 3
+	 *                {@code countGrandExchange} the fourth - a merged stack is drawn as the one stack it is, and
+	 *                only the hover says where it is
 	 */
 	public MovementRowPanel(MovementRow row, @Nullable AsyncBufferedImage icon, MovementWindow window,
 		@Nullable LocalDate thenDay, @Nullable ViewOptions options)
@@ -833,7 +837,7 @@ public class MovementRowPanel extends JPanel
 
 		final List<String> notes = new ArrayList<>(4);
 		addNote(notes, alch ? ALCH_NOTE : partsLine(row));
-		addNote(notes, view.countInventory() ? splitLine(row) : "");
+		addNote(notes, view.countInventory() || view.countGrandExchange() ? splitLine(row) : "");
 		addNote(notes, live ? liveRefusalLine(row) : "");
 		addNote(notes, live ? tradedNote(row) : "");
 		for (int i = 0; i < notes.size(); i++)
@@ -1239,15 +1243,15 @@ public class MovementRowPanel extends JPanel
 
 	/**
 	 * The one line a CARRIED row's tooltip adds under its "Holding:" line (addendum Y, line Y3;
-	 * {@code docs/bank-price-movement-addendum-Y-2026-09-13.md}): "3 in bank, 1 in inventory, 1 worn" - where the
-	 * quantity on the line above it actually is.
+	 * {@code docs/bank-price-movement-addendum-Y-2026-09-13.md}): "3 in bank, 1 in inventory, 1 worn, 2 in the Grand
+	 * Exchange" - where the quantity on the line above it actually is.
 	 *
-	 * <p>It exists because addendum Y merges the three containers into ONE row: an item held in the bank and worn
+	 * <p>It exists because addendum Y merges the containers into ONE row: an item held in the bank and worn
 	 * is a single card with the quantities summed, which is the row a reader wants and also a row whose
-	 * quantity they cannot check against anything they can see. The three parts are named in the order a player
-	 * would look for them - the bank the list is about, then what they are carrying, then what they have on -
-	 * and a part at zero is DROPPED rather than printed as "0 worn", so a worn-only item reads "1 worn" and a
-	 * stack split two ways reads "3 in bank, 1 in inventory".
+	 * quantity they cannot check against anything they can see. The parts are named in the order a player
+	 * would look for them - the bank the list is about, then what they are carrying, then what they have on, then
+	 * what is in their Grand Exchange offers (1.0.9 part 3) - and a part at zero is DROPPED rather than printed as
+	 * "0 worn", so a worn-only item reads "1 worn" and a stack split two ways reads "3 in bank, 1 in inventory".
 	 *
 	 * <p>"" whenever there is nothing to say: a row computed with the switch off (no split at all) and a row whose
 	 * whole stack is in the bank ({@link MovementRow#allInBank()}), because "3 in bank" under "Holding: 3" is the
@@ -1264,10 +1268,11 @@ public class MovementRowPanel extends JPanel
 		{
 			return "";
 		}
-		final List<String> parts = new ArrayList<>(3);
+		final List<String> parts = new ArrayList<>(4);
 		addWhere(parts, row.bankQuantity(), IN_BANK);
 		addWhere(parts, row.inventoryQuantity(), IN_INVENTORY);
 		addWhere(parts, row.wornQuantity(), WORN);
+		addWhere(parts, row.exchangeQuantity(), IN_EXCHANGE);
 		return String.join(", ", parts);
 	}
 
@@ -1452,8 +1457,8 @@ public class MovementRowPanel extends JPanel
 	 * </pre>
 	 *
 	 * <p>The fifth line is addendum Y's and is there only when it has something to say ({@link #splitLine}): with
-	 * "Include inventory and worn gear" off, or with the whole stack in the bank, the tooltip is the five lines
-	 * addenda K and L wrote.
+	 * "Include inventory and worn gear" and "Include Grand Exchange offers" off, or with the whole stack in the bank,
+	 * the tooltip is the five lines addenda K and L wrote.
 	 *
 	 * <p><b>"per item" is load-bearing, not decoration</b> - and since addendum X (line X2;
 	 * {@code docs/bank-price-movement-addendum-X-2026-09-13.md}) took the words off the sort button's hover,
@@ -1472,11 +1477,11 @@ public class MovementRowPanel extends JPanel
 	 * GE site can see that the baseline came from the 2nd rather than the 3rd instead of guessing.
 	 *
 	 * <p><b>A merged row says where its quantity is</b> (addendum Y, line Y3;
-	 * {@code docs/bank-price-movement-addendum-Y-2026-09-13.md}). With "Include inventory and worn gear" on, an
-	 * item held in two places is ONE row with the quantities summed, so directly under the Holding line - and only
-	 * when something is carried or worn - comes {@link #splitLine}: "3 in bank, 1 in inventory, 1 worn". It is the
-	 * only place the split exists, exactly as the holding value and the exact change are, and a row entirely in the
-	 * bank prints nothing new.
+	 * {@code docs/bank-price-movement-addendum-Y-2026-09-13.md}). With "Include inventory and worn gear" or "Include
+	 * Grand Exchange offers" on, an item held in two places is ONE row with the quantities summed, so directly under
+	 * the Holding line - and only when something is carried, worn or in an offer - comes {@link #splitLine}: "3 in
+	 * bank, 1 in inventory, 1 worn, 2 in the Grand Exchange". It is the only place the split exists, exactly as the
+	 * holding value and the exact change are, and a row entirely in the bank prints nothing new.
 	 *
 	 * <p><b>An untradeable row says one more thing, or another thing.</b> A row valued at its tradeable parts
 	 * (R4) keeps all five lines - it has a price, a baseline and a change like any other - and gains a sixth
@@ -1555,8 +1560,9 @@ public class MovementRowPanel extends JPanel
 	 *                recorded while the switch was on cannot bleed a live line into a guide-only sidebar. The rows
 	 *                already on screen keep the tooltips they were built with until the service's own recompute
 	 *                publishes the new figures, which is the same beat their FACES change on. {@code countInventory}
-	 *                reaches it the same way (Y3): with the switch off no split line is printed whatever the row
-	 *                carries, so a list recorded while it was on cannot bleed one into a bank-only sidebar
+	 *                and {@code countGrandExchange} reach it the same way (Y3): with both off no split line is
+	 *                printed whatever the row carries, so a list recorded while one was on cannot bleed one into a
+	 *                bank-only sidebar
 	 */
 	public static String tooltip(MovementRow row, @Nullable MovementWindow window, @Nullable LocalDate thenDay,
 		@Nullable ViewOptions options)
@@ -1567,7 +1573,7 @@ public class MovementRowPanel extends JPanel
 		// Y3: where the quantity is, said under the Holding line it qualifies - on every kind of row, because a
 		// worn slayer helmet is an alch row and a worn Crystal body a parts row. "" while the switch is off and
 		// "" while the whole stack is in the bank, so the line appears exactly where it has something to add.
-		final String split = view.countInventory() ? splitLine(row) : "";
+		final String split = view.countInventory() || view.countGrandExchange() ? splitLine(row) : "";
 		final StringBuilder sb = new StringBuilder(180);
 		sb.append("<html><b>").append(Widgets.escapeHtml(row.name())).append("</b>");
 		if (isAlch(row))
