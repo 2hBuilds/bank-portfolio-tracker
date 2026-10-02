@@ -36,6 +36,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import javax.inject.Inject;
 import javax.inject.Named;
+import javax.swing.JLabel;
 import javax.swing.JMenuItem;
 import javax.swing.SwingUtilities;
 import net.runelite.api.Client;
@@ -65,6 +66,7 @@ import net.runelite.client.game.ItemManager;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.ClientToolbar;
+import net.runelite.client.ui.ClientUI;
 import net.runelite.client.ui.NavigationButton;
 import net.runelite.client.util.Filepath;
 import okhttp3.OkHttpClient;
@@ -475,6 +477,29 @@ public class BankPriceMovementWiringTest
 		assertNull(field(f.plugin, "panel"));
 		assertNull(field(f.plugin, "service"));
 		assertNull(field(f.plugin, "navButton"));
+	}
+
+	/**
+	 * 1.0.9 part 6 (the Hub's review of PR #17431, 2026-10-02): {@code startUp} hands the panel the game-focus hook, and
+	 * the hook is RuneLite's own {@code ClientUI.requestFocus()} - the call its Notifier uses to give the keyboard back
+	 * to the game - so a press that leaves a text box lets go of it without the panel touching the JVM's global focus
+	 * manager. Nothing asks for the focus before such a press.
+	 */
+	@Test
+	public void startUpHandsThePanelAHookThatAsksRuneLiteToFocusTheGame() throws Exception
+	{
+		final Fixture f = new Fixture(false);
+		onEdt(f.plugin::startUp);
+		final BankPriceMovementPanel panel = (BankPriceMovementPanel) field(f.plugin, "panel");
+		assertNotNull(panel);
+		verify(f.clientUI, never()).requestFocus();
+
+		onEdt(() -> panel.dropFieldFocus(panel.searchField().getTextField(), new JLabel("a row")));
+		verify(f.clientUI).requestFocus();
+
+		onEdt(() -> panel.dropFieldFocus(panel.searchField().getTextField(), panel.searchField()));
+		verify(f.clientUI).requestFocus();
+		onEdt(f.plugin::shutDown);
 	}
 
 	/**
@@ -4111,7 +4136,9 @@ public class BankPriceMovementWiringTest
 
 	/**
 	 * The panel's open-bank Refresh hook, read by TYPE for the reason {@link #carriedReaderOf} reads the service's:
-	 * what is pinned is that something was installed and then taken back, not what the panel calls its field.
+	 * what is pinned is that something was installed and then taken back, not what the panel calls its field. 1.0.9
+	 * part 6 gave the panel a second hook, the game-focus one ({@code gameFocus}, and its static no-op), which is read
+	 * by name and left out here.
 	 */
 	private static Runnable bankRefreshOf(BankPriceMovementPanel panel) throws Exception
 	{
@@ -4119,7 +4146,8 @@ public class BankPriceMovementWiringTest
 		int fields = 0;
 		for (Field f : BankPriceMovementPanel.class.getDeclaredFields())
 		{
-			if (!Runnable.class.equals(f.getType()))
+			if (!Runnable.class.equals(f.getType()) || Modifier.isStatic(f.getModifiers())
+				|| "gameFocus".equals(f.getName()))
 			{
 				continue;
 			}
@@ -4127,8 +4155,8 @@ public class BankPriceMovementWiringTest
 			f.setAccessible(true);
 			found = (Runnable) f.get(panel);
 		}
-		assertEquals("BankPriceMovementPanel must hold exactly one Runnable field, the open-bank Refresh hook", 1,
-			fields);
+		assertEquals("BankPriceMovementPanel must hold exactly one Runnable field besides the game-focus hook, the"
+			+ " open-bank Refresh hook", 1, fields);
 		return found;
 	}
 
@@ -4726,6 +4754,7 @@ public class BankPriceMovementWiringTest
 		private final Client client = mock(Client.class);
 		private final ClientThread clientThread = mock(ClientThread.class);
 		private final ClientToolbar clientToolbar = mock(ClientToolbar.class);
+		private final ClientUI clientUI = mock(ClientUI.class);
 		private final ItemManager itemManager = mock(ItemManager.class);
 		private final ConfigManager configManager = mock(ConfigManager.class);
 		private final BankPriceMovementConfig config = mock(BankPriceMovementConfig.class);
@@ -4756,6 +4785,7 @@ public class BankPriceMovementWiringTest
 			set(plugin, "client", client);
 			set(plugin, "clientThread", clientThread);
 			set(plugin, "clientToolbar", clientToolbar);
+			set(plugin, "clientUI", clientUI);
 			set(plugin, "itemManager", itemManager);
 			set(plugin, "okHttpClient", mock(OkHttpClient.class));
 			set(plugin, "gson", new Gson());

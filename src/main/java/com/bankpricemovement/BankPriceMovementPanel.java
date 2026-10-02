@@ -14,13 +14,11 @@ import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.GridBagLayout;
 import java.awt.GridLayout;
-import java.awt.KeyboardFocusManager;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
 import java.awt.Toolkit;
 import java.awt.Window;
 import java.awt.datatransfer.StringSelection;
-import java.awt.event.AWTEventListener;
 import java.awt.event.ActionEvent;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
@@ -59,6 +57,7 @@ import javax.swing.JButton;
 import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
+import javax.swing.JLayer;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
@@ -77,6 +76,7 @@ import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
 import javax.swing.event.PopupMenuEvent;
 import javax.swing.event.PopupMenuListener;
+import javax.swing.plaf.LayerUI;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.DynamicGridLayout;
@@ -1268,13 +1268,15 @@ public class BankPriceMovementPanel extends PluginPanel
 		// 1.0.9 part 4: the search box, before buildHeader below for the reason the two fields are - the header's rows
 		// are built from it.
 		searchField = searchBox();
-		// A press anywhere but on the box that owns the focus takes the focus off it (dropFieldFocusOnPressOutside);
-		// taken back by stop().
-		Toolkit.getDefaultToolkit().addAWTEventListener(focusDropper, AWTEvent.MOUSE_EVENT_MASK);
+		// The sidebar's whole content sits in one JLayer, which hears the presses inside it and nothing else
+		// (PressWatcher): a press anywhere but on the box that owns the focus hands the focus to the game.
+		final JPanel content = new JPanel(new BorderLayout());
+		content.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		add(new JLayer<>(content, new PressWatcher()), BorderLayout.CENTER);
 
 		header = Widgets.column(0);
 		header.setBorder(new EmptyBorder(MARGIN, MARGIN, GAP, MARGIN));
-		add(header, BorderLayout.NORTH);
+		content.add(header, BorderLayout.NORTH);
 		buildHeader();
 
 		// The cards. Each message is a PluginErrorPanel inside its own holder: the holder is what CardLayout
@@ -1375,7 +1377,7 @@ public class BankPriceMovementPanel extends PluginPanel
 		cards.add(emptyCard, CARD_EMPTY);
 		cards.add(scroll, CARD_LIST);
 		cards.add(historyScroll, CARD_HISTORY);
-		add(cards, BorderLayout.CENTER);
+		content.add(cards, BorderLayout.CENTER);
 
 		renderBounds();
 		renderAll();
@@ -2238,34 +2240,79 @@ public class BankPriceMovementPanel extends PluginPanel
 		return field;
 	}
 
-	/**
-	 * Hears every mouse press in the client, so a press on a label, a row or a panel - none of which can take the
-	 * focus - can still take it off a text box (1.0.9 part 4, from the user's first look at the search box: "once
-	 * the typing box is selected it stays selected even when i click off of it"). Installed as the panel is built,
-	 * removed by {@link #stop()}.
-	 */
-	private final AWTEventListener focusDropper = this::dropFieldFocusOnPressOutside;
+	/** What {@link #gameFocus} is until the plugin hands over a real one, and again once the panel stops. */
+	private static final Runnable NO_HAND_OVER = () ->
+	{
+	};
 
 	/**
-	 * A mouse press anywhere in the client: when one of this panel's text boxes - the search box, Min or Max - owns
-	 * the focus and the press is not on that box, the focus is taken off it. Swing moves the focus only to a
-	 * component that can take it, and nothing else in this sidebar can, so without this a click anywhere but the game
-	 * left the caret blinking in the box and the box eating the next keystroke. The box then loses the focus the way
-	 * it would to any other control: Min and Max apply their bound on it ({@link #boundField}), the search box has
-	 * nothing left to do. A press on another control that can take the focus - a button, the game's canvas - is
-	 * unchanged: the focus is cleared here first and that control then asks for it itself.
+	 * What a press that leaves a text box does about the focus: the plugin's hand-over of it to the game
+	 * ({@link #setGameFocus}), a no-op until then. Volatile for the reason {@link #bankRefresh} is.
 	 */
-	private void dropFieldFocusOnPressOutside(final AWTEvent event)
+	private volatile Runnable gameFocus = NO_HAND_OVER;
+
+	/**
+	 * Hears every mouse press inside the sidebar, so a press on a label, a row or a panel - none of which can take the
+	 * focus - can still take it off a text box (1.0.9 part 4, from the user's first look at the search box: "once
+	 * the typing box is selected it stays selected even when i click off of it"). It is the decorator of the one
+	 * {@link JLayer} that holds the panel's whole content: Swing hands it the events of that layer's own subtree and
+	 * of nothing else, and it changes no event's target, so a press still goes to the row, chip or label it was made
+	 * on. The panel asks its own boxes who owns the focus ({@link #focusedField}) and hands the focus to the game
+	 * ({@link #setGameFocus}); it never asks the JVM's global focus manager or clears it, which is shared with the
+	 * game's canvas and every other plugin and which the Hub's reviewers refuse (PR #17431, 2026-10-02).
+	 */
+	private final class PressWatcher extends LayerUI<JPanel>
 	{
-		if (event.getID() != MouseEvent.MOUSE_PRESSED)
+		@Override
+		public void installUI(final JComponent c)
 		{
-			return;
+			super.installUI(c);
+			((JLayer<?>) c).setLayerEventMask(AWTEvent.MOUSE_EVENT_MASK);
 		}
-		final KeyboardFocusManager focus = KeyboardFocusManager.getCurrentKeyboardFocusManager();
-		if (pressLeavesField(focus.getFocusOwner(), event.getSource()))
+
+		@Override
+		public void uninstallUI(final JComponent c)
 		{
-			focus.clearFocusOwner();
+			((JLayer<?>) c).setLayerEventMask(0);
+			super.uninstallUI(c);
 		}
+
+		@Override
+		protected void processMouseEvent(final MouseEvent e, final JLayer<? extends JPanel> layer)
+		{
+			if (e.getID() == MouseEvent.MOUSE_PRESSED)
+			{
+				dropFieldFocus(focusedField(), e.getComponent());
+			}
+		}
+	}
+
+	/**
+	 * A mouse press inside the sidebar: when one of this panel's text boxes - the search box, Min or Max - owns the
+	 * focus ({@code owner}) and the press ({@code source}) is not on that box, the focus goes to the game. Swing moves
+	 * the focus only to a component that can take it, and nothing else in this sidebar can, so without this a click
+	 * anywhere but the game left the caret blinking in the box and the box eating the next keystroke. The box then
+	 * loses the focus the way it would to any other control: Min and Max apply their bound on it
+	 * ({@link #boundField}), the search box has nothing left to do. A press on another box or a button is unchanged:
+	 * the control's own request for the focus follows the hand-over, so it ends with it. Nothing runs once the panel
+	 * is stopped.
+	 */
+	void dropFieldFocus(@Nullable final Component owner, @Nullable final Object source)
+	{
+		if (!stopped && pressLeavesField(owner, source))
+		{
+			gameFocus.run();
+		}
+	}
+
+	/**
+	 * Where a press that leaves a text box sends the focus ({@link #dropFieldFocus}): the plugin hands over RuneLite's
+	 * own "give the game the focus". Null takes it away, and a stopped panel keeps none, so a late registration cannot
+	 * pin the plugin that made it. Callable from any thread: it writes one volatile field and touches nothing Swing.
+	 */
+	public void setGameFocus(@Nullable Runnable handOver)
+	{
+		gameFocus = stopped || handOver == null ? NO_HAND_OVER : handOver;
 	}
 
 	/**
@@ -2283,6 +2330,20 @@ public class BankPriceMovementPanel extends PluginPanel
 		return !(source instanceof Component) || !SwingUtilities.isDescendingFrom((Component) source, field);
 	}
 
+	/** The text field of whichever of the three boxes owns the focus right now, or null when none does. */
+	@Nullable
+	private Component focusedField()
+	{
+		for (final Widgets.PlaceholderField field : textBoxes())
+		{
+			if (field.getTextField().isFocusOwner())
+			{
+				return field.getTextField();
+			}
+		}
+		return null;
+	}
+
 	/** The box whose text field {@code owner} is, or null when it is none of the three. */
 	@Nullable
 	private Widgets.PlaceholderField fieldOwning(@Nullable final Component owner)
@@ -2291,7 +2352,7 @@ public class BankPriceMovementPanel extends PluginPanel
 		{
 			return null;
 		}
-		for (final Widgets.PlaceholderField field : new Widgets.PlaceholderField[]{searchField, minField, maxField})
+		for (final Widgets.PlaceholderField field : textBoxes())
 		{
 			if (owner == field.getTextField())
 			{
@@ -2299,6 +2360,12 @@ public class BankPriceMovementPanel extends PluginPanel
 			}
 		}
 		return null;
+	}
+
+	/** The panel's three text boxes: the search box, Min and Max. */
+	private Widgets.PlaceholderField[] textBoxes()
+	{
+		return new Widgets.PlaceholderField[]{searchField, minField, maxField};
 	}
 
 	/**
@@ -2601,11 +2668,11 @@ public class BankPriceMovementPanel extends PluginPanel
 	public void stop()
 	{
 		stopped = true;
-		Toolkit.getDefaultToolkit().removeAWTEventListener(focusDropper);
 		closeMenus();
 		clearRefreshAck();
 		stopGlow();
 		bankRefresh = null;
+		gameFocus = NO_HAND_OVER;
 		service.removeListener(listener);
 		rows = Collections.emptyList();
 		matching = Collections.emptyList();

@@ -1,5 +1,6 @@
 package com.bankpricemovement;
 
+import java.awt.AWTEvent;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
@@ -46,6 +47,7 @@ import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JComponent;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
+import javax.swing.JLayer;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
@@ -814,6 +816,86 @@ public class BankPriceMovementPanelTest
 			assertFalse("...or anywhere in the box's panel", panel.pressLeavesField(search, panel.searchField()));
 			assertFalse("nothing focused: nothing to drop", panel.pressLeavesField(null, label));
 			assertFalse("a focused control that is not a box is left alone", panel.pressLeavesField(label, search));
+		});
+	}
+
+	/**
+	 * 1.0.9 part 6 (the Hub's review of PR #17431, 2026-10-02: the JVM's global focus manager is not allowed): the
+	 * click-off hands the focus to the game through the hook the plugin gives the panel, and only when the press leaves
+	 * the focused box. A press inside the box, or with no box focused, hands nothing over; a stopped panel runs nothing
+	 * and keeps no hook; a panel with no hook at all throws nothing.
+	 */
+	@Test
+	public void aPressOutsideAFocusedBoxHandsTheFocusToTheGame() throws Exception
+	{
+		build();
+		final AtomicInteger handedOver = new AtomicInteger();
+		final Component label = new JLabel("a row");
+		final AtomicReference<Component> search = new AtomicReference<>();
+		onEdt(() ->
+		{
+			search.set(panel.searchField().getTextField());
+			final Component min = panel.minField().getTextField();
+			panel.setGameFocus(handedOver::incrementAndGet);
+			panel.dropFieldFocus(search.get(), label);
+			assertEquals("a press on a label leaves the search box", 1, handedOver.get());
+			panel.dropFieldFocus(null, label);
+			assertEquals("nothing focused: nothing to hand over", 1, handedOver.get());
+			panel.dropFieldFocus(search.get(), search.get());
+			assertEquals("a press on the box's own text field stays", 1, handedOver.get());
+			panel.dropFieldFocus(search.get(), panel.searchField());
+			assertEquals("...or anywhere in the box's panel", 1, handedOver.get());
+			panel.dropFieldFocus(min, label);
+			assertEquals("the Min box hands it over the same way", 2, handedOver.get());
+
+			panel.setGameFocus(null);
+			panel.dropFieldFocus(search.get(), label);
+			assertEquals("no hook: nothing runs and nothing throws", 2, handedOver.get());
+			panel.setGameFocus(handedOver::incrementAndGet);
+		});
+		onEdt(() -> panel.stop());
+		onEdt(() ->
+		{
+			panel.dropFieldFocus(search.get(), label);
+			assertEquals("a stopped panel hands nothing over", 2, handedOver.get());
+			panel.setGameFocus(handedOver::incrementAndGet);
+			panel.dropFieldFocus(search.get(), label);
+			assertEquals("...and keeps no hook given to it", 2, handedOver.get());
+		});
+	}
+
+	/**
+	 * 1.0.9 part 6: the sidebar's whole content sits under ONE {@link JLayer} - the panel's only direct child - whose
+	 * decorator hears the mouse presses inside it (and not the whole client's), with the header over the cards as
+	 * before and the same opaque ground under them. A press with no box focused, run through the real decorator, hands
+	 * nothing over; the other mouse events are not presses.
+	 */
+	@Test
+	public void thePanelsContentSitsUnderOneLayerThatWatchesPresses() throws Exception
+	{
+		build();
+		final AtomicInteger handedOver = new AtomicInteger();
+		onEdt(() ->
+		{
+			assertEquals("the layer is the panel's only child", 1, panel.getComponentCount());
+			assertTrue(panel.getComponent(0).getClass().getName(), panel.getComponent(0) instanceof JLayer);
+			@SuppressWarnings("unchecked")
+			final JLayer<JPanel> layer = (JLayer<JPanel>) panel.getComponent(0);
+			assertTrue("it hears mouse events", (layer.getLayerEventMask() & AWTEvent.MOUSE_EVENT_MASK) != 0);
+			assertTrue("its view is the content panel", layer.getView() instanceof JPanel);
+			final JPanel content = (JPanel) layer.getView();
+			assertEquals("the header and the cards, as before", 2, content.getComponentCount());
+			assertSame(panel.header(), content.getComponent(0));
+			assertTrue("the same ground the panel painted under them", content.isOpaque());
+			assertEquals(ColorScheme.DARK_GRAY_COLOR, content.getBackground());
+
+			panel.setGameFocus(handedOver::incrementAndGet);
+			final Component target = panel.header();
+			layer.getUI().eventDispatched(
+				new MouseEvent(target, MouseEvent.MOUSE_PRESSED, 0L, 0, 1, 1, 1, false), layer);
+			layer.getUI().eventDispatched(
+				new MouseEvent(target, MouseEvent.MOUSE_RELEASED, 0L, 0, 1, 1, 1, false), layer);
+			assertEquals("no box has the focus in a headless run, so a press hands nothing over", 0, handedOver.get());
 		});
 	}
 

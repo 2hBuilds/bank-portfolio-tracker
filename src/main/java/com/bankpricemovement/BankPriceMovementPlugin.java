@@ -41,6 +41,7 @@ import net.runelite.client.game.ItemManager;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.ClientToolbar;
+import net.runelite.client.ui.ClientUI;
 import net.runelite.client.ui.NavigationButton;
 import okhttp3.OkHttpClient;
 import org.slf4j.Logger;
@@ -214,6 +215,13 @@ public class BankPriceMovementPlugin extends Plugin
 
 	@Inject
 	private ClientToolbar clientToolbar;
+
+	/**
+	 * RuneLite's own window: {@code requestFocus()} is what its Notifier calls to hand the keyboard back to the game's
+	 * canvas, and what the sidebar's text boxes use to let go of it ({@link BankPriceMovementPanel#setGameFocus}).
+	 */
+	@Inject
+	private ClientUI clientUI;
 
 	@Inject
 	private ItemManager itemManager;
@@ -525,6 +533,10 @@ public class BankPriceMovementPlugin extends Plugin
 			SwingUtilities::invokeLater, traded);
 		service.setDiagnostics(diag);
 		panel = new BankPriceMovementPanel(itemManager, service, configPrefs());
+		// 1.0.9: a press in the sidebar that leaves a text box hands the keyboard back to the game, as a click on the
+		// game does. RuneLite's own call, read from the field when the press happens (the panel never reaches for the
+		// JVM's global focus manager, which the Hub refuses).
+		panel.setGameFocus(() -> clientUI.requestFocus());
 		panel.setDiagnostics(diag);
 		// 1.0.8: the settings menu's Troubleshoot... - the checks run through RuneLite's own OkHttp and executor, and
 		// the data-folder check asks the store for the folder it already uses.
