@@ -169,9 +169,6 @@ public class GuidePriceClientTest
 	/** What died on the simulated dispatcher thread, so a test can assert the Error was not swallowed. */
 	private final List<Throwable> dispatched = Collections.synchronizedList(new ArrayList<>());
 
-	/** The {@code Date} header every faked response carries, when a test sets one. */
-	private String dateHeader;
-
 	private OkHttpClient http;
 	private Call call;
 	private GuidePriceClient client;
@@ -1000,124 +997,6 @@ public class GuidePriceClientTest
 		}
 	}
 
-	// ---------------------------------------------------------------- 1.0.8: the passive fetch log
-
-	private FetchLog fetchLogOn(final GuidePriceClient on)
-	{
-		final FetchLog log = new FetchLog(() -> NOW_MILLIS);
-		on.setFetchLog(log);
-		return log;
-	}
-
-	@Test
-	public void aFetchThatParsedIsNotedWithItsStatusSizeAndEntryCount() throws Exception
-	{
-		final FetchLog log = fetchLogOn(client);
-		queue(MAPPING_JSON);
-
-		client.fetchMapping(NOW_MILLIS).get(5, TimeUnit.SECONDS);
-
-		final FetchLog.Record record = log.last(FetchLog.MAPPING);
-		assertTrue(record.ok);
-		assertEquals(200, record.httpStatus);
-		assertEquals(MAPPING_JSON.length(), record.bytes);
-		assertEquals("three names in the trimmed table", 3, record.items);
-		assertEquals(0, record.consecutiveFailures);
-		assertEquals(NOW_MILLIS, record.attemptMillis);
-		assertTrue(record.millis >= 0L);
-	}
-
-	@Test
-	public void theIndexAndTheTablesAreNotedUnderTheirOwnNames() throws Exception
-	{
-		final FetchLog log = fetchLogOn(client);
-		queue(INDEX_JSON);
-		client.fetchRevisionIndex(NOW_MILLIS).get(5, TimeUnit.SECONDS);
-		queue(tablesJson(revision(REV_0907, SAVED_0907, TABLE_0907)));
-		client.fetchTables(Collections.singletonList(REV_0907), NOW_MILLIS).get(5, TimeUnit.SECONDS);
-
-		assertEquals(5, log.last(FetchLog.PRICE_INDEX).items);
-		assertEquals(1, log.last(FetchLog.GUIDE_TABLES).items);
-		assertTrue(log.last(FetchLog.GUIDE_TABLES).bytes > 100L);
-		assertNull("the mapping was never asked for", log.last(FetchLog.MAPPING));
-	}
-
-	@Test
-	public void anHttpFailureIsNotedWithItsStatusAndTheRunOfFailuresCountsUp() throws Exception
-	{
-		final FetchLog log = fetchLogOn(client);
-		queue(503, "busy");
-		client.fetchMapping(NOW_MILLIS);
-		FetchLog.Record record = log.last(FetchLog.MAPPING);
-
-		assertFalse(record.ok);
-		assertEquals(503, record.httpStatus);
-		assertEquals(4L, record.bytes);
-		assertEquals(1, record.consecutiveFailures);
-		assertTrue(record.lastError, record.lastError.contains("503"));
-
-		queue(500, "worse");
-		client.fetchMapping(NOW_MILLIS);
-		assertEquals(2, log.last(FetchLog.MAPPING).consecutiveFailures);
-
-		queue(MAPPING_JSON);
-		client.fetchMapping(NOW_MILLIS);
-		assertTrue(log.last(FetchLog.MAPPING).ok);
-		assertEquals(0, log.last(FetchLog.MAPPING).consecutiveFailures);
-	}
-
-	@Test
-	public void aTransportFailureIsNotedWithNoStatus() throws Exception
-	{
-		final FetchLog log = fetchLogOn(client);
-		queue(new IOException("connection refused"));
-
-		client.fetchMapping(NOW_MILLIS);
-
-		final FetchLog.Record record = log.last(FetchLog.MAPPING);
-		assertFalse(record.ok);
-		assertEquals(0, record.httpStatus);
-		assertTrue(record.lastError, record.lastError.contains("connection refused"));
-	}
-
-	@Test
-	public void aBodyThatWillNotParseIsNotedAsFailedWithTheStatusItCameWith() throws Exception
-	{
-		final FetchLog log = fetchLogOn(client);
-		queue(200, "this is not json");
-
-		client.fetchMapping(NOW_MILLIS);
-
-		final FetchLog.Record record = log.last(FetchLog.MAPPING);
-		assertFalse(record.ok);
-		assertEquals(200, record.httpStatus);
-		assertEquals(16L, record.bytes);
-	}
-
-	@Test
-	public void theDateHeaderOfAResponseBecomesTheClockSkew() throws Exception
-	{
-		final FetchLog log = fetchLogOn(client);
-		assertNull(log.clockSkewSeconds());
-		dateHeader = "Mon, 07 Sep 2026 19:59:55 GMT";
-		queue(MAPPING_JSON);
-
-		client.fetchMapping(NOW_MILLIS).get(5, TimeUnit.SECONDS);
-
-		final long theirs = java.time.ZonedDateTime.parse(dateHeader, java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME)
-			.toInstant().toEpochMilli();
-		assertEquals(Long.valueOf(Math.round((NOW_MILLIS - theirs) / 1000.0d)), log.clockSkewSeconds());
-	}
-
-	@Test
-	public void aClientWithNoFetchLogFetchesExactlyAsBefore() throws Exception
-	{
-		client.setFetchLog(null);
-		queue(MAPPING_JSON);
-
-		assertEquals(3, client.fetchMapping(NOW_MILLIS).get(5, TimeUnit.SECONDS).size());
-	}
-
 	private void queue(final String body)
 	{
 		replies.add(new Reply(200, body, null, Mode.NORMAL));
@@ -1153,17 +1032,13 @@ public class GuidePriceClientTest
 			: requests.get(requests.size() - 1);
 
 		final ResponseBody carried = body == null ? new ExplodingBody() : ResponseBody.create(JSON, body);
-		final Response.Builder builder = new Response.Builder()
+		return new Response.Builder()
 			.request(request)
 			.protocol(Protocol.HTTP_1_1)
 			.code(code)
 			.message(code == 200 ? "OK" : "Error")
-			.body(new CountingBody(carried, bodyCloses));
-		if (dateHeader != null)
-		{
-			builder.header("Date", dateHeader);
-		}
-		return builder.build();
+			.body(new CountingBody(carried, bodyCloses))
+			.build();
 	}
 
 	private static WikiPriceException failureOf(final CompletableFuture<?> future)

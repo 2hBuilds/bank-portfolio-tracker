@@ -5019,17 +5019,9 @@ public class PriceServiceTest
 		}
 	}
 
-	private Diagnostics diagnosticsInService()
-	{
-		final Diagnostics diag = new Diagnostics(clock::get, ZoneOffset.UTC);
-		service.setDiagnostics(diag);
-		return diag;
-	}
-
 	@Test
 	public void aStackWhosePricingThrowsIsLeftUnpricedAndTheRestOfTheBankIsPublished()
 	{
-		final Diagnostics diag = diagnosticsInService();
 		service.setOptions(ViewOptions.DEFAULT.withCountUntradeables(true));
 		service.setBank(bank(T0));
 		final int ordinary = lastRows().size();
@@ -5042,13 +5034,11 @@ public class PriceServiceTest
 		assertTrue(lastStatus().bankLoaded());
 		assertEquals("every other row is priced and the planted stack falls back to its alch row", ordinary + 1,
 			lastRows().size());
-		assertTrue(DiagnosticsReports.report(diag).contains("warning: price-stack"));
 	}
 
 	@Test
 	public void aComputationThatThrowsStillPublishesTheBankAsLoaded()
 	{
-		final Diagnostics diag = diagnosticsInService();
 		final BankSnapshot planted = bank(T0);
 		planted.items.add(new Planted("PriceService$Parts", "of"));
 
@@ -5057,10 +5047,6 @@ public class PriceServiceTest
 		assertTrue("the sidebar leaves the 'Open your bank once' card whatever the pricing did",
 			lastStatus().bankLoaded());
 		assertEquals(T0, lastStatus().bankAtMillis());
-		final String report = DiagnosticsReports.report(diag);
-		assertTrue(report, report.contains("warning: compute"));
-		assertTrue(report, report.contains("computation failed"));
-		assertFalse(report, report.contains("Errors\nnone\n"));
 	}
 
 	@Test
@@ -5077,7 +5063,6 @@ public class PriceServiceTest
 	@Test
 	public void aFailureInTheNetWorthHistoryNeverHidesTheBank()
 	{
-		final Diagnostics diag = diagnosticsInService();
 		when(store.loadBankHistory(anyLong(), anyString())).thenThrow(new IllegalStateException("planted"));
 		service.setLoggedIn(true, ACCOUNT, PROFILE);
 
@@ -5086,220 +5071,18 @@ public class PriceServiceTest
 		assertTrue(lastStatus().bankLoaded());
 		assertTrue("the rows are published beside the failed history", lastRows().size() > 20);
 		assertTrue("nothing was recorded", lastStatus().bankHistory().isEmpty());
-		final String report = DiagnosticsReports.report(diag);
-		assertTrue(report, report.contains("warning: history-fold"));
-		assertTrue(report, report.contains("net worth history failed"));
 	}
 
+	/** 1.0.8's rule for trouble that repeats, kept: a kind is a WARN the first time it is raised and DEBUG ever after. */
 	@Test
-	public void theReportNotesWhatTheServiceDidAndNamesNoAccount()
+	public void aWarningOfOneKindIsLoggedOnceThenAtDebug()
 	{
-		final Diagnostics diag = diagnosticsInService();
-		service.setLoggedIn(true, ACCOUNT, PROFILE);
-
-		service.setBank(bank(T0));
-
-		final String report = DiagnosticsReports.report(diag);
-		assertTrue(report, report.contains("bank handed to the service (31 stacks)"));
-		assertTrue(report, report.contains("computed: rows="));
-		assertTrue(report, report.contains("publish: loggedIn=true, bankLoaded=true, rows="));
-		assertFalse("no account hash, in any spelling", report.contains(Long.toString(ACCOUNT))
-			|| report.toLowerCase().contains(Long.toHexString(ACCOUNT)));
-		assertFalse("no item name", report.contains("Green hat") || report.contains("Abyssal whip"));
-	}
-
-	@Test
-	public void aFailedFetchIsNotedOnceInTheReportAndWarnedOnceAsAKind()
-	{
-		final Diagnostics diag = diagnosticsInService();
-		service.start();
-		service.setBank(bank(T0));
-		service.setVisible(true);
-		fireTick();
-
-		indexFutures.get(0).completeExceptionally(new WikiPriceException("planted: HTTP 503", 503));
-
-		final String report = DiagnosticsReports.report(diag);
-		assertTrue(report, report.contains("revision index: failed:"));
-		assertTrue(report, report.contains("warning: fetch-revision-index"));
-		assertFalse("a second failure of the same kind is not warned again",
-			diag.warnOnce("fetch-revision-index"));
-	}
-
-	// ---- 1.0.8 second half: the watchdog and the report's Pricing, History and Bank lines
-
-	@Test
-	public void theExecutorWrapperTellsTheWatchdogWhichTaskRanLast()
-	{
-		final Diagnostics diag = diagnosticsInService();
-
-		service.setBank(bank(T0));
-
-		final Watchdog.Snapshot snapshot = diag.watchdog().snapshot();
-		assertNotNull("a task ran", snapshot.lastName);
-		assertEquals(0, snapshot.queued);
-		assertNull("and nothing is running now", snapshot.runningName);
-		assertTrue("it started and finished at the service's clock", snapshot.startedAtMillis > 0L
-			&& snapshot.finishedAtMillis >= snapshot.startedAtMillis);
-		final String report = DiagnosticsReports.report(diag);
-		assertFalse(report, report.contains("last task: none yet"));
-	}
-
-	@Test
-	public void aTaskIsRunningWhileItRunsAndFinishedWhenItThrows()
-	{
-		final Diagnostics diag = diagnosticsInService();
-		final List<Watchdog.Snapshot> seen = new ArrayList<>();
-		when(store.loadMapping()).thenAnswer(invocation ->
-		{
-			seen.add(diag.watchdog().snapshot());
-			throw new IllegalStateException("planted");
-		});
-
-		service.start();
-
-		assertEquals("one snapshot, taken from inside the task", 1, seen.size());
-		assertEquals("the task was named while it ran", "loading the saved prices", seen.get(0).runningName);
-		assertEquals("and it was not counted as waiting any more", 0, seen.get(0).queued);
-		final Watchdog.Snapshot after = diag.watchdog().snapshot();
-		assertNull("a task that threw is finished all the same", after.runningName);
-		assertEquals("loading the saved prices", after.lastName);
-		assertTrue("and the failure was kept", DiagnosticsReports.report(diag).contains("background task failed"));
-	}
-
-	@Test
-	public void aWriteIsWatchedToo()
-	{
-		final Diagnostics diag = diagnosticsInService();
-		service.setLoggedIn(true, ACCOUNT, PROFILE);
-
-		service.setBank(bank(T0));
-
-		final String report = DiagnosticsReports.report(diag);
-		assertTrue(report, report.contains("last task: "));
-		assertEquals(0, diag.watchdog().snapshot().queued);
-	}
-
-	@Test
-	public void thePricingFactsCountRowsBySourceAndNameTheDays()
-	{
-		service.setBank(bank(T0));
-		final Diagnostics.Facts.Builder builder = Diagnostics.Facts.builder();
-
-		service.describeInto(builder);
-		final List<String> pricing = builder.build().lines(Diagnostics.PRICING);
-
-		assertTrue(pricing.toString(), pricing.get(0).startsWith("rows by source: live 0, guide "));
-		assertTrue(pricing.toString(), pricing.get(0).contains(", unpriced "));
-		assertTrue(pricing.toString(), pricing.get(0).contains(" listed)"));
-		assertTrue(pricing.toString(), pricing.contains("degraded: -") || pricing.toString().contains("degraded: "));
-		boolean days = false;
-		for (final String line : pricing)
-		{
-			days |= line.startsWith("1d compares against: guide ");
-		}
-		assertTrue("every window names its day: " + pricing, days);
-		assertEquals(Diagnostics.PRICING + " names the anchor day",
-			1, pricing.stream().filter(line -> line.startsWith("anchor day: ")).count());
-		assertTrue(pricing.toString(), pricing.stream().anyMatch(line -> line.startsWith("prices at: ")));
-		assertTrue(pricing.toString(), pricing.stream().anyMatch(line -> line.startsWith("agreement with RuneLite's price table: ")));
-		for (final String line : pricing)
-		{
-			assertFalse("no item name: " + line, line.contains("Green hat") || line.contains("Abyssal whip"));
-			assertFalse("no hash: " + line, line.contains(Long.toString(ACCOUNT)));
-		}
-	}
-
-	@Test
-	public void theHistoryFactsSayLoadedRecordedAndWhetherTheWriteWorked()
-	{
-		when(store.loadBankHistory(anyLong(), anyString())).thenReturn(PriceStore.BankHistoryLoad.missing());
-		when(store.recordBankHistory(anyLong(), anyString(), any(BankHistoryPoint.class), any(LocalDate.class))).thenReturn(true);
-		service.setLoggedIn(true, ACCOUNT, PROFILE);
-		service.setBank(bank(T0));
-		final Diagnostics.Facts.Builder builder = Diagnostics.Facts.builder();
-
-		service.describeInto(builder);
-		final List<String> history = builder.build().lines(Diagnostics.HISTORY);
-
-		assertTrue(history.toString(), history.contains("state: MISSING (no file yet)"));
-		assertTrue(history.toString(), history.contains("today's reading recorded: yes"));
-		assertTrue(history.toString(), history.contains("last fold: recorded"));
-		assertTrue(history.toString(), history.contains("last write: ok"));
-		assertTrue(history.toString(), history.stream().anyMatch(line -> line.startsWith("first day: 2026-")));
-		assertTrue(history.toString(), history.stream().anyMatch(line -> line.startsWith("last day: 2026-")));
-	}
-
-	@Test
-	public void aHistoryWriteTheStoreRefusedIsReportedAsFailed()
-	{
-		when(store.loadBankHistory(anyLong(), anyString())).thenReturn(PriceStore.BankHistoryLoad.missing());
-		when(store.recordBankHistory(anyLong(), anyString(), any(BankHistoryPoint.class), any(LocalDate.class))).thenReturn(false);
-		service.setLoggedIn(true, ACCOUNT, PROFILE);
-		service.setBank(bank(T0));
-		final Diagnostics.Facts.Builder builder = Diagnostics.Facts.builder();
-
-		service.describeInto(builder);
-
-		assertTrue(builder.build().lines(Diagnostics.HISTORY).toString(),
-			builder.build().lines(Diagnostics.HISTORY).contains("last write: failed"));
-	}
-
-	@Test
-	public void aFailedHistoryLoadIsReportedAsFailedAndNothingIsRecordedWithTheReason()
-	{
-		when(store.loadBankHistory(anyLong(), anyString())).thenReturn(PriceStore.BankHistoryLoad.failed());
-		service.setLoggedIn(true, ACCOUNT, PROFILE);
-		service.setBank(bank(T0));
-		final Diagnostics.Facts.Builder builder = Diagnostics.Facts.builder();
-
-		service.describeInto(builder);
-		final List<String> history = builder.build().lines(Diagnostics.HISTORY);
-
-		assertTrue(history.toString(), history.contains("state: FAILED (the store logged the cause at WARN in the client log)"));
-		assertTrue(history.toString(), history.contains("last fold: the history file could not be read, so nothing is written"));
-		assertTrue(history.toString(), history.contains("last write: none yet"));
-	}
-
-	@Test
-	public void withNoOneLoggedInTheReadingIsNotRecordedAndTheReasonIsGiven()
-	{
-		service.setBank(bank(T0, 0L));
-		final Diagnostics.Facts.Builder builder = Diagnostics.Facts.builder();
-
-		service.describeInto(builder);
-		final List<String> history = builder.build().lines(Diagnostics.HISTORY);
-
-		assertTrue(history.toString(), history.contains("today's reading recorded: no - no account on the bank"));
-	}
-
-	@Test
-	public void beforeAnyComputationTheHistoryFactsSayNotLoadedYet()
-	{
-		final Diagnostics.Facts.Builder builder = Diagnostics.Facts.builder();
-
-		service.describeInto(builder);
-		final List<String> history = builder.build().lines(Diagnostics.HISTORY);
-
-		assertTrue(history.toString(), history.contains("state: not loaded yet"));
-		assertTrue(history.toString(), history.contains("today's reading recorded: no - no computation yet"));
-	}
-
-	@Test
-	public void theBankFactsSayWhetherTheBankCameOffTheDiskAndWhetherTheStatusHasOne()
-	{
-		final Diagnostics.Facts.Builder before = Diagnostics.Facts.builder();
-		service.describeBankInto(before);
-		assertEquals(Arrays.asList("bank loaded from disk at login: no", "bank loaded (as the status says): no"),
-			before.build().lines(Diagnostics.BANK));
-
-		when(store.loadBank(anyLong(), anyString())).thenReturn(bank(T0));
-		service.setLoggedIn(true, ACCOUNT, PROFILE);
-		final Diagnostics.Facts.Builder after = Diagnostics.Facts.builder();
-		service.describeBankInto(after);
-
-		assertEquals(Arrays.asList("bank loaded from disk at login: yes", "bank loaded (as the status says): yes"),
-			after.build().lines(Diagnostics.BANK));
+		assertTrue("the first time a kind is raised it is the WARN", service.warnOnce("compute"));
+		assertFalse("the second time it is not", service.warnOnce("compute"));
+		assertFalse("nor ever after", service.warnOnce("compute"));
+		assertTrue("another kind has a first time of its own", service.warnOnce("history-fold"));
+		assertFalse(service.warnOnce("history-fold"));
+		assertTrue("and so does a kind with a name in it", service.warnOnce("write-failed saving the bank"));
 	}
 
 	static BankSnapshot bank(final long capturedAt)

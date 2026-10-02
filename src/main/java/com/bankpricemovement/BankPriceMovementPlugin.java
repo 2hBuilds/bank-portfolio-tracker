@@ -6,22 +6,15 @@ import javax.annotation.Nullable;
 import javax.inject.Inject;
 import javax.inject.Named;
 import javax.swing.SwingUtilities;
-import java.awt.Window;
-import java.time.Instant;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
-import java.util.Locale;
 import java.util.Objects;
-import java.util.concurrent.CompletableFuture;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.function.BiFunction;
-import java.util.function.Consumer;
 import java.util.function.Predicate;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
 import net.runelite.api.Item;
 import net.runelite.api.ItemContainer;
-import net.runelite.api.WorldType;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.GrandExchangeOfferChanged;
@@ -288,23 +281,11 @@ public class BankPriceMovementPlugin extends Plugin
 	private volatile PriceService service;
 	private volatile BankPriceMovementPanel panel;
 	/**
-	 * The plugin's short memory for the settings menu's <i>Troubleshoot...</i> (1.0.8): made in {@link #startUp()},
-	 * shared with the service and the panel, dropped in {@link #shutDown()}. Null outside a run, and every use
-	 * copies the field first and checks - a note is a courtesy, never a reason for a handler to throw.
+	 * The kinds of trouble already raised this run (1.0.8's rule, kept): {@link #warn} writes a kind at WARN the first
+	 * time and at DEBUG after, so a failure that repeats on every bank event is one line in the log. Cleared in
+	 * {@link #startUp()}, because RuneLite reuses this instance across a disable and an enable.
 	 */
-	private volatile Diagnostics diagnostics;
-	/**
-	 * The checks and the verdict of the settings menu's <i>Troubleshoot...</i> (1.0.8): made in {@link #startUp()},
-	 * dropped in {@link #shutDown()}.
-	 */
-	private volatile Troubleshooter troubleshooter;
-	/** The troubleshooting window on screen, if any: opening a second closes the first. EDT only. */
-	private TroubleshootDialog troubleshootDialog;
-	/**
-	 * How the troubleshooting window is opened (1.0.8): the real one, which needs a display. A field so a test can hand
-	 * back a window that is never shown.
-	 */
-	BiFunction<Window, Consumer<String>, TroubleshootDialog> dialogOpener = TroubleshootDialog::open;
+	private final Set<String> warnedKinds = ConcurrentHashMap.newKeySet();
 	/**
 	 * The last snapshot this plugin PUBLISHED (Y2): the bank half a container event read, with whatever the
 	 * player was carrying folded into it. It is what the Refresh hook re-stamps - the bank part is kept
@@ -430,13 +411,6 @@ public class BankPriceMovementPlugin extends Plugin
 	 */
 	private volatile int heldEvents;
 	private volatile int bankReads;
-	/**
-	 * Bank container events this handler received, and those it had to drop because the client would not name the
-	 * account, since startUp (1.0.8) - the two totals of the Troubleshoot report that {@link #heldEvents} and
-	 * {@link #bankReads} do not already give. Written on the client thread, reset on the EDT like the two above.
-	 */
-	private volatile int bankEventsSeen;
-	private volatile int bankEventsDropped;
 
 	/**
 	 * AS: {@link #fingerprint(Item[], Item[], Item[])} of the three containers the last read was made from - the
@@ -486,12 +460,10 @@ public class BankPriceMovementPlugin extends Plugin
 	protected void startUp()
 	{
 		// 1.0.8: the one INFO line of a run that names the build, so a client.log pasted into a bug report says which
-		// plugin version and which RuneLite it came from, and the first note of the diagnostics report.
+		// plugin version and which RuneLite it came from.
 		log.info("bank-portfolio-tracker: 2h Bank Portfolio Tracker {} starting on RuneLite {}", Version.CURRENT,
 			RuneLiteProperties.getVersion());
-		final Diagnostics diag = new Diagnostics();
-		diagnostics = diag;
-		diag.note("plugin started, version " + Version.CURRENT);
+		warnedKinds.clear();
 		// RuneLite reuses the plugin instance across a disable/enable, so last run's memo would swallow this
 		// run's first login (the service below is a new one and has been told nothing).
 		sentLoggedIn = false;
@@ -517,32 +489,23 @@ public class BankPriceMovementPlugin extends Plugin
 		// holding the EDT that PluginManager runs startUp on.
 		sweepStaleFiles();
 		guide = new GuidePriceClient(okHttpClient, gson);
-		guide.setFetchLog(diag.fetchLog());
 		// T2, and the same two injected collaborators as the line above: RuneLite's own OkHttp (with its
 		// interceptors, its connection pool and its refusal to run on the client thread or the EDT) and RuneLite's
 		// own Gson. Built unconditionally rather than behind the livePrices switch, because it makes no request of
 		// its own - the service asks it for a feed only while the switch is on (T2), so a user who has turned live
 		// prices off pays for this object and nothing else.
 		traded = new TradedPriceClient(okHttpClient, gson);
-		traded.setFetchLog(diag.fetchLog());
 		bankReader = new BankReader(itemManager);
 		// The client thread is the service's one hop back into the game: ItemManager.getItemPriceWithSource
 		// reads the item composition first (ItemManager.java:328-368, the composition at :339), so the guide price is a
 		// client-thread read.
 		service = new PriceService(guide, store, itemManager, clientThread, executor, System::currentTimeMillis,
 			SwingUtilities::invokeLater, traded);
-		service.setDiagnostics(diag);
 		panel = new BankPriceMovementPanel(itemManager, service, configPrefs());
 		// 1.0.9: a press in the sidebar that leaves a text box hands the keyboard back to the game, as a click on the
 		// game does. RuneLite's own call, read from the field when the press happens (the panel never reaches for the
 		// JVM's global focus manager, which the Hub refuses).
 		panel.setGameFocus(() -> clientUI.requestFocus());
-		panel.setDiagnostics(diag);
-		// 1.0.8: the settings menu's Troubleshoot... - the checks run through RuneLite's own OkHttp and executor, and
-		// the data-folder check asks the store for the folder it already uses.
-		troubleshooter = new Troubleshooter(okHttpClient, executor, store::dir, diag, SwingUtilities::invokeLater, gson,
-			Diagnostics.pluginHubVersion());
-		panel.setTroubleshoot(this::troubleshoot);
 		// O2: the card opens showing exactly the figures the config names. The panel already asks the prefs
 		// seam while it builds; this says it a second time, out loud, because applying the visibility it is
 		// already in is a no-op and a card that flashed a figure the user had hidden would be the first thing
@@ -645,24 +608,16 @@ public class BankPriceMovementPlugin extends Plugin
 		// First, and unconditionally: the panel this points at is about to be thrown away, and the lab's HTTP
 		// thread can call in at any moment. A handler left by an earlier developer-mode run must go either way.
 		BpmDevBridge.handler = null;
-		note("plugin stopped");
 		if (navButton != null)
 		{
 			clientToolbar.removeNavigation(navButton);
 			navButton = null;
 		}
-		if (troubleshootDialog != null)
-		{
-			troubleshootDialog.dispose();
-			troubleshootDialog = null;
-		}
-		troubleshooter = null;
 		if (panel != null)
 		{
 			// AS: the Refresh hook points back at this plugin, whose fields are about to be cleared - dropped
 			// before stop(), for the reason the carried reader below is dropped before the service's.
 			panel.setBankRefresh(null);
-			panel.setTroubleshoot(null);
 			panel.stop();
 			panel = null;
 		}
@@ -689,132 +644,6 @@ public class BankPriceMovementPlugin extends Plugin
 		// still in the client's bank - the replay reads it if the plugin is switched on again this session (nothing
 		// has been read in that run, so the replay is never held), and the first bank event of a later one does.
 		resetBankHold();
-		diagnostics = null;
-	}
-
-	/** Adds one note to the diagnostics report, if a run is under way. */
-	private void note(final String text)
-	{
-		final Diagnostics d = diagnostics;
-		if (d != null)
-		{
-			d.note(text);
-		}
-	}
-
-	// ---------------------------------------------------------------- Troubleshoot... (1.0.8)
-
-	private static final DateTimeFormatter CLOCK_SECONDS = DateTimeFormatter.ofPattern("HH:mm:ss", Locale.ROOT);
-
-	/**
-	 * EDT. The settings menu's <i>Troubleshoot...</i> (1.0.8): opens the window on "Checking...", fills in what the
-	 * panel, the service and the config know at once, asks the client thread for the rest, and lets
-	 * {@link Troubleshooter#run} start the checks and put the verdict and the report in the window when they are in.
-	 * A window already open is closed first. Nothing is written to disk, and nothing in the report names an account,
-	 * a player, an item or a path.
-	 *
-	 * @param owner the RuneLite frame the window belongs to; may be null
-	 */
-	void troubleshoot(@Nullable final Window owner)
-	{
-		final Diagnostics diag = diagnostics;
-		final Troubleshooter checker = troubleshooter;
-		final PriceService s = service;
-		final BankPriceMovementPanel p = panel;
-		final ClientThread ct = clientThread;
-		if (diag == null || checker == null || s == null || p == null || ct == null)
-		{
-			return;
-		}
-		if (troubleshootDialog != null)
-		{
-			troubleshootDialog.dispose();
-		}
-		final TroubleshootDialog dialog = dialogOpener.apply(owner, p.clipboard);
-		troubleshootDialog = dialog;
-		final Diagnostics.Facts.Builder facts = Diagnostics.Facts.builder();
-		p.describeInto(facts);
-		s.describeInto(facts);
-		describeSettings(facts);
-		final CompletableFuture<Void> playerDone = new CompletableFuture<>();
-		ct.invoke(() ->
-		{
-			try
-			{
-				describePlayer(facts);
-			}
-			catch (final RuntimeException e)
-			{
-				diag.error("troubleshoot could not read the player", e);
-			}
-			finally
-			{
-				playerDone.complete(null);
-			}
-		});
-		checker.run(facts, playerDone, dialog::show);
-	}
-
-	/**
-	 * CLIENT THREAD. The report's Player and Bank sections: whether the client is logged in and has named the account
-	 * (a yes or a no - never which), the profile, the world types, whether the bank is open, the bank-event
-	 * totals and what the last read held, as counts. Never the hash, the name, an item or a quantity.
-	 */
-	void describePlayer(final Diagnostics.Facts.Builder facts)
-	{
-		final Client c = client;
-		final PriceService s = service;
-		if (c == null || s == null)
-		{
-			return;
-		}
-		facts.loggedIn(c.getGameState() == GameState.LOGGED_IN);
-		facts.accountKnown(c.getAccountHash() > 0L);
-		facts.line(Diagnostics.PLAYER, "profile", RuneScapeProfileType.getCurrent(c).name());
-		final StringBuilder types = new StringBuilder();
-		for (final WorldType type : c.getWorldType())
-		{
-			types.append(types.length() == 0 ? "" : ", ").append(type.name());
-		}
-		facts.line(Diagnostics.PLAYER, "world types", types.length() == 0 ? "none" : types.toString());
-		facts.line(Diagnostics.PLAYER, "bank window open now", bankOpen ? "yes" : "no");
-		facts.bankEvents(bankEventsSeen, heldEvents, bankReads, bankEventsDropped);
-		final BankSnapshot last = lastBank;
-		facts.line(Diagnostics.BANK, "last read at", last == null || last.capturedAtMillis <= 0L ? "never"
-			: CLOCK_SECONDS.format(Instant.ofEpochMilli(last.capturedAtMillis).atZone(ZoneId.systemDefault())));
-		facts.line(Diagnostics.BANK, "stacks read", "bank " + stacks(last) + ", inventory "
-			+ (last == null || last.inventory == null ? 0 : last.inventory.size()) + ", worn "
-			+ (last == null || last.worn == null ? 0 : last.worn.size()));
-		s.describeBankInto(facts);
-	}
-
-	/** The report's Settings section: the eighteen stored values, by key. Plain values the player chose. */
-	void describeSettings(final Diagnostics.Facts.Builder facts)
-	{
-		facts.line(Diagnostics.SETTINGS, "gpMin", String.valueOf(config.gpMin()));
-		facts.line(Diagnostics.SETTINGS, "gpMax", String.valueOf(config.gpMax()));
-		facts.line(Diagnostics.SETTINGS, BAND_PRESETS_KEY, String.valueOf(config.bandPresets()));
-		facts.line(Diagnostics.SETTINGS, FOLD_OPEN_KEY, String.valueOf(config.foldOpen()));
-		facts.line(Diagnostics.SETTINGS, "sortMode", nameOf(config.sortMode()));
-		facts.line(Diagnostics.SETTINGS, "sortDescending", String.valueOf(config.sortDescending()));
-		facts.line(Diagnostics.SETTINGS, "window", nameOf(config.window()));
-		facts.line(Diagnostics.SETTINGS, SHOW_VALUE_KEY, String.valueOf(config.showBankValue()));
-		facts.line(Diagnostics.SETTINGS, SHOW_GP_KEY, String.valueOf(config.showBankMoveGp()));
-		facts.line(Diagnostics.SETTINGS, SHOW_PCT_KEY, String.valueOf(config.showBankMovePct()));
-		facts.line(Diagnostics.SETTINGS, COUNT_CASH_KEY, String.valueOf(config.countCash()));
-		facts.line(Diagnostics.SETTINGS, COUNT_UNTRADEABLES_KEY, String.valueOf(config.countUntradeables()));
-		facts.line(Diagnostics.SETTINGS, COUNT_INVENTORY_KEY, String.valueOf(config.countInventory()));
-		facts.line(Diagnostics.SETTINGS, COUNT_GRAND_EXCHANGE_KEY, String.valueOf(config.countGrandExchange()));
-		facts.line(Diagnostics.SETTINGS, SHOW_HOVER_TEXT_KEY, String.valueOf(config.showHoverText()));
-		facts.line(Diagnostics.SETTINGS, LIVE_PRICES_KEY, String.valueOf(config.livePrices()));
-		facts.line(Diagnostics.SETTINGS, START_TAB_KEY, nameOf(config.startTab()));
-		facts.line(Diagnostics.SETTINGS, INCLUDE_LEGACY_KEY, String.valueOf(config.includeLegacyHistory()));
-	}
-
-	/** An enum setting as the name RuneLite stores it under, not the label the settings page shows. */
-	private static String nameOf(@Nullable final Enum<?> value)
-	{
-		return value == null ? "null" : value.name();
 	}
 
 	// ---------------------------------------------------------------- startUp housekeeping (K9, K11)
@@ -1066,7 +895,6 @@ public class BankPriceMovementPlugin extends Plugin
 				// last bank event and under the account they arrived with - before the cached account and lastBank
 				// are dropped below and before the service is told nobody is logged in, so the capture is stamped,
 				// published and saved as that player's.
-				note("game state: " + event.getGameState());
 				endSession(event.getGameState());
 				accountHash = 0;
 				// Y2: the held snapshot belongs to the account that has just left. The ROWS stay on screen
@@ -1102,7 +930,6 @@ public class BankPriceMovementPlugin extends Plugin
 		sentLoggedIn = true;
 		sentHash = hash;
 		sentProfile = p;
-		note("game state: logged in");
 		s.setLoggedIn(true, hash, p);
 	}
 
@@ -1165,7 +992,6 @@ public class BankPriceMovementPlugin extends Plugin
 		{
 			return;
 		}
-		bankEventsSeen++;
 		final ItemContainer container = event.getItemContainer();
 		if (container == null || c.getGameState() != GameState.LOGGED_IN)
 		{
@@ -1176,7 +1002,7 @@ public class BankPriceMovementPlugin extends Plugin
 		{
 			// 1.0.8: no longer silent. The client answers -1 before it has named the account; a bank event in that
 			// window cannot be filed under anyone, so it is not read - and the player's sidebar then waits for the next
-			// one. The line says so, once, and the report keeps a note of every one.
+			// one. The line says so, once.
 			droppedNoHash();
 			return;
 		}
@@ -1196,7 +1022,6 @@ public class BankPriceMovementPlugin extends Plugin
 		{
 			hold(items, inventory, worn, hash, profile);
 			log.debug("bank-portfolio-tracker: bank hold - bank event held (held events {})", heldEvents);
-			note("bank event: held (" + heldEvents + " events so far)");
 			notifyBankHold();
 			return;
 		}
@@ -1211,7 +1036,6 @@ public class BankPriceMovementPlugin extends Plugin
 			// tells the live run to look for this line, and "unchanged" now means all three containers.
 			log.debug("bank-portfolio-tracker: bank hold - bank event unchanged since the last read (open={}),"
 				+ " skipped", bankOpen);
-			note("bank event: unchanged, not re-read");
 			return;
 		}
 		if (bankOpen && readBefore)
@@ -1220,13 +1044,12 @@ public class BankPriceMovementPlugin extends Plugin
 			hold(items, inventory, worn, hash, profile);
 			log.debug("bank-portfolio-tracker: bank hold - a change while the bank is open, holding it (held events"
 				+ " {})", heldEvents);
-			note("bank event: held (" + heldEvents + " events so far)");
 			notifyBankHold();
 			return;
 		}
 		log.debug("bank-portfolio-tracker: bank hold - bank event read (open={}, first read for this account={}),"
 			+ " ge slots {}", bankOpen, !readBefore, offers.slotsInUse());
-		captureBank(items, inventory, worn, offers, hash, profile, "bank event");
+		captureBank(items, inventory, worn, offers, hash, profile);
 		notifyBankHold();
 	}
 
@@ -1250,11 +1073,9 @@ public class BankPriceMovementPlugin extends Plugin
 	 * @param offers    the Grand Exchange offers to fold in (1.0.9 part 3); null reads as none
 	 * @param hash      the account the capture is stamped and saved under - a real one, checked by the caller
 	 * @param profile   the RuneScape profile that goes with it
-	 * @param why       what asked for the read, as the diagnostics note names it ("bank event", "bank closed" ...)
 	 */
 	private void captureBank(@Nullable final Item[] items, @Nullable final Item[] inventory,
-		@Nullable final Item[] worn, @Nullable final ExchangeOffers offers, final long hash, final String profile,
-		final String why)
+		@Nullable final Item[] worn, @Nullable final ExchangeOffers offers, final long hash, final String profile)
 	{
 		final PriceService s = service;
 		final BankReader reader = bankReader;
@@ -1274,14 +1095,7 @@ public class BankPriceMovementPlugin extends Plugin
 			// it does not expect. Nothing is stamped - no fingerprint, no counter, no snapshot - so the next bank
 			// event finds nothing to be equal to and tries again, and the sidebar is not told a bank was read that
 			// was not.
-			final Diagnostics d = diagnostics;
-			if (d == null)
-			{
-				log.warn("bank-portfolio-tracker: the bank could not be read - will try again at the next bank event", e);
-				return;
-			}
-			d.error(Diagnostics.BANK_READ_FAILED, e);
-			d.warn(log, "bank-read", "bank-portfolio-tracker: the bank could not be read - will try again at the"
+			warn("bank-read", "bank-portfolio-tracker: the bank could not be read - will try again at the"
 				+ " next bank event", e);
 			return;
 		}
@@ -1290,7 +1104,6 @@ public class BankPriceMovementPlugin extends Plugin
 		{
 			log.info("bank-portfolio-tracker: first bank read of the session: {} stacks", stacks(snapshot));
 		}
-		note(why + ": read (" + stacks(snapshot) + " stacks, " + carriedStacks(snapshot) + " carried)");
 		lastBank = snapshot;
 		s.setBank(snapshot);
 		lastFingerprint = fingerprint(items, inventory, worn);
@@ -1298,39 +1111,36 @@ public class BankPriceMovementPlugin extends Plugin
 		lastFingerprintProfile = profile;
 	}
 
-	/** How many stacks the bank half of a snapshot holds, for the diagnostics note; 0 for no snapshot. */
+	/** How many stacks the bank half of a snapshot holds; 0 for no snapshot. */
 	private static int stacks(@Nullable final BankSnapshot snapshot)
 	{
 		return snapshot == null || snapshot.items == null ? 0 : snapshot.items.size();
 	}
 
 	/**
-	 * How many stacks the inventory, the worn gear and the Grand Exchange offers of a snapshot hold, for the
-	 * diagnostics note.
-	 */
-	private static int carriedStacks(@Nullable final BankSnapshot snapshot)
-	{
-		return snapshot == null ? 0 : (snapshot.inventory == null ? 0 : snapshot.inventory.size())
-			+ (snapshot.worn == null ? 0 : snapshot.worn.size())
-			+ (snapshot.exchange == null ? 0 : snapshot.exchange.size());
-	}
-
-	/**
-	 * A bank event that could not be filed under anyone: the client had not yet named the account (1.0.8). One note
-	 * per event, and the first of the session at WARN.
+	 * A bank event that could not be filed under anyone: the client had not yet named the account (1.0.8). The first
+	 * of the run is logged at WARN, the rest at DEBUG.
 	 */
 	private void droppedNoHash()
 	{
-		bankEventsDropped++;
-		final Diagnostics d = diagnostics;
-		if (d == null)
-		{
-			log.warn("bank-portfolio-tracker: a bank event arrived before the client named the account - not read");
-			return;
-		}
-		d.note("bank event: dropped - no account hash");
-		d.warn(log, "no-hash", "bank-portfolio-tracker: a bank event arrived before the client named the account -"
+		warn("no-hash", "bank-portfolio-tracker: a bank event arrived before the client named the account -"
 			+ " not read");
+	}
+
+	/**
+	 * Logs at WARN the first time {@code key} is raised in this run and at DEBUG every time after - the plugin's one
+	 * rule for trouble that can repeat. {@code args} follow SLF4J's rule: a trailing exception is the throwable.
+	 */
+	private void warn(final String key, final String message, final Object... args)
+	{
+		if (warnedKinds.add(key))
+		{
+			log.warn(message, args);
+		}
+		else
+		{
+			log.debug(message, args);
+		}
 	}
 
 	/**
@@ -1522,8 +1332,6 @@ public class BankPriceMovementPlugin extends Plugin
 			return;
 		}
 		lastBank = next;
-		note("Refresh: what you carry was re-read (" + carriedStacks(next) + " stacks, ge slots "
-			+ offers.slotsInUse() + ")");
 		s.setBank(next);
 		final Fingerprint last = lastFingerprint;
 		if (last != null && lastFingerprintHash == hash && Objects.equals(lastFingerprintProfile, profile))
@@ -1583,7 +1391,6 @@ public class BankPriceMovementPlugin extends Plugin
 		if (!bankOpen)
 		{
 			bankOpen = true;
-			note("bank interface opened");
 			notifyBankHold();
 		}
 	}
@@ -1653,7 +1460,6 @@ public class BankPriceMovementPlugin extends Plugin
 	{
 		final boolean pending = bankPending;
 		bankOpen = false;
-		note("bank interface closed" + (pending ? ", a change was held" : ""));
 		if (pending)
 		{
 			readBankOnce(why);
@@ -1725,7 +1531,7 @@ public class BankPriceMovementPlugin extends Plugin
 				final ExchangeOffers offers = offersOf(c);
 				log.debug("bank-portfolio-tracker: bank hold - {}: read from the client's bank container, ge slots {}",
 					why, offers.slotsInUse());
-				captureBank(live.getItems(), inventoryOf(c), wornOf(c), offers, liveHash, liveProfile, why);
+				captureBank(live.getItems(), inventoryOf(c), wornOf(c), offers, liveHash, liveProfile);
 				return;
 			}
 		}
@@ -1752,7 +1558,7 @@ public class BankPriceMovementPlugin extends Plugin
 			+ " held at the last bank event, ge slots {}", why, loggedIn, items.length,
 			offers == null ? 0 : offers.slotsInUse());
 		captureBank(items, vouched ? inventoryOf(c) : heldInventory, vouched ? wornOf(c) : heldWorn, offers, hash,
-			profile, why);
+			profile);
 	}
 
 	/**
@@ -1843,8 +1649,6 @@ public class BankPriceMovementPlugin extends Plugin
 		lastOffers = null;
 		heldEvents = 0;
 		bankReads = 0;
-		bankEventsSeen = 0;
-		bankEventsDropped = 0;
 	}
 
 	/**

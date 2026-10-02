@@ -37,7 +37,6 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
-import java.util.regex.Pattern;
 import javax.annotation.Nullable;
 import javax.imageio.ImageIO;
 import javax.swing.AbstractButton;
@@ -1913,16 +1912,14 @@ public class BankPriceMovementPanelTest
 			BankPriceMovementPanel.COUNT_GRAND_EXCHANGE_TEXT,
 			// AU: the start-tab group's two dots, between the five switches and the preset row.
 			SidebarView.ITEMS.toString(), SidebarView.HISTORY.toString(),
-			// 1.0.8: and the troubleshooting item under them.
-			BankPriceMovementPanel.TROUBLESHOOT_TEXT,
 			// AH: the ninth and last ITEM, under the preset row. "Reset to default" is no longer among them -
 			// AH2 made it a button in the bottom row beside OK, so it is a child of that row and not an entry.
 			// It was the tenth until addendum AO deleted "Show stack value on rows" from the group above it.
 			BankPriceMovementPanel.SHOW_HOVER_TEXT_TEXT), itemTexts(menu));
 		// Z2: nine items - the eight switches and addendum AH's hover switch - with the preset row among them and,
 		// under everything, addendum AB's OK row carrying AH2's "Reset to default" button at its left end.
-		assertEquals("thirteen items (two of them AU's dots, one 1.0.8's troubleshooting, one 1.0.9 part 3's), the caption,"
-			+ " the preset row, the OK row, the version row and six separators", 23, menu.getComponentCount());
+		assertEquals("twelve items (two of them AU's dots, one 1.0.9 part 3's), the caption,"
+			+ " the preset row, the OK row, the version row and five separators", 21, menu.getComponentCount());
 		assertTrue("1.0.8: the header's rule first, under the name and the version", menu.getComponent(1) instanceof JSeparator);
 		assertTrue("then the rule under Refresh", menu.getComponent(3) instanceof JSeparator);
 		assertTrue("the third is between the card's three and the view's four", menu.getComponent(7) instanceof JSeparator);
@@ -2135,8 +2132,7 @@ public class BankPriceMovementPanelTest
 	/**
 	 * 1.0.8: a press on the login card's gear opens THE settings menu under that gear - the menu's invoker is the
 	 * gear that was pressed - and the same on the no-bank card. This needs a component that is really showing (a
-	 * popup can only be placed against one), so it runs only where there is a display, like
-	 * {@link TroubleshootDialogTest}'s window test.
+	 * popup can only be placed against one), so it runs only where there is a display.
 	 */
 	@Test
 	public void aPressOnAMessageCardsGearOpensTheSettingsMenuUnderIt() throws Exception
@@ -2699,8 +2695,6 @@ public class BankPriceMovementPanelTest
 			// AU: the two dots of "Tab to open on startup".
 			"Items",
 			"Net Worth History",
-			// 1.0.8: the troubleshooting item, right under the dots and above the rule that opens the preset group.
-			"Troubleshoot...",
 			// AH: the ninth and last entry, under the preset row and its rule - the only switch carrying a box
 			// it draws itself. "Reset to default" was an entry until AH2 moved it into the bottom row beside
 			// OK, so it is pinned by the bottom-row test instead.
@@ -2720,8 +2714,9 @@ public class BankPriceMovementPanelTest
 		// addendum AB's OK row - now carrying "Reset to default" as well (AH2) - after everything.
 		assertFalse("AH2: the way back to the default bands is a button in that row, not an entry",
 			texts.contains(BankPriceMovementPanel.RESET_PRESETS_TEXT));
-		assertEquals("thirteen items (AU's two dots, 1.0.8's troubleshooting and 1.0.9 part 3's Grand Exchange switch among"
-			+ " them), the caption, the preset row, the OK row, the version row and six separators", 23,
+		assertFalse("1.0.9 part 7: the Troubleshoot item is gone, label and all", texts.contains("Troubleshoot..."));
+		assertEquals("twelve items (AU's two dots and 1.0.9 part 3's Grand Exchange switch among them), the caption,"
+			+ " the preset row, the OK row, the version row and five separators", 21,
 			panel.heroMenu().getComponentCount());
 	}
 
@@ -3823,26 +3818,23 @@ public class BankPriceMovementPanelTest
 	{
 		buildWithHovers();
 		final JPopupMenu menu = panel.heroMenu();
-		assertEquals("eleven items, AU's caption, the troubleshooting item, the preset row, the hover switch, the OK row, the"
-			+ " version row and six separators", 23, menu.getComponentCount());
+		assertEquals("eleven items, AU's caption, the preset row, the hover switch, the OK row, the"
+			+ " version row and five separators", 21, menu.getComponentCount());
 		// 1.0.8: the header (the name over the version) and its rule come first, so everything else sits two places
 		// lower than before it.
 		assertTrue("the header's rule", menu.getComponent(1) instanceof JSeparator);
-		assertTrue("1.0.8: a rule above the troubleshooting item - the user, on the first look: without it the item"
-			+ " read as one more start-tab choice", menu.getComponent(17) instanceof JSeparator);
-		assertEquals("1.0.8: the troubleshooting item in its own group under the start-tab dots",
-			BankPriceMovementPanel.TROUBLESHOOT_TEXT, ((JMenuItem) menu.getComponent(18)).getText());
-		assertTrue("a rule under it (AU's, moved down two places by 1.0.8 and one more by 1.0.9 part 3)",
-			menu.getComponent(19) instanceof JSeparator);
-		assertSame("then the row", panel.presetRow(), menu.getComponent(20));
+		assertTrue("1.0.9 part 7: one rule under the start-tab dots, and no Troubleshoot item in a group of its own"
+			+ " (AU's rule, moved down two places by 1.0.8 and one more by 1.0.9 part 3)",
+			menu.getComponent(17) instanceof JSeparator);
+		assertSame("then the row", panel.presetRow(), menu.getComponent(18));
 		// AH: and in the space under it, where the user drew the box - the group's rule is the one above, so the
 		// hover switch joins this last group rather than starting another. AH2 took "Reset to default" out from
 		// between the two and put it in the bottom row.
-		assertSame(panel.showHoverTextItem(), menu.getComponent(21));
-		assertEquals(BankPriceMovementPanel.SHOW_HOVER_TEXT_TEXT, ((JMenuItem) menu.getComponent(21)).getText());
+		assertSame(panel.showHoverTextItem(), menu.getComponent(19));
+		assertEquals(BankPriceMovementPanel.SHOW_HOVER_TEXT_TEXT, ((JMenuItem) menu.getComponent(19)).getText());
 		assertSame("and the OK row under all of those (AB2), the menu's last thing again - the user moved the version"
-			+ " lines to the top (2026-09-30)", panel.okRow(), menu.getComponent(22));
-		assertEquals(22, menu.getComponentCount() - 1);
+			+ " lines to the top (2026-09-30)", panel.okRow(), menu.getComponent(20));
+		assertEquals(20, menu.getComponentCount() - 1);
 		assertFalse("the row is no menu element - which is what makes the popup window focusable",
 			panel.presetRow() instanceof MenuElement);
 		assertEquals("the caption addendum AB line AB3 asks for, pinned", "Preset price ranges",
@@ -4281,149 +4273,56 @@ public class BankPriceMovementPanelTest
 		}
 	}
 
-	// ---- 1.0.8: Troubleshoot... and the version row
+	// ---- 1.0.9 part 7: the Troubleshoot item is gone and the menu around it is as it was
 
 	/**
-	 * 1.0.8: the settings menu's troubleshooting item - its words, its place (right under the start-tab dots, above the
-	 * rule that opens the preset group) and its hover, which is behind "Show hover text" like every other.
+	 * 1.0.9 part 7: the settings menu has no "Troubleshoot..." item - in either state of "Show hover text" - and keeps
+	 * the header (the name over the version, the row of link marks and the rule under them), the group rules it had,
+	 * the preset row and the OK row last. Where the item and its own rule stood, the one rule that opens the preset
+	 * group follows the start-tab dots directly.
 	 */
 	@Test
-	public void theGearMenuHasATroubleshootItemUnderTheDotsWithAHover() throws Exception
+	public void theSettingsMenuHasNoTroubleshootItemAndKeepsItsHeaderVersionMarksAndOkRow() throws Exception
 	{
 		buildWithHovers();
+
+		assertMenuWithoutTroubleshoot();
+	}
+
+	@Test
+	public void theSettingsMenuHasNoTroubleshootItemWithTheHoversOffEither() throws Exception
+	{
+		build();
+
+		assertMenuWithoutTroubleshoot();
+	}
+
+	private void assertMenuWithoutTroubleshoot()
+	{
 		final JPopupMenu menu = panel.heroMenu();
-		final JMenuItem item = item(menu, BankPriceMovementPanel.TROUBLESHOOT_TEXT);
-
-		assertEquals("Troubleshoot...", BankPriceMovementPanel.TROUBLESHOOT_TEXT);
-		assertEquals("Check the plugin's connections and state, say what is wrong in plain words, and give you a report "
-			+ "to paste into a bug report. It holds no account or bank data.", BankPriceMovementPanel.TROUBLESHOOT_TIP);
-		assertEquals(BankPriceMovementPanel.TROUBLESHOOT_TIP, item.getToolTipText());
-		assertEquals(Widgets.sans(12), item.getFont());
-		final int at = Arrays.asList(menu.getComponents()).indexOf(item);
-		assertTrue("the item is in the menu", at > 0);
-		assertTrue("a rule above it, so it does not read as a start-tab choice (the user's ask on the first look)",
-			menu.getComponent(at - 1) instanceof JSeparator);
-		assertTrue("and the last start-tab dot above that", menu.getComponent(at - 2) instanceof JRadioButtonMenuItem);
-		assertTrue("and above the rule that opens the preset group", menu.getComponent(at + 1) instanceof JSeparator);
-		assertSame(panel.presetRow(), menu.getComponent(at + 2));
-	}
-
-	@Test
-	public void withTheHoversOffTheTroubleshootItemCarriesNone() throws Exception
-	{
-		build();
-
-		assertNull(item(panel.heroMenu(), BankPriceMovementPanel.TROUBLESHOOT_TEXT).getToolTipText());
-	}
-
-	/**
-	 * 1.0.8: the click hands the plugin's routine the window the panel is in - null here, the panel being in none -
-	 * once per click, and the item keeps its words: the window it opens carries the feedback now.
-	 */
-	@Test
-	public void clickingTroubleshootRunsThePluginsRoutineWithThePanelsWindow() throws Exception
-	{
-		build();
-		final List<java.awt.Window> owners = new ArrayList<>();
-		final AtomicInteger calls = new AtomicInteger();
-		panel.setTroubleshoot(owner ->
+		for (final Component c : menu.getComponents())
 		{
-			calls.incrementAndGet();
-			owners.add(owner);
-		});
-		final JMenuItem item = item(panel.heroMenu(), BankPriceMovementPanel.TROUBLESHOOT_TEXT);
-
-		onEdt(item::doClick);
-
-		assertEquals(1, calls.get());
-		assertNull("a panel in no window has no owner for the dialog, and the routine is told so", owners.get(0));
-		assertEquals("the item still says what it does", BankPriceMovementPanel.TROUBLESHOOT_TEXT, item.getText());
-		onEdt(item::doClick);
-		assertEquals("every click opens it again", 2, calls.get());
-	}
-
-	@Test
-	public void clickingTroubleshootWithNoRoutineDoesNothingAndThrowsNothing() throws Exception
-	{
-		build();
-		final JMenuItem item = item(panel.heroMenu(), BankPriceMovementPanel.TROUBLESHOOT_TEXT);
-
-		onEdt(item::doClick);
-
-		panel.setTroubleshoot(owner -> fail("unregistered"));
-		panel.setTroubleshoot(null);
-		onEdt(item::doClick);
-	}
-
-	/** The Sidebar section for the LIST card: the row count, the card, and no account in any spelling. */
-	@Test
-	public void theSidebarFactsNameTheRowCountAndTheCardAndNoAccount() throws Exception
-	{
-		build();
-		publish(rows(3), listedWith(summary()));
-
-		final Diagnostics.Facts.Builder builder = Diagnostics.Facts.builder();
-		onEdt(() -> panel.describeInto(builder));
-		final Diagnostics.Facts facts = builder.build();
-		final List<String> lines = facts.lines(Diagnostics.SIDEBAR);
-
-		assertEquals("the verdict reads the card off the facts", BankPriceMovementPanel.CARD_LIST, facts.card);
-		assertTrue(lines.toString(), lines.contains("card: LIST"));
-		assertTrue(lines.toString(), lines.contains("rows: 3"));
-		assertTrue(lines.toString(), lines.contains("tab: ITEMS"));
-		assertTrue(lines.toString(), lines.contains("band: all"));
-		assertTrue(lines.toString(), lines.contains("active: yes"));
-		assertTrue(lines.toString(), lines.contains("holding publishes: no"));
-		assertTrue(lines.toString(), lines.contains("a publish waiting: no"));
-		boolean stamped = false;
-		boolean windowed = false;
-		for (final String line : lines)
-		{
-			stamped |= Pattern.compile("last publish at: \\d\\d:\\d\\d:\\d\\d").matcher(line).matches();
-			windowed |= line.startsWith("window: ");
-			assertFalse("nothing that looks like a hash: " + line, Pattern.compile("\\d{15,}").matcher(line).find());
+			for (final String text : texts(c))
+			{
+				assertFalse("no Troubleshoot anywhere in the menu: " + text, text != null && text.startsWith("Troubleshoot"));
+			}
+			if (c instanceof JMenuItem)
+			{
+				assertFalse(((JMenuItem) c).getText(), ((JMenuItem) c).getText().startsWith("Troubleshoot"));
+			}
 		}
-		assertTrue("the last publish is stamped with a time of day: " + lines, stamped);
-		assertTrue(windowed);
-	}
+		assertEquals("twelve items, the caption, the preset row, the OK row, the header and five rules", 21,
+			menu.getComponentCount());
 
-	@Test
-	public void theSidebarFactsBeforeAnyPublishSayLoginAndNever() throws Exception
-	{
-		build();
-
-		final Diagnostics.Facts.Builder builder = Diagnostics.Facts.builder();
-		onEdt(() -> panel.describeInto(builder));
-		final Diagnostics.Facts facts = builder.build();
-
-		assertEquals(BankPriceMovementPanel.CARD_LOGIN, facts.card);
-		assertTrue(facts.lines(Diagnostics.SIDEBAR).contains("last publish at: never"));
-		assertTrue(facts.lines(Diagnostics.SIDEBAR).contains("rows: 0"));
-	}
-
-	@Test
-	public void aPublishThatArrivedWhileTheSidebarWasElsewhereIsReportedAsWaiting() throws Exception
-	{
-		build();
-		onEdt(() -> panel.onDeactivate());
-		publish(rows(3), listedWith(summary()));
-
-		final Diagnostics.Facts.Builder builder = Diagnostics.Facts.builder();
-		onEdt(() -> panel.describeInto(builder));
-		final List<String> lines = builder.build().lines(Diagnostics.SIDEBAR);
-
-		assertTrue(lines.toString(), lines.contains("active: no"));
-		assertTrue(lines.toString(), lines.contains("holding publishes: yes"));
-		assertTrue(lines.toString(), lines.contains("a publish waiting: yes"));
-		assertTrue("it was stored, not drawn", lines.contains("rows: 0"));
-	}
-
-	@Test
-	public void theDefaultClipboardIsTheSystemsAndItsSeamIsAField() throws Exception
-	{
-		build();
-
-		assertNotNull(panel.clipboard);
+		final Container header = (Container) menu.getComponent(0);
+		assertEquals("the name, the version and the row of link marks", 3, header.getComponentCount());
+		assertEquals("the version line", "Version " + Version.CURRENT, ((JLabel) header.getComponent(1)).getText());
+		assertEquals("the four link marks", 4, marksOf((Container) header.getComponent(2)).size());
+		assertTrue("the rule under the header", menu.getComponent(1) instanceof JSeparator);
+		assertSame("the OK row is still last", panel.okRow(), menu.getComponent(menu.getComponentCount() - 1));
+		assertTrue("the last start-tab dot, then the one rule that opens the preset group, then the row",
+			menu.getComponent(16) instanceof JRadioButtonMenuItem && menu.getComponent(17) instanceof JSeparator
+				&& menu.getComponent(18) == panel.presetRow());
 	}
 
 	// ---- addendum AB: the gear toggles (AB1) and the menu's OK button (AB2)
@@ -7026,7 +6925,7 @@ public class BankPriceMovementPanelTest
 			assertEquals("the box holds only the text field", 1, box.getComponentCount());
 			box.setText("r");
 			assertFalse("typed in: the placeholder goes", box.getText().isEmpty());
-			assertEquals("the settings menu is still 23 components", 23, panel.heroMenu().getComponentCount());
+			assertEquals("the settings menu is still 21 components", 21, panel.heroMenu().getComponentCount());
 		});
 		assertTrue("nothing is stored for a search", prefs.saves.isEmpty() && prefs.optionSaves.isEmpty()
 			&& prefs.heroSaves.isEmpty() && prefs.presetSaves.isEmpty() && prefs.foldSaves.isEmpty());
@@ -7331,23 +7230,6 @@ public class BankPriceMovementPanelTest
 				assertFalse("the panel asks for focus: " + line.trim(), code.contains("searchBox") && code.contains(ask));
 			}
 		}
-	}
-
-	/**
-	 * The typed text never reaches the Troubleshoot report: the sidebar facts carry counts and states, never the search -
-	 * and "rows" is still the rows the service published, not the rows shown.
-	 */
-	@Test
-	public void theTypedTextIsNotInTheTroubleshootFacts() throws Exception
-	{
-		build();
-		publish(searchBank(), listed(13, 6));
-		type("secretword");
-		final Diagnostics.Facts.Builder builder = Diagnostics.Facts.builder();
-		onEdt(() -> panel.describeInto(builder));
-		final List<String> lines = builder.build().lines(Diagnostics.SIDEBAR);
-		assertFalse(lines.toString(), lines.toString().contains("secretword"));
-		assertTrue(lines.toString(), lines.contains("rows: 6"));
 	}
 
 	/**

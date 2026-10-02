@@ -12,7 +12,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
-import javax.annotation.Nullable;
 import okhttp3.Call;
 import okhttp3.Callback;
 import okhttp3.OkHttpClient;
@@ -112,13 +111,6 @@ public class TradedPriceClient
 	private volatile boolean reported;
 
 	/**
-	 * Where every fetch's outcome is noted for the Troubleshoot report (1.0.8); null is a no-op. See
-	 * {@link GuidePriceClient#setFetchLog}.
-	 */
-	@Nullable
-	private volatile FetchLog fetchLog;
-
-	/**
 	 * @param client RuneLite's injected OkHttpClient; constructing one here is a Plugin Hub blocker
 	 * @param gson   RuneLite's injected Gson, for the same reason
 	 */
@@ -136,17 +128,6 @@ public class TradedPriceClient
 		this.gson = gson;
 	}
 
-	/**
-	 * Hands over the log this client notes each fetch into (1.0.8) - the twin of
-	 * {@link GuidePriceClient#setFetchLog}.
-	 *
-	 * @param fetchLog the plugin's; null stops the noting
-	 */
-	public void setFetchLog(@Nullable final FetchLog fetchLog)
-	{
-		this.fetchLog = fetchLog;
-	}
-
 	// ---------------------------------------------------------------- the two fetches (T2)
 
 	/**
@@ -159,7 +140,7 @@ public class TradedPriceClient
 	public CompletableFuture<Map<Integer, Quote>> fetchLatest(final long nowMillis)
 	{
 		log.debug("bank-portfolio-tracker: fetching the traded /latest snapshot at {}", nowMillis);
-		return request(FetchLog.LIVE_LATEST, latestUrl(), this::parseLatest);
+		return request(latestUrl(), this::parseLatest);
 	}
 
 	/**
@@ -179,7 +160,7 @@ public class TradedPriceClient
 			return failed(new WikiPriceException("no day to fetch a traded bucket for"));
 		}
 		log.debug("bank-portfolio-tracker: fetching the traded bucket of {} at {}", day, nowMillis);
-		return request(FetchLog.LIVE_BUCKETS, dayUrl(day), this::parseDay);
+		return request(dayUrl(day), this::parseDay);
 	}
 
 	/**
@@ -640,7 +621,7 @@ public class TradedPriceClient
 	 * dispatcher thread rather than routing it to {@code onFailure}, so a rethrow first would leave the caller's
 	 * in-flight flag claimed for the rest of the session.
 	 */
-	private <T> CompletableFuture<T> request(final String source, final String url, final BodyParser<T> parser)
+	private <T> CompletableFuture<T> request(final String url, final BodyParser<T> parser)
 	{
 		final CompletableFuture<T> future = new CompletableFuture<>();
 
@@ -665,7 +646,6 @@ public class TradedPriceClient
 			return future;
 		}
 
-		final long started = System.nanoTime();
 		try
 		{
 			final Call call = client.newCall(request);
@@ -676,58 +656,35 @@ public class TradedPriceClient
 				@Override
 				public void onFailure(final Call call, final IOException e)
 				{
-					final WikiPriceException failure = new WikiPriceException(
-						"traded-price request failed: " + messageOf(e), e);
-					noteFailed(source, started, 0, 0L, failure);
-					fail(future, url, failure);
+					fail(future, url, new WikiPriceException("traded-price request failed: " + messageOf(e), e));
 				}
 
 				@Override
 				public void onResponse(final Call call, final Response response)
 				{
 					final T value;
-					int code = 0;
-					long bytes = 0L;
 					try (Response closing = response)
 					{
-						code = closing.code();
-						final FetchLog fetches = fetchLog;
-						if (fetches != null)
-						{
-							fetches.serverDate(closing.header("Date"));
-						}
 						final String body = bodyText(closing);
-						bytes = body.length();
 						if (!closing.isSuccessful())
 						{
-							final WikiPriceException failure = httpFailure(code);
-							noteFailed(source, started, code, bytes, failure);
-							fail(future, url, failure);
+							fail(future, url, httpFailure(closing.code()));
 							return;
 						}
 						value = parser.parse(body);
 					}
 					catch (final IOException e)
 					{
-						final WikiPriceException failure = e instanceof WikiPriceException
+						fail(future, url, e instanceof WikiPriceException
 							? (WikiPriceException) e
-							: new WikiPriceException("could not read the traded-price response: " + messageOf(e), e);
-						noteFailed(source, started, code, bytes, failure);
-						fail(future, url, failure);
+							: new WikiPriceException("could not read the traded-price response: " + messageOf(e), e));
 						return;
 					}
 					catch (final Throwable t)
 					{
-						final WikiPriceException failure = new WikiPriceException(
-							"could not parse the traded-price response: " + messageOf(t), t);
-						noteFailed(source, started, code, bytes, failure);
-						failAndRethrow(future, url, failure, t);
+						failAndRethrow(future, url, new WikiPriceException(
+							"could not parse the traded-price response: " + messageOf(t), t), t);
 						return;
-					}
-					final FetchLog fetches = fetchLog;
-					if (fetches != null)
-					{
-						fetches.ok(source, code, elapsedMillis(started), bytes, sizeOf(value));
 					}
 					future.complete(value);
 				}
@@ -735,35 +692,10 @@ public class TradedPriceClient
 		}
 		catch (final Throwable t)
 		{
-			final WikiPriceException failure = new WikiPriceException(
-				"could not queue the traded-price request: " + messageOf(t), t);
-			noteFailed(source, started, 0, 0L, failure);
-			failAndRethrow(future, url, failure, t);
+			failAndRethrow(future, url, new WikiPriceException("could not queue the traded-price request: " + messageOf(t), t), t);
 		}
 
 		return future;
-	}
-
-	/** Notes a failed fetch in the log, if there is one (1.0.8). */
-	private void noteFailed(final String source, final long startedNanos, final int status, final long bytes,
-		final WikiPriceException failure)
-	{
-		final FetchLog fetches = fetchLog;
-		if (fetches != null)
-		{
-			fetches.failed(source, status, elapsedMillis(startedNanos), bytes, failure.getMessage());
-		}
-	}
-
-	private static long elapsedMillis(final long startedNanos)
-	{
-		return (System.nanoTime() - startedNanos) / 1_000_000L;
-	}
-
-	/** How many entries a parsed answer holds, for the log: a table's size. */
-	private static int sizeOf(final Object value)
-	{
-		return value instanceof Map ? ((Map<?, ?>) value).size() : 0;
 	}
 
 	/** The one way a request fails: {@link #report} it, THEN complete the future with it. */

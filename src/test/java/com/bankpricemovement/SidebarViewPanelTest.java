@@ -892,9 +892,9 @@ public class SidebarViewPanelTest
 		});
 	}
 
-	/** The row never touches the settings menu: still 23 components. */
+	/** The row never touches the settings menu: still 21 components (23 before 1.0.9 part 7 took Troubleshoot out). */
 	@Test
-	public void theSettingsMenuIsStillTwentyThreeComponents() throws Exception
+	public void theSettingsMenuIsStillTwentyOneComponents() throws Exception
 	{
 		build(new Asked(true));
 		publish(rows(3), status(withLegacyDays(), VALUE_NOW, NOW - 60_000L));
@@ -902,7 +902,7 @@ public class SidebarViewPanelTest
 		{
 			panel.pressView(SidebarView.HISTORY);
 			assertTrue(legacyRowShows());
-			assertEquals(23, panel.heroMenu().getComponentCount());
+			assertEquals(21, panel.heroMenu().getComponentCount());
 		});
 	}
 

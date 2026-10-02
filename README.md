@@ -30,7 +30,7 @@
 - **Untradeables** made from tradeable items, like a charged bow or crystal armour, count at their parts' prices.
 - **Grand Exchange offers** count too: unsold items, bought items waiting to be collected, and the coins committed or waiting in your offers.
 - **Privacy.** No account or bank data is ever uploaded. The plugin only fetches prices.
-- **Something wrong?** Click the settings icon, then Troubleshoot..., and paste the report in the Discord.
+- **Something wrong?** Tell us in the Discord.
 
 </td>
 <td width="28"></td>

@@ -48,12 +48,7 @@ total, one reading a day.
   on the way out, which closing the menu does anyway, since everything in here saves itself as you set it.
   Clicking the settings icon again while the menu is open closes it too: the icon is a switch, not just a way
   in. The menu opens with the plugin's name and which version of it you are running, as its header, and under the
-  version a row of marks for the 2hBuilds Discord, X and GitHub pages and this plugin's own GitHub page. **Troubleshoot...**,
-  under the start-tab choices, checks the plugin's connections and state, and opens a small window. It also
-  asks the Plugin Hub whether a newer version of the plugin exists, and says so first if there is one. The
-  window shows what is wrong in plain words, in one sentence at the top, with a line under it on what to do
-  next and how to send the report. Under that is a report to paste into a bug report, which **Copy report**
-  puts on the clipboard - it holds no account or bank data.
+  version a row of marks for the 2hBuilds Discord, X and GitHub pages and this plugin's own GitHub page.
 
 The gp band you set does **not** apply here: a portfolio is everything you own, coins included. Each of the
 three figures has its own switch, and a switch you turn off **removes** the line rather than blanking it - the
@@ -451,8 +446,21 @@ there the moment you open the sidebar.
   anyone would pay you for those parts. The ones it cannot are in it only when you ask for them, and then at
   their High Alchemy value, which is not what anyone would pay you for them. Whenever the total looks short, the
   stacks reading "-" in the list are the ones it is leaving out.
-- Items waiting to be collected from the Grand Exchange are not in your bank until you collect them, so neither
-  the list nor the Bank value counts them until then.
+- Your Grand Exchange offers count while *Include Grand Exchange offers* is on: unsold items, bought items waiting
+  to be collected, and the coins committed to or waiting in an offer. They are read when the bank closes and on
+  Refresh, not the moment an offer changes.
+
+## Something wrong?
+
+Tell us in the 2hBuilds Discord - the mark beside the settings icon opens it. Three things answer most questions:
+
+- **Which version you run.** The settings menu's header shows it.
+- **What the sidebar shows.** A screenshot of the card and the list. When prices could not be fetched, the card's
+  status line says so, and its hover (with *Show hover text* on) says why.
+- **The plugin's own log lines.** RuneLite keeps one log for the whole client, `.runelite\logs\client.log` in your
+  user folder, with the earlier days beside it as `client_<date>.log` for about a month. Every line of this plugin
+  starts with `bank-portfolio-tracker:` - one at start-up with the version, and one for each kind of problem the
+  first time it happens. Search the file for that prefix and paste those lines. They carry no account data.
 
 ## Licence
 

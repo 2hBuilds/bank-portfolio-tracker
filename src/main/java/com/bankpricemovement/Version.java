@@ -2,7 +2,7 @@ package com.bankpricemovement;
 
 /**
  * The plugin's version, in one place: the settings menu's last row prints it, the plugin's description ends with it,
- * the start-up line in the client log names it and the diagnostics report opens with it.
+ * and the start-up line in the client log names it.
  *
  * <p>It is bumped BY HAND each release, in step with {@code version=} in the export's
  * {@code runelite-plugin.properties} (the Hub reads that one). The export's {@code publish.py} refuses to commit when

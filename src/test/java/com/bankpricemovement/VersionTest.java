@@ -37,10 +37,10 @@ import org.junit.Test;
 
 /**
  * The version of the build (1.0.8): one constant, {@link Version#CURRENT}, and the three places a player meets it -
- * the plugin's description, the last row of the settings menu, and (pinned in the wiring and diagnostics tests) the
- * client log and the report. The number itself is not pinned to a literal here on purpose: a release bumps it by
- * hand, and a test that named it would fail the release for the right reason and the wrong place. The export's
- * {@code publish.py} is what checks it against the Hub's {@code version=}.
+ * the plugin's description, the header of the settings menu, and (pinned in the wiring test) the client log. The
+ * number itself is not pinned to a literal here on purpose: a release bumps it by hand, and a test that named it would
+ * fail the release for the right reason and the wrong place. The export's {@code publish.py} is what checks it
+ * against the Hub's {@code version=}.
  */
 public class VersionTest
 {
@@ -160,8 +160,8 @@ public class VersionTest
 	 * Discord, X, GitHub for the 2hBuilds profile and GitHub again for this plugin's page (the two GitHub marks are the
 	 * same picture on purpose, told apart by their hovers) - with the hovers "Discord", "X", "2hBuilds on GitHub" and
 	 * "This plugin on GitHub", ON with the hover switch off (which is what this panel is built with). The row lives
-	 * inside the header, so the menu still has its 23 components (22 before 1.0.9 part 3's Grand Exchange item) and
-	 * every position in it is where it was.
+	 * inside the header, so the menu has the 21 components it has without the Troubleshoot item (22 before 1.0.9 part 3's
+	 * Grand Exchange item, 23 with the Troubleshoot item and its rule) and nothing else in it moved.
 	 */
 	@Test
 	public void theHeadersThirdChildIsARowOfFourLinkMarks() throws Exception
@@ -170,7 +170,7 @@ public class VersionTest
 		SwingUtilities.invokeAndWait(() ->
 		{
 			assertFalse("the switch is off", panel.options().showHoverText());
-			assertEquals("the links row lives inside the header: the menu's count is what it was", 23,
+			assertEquals("the links row lives inside the header: the menu's count is what the menu has", 21,
 				panel.heroMenu().getComponentCount());
 			final Container links = linksRowOf(panel);
 			final List<JLabel> marks = linkMarks(links);

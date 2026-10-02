@@ -160,7 +160,7 @@ public final class ExchangeOffers
 		return cashGp() <= 0L && items().length == 0;
 	}
 
-	/** How many of the slots are not empty, for the diagnostics line and the Refresh note. */
+	/** How many of the slots are not empty, for the debug lines. */
 	public int slotsInUse()
 	{
 		int count = 0;

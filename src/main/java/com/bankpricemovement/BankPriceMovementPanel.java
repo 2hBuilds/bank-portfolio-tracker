@@ -16,9 +16,6 @@ import java.awt.GridBagLayout;
 import java.awt.GridLayout;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
-import java.awt.Toolkit;
-import java.awt.Window;
-import java.awt.datatransfer.StringSelection;
 import java.awt.event.ActionEvent;
 import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
@@ -31,7 +28,6 @@ import java.text.ParseException;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -40,7 +36,6 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -122,7 +117,7 @@ import org.slf4j.LoggerFactory;
  * only the band's rows, and a recompute with a hop to the client thread is not a thing a keystroke may cost - so the
  * band, the sort and the prices are untouched, the count reads the rows shown against the bank's items, and a search
  * that leaves nothing is its own EMPTY card ({@link #NO_MATCH_TEXT}). The text is session state: no config key, not
- * remembered, never logged and never in the troubleshooting report.
+ * remembered and never logged.
  *
  * <p><b>Two views since addendum AU</b> ({@code docs/handoff/plan-AU-history-2026-09-27.md} section 7.2, the phase-0
  * contract's sections 6-7 and amendments 9.6-9.15). An "Items | Net Worth History" toggle with one grey caption line
@@ -699,15 +694,6 @@ public class BankPriceMovementPanel extends PluginPanel
 	 * 2026-09-30; the version line's grey and the title's size now live with the header in {@link SupportLinks}.)
 	 */
 	public static final String VERSION_NAME_TEXT = "2h Bank Portfolio Tracker";
-	private static final DateTimeFormatter CLOCK_SECONDS = DateTimeFormatter.ofPattern("HH:mm:ss", Locale.ROOT);
-	/**
-	 * The menu item that opens the troubleshooting window (1.0.8), after the start-tab dots: it runs a few checks, says
-	 * what is wrong in plain words and offers a report to paste into a bug report.
-	 */
-	public static final String TROUBLESHOOT_TEXT = "Troubleshoot...";
-	/** Its hover, behind "Show hover text" like every other: what it does, and what its report does not hold. */
-	public static final String TROUBLESHOOT_TIP = "Check the plugin's connections and state, say what is wrong in plain "
-		+ "words, and give you a report to paste into a bug report. It holds no account or bank data.";
 	/**
 	 * The tooltip of the refresh link (addendum S, line S2;
 	 * {@code docs/bank-price-movement-addendum-S-2026-09-11.md}): what the control does, and the fact that decides
@@ -948,31 +934,6 @@ public class BankPriceMovementPanel extends PluginPanel
 	private JPanel okRow;
 	/** The way out of the menu (AB2). */
 	private JButton okButton;
-	/** The menu's item that opens the troubleshooting window (1.0.8). */
-	private JMenuItem troubleshootItem;
-	/**
-	 * The plugin's short memory (1.0.8): handed over by {@link #setDiagnostics}. Never null - a panel built without
-	 * one (every headless test) keeps a private memory of its own, so the clipboard's one warning needs no guard.
-	 */
-	private volatile Diagnostics diagnostics = new Diagnostics();
-	/**
-	 * What the menu item does when clicked (1.0.8): the plugin's routine, handed the window the dialog should belong to
-	 * (this panel's ancestor, null while it has none). Null while there is none - a panel built without a plugin, or
-	 * one whose plugin has shut down - and the click then does nothing. Volatile because the plugin hands it over from
-	 * startUp and takes it back in shutDown, and the only reader is the click on the EDT.
-	 */
-	@Nullable
-	private volatile Consumer<Window> troubleshoot;
-	/**
-	 * Where the troubleshooting window's <i>Copy report</i> puts the report: the system clipboard, as RuneLite's own
-	 * chat history plugin puts text on it. A field and not a constructor argument because the panel has a dozen
-	 * callers that know nothing of it; a test replaces it to read what would have been copied. The default is the
-	 * production one - it catches what a machine without a clipboard throws (a headless one, or another program
-	 * holding it) and says so once in the client log, so a click is never the reason an exception reaches the EDT.
-	 */
-	Consumer<String> clipboard = this::toSystemClipboard;
-	/** When the last publish ARRIVED, by {@link #clock}, stored or drawn; 0 before the first. For the report. */
-	private long lastPublishAtMillis;
 	private JPanel captionRow;
 	private JLabel captionLabel;
 	private JLabel refreshLabel;
@@ -1039,7 +1000,7 @@ public class BankPriceMovementPanel extends PluginPanel
 	 * The settings gear on {@link #loginCard} and on {@link #noBankCard}, one each because a label can sit in only
 	 * one container. The hero card is not on screen at these two cards, so without them a player who goes no
 	 * further than "Log in to load your bank" or "Open your bank once to load your items" could not reach the
-	 * settings menu, and with it Troubleshoot, which is the place to find out why the plugin got no further.
+	 * settings menu, whose header links to the Discord - the place to ask why the plugin got no further.
 	 */
 	private final JLabel loginGearLabel;
 	private final JLabel noBankGearLabel;
@@ -1095,8 +1056,8 @@ public class BankPriceMovementPanel extends PluginPanel
 	/**
 	 * {@link #rows} after the search - what the pages are built from and what "n items" counts as shown (1.0.9 part 4).
 	 * The very same list instance while there is no search, so a panel nobody has searched in holds one list and not two.
-	 * {@link #rows} itself stays what the service published: {@code total} and the troubleshooting report's row count
-	 * still mean the bank's rows under the band, and a narrowing is never mistaken for the service having sent fewer.
+	 * {@link #rows} itself stays what the service published: {@code total} still means the bank's rows under the band,
+	 * and a narrowing is never mistaken for the service having sent fewer.
 	 */
 	private List<MovementRow> matching = Collections.emptyList();
 	/** Set while {@link #applySearch} writes the box itself, so the document listener does not answer its own write. */
@@ -1618,15 +1579,6 @@ public class BankPriceMovementPanel extends PluginPanel
 			startTabItems[tab.ordinal()] = dot;
 			menu.add(dot);
 		}
-		// 1.0.8: the troubleshooting window, in its own group after the start-tab dots - the user, on the first look:
-		// without a line above it, it read as one more start-tab choice. A plain item: the click closes the menu
-		// and opens the window.
-		menu.addSeparator();
-		troubleshootItem = new JMenuItem(TROUBLESHOOT_TEXT);
-		troubleshootItem.setFont(Widgets.sans(12));
-		setHover(troubleshootItem, TROUBLESHOOT_TIP);
-		troubleshootItem.addActionListener(e -> openTroubleshoot());
-		menu.add(troubleshootItem);
 		// Z2: a third group, and the only one that is not a list of switches - the three quick bands, in boxes,
 		// with the way back to 100k / 1m / 10m now a button in the bottom row (AH2).
 		menu.addSeparator();
@@ -1788,85 +1740,6 @@ public class BankPriceMovementPanel extends PluginPanel
 			}
 		});
 		return field;
-	}
-
-	/**
-	 * The plugin's diagnostics memory (1.0.8), which the clipboard's one warning goes through. Any thread.
-	 *
-	 * @param diagnostics the plugin's; null keeps the panel's own private one
-	 */
-	public void setDiagnostics(@Nullable final Diagnostics diagnostics)
-	{
-		this.diagnostics = diagnostics == null ? new Diagnostics() : diagnostics;
-	}
-
-	/**
-	 * The routine the menu's <i>Troubleshoot...</i> runs (1.0.8). Any thread.
-	 *
-	 * @param troubleshoot given the window the dialog should belong to; null unregisters it, which is what
-	 *                     {@code shutDown} does
-	 */
-	public void setTroubleshoot(@Nullable final Consumer<Window> troubleshoot)
-	{
-		this.troubleshoot = troubleshoot;
-	}
-
-	/**
-	 * The menu item's click (1.0.8): hands the plugin's routine this panel's window, the RuneLite frame, for the dialog
-	 * to be owned by. The window may be null - a panel not yet in one - and the dialog then simply has no owner.
-	 */
-	private void openTroubleshoot()
-	{
-		final Consumer<Window> hook = troubleshoot;
-		if (hook != null)
-		{
-			hook.accept(SwingUtilities.getWindowAncestor(this));
-		}
-	}
-
-	/** The system clipboard as {@link #clipboard}'s default: never throws, and the first failure is a WARN. */
-	private void toSystemClipboard(final String text)
-	{
-		try
-		{
-			Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(text), null);
-		}
-		catch (final RuntimeException e)
-		{
-			// HeadlessException (a machine with no display) and IllegalStateException (the clipboard is busy) both land
-			// here; a report that cannot be copied is not worth an exception on the EDT.
-			diagnostics.warn(log, "clipboard", "bank-portfolio-tracker: could not put the diagnostics on the clipboard",
-				e);
-		}
-	}
-
-	/**
-	 * What the panel is showing, added to the Troubleshoot report's Sidebar section (1.0.8): the card, the tab, the
-	 * window, the sort, the band, the four flags of whether it is drawing, how long ago the last publish came and
-	 * how many rows it lists. Counts, times and states only: never a row, and never an account, a name or an item.
-	 * EDT.
-	 */
-	public void describeInto(final Diagnostics.Facts.Builder facts)
-	{
-		final RowFilter f = filter;
-		facts.card(chooseCard());
-		facts.line(Diagnostics.SIDEBAR, "tab", view.name());
-		facts.line(Diagnostics.SIDEBAR, "window", f.window().name());
-		facts.line(Diagnostics.SIDEBAR, "sort", f.sort().name() + (f.descending() ? " descending" : " ascending"));
-		facts.line(Diagnostics.SIDEBAR, "band", f.gpMin() <= 0L && f.gpMax() <= 0L ? "all"
-			: (f.gpMin() > 0L ? MovementMath.formatGp(f.gpMin()) : "0") + " to "
-			+ (f.gpMax() > 0L ? MovementMath.formatGp(f.gpMax()) : "max"));
-		facts.line(Diagnostics.SIDEBAR, "active", yesNo(active));
-		facts.line(Diagnostics.SIDEBAR, "holding publishes", yesNo(holding()));
-		facts.line(Diagnostics.SIDEBAR, "a publish waiting", yesNo(pendingPublish));
-		facts.line(Diagnostics.SIDEBAR, "last publish at", lastPublishAtMillis <= 0L ? "never"
-			: CLOCK_SECONDS.format(Instant.ofEpochMilli(lastPublishAtMillis).atZone(ZoneId.systemDefault())));
-		facts.line(Diagnostics.SIDEBAR, "rows", String.valueOf(rows.size()));
-	}
-
-	private static String yesNo(final boolean on)
-	{
-		return on ? "yes" : "no";
 	}
 
 	/**
@@ -3296,8 +3169,7 @@ public class BankPriceMovementPanel extends PluginPanel
 	 *
 	 * <p>Text that trims to what is already searched changes nothing - a space typed after a word, or Enter after the
 	 * keystroke that did the work - so the list is not built twice for one wish. Nothing is remembered: the search is
-	 * not a setting, and nothing is written. And the text is the player's: it is never logged and never in the
-	 * troubleshooting report.
+	 * not a setting, and nothing is written. And the text is the player's: it is never logged.
 	 */
 	void applySearch(@Nullable String text)
 	{
@@ -5063,7 +4935,6 @@ public class BankPriceMovementPanel extends PluginPanel
 			SwingUtilities.invokeLater(() -> onRows(newRows, newStatus));
 			return;
 		}
-		lastPublishAtMillis = clock.getAsLong();
 		if (carriesNewBank(newStatus))
 		{
 			// A read, not a re-statement: the hold is lifted for it (AS; see carriesNewBank). A no-op with the bank

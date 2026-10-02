@@ -30,9 +30,9 @@ import net.runelite.client.ui.ColorScheme;
  * and the window's close box all answer no. It is modal to the client window that owns it: the reader has been asked
  * something about their own numbers, and the sidebar behind it waits for the answer.
  *
- * <p><b>The model and the window are apart</b>, as {@link TroubleshootDialog}'s are. The panel of controls
- * ({@link #content}) is built without a window, so a test can press its buttons on a machine with no screen; the
- * {@link JDialog} that hosts it is made only by {@link #window}.
+ * <p><b>The model and the window are apart.</b> The panel of controls ({@link #content}) is built without a window,
+ * so a test can press its buttons on a machine with no screen; the {@link JDialog} that hosts it is made only by
+ * {@link #window}.
  */
 final class LegacyDialog
 {

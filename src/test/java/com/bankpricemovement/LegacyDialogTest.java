@@ -25,8 +25,8 @@ import org.junit.Test;
 
 /**
  * {@link LegacyDialog} (1.0.9 part 5), the question the History tab asks before it shows the days recorded before
- * 1.0.9: the controls are built without a window and pressed here, on the model {@link TroubleshootDialogTest} set; the
- * {@link JDialog} that hosts them is built (not shown) only where a display exists.
+ * 1.0.9: the controls are built without a window and pressed here; the {@link JDialog} that hosts them is built (not
+ * shown) only where a display exists.
  */
 public class LegacyDialogTest
 {
