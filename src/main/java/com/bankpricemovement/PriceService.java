@@ -2901,7 +2901,8 @@ public class PriceService
 				// nothing, so a login on a day with no reading yet - the next morning, the sidebar on another plugin,
 				// the bank opened unchanged (addendum AS reads nothing then) - left that day "carried" although the
 				// player logged in (plan 7.5 item 1). One computation, only then.
-				recordDay = loggedIn && bankPersist && accountHash > 0L && !hasBankHistoryTodayLocked(accountHash, profile);
+				recordDay = loggedIn && bankPersist && BankSnapshot.isAccount(accountHash)
+					&& !hasBankHistoryTodayLocked(accountHash, profile);
 			}
 			else
 			{
@@ -5809,7 +5810,7 @@ public class PriceService
 	@Nullable
 	private PriceStore.BankHistoryLoad loadBankHistoryFor(final long generation, final PricedBank bank)
 	{
-		if (bank.accountHash <= 0L)
+		if (!BankSnapshot.isAccount(bank.accountHash))
 		{
 			return null;
 		}
@@ -5827,7 +5828,8 @@ public class PriceService
 	/** Under the lock. Whether the series in memory is the one of the snapshot's owner. */
 	private boolean ownsBankHistoryLocked(final PricedBank bank)
 	{
-		return bankHistoryHash > 0L && bankHistoryHash == bank.accountHash && bankHistoryProfile.equals(bank.profileType);
+		return BankSnapshot.isAccount(bankHistoryHash) && bankHistoryHash == bank.accountHash
+			&& bankHistoryProfile.equals(bank.profileType);
 	}
 
 	/**
@@ -5847,11 +5849,11 @@ public class PriceService
 	 * this computation's reading into it when the computation IS a reading. Answers the point to write to the
 	 * store, or null when nothing is to be written.
 	 *
-	 * <p><b>Not a reading</b> (plan 7.1 item 6, 7.5 item 1, amendment 9.18): an owner hash {@code <= 0}; a made-up
-	 * bank ({@code persist} false); a snapshot holding GE-tradeable stacks of which not one is priced; and a client
-	 * that is not logged in - UNLESS this is the first computation to price a capture other than the one the last
-	 * reading priced, and that capture was taken today (the logout read of a bank captured that day). A DEGRADED
-	 * computation still records: "now" is still a guide price.
+	 * <p><b>Not a reading</b> (plan 7.1 item 6, 7.5 item 1, amendment 9.18): no owner (a hash of 0 or -1, see
+	 * {@link BankSnapshot#isAccount}); a made-up bank ({@code persist} false); a snapshot holding GE-tradeable stacks
+	 * of which not one is priced; and a client that is not logged in - UNLESS this is the first computation to price
+	 * a capture other than the one the last reading priced, and that capture was taken today (the logout read of a
+	 * bank captured that day). A DEGRADED computation still records: "now" is still a guide price.
 	 *
 	 * <p><b>Logged in means THIS owner is</b> (review finding H4): between a login and that account's own bank
 	 * landing, the service still holds the previous account's snapshot, and a computation of it then is not that
@@ -5883,7 +5885,7 @@ public class PriceService
 	private BankHistoryWrite foldBankHistoryLocked(final PricedBank bank, @Nullable final PriceStore.BankHistoryLoad load,
 		@Nullable final BankHistoryCells cells, final long readAt, final LocalDate today)
 	{
-		if (bank.accountHash <= 0L)
+		if (!BankSnapshot.isAccount(bank.accountHash))
 		{
 			// The drawn bank belongs to nobody: there is no one's history to draw.
 			bankHistory = BankHistorySeries.EMPTY;

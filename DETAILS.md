@@ -457,10 +457,11 @@ Tell us in the 2hBuilds Discord - the mark beside the settings icon opens it. Th
 - **Which version you run.** The settings menu's header shows it.
 - **What the sidebar shows.** A screenshot of the card and the list. When prices could not be fetched, the card's
   status line says so, and its hover (with *Show hover text* on) says why.
-- **The plugin's own log lines.** RuneLite keeps one log for the whole client, `.runelite\logs\client.log` in your
-  user folder, with the earlier days beside it as `client_<date>.log` for about a month. Every line of this plugin
-  starts with `bank-portfolio-tracker:` - one at start-up with the version, and one for each kind of problem the
-  first time it happens. Search the file for that prefix and paste those lines. They carry no account data.
+- **The plugin's log lines.** RuneLite keeps one log for the whole client. To find it, right-click the camera icon
+  at the top of the RuneLite window, click *Open screenshot folder...*, go up one folder and open `logs`. The file
+  is `client.log` (Windows may show it as just `client`). Search it for `bank-portfolio-tracker` and for
+  `bankpricemovement`, and paste the lines from the day it went wrong. Nothing in them can log anyone in, but they
+  can show your computer's user name, so send them in a direct message.
 
 ## Licence
 

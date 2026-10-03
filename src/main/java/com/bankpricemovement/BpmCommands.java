@@ -1100,7 +1100,7 @@ public class BpmCommands implements Function<String, String>
 		{
 			return error(NO_ACCOUNT);
 		}
-		if (account.hash() <= 0L)
+		if (!BankSnapshot.isAccount(account.hash()))
 		{
 			return error(NOT_LOGGED_IN);
 		}

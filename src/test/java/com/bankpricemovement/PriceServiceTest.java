@@ -970,6 +970,82 @@ public class PriceServiceTest
 		verify(store, times(1)).saveBank(synthetic);
 	}
 
+	/**
+	 * 1.0.10: a realistic 19-digit NEGATIVE account hash. RuneLite files such an account like any other - only -1 means
+	 * "not logged in yet".
+	 */
+	static final long NEG_ACCOUNT = -7_123_456_789_012_345_678L;
+
+	/**
+	 * T8 (sites 8, 9 and 10). Logged in as a negative account, that account's bank publishes as a bank, and the
+	 * computation that priced it IS a bank-history reading for that account: the store is asked for the owner's series
+	 * once - and not again by the next computation, which finds the series in memory - and handed this computation's
+	 * point.
+	 *
+	 * <p>Planted bugs this catches: the old {@code accountHash <= 0L} in {@code loadBankHistoryFor} (the store is never
+	 * asked for the series); in {@code foldBankHistoryLocked} (the series is cleared and nothing is recorded); the old
+	 * {@code bankHistoryHash > 0L} in {@code ownsBankHistoryLocked} (the second computation asks the store again).
+	 */
+	@Test
+	public void aNegativeAccountsBankIsPublishedAndItsReadingIsRecorded()
+	{
+		zonedService(ZoneOffset.UTC, false);
+		service.start();
+		service.setLoggedIn(true, NEG_ACCOUNT, PROFILE);
+
+		service.setBank(bank(T0, NEG_ACCOUNT));
+
+		assertTrue(lastStatus().loggedIn());
+		assertTrue("a negative account's bank is a bank", lastStatus().bankLoaded());
+		assertEquals(30, lastRows().size());
+		verify(store).loadBankHistory(NEG_ACCOUNT, PROFILE);
+		final ArgumentCaptor<BankHistoryPoint> point = ArgumentCaptor.forClass(BankHistoryPoint.class);
+		verify(store, atLeastOnce()).recordBankHistory(eq(NEG_ACCOUNT), eq(PROFILE), point.capture(),
+			eq(SEP_8));
+		assertEquals("the reading is the card's own total", lastStatus().portfolio().valueNow(),
+			point.getValue().valueFor(lastStatus().options()));
+		assertEquals("and the series the sidebar draws holds it", 1, lastStatus().bankHistory().size());
+		assertNotNull(lastStatus().bankHistory().on(SEP_8));
+
+		// The series is the owner's and in memory now: a second computation does not ask the store for it again.
+		service.setOptions(ViewOptions.DEFAULT.withCountCash(false));
+		verify(store, times(1)).loadBankHistory(NEG_ACCOUNT, PROFILE);
+	}
+
+	/**
+	 * T9 (site 7, review finding H3's re-login). The account whose bank is held logs in again on a day with no reading
+	 * yet - the next morning, with the sidebar on another plugin - and that login schedules the ONE computation that
+	 * records the day. Under a negative account it did not: the test that decides it was {@code accountHash > 0L}.
+	 *
+	 * <p>Planted bug this catches: the old rule in {@code setLoggedIn} (no computation, no reading for the new day).
+	 */
+	@Test
+	public void aReLoginOfANegativeAccountOnADayWithNoReadingYetRecordsTheDay()
+	{
+		zonedService(ZoneOffset.UTC, false);
+		service.start();
+		service.setLoggedIn(true, NEG_ACCOUNT, PROFILE);
+		service.setBank(bank(T0, NEG_ACCOUNT));
+		assertNotNull(lastStatus().bankHistory().on(SEP_8));
+		service.setLoggedIn(false, NEG_ACCOUNT, PROFILE);
+		clock.set(T0 + DAY);
+		final int trips = clientThread.invocations;
+
+		service.setLoggedIn(true, NEG_ACCOUNT, PROFILE);
+
+		assertEquals("the login costs exactly one computation", trips + 1, clientThread.invocations);
+		assertNotNull("and the day of the login has its reading", lastStatus().bankHistory().on(SEP_9));
+		final ArgumentCaptor<BankHistoryPoint> points = ArgumentCaptor.forClass(BankHistoryPoint.class);
+		verify(store, atLeastOnce()).recordBankHistory(eq(NEG_ACCOUNT), eq(PROFILE), points.capture(), any());
+		assertEquals(SEP_9, points.getValue().day());
+
+		// A second re-login the same day finds the reading and costs no computation.
+		final int after = clientThread.invocations;
+		service.setLoggedIn(false, NEG_ACCOUNT, PROFILE);
+		service.setLoggedIn(true, NEG_ACCOUNT, PROFILE);
+		assertEquals(after, clientThread.invocations);
+	}
+
 	// ---------------------------------------------------------------- L10 + L3 + L6: the activation chain
 
 	/**

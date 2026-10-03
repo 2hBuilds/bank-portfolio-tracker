@@ -951,7 +951,8 @@ public class BankPriceMovementPlugin extends Plugin
 	 * event that arrives while the player is logging out or between accounts, and {@code Client.getAccountHash()}
 	 * answers -1 before a login (clone {@code com/jagex/oldscape/pub/OAuthApi.java:30-32}) while this plugin
 	 * spells "nobody" as 0. So: no capture unless the game state is {@code LOGGED_IN}, and none unless the hash
-	 * is a real account - otherwise the previous player's stacks could be written over
+	 * is a real account ({@link BankSnapshot#isAccount}: anything but 0 and -1, a negative hash included - 1.0.10) -
+	 * otherwise the previous player's stacks could be written over
 	 * {@code bank-<this account>-<profile>.json}, or a capture filed as {@code bank--1-STANDARD.json} that no
 	 * login will ever load.
 	 *
@@ -998,7 +999,7 @@ public class BankPriceMovementPlugin extends Plugin
 			return;
 		}
 		final long hash = rememberAccount();
-		if (hash <= 0)
+		if (!BankSnapshot.isAccount(hash))
 		{
 			// 1.0.8: no longer silent. The client answers -1 before it has named the account; a bank event in that
 			// window cannot be filed under anyone, so it is not read - and the player's sidebar then waits for the next
@@ -1311,7 +1312,7 @@ public class BankPriceMovementPlugin extends Plugin
 			return;
 		}
 		final long hash = rememberAccount();
-		if (hash <= 0L)
+		if (!BankSnapshot.isAccount(hash))
 		{
 			return;
 		}
@@ -1523,7 +1524,7 @@ public class BankPriceMovementPlugin extends Plugin
 		final boolean loggedIn = c.getGameState() == GameState.LOGGED_IN;
 		final long liveHash = loggedIn ? rememberAccount() : 0L;
 		final String liveProfile = profileType;
-		if (liveHash > 0L)
+		if (BankSnapshot.isAccount(liveHash))
 		{
 			final ItemContainer live = c.getItemContainer(BankReader.BANK_CONTAINER_ID);
 			if (live != null)
@@ -1539,7 +1540,7 @@ public class BankPriceMovementPlugin extends Plugin
 		if (items == null)
 		{
 			log.debug("bank-portfolio-tracker: bank hold - {}: no bank container and nothing held, nothing read", why);
-			if (loggedIn && liveHash <= 0L)
+			if (loggedIn && !BankSnapshot.isAccount(liveHash))
 			{
 				// The read wanted the live bank and the client would not name the account: the same drop as a bank
 				// event's (1.0.8).
@@ -1549,7 +1550,8 @@ public class BankPriceMovementPlugin extends Plugin
 		}
 		final long hash = heldHash;
 		final String profile = heldProfile;
-		final boolean vouched = liveHash > 0L && liveHash == hash && Objects.equals(liveProfile, profile);
+		final boolean vouched = BankSnapshot.isAccount(liveHash) && liveHash == hash
+			&& Objects.equals(liveProfile, profile);
 		// 1.0.9 part 3: the offers follow the carried pair's rule - the client's while it vouches for this account, the
 		// last copy an offer event left when it cannot (the logout). Null, which a run that has seen no offer event
 		// has, reads as none.

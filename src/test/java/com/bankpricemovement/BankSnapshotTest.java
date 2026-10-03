@@ -61,6 +61,23 @@ public class BankSnapshotTest
 		assertEquals(BankSnapshot.DEFAULT_PROFILE_TYPE, bank.profileType);
 	}
 
+	/**
+	 * T1 (1.0.10). The one predicate every owner test goes through: only 0 (this plugin's "nobody") and -1 (what
+	 * {@code OAuthApi.getAccountHash()} answers before the client has logged in) have no account behind them. Every
+	 * other value is one - the negative ones included, which are as real as the positive ones.
+	 */
+	@Test
+	public void onlyZeroAndMinusOneAreNotAnAccount()
+	{
+		assertFalse("the client's 'not logged in yet'", BankSnapshot.isAccount(-1L));
+		assertFalse("this plugin's 'nobody'", BankSnapshot.isAccount(0L));
+		assertTrue(BankSnapshot.isAccount(1L));
+		assertTrue("-2 is the nearest negative account, not an error", BankSnapshot.isAccount(-2L));
+		assertTrue(BankSnapshot.isAccount(-7_123_456_789_012_345_678L));
+		assertTrue(BankSnapshot.isAccount(Long.MIN_VALUE));
+		assertTrue(BankSnapshot.isAccount(Long.MAX_VALUE));
+	}
+
 	// ---------------------------------------------------------------- normalize
 
 	@Test

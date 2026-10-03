@@ -1928,6 +1928,29 @@ public class BpmCommandsTest
 	}
 
 	/**
+	 * T10 (1.0.10). Only 0 and -1 are nobody: an {@link BpmCommands.Account} that answers a NEGATIVE hash is a real
+	 * account (RuneLite files it like any other), so {@code bank=} is accepted and the staged snapshot is stamped with
+	 * it. The two refusals above stand.
+	 *
+	 * <p>Planted bug this catches: the old {@code account.hash() <= 0L} test (the verb answers
+	 * {@link BpmCommands#NOT_LOGGED_IN} and pushes nothing).
+	 */
+	@Test
+	public void aSyntheticBankIsAcceptedUnderANegativeAccount()
+	{
+		final long negative = -7_123_456_789_012_345_678L;
+		final BpmCommands negativeAccount = new BpmCommands(panel, service, gson, account(negative), shotDir(),
+			showing::get);
+
+		final JsonObject r = gson.fromJson(negativeAccount.apply("bank=4151:2"), JsonObject.class);
+
+		assertTrue(r.toString(), r.get("ok").getAsBoolean());
+		final ArgumentCaptor<BankSnapshot> pushed = ArgumentCaptor.forClass(BankSnapshot.class);
+		verify(service).setBank(pushed.capture(), eq(false));
+		assertEquals("stamped with the negative account", negative, pushed.getValue().accountHash);
+	}
+
+	/**
 	 * The contract's three-argument constructor serves every verb that needs no seam of its own: {@code bank=} is
 	 * refused because there is no live account to stamp the snapshot with, and since addendum AD {@code shot} is
 	 * refused too because there is no directory to write into - that one is pinned on its own, just below, since

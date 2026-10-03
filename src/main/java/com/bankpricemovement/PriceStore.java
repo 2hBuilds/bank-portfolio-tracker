@@ -445,7 +445,7 @@ public class PriceStore
 		{
 			return;
 		}
-		if (snapshot.accountHash <= 0L)
+		if (!BankSnapshot.isAccount(snapshot.accountHash))
 		{
 			log.debug("bank-portfolio-tracker: not saving a bank stamped with account {} - it has no owner",
 				snapshot.accountHash);
@@ -492,7 +492,7 @@ public class PriceStore
 	 * One account's history as it is on disk now (addendum AU, plan 7.1 item 5; contract section 4), with the
 	 * outcome of the read - which, unlike every other load here, is not folded into one "empty" answer:
 	 * <ul>
-	 * <li>{@link BankHistoryLoad.State#MISSING} - no such file (or an owner hash {@code <= 0}, which never has one):
+	 * <li>{@link BankHistoryLoad.State#MISSING} - no such file (or no owner, a hash of 0 or -1, which never has one):
 	 * start a series.</li>
 	 * <li>{@link BankHistoryLoad.State#LOADED} - the file read and parsed. An entry that does not parse is skipped
 	 * and the rest kept; an older schema is migrated, never read as empty.</li>
@@ -506,7 +506,7 @@ public class PriceStore
 	 */
 	public BankHistoryLoad loadBankHistory(final long accountHash, @Nullable final String profileType)
 	{
-		if (accountHash <= 0L)
+		if (!BankSnapshot.isAccount(accountHash))
 		{
 			return BankHistoryLoad.missing();
 		}
@@ -530,8 +530,8 @@ public class PriceStore
 	 * {@code today}, and replaces the file atomically through {@link #writeAtomic(Filepath, String)}. The series in
 	 * a caller's memory is never written straight out, so a second client's days are kept.
 	 *
-	 * <p>Writes NOTHING and answers false when: the owner hash is {@code <= 0} (as {@link #saveBank}); the point is
-	 * dated after {@code today}; there is no data directory; this session already failed to read the owner's file;
+	 * <p>Writes NOTHING and answers false when: there is no owner, a hash of 0 or -1 (as {@link #saveBank}); the point
+	 * is dated after {@code today}; there is no data directory; this session already failed to read the owner's file;
 	 * the fresh read FAILS now - which is then remembered for the rest of the session; or the clock is BEHIND the
 	 * file - at least as many stored readings are dated after {@code today} as on or before it, the new point
 	 * counted (review finding H1: a clock set back to 2000 must not prune years of readings as "the future"; a
@@ -562,7 +562,7 @@ public class PriceStore
 		{
 			return false;
 		}
-		if (accountHash <= 0L)
+		if (!BankSnapshot.isAccount(accountHash))
 		{
 			log.debug("bank-portfolio-tracker: not recording history for account {} - it has no owner", accountHash);
 			return false;

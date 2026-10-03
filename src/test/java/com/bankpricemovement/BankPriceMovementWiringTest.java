@@ -2382,6 +2382,8 @@ public class BankPriceMovementWiringTest
 	/** The account every hold test plays as, and a second one for the test that needs somebody else. */
 	private static final long ACCOUNT = 77L;
 	private static final long OTHER_ACCOUNT = 88L;
+	/** 1.0.10: a realistic 19-digit NEGATIVE account hash - a real account, as RuneLite files it. */
+	private static final long NEG = -7_123_456_789_012_345_678L;
 	private static final String STANDARD = RuneScapeProfileType.STANDARD.name();
 
 	private static final Item WHIP = new Item(4151, 1);
@@ -2783,6 +2785,194 @@ public class BankPriceMovementWiringTest
 			inventoryAtClose, r.carriedReads().get(1)[0]);
 		assertArrayEquals("and the worn gear likewise", wornAtClose, r.carriedReads().get(1)[1]);
 		assertFalse(r.isPending());
+	}
+
+	// ------------------------------------------- 1.0.10: a negative account hash is an account
+
+	/**
+	 * A rig whose client names {@link #NEG} and whose reader stamps every snapshot it reads with it, as the real one
+	 * stamps the hash it is handed.
+	 */
+	private static BankRig negativeRig() throws Exception
+	{
+		final BankRig r = new BankRig();
+		when(r.client.getAccountHash()).thenReturn(NEG);
+		when(r.reader.read(any(), anyLong(), anyString(), anyLong())).thenAnswer(invocation ->
+			new BankSnapshot(Collections.emptyList(), 1_000L, invocation.<Long>getArgument(1), STANDARD));
+		return r;
+	}
+
+	/** Whether the plugin has raised the "no account named" warning in this run (it is raised at most once). */
+	private static boolean droppedForWantOfAnAccount(final BankRig r) throws Exception
+	{
+		return ((java.util.Set<?>) field(r.plugin, "warnedKinds")).contains("no-hash");
+	}
+
+	/**
+	 * T2. RuneLite's contract is that only -1 means "not logged in": a negative hash is a real account and a clan
+	 * member's bank was never read because of the old {@code hash <= 0} test. A bank event while {@code LOGGED_IN}
+	 * under {@link #NEG} is READ - the reader is handed NEG, the service is handed a snapshot stamped NEG - and nothing
+	 * is dropped for want of an account.
+	 *
+	 * <p>Planted bug this catches: the old rule at the event ({@code hash <= 0}) - the event is dropped, nothing is
+	 * read, and the "no account named" warning is raised.
+	 */
+	@Test
+	public void aBankEventUnderANegativeAccountHashIsRead() throws Exception
+	{
+		final BankRig r = negativeRig();
+
+		r.bankEvent(bank());
+
+		verify(r.reader).read(any(), eq(NEG), eq(STANDARD), anyLong());
+		final ArgumentCaptor<BankSnapshot> published = ArgumentCaptor.forClass(BankSnapshot.class);
+		verify(r.service).setBank(published.capture());
+		assertEquals("the service is handed a snapshot stamped with the negative account", NEG,
+			published.getValue().accountHash);
+		assertFalse("and nothing was dropped for want of an account", droppedForWantOfAnAccount(r));
+		assertEquals(NEG, (long) field(r.plugin, "lastFingerprintHash"));
+	}
+
+	/**
+	 * T3. The two values that really are "nobody" - -1, which the client answers before the account is named, and 0,
+	 * this plugin's own spelling - are still not read, and the drop still says so once.
+	 */
+	@Test
+	public void aBankEventUnderMinusOneOrZeroIsStillNotRead() throws Exception
+	{
+		for (long nobody : new long[]{-1L, 0L})
+		{
+			final BankRig r = new BankRig();
+			when(r.client.getAccountHash()).thenReturn(nobody);
+
+			r.bankEvent(bank());
+
+			assertEquals(nobody + ": nothing is read", 0, r.reads());
+			verify(r.service, never()).setBank(any(BankSnapshot.class));
+			assertTrue(nobody + ": and the drop is noted", droppedForWantOfAnAccount(r));
+		}
+	}
+
+	/**
+	 * T4 (sites 3 and 5). Under a negative account a change held while the bank is open is read ONCE at the close,
+	 * from the client's own bank container, under NEG, with the carried half as the client holds it.
+	 *
+	 * <p>Planted bug this catches: the old rule at the event (the change is never held - fails "held") or at the close
+	 * (the live container is not asked - the held slots are read instead and the slots differ).
+	 */
+	@Test
+	public void underANegativeAccountAHeldChangeIsReadOnceAtTheClose() throws Exception
+	{
+		final BankRig r = negativeRig();
+		r.carrying(new Item[]{new Item(2434, 4)}, new Item[]{new Item(1127, 1)});
+		r.openBank();
+		r.bankEvent(bank());
+		assertEquals("the first bank of the run is read", 1, r.reads());
+		r.bankEvent(withdrew28Sharks());
+		assertTrue("a change with the bank open is held", r.isPending());
+		assertEquals("...and not read in front of the player", 1, r.reads());
+
+		final Item[] closing = {WHIP, new Item(385, 116), COINS};
+		final Item[] inventoryAtClose = {new Item(385, 84)};
+		final Item[] wornAtClose = {new Item(1127, 1), new Item(4151, 1)};
+		r.liveBank(closing);
+		r.carrying(inventoryAtClose, wornAtClose);
+		r.closeBank(true);
+
+		assertEquals("the close is ONE read", 2, r.reads());
+		assertArrayEquals("from the client's own container", closing, r.readSlots().get(1));
+		assertEquals("under the negative account", NEG, (long) r.readHashes().get(1));
+		assertArrayEquals(inventoryAtClose, r.carriedReads().get(1)[0]);
+		assertArrayEquals(wornAtClose, r.carriedReads().get(1)[1]);
+		assertFalse(r.isPending());
+		assertFalse(droppedForWantOfAnAccount(r));
+
+		r.closeBank(true);
+		assertEquals("a second close has nothing to read", 2, r.reads());
+	}
+
+	/**
+	 * T4 (site 5, the vouching). With the container gone at the close the held slots are read under the account they
+	 * arrived with, and the client - which still names NEG - is asked for the carried half rather than the copies held
+	 * at the last event. The same account on both sides is what {@code vouched} compares.
+	 *
+	 * <p>Planted bug this catches: the old rule in {@code vouched} ({@code liveHash > 0L} - the held copies are used
+	 * and the carried read is the event's).
+	 */
+	@Test
+	public void underANegativeAccountTheClientVouchesForItAtTheClose() throws Exception
+	{
+		final BankRig r = negativeRig();
+		final Item[] inventoryAtEvent = {new Item(385, 28), new Item(1215, 1)};
+		r.carrying(inventoryAtEvent, new Item[]{new Item(1127, 1), new Item(-1, 0)});
+		r.openBank();
+		r.bankEvent(bank());
+		final Item[] lastEvent = withdrew28Sharks();
+		r.bankEvent(lastEvent);
+
+		final Item[] inventoryAtClose = {new Item(385, 27), new Item(-1, 0)};
+		final Item[] wornAtClose = {new Item(1127, 1), new Item(1215, 1)};
+		r.carrying(inventoryAtClose, wornAtClose);
+		r.liveBank(null);
+		r.closeBank(true);
+
+		assertEquals(2, r.reads());
+		assertArrayEquals("the slots held at the last event", lastEvent, r.readSlots().get(1));
+		assertEquals(NEG, (long) r.readHashes().get(1));
+		assertArrayEquals("the inventory as the client holds it at the close, not as held at the event",
+			inventoryAtClose, r.carriedReads().get(1)[0]);
+		assertArrayEquals(wornAtClose, r.carriedReads().get(1)[1]);
+	}
+
+	/**
+	 * T4 (site 4). A Refresh click with the bank open reads even with nothing held. With nothing held and no bank
+	 * container, the read has nothing to read and says nothing about an account when the client has named one - NEG
+	 * is named; -1 is not, and that one still raises the warning.
+	 *
+	 * <p>Planted bug this catches: the old rule in the "no hash" branch (the warning is raised for NEG).
+	 */
+	@Test
+	public void aReadWithNothingToReadOnlyComplainsOfAnAccountThatIsNotNamed() throws Exception
+	{
+		final BankRig named = negativeRig();
+		named.openBank();
+		named.liveBank(null);
+		named.plugin.captureHeldBank();
+		assertEquals("nothing held and no container: nothing read", 0, named.reads());
+		assertFalse("NEG is named, so there is nothing to complain of", droppedForWantOfAnAccount(named));
+
+		final BankRig unnamed = new BankRig();
+		when(unnamed.client.getAccountHash()).thenReturn(-1L);
+		unnamed.openBank();
+		unnamed.liveBank(null);
+		unnamed.plugin.captureHeldBank();
+		assertTrue("-1 is not an account", droppedForWantOfAnAccount(unnamed));
+	}
+
+	/**
+	 * T5 (site 2). The price Refresh's carried re-read re-stamps the bank the plugin holds under a negative account:
+	 * the stored bank is republished with the inventory and worn gear as the client holds them now, still stamped NEG.
+	 * Played from a bank the plugin already holds, so only the Refresh's own gate is in question.
+	 *
+	 * <p>Planted bug this catches: the old rule in {@code readCarriedOnClientThread} (it returns at once and nothing
+	 * is republished).
+	 */
+	@Test
+	public void theRefreshHooksCarriedReReadRestampsANegativeAccountsBank() throws Exception
+	{
+		final BankRig r = negativeRig();
+		r.answerCarriedReads();
+		final BankSnapshot stored = new BankSnapshot(Collections.emptyList(), 1_000L, NEG, STANDARD);
+		set(r.plugin, "lastBank", stored);
+		r.carrying(new Item[]{new Item(385, 20)}, new Item[]{new Item(1127, 1)});
+
+		r.plugin.readCarriedOnClientThread();
+
+		final ArgumentCaptor<BankSnapshot> published = ArgumentCaptor.forClass(BankSnapshot.class);
+		verify(r.service).setBank(published.capture());
+		assertEquals(NEG, published.getValue().accountHash);
+		assertEquals("the carried half was re-stamped by the read", 5L, published.getValue().carriedAtMillis);
+		assertEquals("the bank half is the stored one", stored.items, published.getValue().items);
 	}
 
 	/**

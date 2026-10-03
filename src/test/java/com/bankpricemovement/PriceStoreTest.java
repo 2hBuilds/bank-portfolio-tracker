@@ -249,6 +249,60 @@ public class PriceStoreTest
 		assertEquals(Arrays.asList("bank-7-STANDARD.json"), names());
 	}
 
+	/** 1.0.10: a realistic 19-digit NEGATIVE account hash - a real account, since only -1 means "not logged in". */
+	private static final long NEG = -7_123_456_789_012_345_678L;
+
+	/**
+	 * T6. RuneLite's contract is that only -1 means "not logged in yet" ({@code ConfigManager.findRSProfile} refuses
+	 * {@code ACCOUNT_HASH_INVALID} alone and packs every other hash into the profile key), so a negative hash is an
+	 * account and its bank has a file of its own, named with the sign: {@code bank--7123456789012345678-STANDARD.json}.
+	 * The same two values as ever - 0 and -1 - still write nothing.
+	 *
+	 * <p>Planted bug this catches: the old {@code accountHash <= 0L} guard in {@code saveBank} (nothing is written).
+	 */
+	@Test
+	public void aBankOfANegativeAccountIsWrittenAndReadBack()
+	{
+		final PriceStore store = store();
+		final BankSnapshot saved = snapshot(NEG, "STANDARD", 1_700_000_000_000L, item(4151, 1, "Abyssal whip", false));
+		store.saveBank(saved);
+
+		assertEquals(Arrays.asList("bank--7123456789012345678-STANDARD.json"), names());
+		final BankSnapshot loaded = store.loadBank(NEG, "STANDARD");
+		assertEquals(NEG, loaded.accountHash);
+		assertEquals(saved, loaded);
+		assertEquals("Abyssal whip", loaded.items.get(0).name);
+
+		store.saveBank(snapshot(-1L, "STANDARD", 2_000L, item(4151, 1, "Whip", false)));
+		store.saveBank(snapshot(0L, "STANDARD", 2_000L, item(4151, 1, "Whip", false)));
+		assertEquals("-1 and 0 still write nothing", 1, names().size());
+	}
+
+	/**
+	 * T11. The sweep never touches a bank or a history file, so the two files of a negative account - whose names
+	 * carry a second dash, {@code bank--<n>-STANDARD.json} and {@code history--<n>-STANDARD.json} - stay in place
+	 * while a stale file beside them goes.
+	 */
+	@Test
+	public void theSweepLeavesTheFilesOfANegativeAccountAlone() throws IOException
+	{
+		final PriceStore store = store();
+		store.saveBank(snapshot(NEG, "STANDARD", 1L, item(4151, 1, "Whip", false)));
+		final long[] cells = new long[BankHistoryPoint.CELLS];
+		for (int i = 0; i < cells.length; i++)
+		{
+			cells[i] = 100L + i;
+		}
+		assertTrue(store.recordBankHistory(NEG, "STANDARD", new BankHistoryPoint(LocalDate.of(2026, 9, 28), 2L, 1L,
+			cells, null), LocalDate.of(2026, 9, 28)));
+		write(TestFilepaths.at(tmp.getRoot(), PriceStore.LEGACY_LATEST_FILE), "{\"points\":{\"658\":[1848,999]}}");
+
+		assertEquals("only the stale price file goes", 1, store.deleteStaleFiles());
+
+		assertEquals(Arrays.asList("bank--7123456789012345678-STANDARD.json",
+			"history--7123456789012345678-STANDARD.json"), names());
+	}
+
 	/**
 	 * The store normalises whatever it read: the file may come from an older build or a hand edit, and every
 	 * caller downstream assumes a clean item list (C5).

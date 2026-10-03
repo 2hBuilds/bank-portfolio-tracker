@@ -135,6 +135,21 @@ public class BankSnapshot
 	 */
 	public long carriedAtMillis;
 
+	/**
+	 * Whether {@code accountHash} names a real RuneScape account - the one test every site that files, loads or reads a
+	 * bank by its owner asks (1.0.10). False for exactly two values: {@code 0}, this plugin's own spelling of "nobody",
+	 * and {@code -1}, what {@code OAuthApi.getAccountHash()} answers while the client has not logged in yet ("or -1 if
+	 * the client has not logged in yet"). True for every other value, NEGATIVE ones included: RuneLite's
+	 * {@code ConfigManager.findRSProfile} refuses only {@code ACCOUNT_HASH_INVALID} (-1) and packs all 64 bits of any
+	 * other hash into the profile key, so a negative hash is an ordinary account.
+	 *
+	 * @param accountHash {@code Client.getAccountHash()} or a stored owner hash
+	 */
+	public static boolean isAccount(final long accountHash)
+	{
+		return accountHash != 0L && accountHash != -1L;
+	}
+
 	public BankSnapshot()
 	{
 		items = new ArrayList<>();

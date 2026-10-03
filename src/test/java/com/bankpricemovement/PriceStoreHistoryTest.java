@@ -262,6 +262,33 @@ public class PriceStoreHistoryTest
 		assertTrue(names().isEmpty());
 	}
 
+	/**
+	 * T7 (1.0.10). Only 0 (this plugin's "nobody") and -1 (the client's "not logged in yet") have no owner; a NEGATIVE
+	 * hash is an account, so its reading is recorded in {@code history--<n>-STANDARD.json} and loads back LOADED with
+	 * that point, while -1 still answers false and MISSING.
+	 *
+	 * <p>Planted bug this catches: the old {@code accountHash <= 0L} guards in {@code recordBankHistory} and
+	 * {@code loadBankHistory} (the record answers false and writes nothing; the load answers MISSING).
+	 */
+	@Test
+	public void aNegativeAccountHasAHistoryOfItsOwn()
+	{
+		final long negative = -7_123_456_789_012_345_678L;
+		final PriceStore store = store();
+		final BankHistoryPoint p = point(TODAY, 5_000L, 100L, 200L);
+
+		assertTrue(store.recordBankHistory(negative, PROFILE, p, TODAY));
+
+		assertEquals(Arrays.asList("history--7123456789012345678-STANDARD.json"), names());
+		final PriceStore.BankHistoryLoad load = store.loadBankHistory(negative, PROFILE);
+		assertEquals(PriceStore.BankHistoryLoad.State.LOADED, load.state());
+		assertEquals(BankHistorySeries.EMPTY.with(p), load.series());
+
+		assertFalse("-1 still has no owner", store.recordBankHistory(-1L, PROFILE, p, TODAY));
+		assertEquals(PriceStore.BankHistoryLoad.State.MISSING, store.loadBankHistory(-1L, PROFILE).state());
+		assertEquals("and wrote nothing", 1, names().size());
+	}
+
 	@Test
 	public void accountsAndProfilesKeepTheirOwnHistories()
 	{
