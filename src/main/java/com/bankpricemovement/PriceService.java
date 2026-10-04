@@ -492,6 +492,12 @@ public class PriceService
 	 */
 	private int leftOutRows;
 	/**
+	 * Every stack of the last computation that ended on the alch rule, counted in the bank value or not (1.1.0 part G):
+	 * {@link Status#alchStacks()}, which is what lets the panel say "n of m items" over the alch stacks it lists and not
+	 * over the ones it keeps out of the list.
+	 */
+	private int alchStacksAll;
+	/**
 	 * The live day the last computation counted back from (U1), and the day each window's bucket really held
 	 * (null where a window had none). Set in {@link #commit} from the inputs that computation used, like the three
 	 * counts above and for the same reason: a status must never name a day its own figures were not built with.
@@ -1073,6 +1079,13 @@ public class PriceService
 		private final LiveStatus live;
 		/** The drawn bank's owner's daily readings (addendum AU); EMPTY from every public constructor. */
 		private final BankHistorySeries bankHistory;
+		/**
+		 * Every stack that ended on the alch rule, counted in the bank value or not (1.1.0 part G); 0 from every public
+		 * constructor.
+		 */
+		private final int alchStacks;
+		/** How many of those {@link #bankItems} counts (all of them with "Include alch-only untradeables" on, none off). */
+		private final int alchCounted;
 
 		/**
 		 * @param pricesAtMillis          when the guide prices in the rows were read (the last computation that
@@ -1196,11 +1209,18 @@ public class PriceService
 			this.degradedReason = degraded ? degradedReason : null;
 			this.portfolio = portfolio == null ? PortfolioSummary.EMPTY : portfolio;
 			this.bankHistory = BankHistorySeries.EMPTY;
+			this.alchStacks = 0;
+			this.alchCounted = 0;
 		}
 
-		/** Every field of {@code base}, with {@code bankHistory} in place of its series (amendment 9.3). */
-		private Status(final Status base, final BankHistorySeries bankHistory)
+		/**
+		 * Every field of {@code base}, with {@code bankHistory} in place of its series (amendment 9.3) and the two alch
+		 * counts of 1.1.0 part G.
+		 */
+		private Status(final Status base, final BankHistorySeries bankHistory, final int alchStacks, final int alchCounted)
 		{
+			this.alchStacks = alchStacks;
+			this.alchCounted = alchCounted;
 			this.pricesAtMillis = base.pricesAtMillis;
 			this.bankAtMillis = base.bankAtMillis;
 			this.bankLoaded = base.bankLoaded;
@@ -1237,7 +1257,36 @@ public class PriceService
 		 */
 		public Status withBankHistory(@Nullable final BankHistorySeries series)
 		{
-			return new Status(this, series == null ? BankHistorySeries.EMPTY : series);
+			return new Status(this, series == null ? BankHistorySeries.EMPTY : series, alchStacks, alchCounted);
+		}
+
+		/**
+		 * This status carrying the alch counts of its computation (1.1.0 part G) - how the service tells the panel how many
+		 * stacks ended on the alch rule and how many of them {@link #bankItems()} counts, so the panel can list or hide the
+		 * alch rows and still say "n of m items" over what it lists. Negative reads as 0.
+		 */
+		public Status withAlchStacks(final int all, final int counted)
+		{
+			return new Status(this, bankHistory, Math.max(0, all), Math.max(0, counted));
+		}
+
+		/**
+		 * Every stack of the bank that ended on the alch rule - an untradeable with no tradeable parts, or one whose parts
+		 * could not all be priced - whether or not "Include alch-only untradeables" counted it (1.1.0 part G). Over the
+		 * whole bank before the gp band. 0 for a status the service did not build.
+		 */
+		public int alchStacks()
+		{
+			return alchStacks;
+		}
+
+		/**
+		 * How many of {@link #alchStacks()} {@link #bankItems()} has in it: all of them while "Include alch-only
+		 * untradeables" is on, none while it is off (1.1.0 part G).
+		 */
+		public int alchCounted()
+		{
+			return alchCounted;
 		}
 
 		public long pricesAtMillis()
@@ -1734,6 +1783,13 @@ public class PriceService
 		 */
 		final Stacks everything;
 		/**
+		 * The alch-only stacks "Include alch-only untradeables" kept out of {@link #items} (1.1.0 part G), with the other
+		 * switches applied as they are: empty while that switch is on, because then {@link #items} holds them. They are
+		 * never priced, summed, counted or recorded - the rows draw them at their alch value ({@link #rowsAndPortfolio})
+		 * so the list can show them, and nothing else reads the list.
+		 */
+		final List<BankItem> droppedAlch;
+		/**
 		 * Where each stack's quantity is (Y3), by canonical id: {bank, inventory, worn, exchange}. Empty while no
 		 * source beside the bank merges anything, which is what leaves every row's split at zeros.
 		 */
@@ -1805,7 +1861,8 @@ public class PriceService
 		 */
 		final PricedBank priced;
 
-		Inputs(final Stacks stacks, final Stacks everything, final long currencyGp, final RowFilter filter,
+		Inputs(final Stacks stacks, final Stacks everything, final List<BankItem> droppedAlch, final long currencyGp,
+			final RowFilter filter,
 			final ViewOptions options, final Map<MovementWindow, PriceMap> baselines,
 			final Map<MovementWindow, GuideSnapshot> tables, final List<GuideSnapshot> inMemory, final GuideSnapshot r0,
 			final PriceMap r0Map, final Map<Integer, String> mapping, final Map<Integer, String> foldedNames,
@@ -1817,6 +1874,7 @@ public class PriceService
 			this.items = stacks.items;
 			this.splits = stacks.splits;
 			this.everything = everything;
+			this.droppedAlch = droppedAlch;
 			this.currencyGp = currencyGp;
 			this.filter = filter;
 			this.options = options;
@@ -2324,6 +2382,11 @@ public class PriceService
 		/** Stacks that ended on the alch rule and were left out with "Include alch-only untradeables" off (AV2). */
 		final int leftOut;
 		/**
+		 * Every stack that ended on the alch rule, counted or left out, and the alch-only stacks the switch kept out of the
+		 * computation altogether (1.1.0 part G) - the panel's m for the alch rows it lists.
+		 */
+		final int alchStacks;
+		/**
 		 * The whole snapshot's eight bank-history cells, priced by the same rule in the same pass (addendum AU);
 		 * null until {@link #finish} puts them on with {@link #withBankHistoryCells}.
 		 */
@@ -2331,13 +2394,14 @@ public class PriceService
 		final BankHistoryCells bankHistoryCells;
 
 		Computed(final List<MovementRow> rows, final PortfolioSummary summary, final int priced, final int live,
-			final int alch, final int leftOut)
+			final int alch, final int leftOut, final int alchStacks)
 		{
-			this(rows, summary, priced, live, alch, leftOut, null);
+			this(rows, summary, priced, live, alch, leftOut, alchStacks, null);
 		}
 
 		private Computed(final List<MovementRow> rows, final PortfolioSummary summary, final int priced,
-			final int live, final int alch, final int leftOut, @Nullable final BankHistoryCells bankHistoryCells)
+			final int live, final int alch, final int leftOut, final int alchStacks,
+			@Nullable final BankHistoryCells bankHistoryCells)
 		{
 			this.rows = rows;
 			this.summary = summary;
@@ -2345,13 +2409,14 @@ public class PriceService
 			this.live = live;
 			this.alch = alch;
 			this.leftOut = leftOut;
+			this.alchStacks = alchStacks;
 			this.bankHistoryCells = bankHistoryCells;
 		}
 
 		/** This computation with its bank-history cells on it. */
 		Computed withBankHistoryCells(@Nullable final BankHistoryCells cells)
 		{
-			return new Computed(rows, summary, priced, live, alch, leftOut, cells);
+			return new Computed(rows, summary, priced, live, alch, leftOut, alchStacks, cells);
 		}
 
 		/** Stacks priced from the Jagex guide table - a parts sum is guide prices summed (R3), so it counts here. */
@@ -4720,7 +4785,11 @@ public class PriceService
 			final ViewOptions allOn = options.withCountCash(true).withCountUntradeables(true).withCountInventory(true)
 				.withCountGrandExchange(true);
 			final Stacks everything = allOn.equals(options) ? counted : stacksOf(bank, allOn);
-			in = new Inputs(counted, everything, cashOf(bank, options),
+			// 1.1.0 part G: the Items list can show the alch rows whatever "Include alch-only untradeables" says, so the
+			// alch-only stacks that switch keeps out of `counted` are handed to the rows as well - and to nothing else.
+			final List<BankItem> droppedAlch = options.countUntradeables() ? Collections.<BankItem>emptyList()
+				: alchOnlyOf(stacksOf(bank, options.withCountUntradeables(true)).items);
+			in = new Inputs(counted, everything, droppedAlch, cashOf(bank, options),
 				filter, options, snapshotBaselines, snapshotTables, inMemory, r0, r0Map, mapping, foldedNames, owners,
 				snapshotQuotes, snapshotTraded, liveDay, liveOn, liveFailed, nowMillis / 1000L,
 				new PricedBank(bank, bankPersist));
@@ -5189,8 +5258,9 @@ public class PriceService
 	 * a computation that turns out to be superseded has changed nothing.
 	 *
 	 * <p>Since addendum AV the "now" of each stack is {@link #priceStacks}'s, and "Include alch-only untradeables"
-	 * acts here a second time, after pricing (AV2): a stack that ENDED on the alch rule is neither a row nor in the
-	 * bank value while it is off. A parts stack that priced is a row and counts whatever it says.
+	 * acts here a second time, after pricing (AV2): a stack that ENDED on the alch rule is not in the bank value while it
+	 * is off. Since 1.1.0 part G it is a ROW all the same - the Items list shows or hides alch rows by its own tick - so
+	 * the switch decides the SUM and nothing else. A parts stack that priced is a row and counts whatever it says.
 	 *
 	 * @param lookups    what the client-thread trip read, by canonical id
 	 * @param r0Values   R0's value per item of {@link Inputs#items} from {@link #agreement}, the "now" of a degraded
@@ -5229,6 +5299,8 @@ public class PriceService
 		// off. Null until the first one, so a bank that loses none hands the summary the very list it had before.
 		boolean[] leftOut = null;
 		int leftOutCount = 0;
+		// 1.1.0 part G: every stack that ended on the alch rule, counted or not.
+		int alchStacks = 0;
 		int priced = 0;
 		for (int i = 0; i < count; i++)
 		{
@@ -5279,9 +5351,19 @@ public class PriceService
 			// "the guide table has a price for it", and an alch value is a constant of the item.
 			if (price.kind == StackKind.ALCH)
 			{
-				// AV2: with "Include alch-only untradeables" off such a stack is neither a row nor in the bank value -
-				// whether it never had parts (keep() let it through only if it had) or one of its parts has no price
-				// today (the all-or-nothing rule of R2 stands).
+				// 1.1.0 part G: the stack is a ROW whatever the switch says - the Items list decides whether to show it
+				// (its own tick, and the search) - and the switch decides only whether it is in the bank value.
+				final MovementRow alchRow = MovementMath.alchRow(item);
+				all.add(in.withSplit(alchRow));
+				// An untradeable with no alch value becomes a row with no price, which the list drops like any unpriced
+				// row: it is not an alch row, and the alch counts the panel's "n of m" works with leave it out.
+				if (MovementMath.isAlch(alchRow))
+				{
+					alchStacks++;
+				}
+				// AV2: with "Include alch-only untradeables" off such a stack is not in the bank value - whether it never
+				// had parts (keep() let it through only if it had) or one of its parts has no price today (the
+				// all-or-nothing rule of R2 stands). It is left out of the SUM below, and out of m.
 				if (!in.options.countUntradeables())
 				{
 					if (leftOut == null)
@@ -5292,7 +5374,6 @@ public class PriceService
 					leftOutCount++;
 					continue;
 				}
-				all.add(in.withSplit(MovementMath.alchRow(item)));
 				alch++;
 				continue;
 			}
@@ -5338,6 +5419,17 @@ public class PriceService
 			}
 			bankNames.put(item.id, item.name);
 		}
+		// 1.1.0 part G: the alch-only stacks the switch kept out of the computation are rows too, at their alch value, and
+		// nothing else: never summed, never priced, never counted - they are not in `summed` below and not in m.
+		for (final BankItem item : in.droppedAlch)
+		{
+			final MovementRow alchRow = MovementMath.alchRow(item);
+			all.add(in.withSplit(alchRow));
+			if (MovementMath.isAlch(alchRow))
+			{
+				alchStacks++;
+			}
+		}
 		// AV2: the list the bank value is summed over - the switched stacks, less the ones just left out.
 		final List<BankItem> summed = leftOut == null ? in.items : without(in.items, leftOut);
 		// EMPTY only when there is genuinely nothing: a bank of nothing but coins has a value, and P1 puts it on the
@@ -5346,7 +5438,7 @@ public class PriceService
 			? PortfolioSummary.EMPTY
 			: summarise(in, summed, nowById, membersNames, bankNames, partsById, partNames, windowNow, windowThen,
 				live);
-		return new Computed(MovementMath.apply(all, in.filter), summary, priced, live, alch, leftOutCount);
+		return new Computed(MovementMath.apply(all, in.filter), summary, priced, live, alch, leftOutCount, alchStacks);
 	}
 
 	/** {@code items} without the stacks {@code drop} marks - a fresh list, in the same order. */
@@ -5692,6 +5784,7 @@ public class PriceService
 			guideRows = computed.guide();
 			alchRows = computed.alch;
 			leftOutRows = computed.leftOut;
+			alchStacksAll = computed.alchStacks;
 			// U1/U4: the live calendar these rows were computed on - the snapshot's own UTC date, and the day each
 			// window's bucket really held (U2's fallback included, because that is the day the rows compared
 			// against and the day the tooltip prints).
@@ -6373,7 +6466,10 @@ public class PriceService
 					windowDaysUsed)
 				: Status.LiveStatus.OFF)
 			// AU, amendment 9.3: the one place a status is built, so a status-only publish carries the series too.
-			.withBankHistory(bankHistory);
+			.withBankHistory(bankHistory)
+			// 1.1.0 part G: how many stacks ended on the alch rule, and how many of them bankItems has in it - all of them
+			// while the switch is on, none while it is off - so the panel can say "n of m items" over the alch rows it lists.
+			.withAlchStacks(alchStacksAll, optionsUsed.countUntradeables() ? alchStacksAll : 0);
 	}
 
 	/**
@@ -6873,6 +6969,20 @@ public class PriceService
 	private static boolean alchOnly(@Nullable final BankItem item)
 	{
 		return item != null && item.untradeable && !item.hasParts();
+	}
+
+	/** The alch-only stacks of {@code stacks} (1.1.0 part G), in their order: what {@link #keep} drops while the switch is off. */
+	private static List<BankItem> alchOnlyOf(final List<BankItem> stacks)
+	{
+		final List<BankItem> only = new ArrayList<>();
+		for (final BankItem item : stacks)
+		{
+			if (alchOnly(item))
+			{
+				only.add(item);
+			}
+		}
+		return only;
 	}
 
 	/**

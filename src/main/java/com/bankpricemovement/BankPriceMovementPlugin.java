@@ -2,6 +2,7 @@ package com.bankpricemovement;
 
 import com.google.gson.Gson;
 import com.google.inject.Provides;
+import java.awt.Color;
 import javax.annotation.Nullable;
 import javax.inject.Inject;
 import javax.inject.Named;
@@ -36,6 +37,7 @@ import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.ClientToolbar;
 import net.runelite.client.ui.ClientUI;
 import net.runelite.client.ui.NavigationButton;
+import net.runelite.client.ui.components.colorpicker.ColorPickerManager;
 import okhttp3.OkHttpClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -175,9 +177,10 @@ public class BankPriceMovementPlugin extends Plugin
 	 */
 	static final String FOLD_OPEN_KEY = "foldOpen";
 	/**
-	 * Addendum AU's start-tab setting, the sixteenth stored key: which of the sidebar's two tabs it opens on. It takes
+	 * Addendum AU's start-tab setting, the sixteenth stored key: which of the sidebar's two tabs it opens on - since
+	 * 1.1.0 part A the tab used LAST, written by the toggle's press and hidden from the settings page. It takes
 	 * a SIXTH {@code ConfigChanged} road ({@link #isStartTabKey(String)}) of the fold's shape: it is a piece of the
-	 * sidebar's SHAPE, so the panel's settings menu is told and nobody else - not the filter, not a figure, and not
+	 * sidebar's SHAPE, so the panel is told and nobody else - not the filter, not a figure, and not
 	 * the tab that is showing now.
 	 */
 	static final String START_TAB_KEY = "startTab";
@@ -188,6 +191,39 @@ public class BankPriceMovementPlugin extends Plugin
 	 * the service never is - no figure is recomputed, only which days of the history are drawn.
 	 */
 	static final String INCLUDE_LEGACY_KEY = "includeLegacyHistory";
+	/**
+	 * 1.1.0 part B's two colours, the nineteenth and twentieth stored keys: the colour a rise and a fall are drawn in, on
+	 * both tabs. They take a road of their own ({@link #isColourKey(String)}) of the fold's shape - the panel is told and the
+	 * service never is, because what is drawn changes and no figure does.
+	 */
+	static final String UP_COLOUR_KEY = "upColour";
+	static final String DOWN_COLOUR_KEY = "downColour";
+	/**
+	 * 1.1.0 part C's two keys, the twenty-first and twenty-second: whether the Net Worth History chart is drawn in one
+	 * colour, and which. They take a road of their own ({@link #isChartKey(String)}), the colours' twin - the panel is told
+	 * and the service never is.
+	 */
+	static final String SINGLE_CHART_KEY = "singleChartColour";
+	static final String CHART_COLOUR_KEY = "chartColour";
+	/**
+	 * 1.1.0 part E's key, the twenty-third: whether the sidebar hides every gp amount and item quantity (the eye on the hero
+	 * card). It takes a road of its own ({@link #isHideKey(String)}) of the fold's shape - the panel is told and the service
+	 * never is, because what is drawn changes and no figure does.
+	 */
+	static final String HIDE_AMOUNTS_KEY = "hideAmounts";
+	/**
+	 * 1.1.0 part G's key, the twenty-fourth: whether the Items list shows its alch rows (the tick in the List options menu). It
+	 * takes a road of its own ({@link #isAlchKey(String)}) of the same shape - the panel is told and the service never is, because
+	 * which rows are listed changes and no figure does.
+	 */
+	static final String SHOW_ALCH_KEY = "showAlchRows";
+	/**
+	 * 1.1.0 part J's two HIDDEN keys, the twenty-fifth and twenty-sixth: the rise and the fall the colour presets' Slot 1
+	 * holds. They take a road of their own ({@link #isSlotKey(String)}) of the colours' shape - the panel is told and the
+	 * service never is, because what the Slot 1 row shows changes and no figure does.
+	 */
+	static final String SLOT_UP_KEY = "slotUpColour";
+	static final String SLOT_DOWN_KEY = "slotDownColour";
 	/**
 	 * Addendum N's look switch, which addendum O deleted (O1). The key survives only as something to SWEEP:
 	 * see {@link #unstickLook()}.
@@ -215,6 +251,13 @@ public class BankPriceMovementPlugin extends Plugin
 	 */
 	@Inject
 	private ClientUI clientUI;
+
+	/**
+	 * RuneLite's own colour picker factory, an injectable singleton (the settings page and the bundled plugins use it):
+	 * the sidebar's "Up colour" and "Down colour" rows open its picker through {@link RuneLiteColourPicker}.
+	 */
+	@Inject
+	private ColorPickerManager colorPickerManager;
 
 	@Inject
 	private ItemManager itemManager;
@@ -501,7 +544,13 @@ public class BankPriceMovementPlugin extends Plugin
 		// client-thread read.
 		service = new PriceService(guide, store, itemManager, clientThread, executor, System::currentTimeMillis,
 			SwingUtilities::invokeLater, traded);
+		// 1.1.0 part B: the colours a rise and a fall are drawn in, set BEFORE the panel builds so its first paint is in them.
+		// A null colour - what a mock answers - is the built-in one. shutDown clears them: the palette is static, and a plugin
+		// that is switched off must leave the next one's sidebar (and every other painter in this process) as it found it.
+		Widgets.setMoveColours(config.upColour(), config.downColour());
 		panel = new BankPriceMovementPanel(itemManager, service, configPrefs());
+		// ...and RuneLite's colour picker behind the menu's two colour rows (null manager = the rows do nothing).
+		panel.setColourPicker(new RuneLiteColourPicker(colorPickerManager));
 		// 1.0.9: a press in the sidebar that leaves a text box hands the keyboard back to the game, as a click on the
 		// game does. RuneLite's own call, read from the field when the press happens (the panel never reaches for the
 		// JVM's global focus manager, which the Hub refuses).
@@ -529,12 +578,21 @@ public class BankPriceMovementPlugin extends Plugin
 		// is the statement that the STORED answer is the one it opens on. setFoldOpen and not pressFold: seeding is
 		// not a press, and writing the value back over itself would be a config write on every launch.
 		panel.setFoldOpen(foldOpenFromConfig());
-		// AU, and the panel alone once more: the menu's dot stands on the tab this profile chose. setStartTab and not
-		// pressStartTab, for setFoldOpen's reason - seeding is not a press and writes nothing back.
+		// AU, and the panel alone once more: the panel holds the tab this profile used last (1.1.0 part A) as the one to
+		// remember. setStartTab and not pressStartTab, for setFoldOpen's reason - seeding is not a press and writes
+		// nothing back.
 		panel.setStartTab(startTabFromConfig());
 		// 1.0.9 part 5, and the panel alone for the same reason: the History tab opens on the stored answer to "include
 		// days before 1.0.9". setIncludeLegacy and not pressLegacy - seeding is not a press and asks nothing.
 		panel.setIncludeLegacy(includeLegacyFromConfig());
+		// 1.1.0 part E, and the panel alone: the eye opens the way this profile last left it. applyHideAmounts and not
+		// pressHideAmounts - seeding is not a press and writes nothing back - and out loud, as the lines above are, because
+		// the panel has already asked the prefs seam while it built and this is the statement that the STORED answer is the
+		// one it opens on.
+		panel.applyHideAmounts(hideAmountsFromConfig());
+		// 1.1.0 part G, and the panel alone: the list opens with the alch rows in or out the way this profile left it.
+		// applyShowAlchRows and not pressShowAlchRows, for the reason the eye's seed above is not a press.
+		panel.applyShowAlchRows(showAlchFromConfig());
 		service.setFilter(filterFromConfig());
 		service.setOptions(options);
 		// Y2 (b): the Refresh link's second job. PriceService owns the cooldown and the re-check; what it
@@ -608,6 +666,8 @@ public class BankPriceMovementPlugin extends Plugin
 		// First, and unconditionally: the panel this points at is about to be thrown away, and the lab's HTTP
 		// thread can call in at any moment. A handler left by an earlier developer-mode run must go either way.
 		BpmDevBridge.handler = null;
+		// 1.1.0 part B: the colours are static (Widgets.move is), so they leave with the plugin.
+		Widgets.setMoveColours(null, null);
 		if (navButton != null)
 		{
 			clientToolbar.removeNavigation(navButton);
@@ -1995,6 +2055,78 @@ public class BankPriceMovementPlugin extends Plugin
 			}
 			return;
 		}
+		if (isColourKey(event.getKey()))
+		{
+			// 1.1.0 part B's road, the fold's twin: the colour a rise and a fall are drawn in is the sidebar's look, so
+			// the panel is told and nobody else - no figure is recomputed, so the service never is. Both colours are read
+			// whichever one changed: the panel takes the pair, and the one that did not change comes back as it was.
+			final Color up = upColourFromConfig();
+			final Color down = downColourFromConfig();
+			final BankPriceMovementPanel look = panel;
+			if (look != null)
+			{
+				// applyMoveColours and not the picker's own path: this IS the config, so writing it back would say nothing.
+				SwingUtilities.invokeLater(() -> look.applyMoveColours(up, down));
+			}
+			return;
+		}
+		if (isSlotKey(event.getKey()))
+		{
+			// 1.1.0 part J's road, the colours' twin: Slot 1's pair is the sidebar's look, so the panel is told and nobody
+			// else - no figure is recomputed, so the service never is. Both keys are read whichever one changed.
+			final Color up = slotUpFromConfig();
+			final Color down = slotDownFromConfig();
+			final BankPriceMovementPanel look = panel;
+			if (look != null)
+			{
+				// applySlotColours and not the menu's own save: this IS the config, so writing it back would say nothing.
+				SwingUtilities.invokeLater(() -> look.applySlotColours(up, down));
+			}
+			return;
+		}
+		if (isChartKey(event.getKey()))
+		{
+			// 1.1.0 part C's road, the colours' twin: the chart's colour is the sidebar's look, so the panel is told and
+			// nobody else - no figure is recomputed, so the service never is. Both keys are read whichever one changed: the
+			// panel takes the switch and the colour together, and the one that did not change comes back as it was.
+			final boolean single = singleChartFromConfig();
+			final Color colour = chartColourFromConfig();
+			final BankPriceMovementPanel look = panel;
+			if (look != null)
+			{
+				// applyChartColour and not the menu's own path: this IS the config, so writing it back would say nothing, and
+				// the menu's tick would bring the History tab into view for a change made on the settings page.
+				SwingUtilities.invokeLater(() -> look.applyChartColour(single, colour));
+			}
+			return;
+		}
+		if (isHideKey(event.getKey()))
+		{
+			// 1.1.0 part E's road, the fold's twin: whether the amounts are hidden is the sidebar's look, so the panel is told
+			// and nobody else - no figure is recomputed, so the service never is.
+			final boolean hide = hideAmountsFromConfig();
+			final BankPriceMovementPanel look = panel;
+			if (look != null)
+			{
+				// applyHideAmounts and not the eye's own press: this IS the config, so writing it back would say nothing, and
+				// pressing would flip a switch the settings page just set.
+				SwingUtilities.invokeLater(() -> look.applyHideAmounts(hide));
+			}
+			return;
+		}
+		if (isAlchKey(event.getKey()))
+		{
+			// 1.1.0 part G's road, the fold's twin: whether the list shows its alch rows is the sidebar's look, so the panel is
+			// told and nobody else - no figure is recomputed, so the service never is.
+			final boolean show = showAlchFromConfig();
+			final BankPriceMovementPanel look = panel;
+			if (look != null)
+			{
+				// applyShowAlchRows and not the menu's own press: this IS the config, so writing it back would say nothing.
+				SwingUtilities.invokeLater(() -> look.applyShowAlchRows(show));
+			}
+			return;
+		}
 		final RowFilter filter = filterFromConfig();
 		final BankPriceMovementPanel p = panel;
 		if (p != null)
@@ -2160,7 +2292,7 @@ public class BankPriceMovementPlugin extends Plugin
 
 	/**
 	 * The sixteenth stored key as the tab the sidebar opens on (AU) - the plugin's only reader of {@code startTab}:
-	 * the panel's {@code Prefs.loadStartTab}, the value {@link #startUp()} seeds the menu's dot with, and what
+	 * the panel's {@code Prefs.loadStartTab}, the value {@link #startUp()} seeds the panel's remembered tab with, and what
 	 * {@link #onConfigChanged} hands it when the item changes on the settings page. Never null: a config that answers
 	 * none (a mock) reads as {@link SidebarView#ITEMS}.
 	 */
@@ -2193,11 +2325,139 @@ public class BankPriceMovementPlugin extends Plugin
 	/**
 	 * Whether a {@code ConfigChanged} key is 1.0.9 part 5's "include days before 1.0.9" - a road of its own after the
 	 * start tab's, and like the fold's it reaches nothing but the panel. The settings page does not list the item
-	 * (it is hidden), so a change here comes from the tab's own check box or from a hand-edited profile.
+	 * (it is hidden), so a change here comes from the settings menu's own item or from a hand-edited profile.
 	 */
 	static boolean isLegacyKey(@Nullable String key)
 	{
 		return INCLUDE_LEGACY_KEY.equals(key);
+	}
+
+	/**
+	 * The nineteenth stored key as the colour a rise is drawn in (1.1.0 part B) - the plugin's only reader of
+	 * {@code upColour}: the panel's {@code Prefs.loadUpColour}, the value {@link #startUp()} sets the palette with, and what
+	 * {@link #onConfigChanged} hands the panel when the key changes. Null only for a config that answers none (a mock),
+	 * which the palette and the panel both read as the built-in green.
+	 */
+	@Nullable
+	Color upColourFromConfig()
+	{
+		return config.upColour();
+	}
+
+	/** The twentieth stored key as the colour a fall is drawn in: {@link #upColourFromConfig}'s twin for {@code downColour}. */
+	@Nullable
+	Color downColourFromConfig()
+	{
+		return config.downColour();
+	}
+
+	/**
+	 * Whether a {@code ConfigChanged} key is one of 1.1.0 part B's two colours - a road of its own, and like the fold's it
+	 * reaches nothing but the panel. Unlike the hidden items above it, the settings page DOES list these two, so a change
+	 * here comes from the sidebar's picker or from the page's own.
+	 */
+	static boolean isColourKey(@Nullable String key)
+	{
+		return UP_COLOUR_KEY.equals(key) || DOWN_COLOUR_KEY.equals(key);
+	}
+
+	/**
+	 * The twenty-fifth stored key as the colour Slot 1 holds for a rise (1.1.0 part J) - the plugin's only reader of
+	 * {@code slotUpColour}: the panel's {@code Prefs.loadSlotUpColour} and what {@link #onConfigChanged} hands the panel when
+	 * either slot key changes. Null only for a config that answers none (a mock), which the panel reads as Classic's.
+	 */
+	@Nullable
+	Color slotUpFromConfig()
+	{
+		return config.slotUpColour();
+	}
+
+	/** The twenty-sixth stored key as the colour Slot 1 holds for a fall: {@link #slotUpFromConfig}'s twin. */
+	@Nullable
+	Color slotDownFromConfig()
+	{
+		return config.slotDownColour();
+	}
+
+	/**
+	 * Whether a {@code ConfigChanged} key is one of 1.1.0 part J's two Slot 1 keys - a road of its own, the colours' twin,
+	 * reaching nothing but the panel. Both are hidden from the settings page, so a change here comes from the sidebar's save
+	 * row (which the panel's own write guard keeps from echoing) or from a hand-edited profile.
+	 */
+	static boolean isSlotKey(@Nullable String key)
+	{
+		return SLOT_UP_KEY.equals(key) || SLOT_DOWN_KEY.equals(key);
+	}
+
+	/**
+	 * The twenty-first stored key as the switch it is (1.1.0 part C): whether the Net Worth History chart is drawn in one
+	 * colour - the plugin's only reader of {@code singleChartColour}: the panel's {@code Prefs.loadSingleChartColour} and
+	 * what {@link #onConfigChanged} hands the panel when either chart key changes.
+	 */
+	boolean singleChartFromConfig()
+	{
+		return config.singleChartColour();
+	}
+
+	/**
+	 * The twenty-second stored key as the colour the chart is drawn in while that switch is on: the panel's
+	 * {@code Prefs.loadChartColour} and the other half of the road's pair. Null only for a config that answers none (a
+	 * mock), which the panel reads as the logo gold.
+	 */
+	@Nullable
+	Color chartColourFromConfig()
+	{
+		return config.chartColour();
+	}
+
+	/**
+	 * Whether a {@code ConfigChanged} key is one of 1.1.0 part C's two chart keys - a road of its own, the colours' twin,
+	 * reaching nothing but the panel. The settings page lists both, so a change here comes from the sidebar's menu or
+	 * from the page.
+	 */
+	static boolean isChartKey(@Nullable String key)
+	{
+		return SINGLE_CHART_KEY.equals(key) || CHART_COLOUR_KEY.equals(key);
+	}
+
+	/**
+	 * The twenty-third stored key as the switch it is (1.1.0 part E): whether the sidebar hides every gp amount and item
+	 * quantity - the plugin's only reader of {@code hideAmounts}: the panel's {@code Prefs.loadHideAmounts}, the value
+	 * {@link #startUp()} seeds the panel with, and what {@link #onConfigChanged} hands the panel when the key changes. A plain
+	 * {@code boolean}: the config's own default (false) answers a fresh profile.
+	 */
+	boolean hideAmountsFromConfig()
+	{
+		return config.hideAmounts();
+	}
+
+	/**
+	 * Whether a {@code ConfigChanged} key is 1.1.0 part E's "hide amounts" - a road of its own, the fold's twin, reaching
+	 * nothing but the panel. The settings page lists the item, so a change here comes from the eye or from the page.
+	 */
+	static boolean isHideKey(@Nullable String key)
+	{
+		return HIDE_AMOUNTS_KEY.equals(key);
+	}
+
+	/**
+	 * The twenty-fourth stored key as the switch it is (1.1.0 part G): whether the Items list shows its alch rows - the plugin's
+	 * only reader of {@code showAlchRows}: the panel's {@code Prefs.loadShowAlchRows}, the value {@link #startUp()} seeds the
+	 * panel with, and what {@link #onConfigChanged} hands the panel when the key changes. A plain {@code boolean}: the config's
+	 * own default (false) answers a fresh profile.
+	 */
+	boolean showAlchFromConfig()
+	{
+		return config.showAlchRows();
+	}
+
+	/**
+	 * Whether a {@code ConfigChanged} key is 1.1.0 part G's "show alch-only items" - a road of its own, the fold's twin, reaching
+	 * nothing but the panel. The settings page lists the item, so a change here comes from the menu's tick or from the page.
+	 */
+	static boolean isAlchKey(@Nullable String key)
+	{
+		return SHOW_ALCH_KEY.equals(key);
 	}
 
 	/**
@@ -2467,7 +2727,7 @@ public class BankPriceMovementPlugin extends Plugin
 				{
 					return;
 				}
-				// ONE key and no service, guarded as saveFoldOpen is: the menu's dot has already moved itself, and
+				// ONE key and no service, guarded as saveFoldOpen is: the toggle has already moved itself, and
 				// the ConfigChanged this write posts on this thread would only move it again.
 				final Thread outer = prefsWriter;
 				prefsWriter = Thread.currentThread();
@@ -2495,7 +2755,7 @@ public class BankPriceMovementPlugin extends Plugin
 				{
 					return;
 				}
-				// ONE key and no service, guarded as saveFoldOpen is (1.0.9 part 5): the check box that was ticked has
+				// ONE key and no service, guarded as saveFoldOpen is (1.0.9 part 5): the menu item that was ticked has
 				// already redrawn the tab itself (BankPriceMovementPanel.pressLegacy applies, then calls this), and the
 				// ConfigChanged this write posts on this thread would only draw it a second time.
 				final Thread outer = prefsWriter;
@@ -2509,7 +2769,132 @@ public class BankPriceMovementPlugin extends Plugin
 					prefsWriter = outer;
 				}
 			}
+
+			@Override
+			public Color loadUpColour()
+			{
+				return upColourFromConfig();
+			}
+
+			@Override
+			public void saveUpColour(Color colour)
+			{
+				saveColour(UP_COLOUR_KEY, colour);
+			}
+
+			@Override
+			public Color loadDownColour()
+			{
+				return downColourFromConfig();
+			}
+
+			@Override
+			public void saveDownColour(Color colour)
+			{
+				saveColour(DOWN_COLOUR_KEY, colour);
+			}
+
+			@Override
+			public Color loadSlotUpColour()
+			{
+				return slotUpFromConfig();
+			}
+
+			@Override
+			public void saveSlotUpColour(Color colour)
+			{
+				saveColour(SLOT_UP_KEY, colour);
+			}
+
+			@Override
+			public Color loadSlotDownColour()
+			{
+				return slotDownFromConfig();
+			}
+
+			@Override
+			public void saveSlotDownColour(Color colour)
+			{
+				saveColour(SLOT_DOWN_KEY, colour);
+			}
+
+			@Override
+			public Boolean loadSingleChartColour()
+			{
+				return singleChartFromConfig();
+			}
+
+			@Override
+			public void saveSingleChartColour(boolean single)
+			{
+				saveColour(SINGLE_CHART_KEY, single);
+			}
+
+			@Override
+			public Color loadChartColour()
+			{
+				return chartColourFromConfig();
+			}
+
+			@Override
+			public void saveChartColour(Color colour)
+			{
+				saveColour(CHART_COLOUR_KEY, colour);
+			}
+
+			@Override
+			public Boolean loadHideAmounts()
+			{
+				return hideAmountsFromConfig();
+			}
+
+			@Override
+			public void saveHideAmounts(boolean hide)
+			{
+				// One key and no service, guarded like the colour switches: the eye that was pressed has already redrawn the
+				// sidebar itself (BankPriceMovementPanel.pressHideAmounts applies, then calls this).
+				saveColour(HIDE_AMOUNTS_KEY, hide);
+			}
+
+			@Override
+			public Boolean loadShowAlchRows()
+			{
+				return showAlchFromConfig();
+			}
+
+			@Override
+			public void saveShowAlchRows(boolean show)
+			{
+				// One key and no service, guarded like the eye's: the tick that was pressed has already redrawn the list itself
+				// (BankPriceMovementPanel.pressShowAlchRows applies, then calls this).
+				saveColour(SHOW_ALCH_KEY, show);
+			}
 		};
+	}
+
+	/**
+	 * ONE colour or colour-switch key and no service, guarded as {@code saveFoldOpen} is (1.1.0 parts B and C): the picker,
+	 * the menu item or the Reset button that made the change has already drawn the sidebar in it itself (the panel
+	 * applies, then calls this), and the {@code ConfigChanged} this write posts on this thread would only draw it a second
+	 * time.
+	 */
+	private void saveColour(String key, @Nullable Object value)
+	{
+		final ConfigManager cm = configManager;
+		if (value == null || cm == null)
+		{
+			return;
+		}
+		final Thread outer = prefsWriter;
+		prefsWriter = Thread.currentThread();
+		try
+		{
+			cm.setConfiguration(BankPriceMovementConfig.GROUP, key, value);
+		}
+		finally
+		{
+			prefsWriter = outer;
+		}
 	}
 
 	private static Integer clampToInt(long gp)

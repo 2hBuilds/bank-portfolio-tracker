@@ -8,6 +8,8 @@ import java.awt.CardLayout;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Container;
+import java.awt.Cursor;
+import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.FontMetrics;
 import java.awt.Graphics;
@@ -22,6 +24,7 @@ import java.awt.event.ComponentEvent;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
 import java.awt.event.KeyEvent;
+import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.geom.RoundRectangle2D;
 import java.text.ParseException;
@@ -46,7 +49,6 @@ import javax.annotation.Nullable;
 import javax.swing.AbstractAction;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
-import javax.swing.ButtonGroup;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
 import javax.swing.JCheckBoxMenuItem;
@@ -56,7 +58,6 @@ import javax.swing.JLayer;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
-import javax.swing.JRadioButtonMenuItem;
 import javax.swing.JScrollBar;
 import javax.swing.JScrollPane;
 import javax.swing.KeyStroke;
@@ -121,7 +122,7 @@ import org.slf4j.LoggerFactory;
  *
  * <p><b>Two views since addendum AU</b> ({@code docs/handoff/plan-AU-history-2026-09-27.md} section 7.2, the phase-0
  * contract's sections 6-7 and amendments 9.6-9.15). An "Items | Net Worth History" toggle with one grey caption line
- * sits under the card in both views ({@link #pressView}, for the session). Items is the
+ * sits under the card in both views ({@link #pressView}, remembered since 1.1.0: the sidebar opens on the tab used last). Items is the
  * sidebar every build before AU drew. History swaps the list for a {@link BankHistoryView} on a card of its own
  * ({@link #CARD_HISTORY}), takes the control row and the price fold out of the header, and puts the card in its History
  * state: the same total, its move against the reader's own RECORDED total of the window's day, a footnote naming that
@@ -143,7 +144,8 @@ import org.slf4j.LoggerFactory;
  * <p><b>The gear, and the menu behind it</b> (addendum Q, lines Q1-Q2;
  * {@code docs/bank-price-movement-addendum-Q-2026-09-11.md}). A 12 px gear drawn in code
  * ({@link Widgets#gearIcon}) sits at the right end of the total's line, directly under the "Refresh" link, and
- * opens the panel's one settings menu on a LEFT click: Refresh, then the card's three show / hide items, then
+ * opens the panel's one settings menu on a LEFT click: the card's three show / hide items (1.1.0 part A took
+ * "Refresh prices now" out of the menu - the card's Refresh link does it and more), then
  * the four view check items of {@link ViewOptions} - use live prices (addendum T, line T1), include coins and
  * platinum tokens, include untradeable items, include inventory and worn gear (addendum Y, line Y1;
  * {@code docs/bank-price-movement-addendum-Y-2026-09-13.md}), every one of them in the
@@ -186,9 +188,33 @@ import org.slf4j.LoggerFactory;
  * <p><b>The Net Worth History tab hides the days before 1.0.9</b> (1.0.9 part 5). Readings recorded by an older build did
  * not count the Grand Exchange offers, so for a player who keeps much of their bank on offer they read low. The panel
  * hands the History view and the card the record cut to the days recorded since ({@link #visibleHistory} - the one place
- * the cut is made), and, while the record holds days before it, draws one check box under the tab's caption,
+ * the cut is made), and, while the record holds days before it, puts one check item in the settings menu under its
+ * "Net worth chart" caption (1.1.0 part A: it stood under the tab's caption until then),
  * "Include days before v1.0.9" ({@link #pressLegacy()}), which shows them again after a question
  * ({@link LegacyPrompt}). Nothing is deleted: the days stay in the file whatever the box says.
+ *
+ * <p><b>The colour of a rise and of a fall is the reader's</b> (1.1.0 part B). The settings menu's "Up colour" and "Down
+ * colour" rows open a colour picker through the {@link ColourPicker} seam; while it moves, {@link #applyMoveColours} hands
+ * the pair to {@link Widgets#setMoveColours} - the one palette {@link Widgets#move} reads for every figure, mark and edge
+ * on both tabs - and draws again from what the panel already holds, never asking the service for anything: the card and
+ * the tab on screen at once, the other tab when the reader switches to it ({@link #redrawMoveColours}). The colour it
+ * closes on is stored through {@link Prefs#saveUpColour} / {@link Prefs#saveDownColour}.
+ *
+ * <p><b>The net worth chart can have one colour of its own</b> (1.1.0 part C). The menu's "Net worth chart" group holds
+ * "Single chart colour" - a check item whose swatch of the chart colour shows while it is ticked and opens the same
+ * picker, titled "Chart colour" - and {@link #applyChartColour} draws the chart in it, or in the range's own up and down
+ * colours when it is off. Both the tick and the swatch bring the Net Worth History tab into view first
+ * ({@link #pressView}), so the change is seen as it is made; the colour and the switch are stored through
+ * {@link Prefs#saveChartColour} / {@link Prefs#saveSingleChartColour}.
+ *
+ * <p><b>An eye hides every amount</b> (1.1.0 part E, "Hide amounts"). The hero card's top-right icons are three since part I:
+ * {@link EyeIcon}, the Discord mark and the settings icon, in that order ({@link #iconTrio}); pressing the eye
+ * ({@link #pressHideAmounts}) makes every gp amount and every item quantity in
+ * the sidebar read a fixed mask ({@link AmountMask}) - the card's total and gp move, each row's stack value, gp change, "n x
+ * price" line, open block and stack-number picture, the History readout, day rows and chart's high and low - and keeps item
+ * names, pictures, percentages, dates, the chart's shape and the counts of rows. {@link #applyHideAmounts} draws it again from
+ * what the panel already holds, the card and the tab on screen at once and the other tab when the reader switches to it, never
+ * asking the service for anything; the choice is stored through {@link Prefs#saveHideAmounts}.
  *
  * <p><b>The view switches are not the card's.</b> {@link HeroVisibility} says what is PAINTED and costs the
  * service nothing; {@link ViewOptions} says what the figures MEAN - which price series an actively traded stack
@@ -244,9 +270,9 @@ import org.slf4j.LoggerFactory;
  * doing (AS8, the user on the AS7 build: "manually clicking the refresh button should refresh everything for the
  * user"): with the bank open the plugin's local re-read ({@link #setBankRefresh}) redraws the items at once and the
  * price re-check follows in the background, its 30 s cooldown kept to the prices; with the bank shut it is the price
- * re-check, which re-reads what the player carries as well ({@link #refreshNow}). The gear's "Refresh prices now"
- * stays the price re-check alone ({@link #refreshPricesNow}), and the link's hover is one sentence in every state
- * ({@link #REFRESH_TIP}).
+ * re-check, which re-reads what the player carries as well ({@link #refreshNow}). The price re-check alone
+ * ({@link #refreshPricesNow}) is what the link falls back on there (the gear's own "Refresh prices now" item left
+ * the menu in 1.1.0), and the link's hover is one sentence in every state ({@link #REFRESH_TIP}).
  *
  * <p><b>Type and colour.</b> Every label here sets its font through {@link Widgets#sans} /
  * {@link Widgets#sansBold} (RuneLiteLAF installs the 16 px bitmap face as the default, and the type scale is
@@ -369,8 +395,9 @@ public class BankPriceMovementPanel extends PluginPanel
 		}
 
 		/**
-		 * The tab the sidebar opens on - the config's {@code startTab} (addendum AU): the player's CHOICE, and never the
-		 * last tab used, which the toggle does not write. Null reads as {@link SidebarView#ITEMS}, the answer for a
+		 * The tab the sidebar opens on - the config's {@code startTab} (addendum AU), which since 1.1.0 is the tab used
+		 * LAST: the toggle's press writes it ({@link BankPriceMovementPanel#pressView}), and a player who chose a start
+		 * tab before 1.1.0 simply has that as their last tab. Null reads as {@link SidebarView#ITEMS}, the answer for a
 		 * fresh install and for the headless renderer.
 		 *
 		 * <p>Defaulted for the reason every pair since the filter is: a caller with nothing to remember gets the
@@ -382,7 +409,7 @@ public class BankPriceMovementPanel extends PluginPanel
 			return null;
 		}
 
-		/** Writes the tab the settings menu's dot chose, so the stored config follows (AU). */
+		/** Writes the tab the toggle was pressed onto, so the sidebar opens there next time (AU; the toggle's since 1.1.0). */
 		default void saveStartTab(SidebarView tab)
 		{
 		}
@@ -398,8 +425,127 @@ public class BankPriceMovementPanel extends PluginPanel
 			return null;
 		}
 
-		/** Writes the state the tab's check box was left in, so the stored config follows (1.0.9 part 5). */
+		/** Writes the state the menu's "Include days before v1.0.9" item was left in, so the stored config follows (1.0.9 part 5). */
 		default void saveIncludeLegacy(boolean include)
+		{
+		}
+
+		/**
+		 * The colour of a rise - the config's {@code upColour} (1.1.0 part B), read as the colour to draw it in. Null reads
+		 * as the built-in green ({@link Widgets#MOVE_UP_DEFAULT}): nothing stored is the shipped default, and the answer
+		 * for the headless renderer and a throwaway test seam, whose sidebar is then drawn exactly as it was before.
+		 */
+		@Nullable
+		default Color loadUpColour()
+		{
+			return null;
+		}
+
+		/** Writes the colour the picker closed on, so the stored config follows (1.1.0 part B). */
+		default void saveUpColour(Color colour)
+		{
+		}
+
+		/** The colour of a fall - the config's {@code downColour}; null reads as the built-in red ({@link Widgets#MOVE_DOWN_TEXT}). */
+		@Nullable
+		default Color loadDownColour()
+		{
+			return null;
+		}
+
+		/** Writes the colour the picker closed on, so the stored config follows (1.1.0 part B). */
+		default void saveDownColour(Color colour)
+		{
+		}
+
+		/**
+		 * The rise colour saved in the colour presets' Slot 1 - the config's {@code slotUpColour} (1.1.0 part J). Null reads as
+		 * the built-in green ({@link Widgets#MOVE_UP_DEFAULT}): the slot starts as Classic's pair, which is also the answer for
+		 * the headless renderer and a throwaway test seam.
+		 */
+		@Nullable
+		default Color loadSlotUpColour()
+		{
+			return null;
+		}
+
+		/** Writes the rise colour "Save current colours to Slot 1" stored, so the stored config follows (1.1.0 part J). */
+		default void saveSlotUpColour(Color colour)
+		{
+		}
+
+		/** The fall colour saved in Slot 1 - the config's {@code slotDownColour}; null reads as {@link Widgets#MOVE_DOWN_TEXT}. */
+		@Nullable
+		default Color loadSlotDownColour()
+		{
+			return null;
+		}
+
+		/** Writes the fall colour "Save current colours to Slot 1" stored, so the stored config follows (1.1.0 part J). */
+		default void saveSlotDownColour(Color colour)
+		{
+		}
+
+		/**
+		 * Whether the Net Worth History chart is drawn in one colour - the config's {@code singleChartColour} (1.1.0 part
+		 * C). Null reads as TRUE since part D: nothing stored is the shipped default, the chart in the logo gold, and the
+		 * answer for the headless renderer and a throwaway test seam.
+		 */
+		@Nullable
+		default Boolean loadSingleChartColour()
+		{
+			return null;
+		}
+
+		/** Writes the state the menu's "Single chart colour" item was left in, so the stored config follows (1.1.0 part C). */
+		default void saveSingleChartColour(boolean single)
+		{
+		}
+
+		/**
+		 * The colour that chart is drawn in while it is one colour - the config's {@code chartColour} (1.1.0 part C). Null
+		 * reads as the logo gold ({@link Widgets#CHART_COLOUR_DEFAULT}).
+		 */
+		@Nullable
+		default Color loadChartColour()
+		{
+			return null;
+		}
+
+		/** Writes the colour the picker closed on, so the stored config follows (1.1.0 part C). */
+		default void saveChartColour(Color colour)
+		{
+		}
+
+		/**
+		 * Whether the sidebar hides every gp amount and item quantity - the config's {@code hideAmounts} (1.1.0 part E).
+		 * Null reads as false: nothing stored is the shipped default, the amounts shown, and the answer for the headless
+		 * renderer and a throwaway test seam, whose sidebar is then drawn exactly as it was before the eye existed.
+		 */
+		@Nullable
+		default Boolean loadHideAmounts()
+		{
+			return null;
+		}
+
+		/** Writes the state the eye's press left the sidebar in, so the stored config follows (1.1.0 part E). */
+		default void saveHideAmounts(boolean hide)
+		{
+		}
+
+		/**
+		 * Whether the Items list shows its alch rows - the config's {@code showAlchRows} (1.1.0 part G). Null reads as
+		 * false: nothing stored is the shipped default, the alch rows left out of the list, and the answer for the headless
+		 * renderer and a throwaway test seam, whose list is then drawn as it was before the List options menu existed.
+		 */
+		@Nullable
+		default Boolean loadShowAlchRows()
+		{
+			return null;
+		}
+
+		/** Writes the tick the List options menu was left in, so the stored config follows (1.1.0 part G). */
+		default void saveShowAlchRows(boolean show)
 		{
 		}
 	}
@@ -440,8 +586,9 @@ public class BankPriceMovementPanel extends PluginPanel
 	/** ...and while the History view is (the user's final words, 2026-09-28). */
 	public static final String HISTORY_CAPTION = "Bank net worth history";
 	/**
-	 * The check box under the History caption (1.0.9 part 5), drawn only while the series holds days recorded before
-	 * 1.0.9. Those readings did not count the Grand Exchange offers, so the tab hides them until the reader asks.
+	 * The check item under the settings menu's "Net worth chart" caption (1.0.9 part 5; in the menu since 1.1.0 part A,
+	 * having stood under the History caption), present only while the series holds days recorded before 1.0.9. Those
+	 * readings did not count the Grand Exchange offers, so the tab hides them until the reader asks.
 	 */
 	public static final String LEGACY_TEXT = "Include days before v1.0.9";
 	/** Its hover, behind "Show hover text" like every sentence hover here: one line, and the reason in it. */
@@ -532,13 +679,13 @@ public class BankPriceMovementPanel extends PluginPanel
 	 */
 	static final int GLOW_HALO_REACH = 2;
 	/**
-	 * The ring's colour: the green a row prints a rise in ({@link Widgets#move}, {@link Widgets.Kind#FIGURE}), so
-	 * the sidebar's one "something new" colour is the one it already uses for good news - and {@link Widgets#move}
-	 * is where every such colour is chosen, so this one cannot drift from the rows'.
+	 * The ring's colour: the client's own green, which is the green a row prints a rise in by default
+	 * ({@link Widgets#move}, {@link Widgets.Kind#FIGURE}), so the sidebar's one "something new" colour is the one it
+	 * already uses for good news. Since 1.1.0 part B it is NAMED rather than asked of {@link Widgets#move}, because that
+	 * is where the reader's own colour for a rise is chosen and this ring marks a bank change the plugin has not read yet,
+	 * not a rise: it keeps its own green whatever the reader picks.
 	 */
-	static final Color GLOW_COLOUR = Widgets.move(1, Widgets.Kind.FIGURE);
-	/** The gear menu's first entry - the second home of Refresh (N 3.1, O4; the gear's since Q2). */
-	public static final String REFRESH_MENU_TEXT = "Refresh prices now";
+	static final Color GLOW_COLOUR = ColorScheme.PROGRESS_COMPLETE_COLOR;
 	/** Where the fourth mark of the menu's header goes (1.0.9): this plugin's repository, handed to {@link SupportLinks}. */
 	public static final String GITHUB_URL = "https://github.com/2hBuilds/bank-portfolio-tracker";
 	/**
@@ -661,18 +808,24 @@ public class BankPriceMovementPanel extends PluginPanel
 	 */
 	public static final String SHOW_HOVER_TEXT_TIP = "Show hover text anywhere in the sidebar: the bank value "
 		+ "and the controls";
-	/** The menu's start-tab caption (AU), in the look of {@link #PRESETS_TEXT}. */
-	public static final String START_TAB_TEXT = "Tab to open on startup";
-	/** The hover of both dot items: the config item's own description, so both places say the same sentence. */
-	public static final String START_TAB_TIP = "Which tab the sidebar shows when the plugin starts.";
+	/**
+	 * The menu's last caption (1.1.0 part A), in the look of {@link #PRESETS_TEXT}: the net worth chart's own settings
+	 * stand under it. It has no hover - the words say what the group is.
+	 */
+	public static final String NET_WORTH_CHART_TEXT = "Net worth chart";
 	public static final String PRESETS_TEXT = "Preset price ranges";
 	/** The menu item under the boxes (Z2) - 100k / 1m / 10m back in one click, in the boxes, the fold and the config. */
 	public static final String RESET_PRESETS_TEXT = "Reset to default";
 	/** The row's hover - the config item's own description (Z1), so both places say the same sentence. */
 	public static final String PRESETS_TIP = "The three quick bands under the band button, in gp shorthand and "
 		+ "smallest first - for example 1m, 10m, 100m.";
-	/** The reset item's hover: the three amounts it puts back, named. */
-	public static final String RESET_PRESETS_TIP = "Put the 100k, 1m and 10m bands back";
+	/**
+	 * The reset button's hover: what it puts back, named - the three amounts, since 1.1.0 part B the two colours, since
+	 * part C the net worth chart's one-colour switch and its colour, and since part D the gold single chart colour (the
+	 * switch ON, as it ships).
+	 */
+	public static final String RESET_PRESETS_TIP = "Put the 100k, 1m and 10m bands, the up and down colours and the "
+		+ "gold single chart colour back";
 	/**
 	 * The button on the menu's last row (addendum AB, line AB2;
 	 * {@code docs/bank-price-movement-addendum-AB-2026-09-13.md}): the way OUT of the gear menu, at the bottom
@@ -724,6 +877,61 @@ public class BankPriceMovementPanel extends PluginPanel
 	public static final String SHOW_VALUE_TIP = "Show the whole-bank total on the card";
 	public static final String SHOW_GP_TIP = "Show the bank's gp change for the chosen window";
 	public static final String SHOW_PCT_TIP = "Show the bank's percentage change for the chosen window";
+	/**
+	 * The two colour rows that follow them (1.1.0 part B), named as the config items are: the colour a rise and a fall are
+	 * drawn in, on both tabs. A row is the words and, at its right end, a swatch of the colour in force; pressing it
+	 * closes the menu and opens the colour picker. The hovers are the config items' own descriptions, behind "Show hover
+	 * text" like every other.
+	 */
+	public static final String UP_COLOUR_TEXT = "Up colour";
+	public static final String DOWN_COLOUR_TEXT = "Down colour";
+	public static final String UP_COLOUR_TIP = "The colour of a rise, on both tabs.";
+	public static final String DOWN_COLOUR_TIP = "The colour of a fall, on both tabs.";
+	/**
+	 * The caption of the colour preset rows - the three {@link ColourSet}s, Slot 1 and the row that saves into it - that follow
+	 * "Down colour" in the settings menu and in the List options menu (1.1.0 part H; part J renamed it from "Colour sets"). A
+	 * caption of the menu's group look, with no hover: the words are the whole of it.
+	 */
+	public static final String COLOUR_PRESETS_TEXT = "Colour presets";
+	/**
+	 * The fourth preset row (1.1.0 part J), whose pair the reader saves with {@link #SAVE_SLOT_TEXT}'s row under it; it starts
+	 * as Classic's. Its press applies the pair like any preset.
+	 */
+	public static final String SLOT_TEXT = "Slot 1";
+	public static final String SAVE_SLOT_TEXT = "Save current colours to Slot 1";
+	/**
+	 * The net worth chart's two rows (1.1.0 part C), named as the config items are: "Single chart colour", a check item
+	 * whose swatch - the "Chart colour" - shows while it is ticked and opens the colour picker under that title. The
+	 * hovers are the config items' own descriptions, behind "Show hover text" like every other.
+	 */
+	public static final String SINGLE_CHART_COLOUR_TEXT = "Single chart colour";
+	public static final String CHART_COLOUR_TEXT = "Chart colour";
+	/**
+	 * The eye's two hovers (1.1.0 part E): what pressing it will do. One or two words and ALWAYS on, like the Discord
+	 * mark's and the settings icon's - an icon with no text beside it has nothing else on the screen to say what it is, so
+	 * they are set on the label directly and never offered to "Show hover text".
+	 */
+	public static final String HIDE_AMOUNTS_TIP = "Hide amounts";
+	public static final String SHOW_AMOUNTS_TIP = "Show amounts";
+	/**
+	 * The List options icon's hover (1.1.0 part G): the two gears at the end of the search box. One word pair and ALWAYS on,
+	 * like the eye's and the settings icon's - set on the label directly and never offered to "Show hover text".
+	 */
+	public static final String LIST_OPTIONS_TIP = "List options";
+	/**
+	 * The List options menu's tick (1.1.0 part G), named as its config item is ({@code showAlchRows}). Its hover is the
+	 * config's own sentence, behind "Show hover text" like every check item's.
+	 */
+	public static final String SHOW_ALCH_TEXT = "Show alch-only items";
+	public static final String SHOW_ALCH_TIP =
+		"Lists untradeables with no tradeable parts, at alch value. Searching finds them either way.";
+	/** The gap between the search box and the List options icon, in px (1.1.0 part G). */
+	static final int LIST_OPTIONS_GAP = 6;
+	public static final String SINGLE_CHART_COLOUR_TIP =
+		"Draw the net worth chart in one colour instead of the up and down colours.";
+	/** A swatch row's swatch, in px (1.1.0 part B): wide enough to read as a colour, as tall as the 12 px menu face's caps. */
+	static final int SWATCH_WIDTH = 24;
+	static final int SWATCH_HEIGHT = 12;
 	/**
 	 * The sort word-button's whole tooltip (addendum X, line X2;
 	 * {@code docs/bank-price-movement-addendum-X-2026-09-13.md}): ONE phrase, the same under every column and
@@ -905,6 +1113,15 @@ public class BankPriceMovementPanel extends PluginPanel
 	private JCheckBoxMenuItem showValueItem;
 	private JCheckBoxMenuItem showGpItem;
 	private JCheckBoxMenuItem showPctItem;
+	/** The two colour rows directly under "Show change in %" (1.1.0 part B): the up colour's and the down colour's. */
+	private SwatchRow upColourRow;
+	private SwatchRow downColourRow;
+	/**
+	 * The settings menu's and the List options menu's colour preset rows (1.1.0 parts H and J), in the order Classic, 2h,
+	 * Colour-blind, Slot 1: the rows that can carry the tick ({@link #syncPresetTicks}). Each menu has rows of its own.
+	 */
+	private final List<SetRow> heroPresetRows = new ArrayList<>();
+	private final List<SetRow> listPresetRows = new ArrayList<>();
 	/** The last group's first item since addendum T (T1): the price series the figures are read from. */
 	private JCheckBoxMenuItem livePricesItem;
 	private JCheckBoxMenuItem countCashItem;
@@ -919,9 +1136,24 @@ public class BankPriceMovementPanel extends PluginPanel
 	 * indistinguishable from a plain command, so nothing would say it is a switch at all.
 	 */
 	private JMenuItem showHoverTextItem;
-	/** AU: the two dots of the start-tab group, one per {@link SidebarView}, in one {@link ButtonGroup}. */
-	private final JRadioButtonMenuItem[] startTabItems = new JRadioButtonMenuItem[SidebarView.values().length];
-	/** AU: the tab the sidebar opens on next time - the settings menu's dot; never the tab showing now. */
+	/** The menu's "Net worth chart" caption (1.1.0 part A), the group's first row. */
+	private JPanel chartCaption;
+	/**
+	 * "Single chart colour" (1.1.0 part C), the group's first item, directly under the caption: a check item whose swatch
+	 * of {@link #chartColour} shows while it is ticked. {@link #legacyItem} goes in directly under it while the record
+	 * holds days before 1.0.9.
+	 */
+	private SwatchRow singleChartRow;
+	/**
+	 * "Include days before v1.0.9" (1.0.9 part 5; the menu's since 1.1.0 part A): a check item that is IN the menu
+	 * only while the record holds such days ({@link #syncLegacyItem}), ticked by {@link #includeLegacy}.
+	 */
+	private JCheckBoxMenuItem legacyItem;
+	/**
+	 * The tab the sidebar opens on next time: the config's {@code startTab}, which the toggle's press writes (1.1.0
+	 * part A) so it is the tab used LAST. Seeded from the prefs as the panel builds; the bridge's {@code starttab=} can
+	 * set it without switching the tab that is showing.
+	 */
 	private SidebarView startTab = SidebarView.ITEMS;
 	/** The menu's box row since addendum Z (Z2): the caption over the three preset boxes. */
 	private JPanel presetRow;
@@ -937,6 +1169,13 @@ public class BankPriceMovementPanel extends PluginPanel
 	private JPanel captionRow;
 	private JLabel captionLabel;
 	private JLabel refreshLabel;
+	/**
+	 * The eye (1.1.0 part E), first of the card's three top-right icons since part I - eye, Discord, settings: always drawn,
+	 * whatever the three hero switches say.
+	 */
+	private JLabel eyeLabel;
+	/** Whether the pointer is over the eye, so a toggle redraws it white and a leave redraws it grey. */
+	private boolean eyeHot;
 	/** The total's line: the figure WEST and the options gear EAST; the line stays for the gear (Q1). */
 	private JPanel totalRow;
 	private JLabel gearLabel;
@@ -969,6 +1208,22 @@ public class BankPriceMovementPanel extends PluginPanel
 	private final Widgets.PlaceholderField searchField;
 	/** What stands between the header's last row and the list in Items: {@link #SEARCH_GAP} of air over {@link #searchField}. */
 	private JPanel searchRow;
+	/** The List options icon at the right end of the search row (1.1.0 part G): two gears, which open {@link #listMenu}. */
+	private JLabel listOptionsLabel;
+	/** Whether the pointer is over the icon, so a hover redraws it white and a leave redraws it grey. */
+	private boolean listOptionsHot;
+	/** The List options menu (1.1.0 part G): the alch tick, a rule and the Up / Down colour rows. */
+	private JPopupMenu listMenu;
+	private JCheckBoxMenuItem showAlchItem;
+	private SwatchRow listUpColourRow;
+	private SwatchRow listDownColourRow;
+	/** When the List options menu last became invisible, by {@link #clock}: {@link #menuClosedAtMillis}'s twin. */
+	private long listMenuClosedAtMillis = MENU_NEVER_CLOSED;
+	/**
+	 * 1.1.0 part G: whether the Items list shows its ALCH rows ({@link MovementMath#list}); a search finds one whatever this
+	 * says. Off unless the reader ticked it. Never reaches the service: which rows are listed changes and no figure does.
+	 */
+	private boolean showAlchRows;
 	private JLabel problemLabel;
 	/**
 	 * Addendum AU's strip under the card, in both views while a bank is loaded: the {@link #viewToggle} over the
@@ -979,14 +1234,6 @@ public class BankPriceMovementPanel extends PluginPanel
 	private Widgets.Toggle viewToggle;
 	/** {@link #ITEMS_CAPTION} or {@link #HISTORY_CAPTION}, grey, one line. */
 	private JLabel viewCaption;
-	/**
-	 * 1.0.9 part 5: the "Include days before v1.0.9" check box, in the header directly under {@link #viewStrip} - and
-	 * in the tree ONLY while the History tab shows and the series holds legacy days ({@link #syncHeader}); with none it
-	 * is not there at all, so a bank that never had such days draws the tab it always did.
-	 */
-	private JLabel legacyRow;
-	/** {@link #legacyRow} at the head of a row of its own, so only the words and the box answer a click, not the width. */
-	private JPanel legacyHolder;
 	/** The sort menu that is open, if any - one at a time (the BeamPickerPopup idiom). */
 	@Nullable
 	private JPopupMenu sortMenu;
@@ -1153,6 +1400,48 @@ public class BankPriceMovementPanel extends PluginPanel
 	 * {@link #visibleHistory} is the one place that reads it.
 	 */
 	private boolean includeLegacy;
+	/**
+	 * 1.1.0 part B: the colours a rise and a fall are drawn in - what the settings menu's swatches show, never null; the
+	 * built-in green and red ({@link Widgets#MOVE_UP_DEFAULT}, {@link Widgets#MOVE_DOWN_TEXT}) until the reader chooses
+	 * others. They are what the panel believes the palette to be: {@link #applyMoveColours} writes them and hands the
+	 * same pair to {@link Widgets#setMoveColours}, which every painter reads through {@link Widgets#move}.
+	 */
+	private Color upColour = Widgets.MOVE_UP_DEFAULT;
+	private Color downColour = Widgets.MOVE_DOWN_TEXT;
+	/**
+	 * 1.1.0 part J: the pair the colour presets' Slot 1 holds - what its row's two squares show, never null; Classic's pair
+	 * until the reader saves their own with "Save current colours to Slot 1" ({@link #pressSaveSlot}). Only that press, the
+	 * plugin's {@code ConfigChanged} for the slot's keys ({@link #applySlotColours}) and the seed from the prefs change them;
+	 * "Reset to default" leaves them alone.
+	 */
+	private Color slotUp = Widgets.MOVE_UP_DEFAULT;
+	private Color slotDown = Widgets.MOVE_DOWN_TEXT;
+	/**
+	 * Set when the colours changed while a tab was NOT showing, so that tab's heavy parts - the item rows (up to a page of
+	 * 250 cells) and the history view's day list - are drawn once, when the reader switches to it, rather than at every
+	 * move of the colour picker: the tab on screen follows the picker live (B-4b), the other one is redrawn on arrival.
+	 */
+	private boolean itemsStale;
+	private boolean historyStale;
+	/**
+	 * 1.1.0 part C: whether the Net Worth History chart is drawn in ONE colour, and which - what the menu's "Single chart
+	 * colour" row shows (its tick, and its swatch while ticked), never null for the colour. On and the logo gold
+	 * ({@link Widgets#CHART_COLOUR_DEFAULT}) until the reader chooses otherwise (on since part D). The chart itself holds
+	 * the colour it is to be drawn in ({@link BankHistoryView#setChartColour}); these are what the panel believes it was
+	 * told.
+	 */
+	private boolean singleChartColour = true;
+	private Color chartColour = Widgets.CHART_COLOUR_DEFAULT;
+	/**
+	 * 1.1.0 part E: whether every gp amount and item quantity the sidebar draws is hidden behind its mask
+	 * ({@link AmountMask}) - what the eye on the hero card shows and toggles. Off unless the reader shut the eye. The card
+	 * reads it as it renders, the rows are built with it, and the History view is handed it ({@link #applyHideAmounts});
+	 * never the service, which knows nothing of it.
+	 */
+	private boolean hideAmounts;
+	/** The colour picker the settings menu's colour rows open, or null for none; set by the plugin (1.1.0 part B). */
+	@Nullable
+	private ColourPicker colourPicker;
 	/** The question {@link #pressLegacy(boolean)} asks; never null. */
 	private final LegacyPrompt legacyPrompt;
 	/** Set while the question is open, so a second press (a script's) cannot open a second dialog on top of it. */
@@ -1221,6 +1510,27 @@ public class BankPriceMovementPanel extends PluginPanel
 		// chose. Null is "nothing stored", which is the days before 1.0.9 hidden.
 		final Boolean savedLegacy = prefs.loadIncludeLegacy();
 		includeLegacy = savedLegacy != null && savedLegacy;
+		// 1.1.0 part B: before buildHeader, whose menu rows paint a swatch of each. Null is "nothing stored", the built-in
+		// green and red. Only the swatches are seeded here: the palette every painter reads is Widgets' own, which the
+		// plugin sets from the same config before it builds this panel (a panel with no plugin behind it draws the defaults).
+		upColour = colourOrDefault(prefs.loadUpColour(), Widgets.MOVE_UP_DEFAULT);
+		downColour = colourOrDefault(prefs.loadDownColour(), Widgets.MOVE_DOWN_TEXT);
+		// 1.1.0 part J, for the same reason: Slot 1's two squares and the ticks are built from the colours and the slot.
+		slotUp = colourOrDefault(prefs.loadSlotUpColour(), Widgets.MOVE_UP_DEFAULT);
+		slotDown = colourOrDefault(prefs.loadSlotDownColour(), Widgets.MOVE_DOWN_TEXT);
+		// 1.1.0 part C, for the same reason: the menu's "Single chart colour" row is built from them. The chart (built
+		// below, after the header) is handed the colour once it exists. Null is "nothing stored": on, and the gold (part D).
+		final Boolean savedSingle = prefs.loadSingleChartColour();
+		singleChartColour = savedSingle == null || savedSingle;
+		chartColour = colourOrDefault(prefs.loadChartColour(), Widgets.CHART_COLOUR_DEFAULT);
+		// 1.1.0 part E, before buildHeader (whose card builds the eye) and renderAll (which draws the card in the mask) so
+		// the first paint is already what the reader left. Null is "nothing stored": the amounts shown.
+		final Boolean savedHide = prefs.loadHideAmounts();
+		hideAmounts = savedHide != null && savedHide;
+		// 1.1.0 part G, before buildHeader (whose search row builds the List options menu with its tick). Null is "nothing
+		// stored": the alch rows left out of the list.
+		final Boolean savedAlch = prefs.loadShowAlchRows();
+		showAlchRows = savedAlch != null && savedAlch;
 
 		// The two gp fields: applied on Enter and on focus lost; a text that does not parse turns the field red
 		// and changes nothing.
@@ -1318,6 +1628,10 @@ public class BankPriceMovementPanel extends PluginPanel
 		historyView = new BankHistoryView(() -> clock.getAsLong(), ZoneId.systemDefault());
 		// 9.10: once here, after the prefs are read, and again wherever the window changes by any road.
 		historyView.setRange(BankHistoryRange.forWindow(filter.window()));
+		// 1.1.0 part C: the chart in the one colour the reader chose, if they chose one (seeded above, before the menu).
+		historyView.setChartColour(singleChartColour ? chartColour : null);
+		// 1.1.0 part E: and in the mask the reader left it in (nothing is drawn yet, so this only stores it).
+		historyView.setAmountsHidden(hideAmounts);
 		historyColumn = Widgets.column(0);
 		historyColumn.setBorder(new EmptyBorder(0, MARGIN, MARGIN, MARGIN));
 		historyColumn.add(historyView);
@@ -1400,7 +1714,6 @@ public class BankPriceMovementPanel extends PluginPanel
 		heroMenu = buildHeroMenu();
 
 		viewStrip = buildViewStrip();
-		legacyRow = buildLegacyRow();
 		controlRow = buildControlRow();
 		fold = buildFold();
 		problemLabel = buildProblemLabel();
@@ -1448,7 +1761,11 @@ public class BankPriceMovementPanel extends PluginPanel
 		// reaches outside the link's box, where no border of the link can draw, so the CARD paints it (HeroCard).
 		refreshLabel.setBorder(new EmptyBorder(2, ROW_GAP, 2, 0));
 		gearLabel = settingsGear();
-		captionRow = transparentBar(ROW_GAP, captionLabel, null, support.supportPair(gearLabel));
+		// 1.1.0 part I: the eye joins the corner as the FIRST of three icons - eye, Discord, settings - so it is part of the
+		// top row whatever the total says: it is drawn with "Show bank value" off too, because a control that its own switch
+		// could hide would be one a reader could not get back to.
+		eyeLabel = buildEye();
+		captionRow = transparentBar(ROW_GAP, captionLabel, null, iconTrio(support.supportPair(gearLabel)));
 
 		totalLabel = Widgets.label("0", Widgets.sansBold(28), Color.WHITE);
 		// The top row is shorter than it was - the pair's height, where the link made it the link's - and the number
@@ -1497,11 +1814,24 @@ public class BankPriceMovementPanel extends PluginPanel
 	}
 
 	/**
-	 * The gear menu (Q2, the card's right-click menu of N 3.1 / O4 moved onto a visible control): "Refresh
-	 * prices now", a separator, the three card check items "Show bank value" / "Show change in gp" / "Show
-	 * change in %", a separator, and the four view check items "Use live prices" (T1) / "Include coins and platinum
-	 * tokens" / "Include untradeable items" / "Include inventory and worn gear" (Y1) -
-	 * two groups, because the first three say what the CARD draws and the last four what the figures MEAN.
+	 * The gear menu (Q2, the card's right-click menu of N 3.1 / O4 moved onto a visible control): the three card
+	 * check items "Show bank value" / "Show change in gp" / "Show change in %", a separator, and the view check items
+	 * "Use live prices" (T1) / "Include coins and platinum tokens" / "Include untradeable items" / "Include inventory
+	 * and worn gear" (Y1) -
+	 * two groups, because the first three say what the CARD draws and the last four what the figures MEAN. (Its first
+	 * entry, "Refresh prices now", and the start-tab group were taken out in 1.1.0 part A: the card's Refresh link does
+	 * the first and more, and the sidebar opens on the tab used last.)
+	 *
+	 * <p><b>Two colour rows follow the card's three items</b> (1.1.0 part B): "Up colour" and "Down colour", each the words
+	 * and a swatch of the colour in force ({@link #colourRow}). Pressing one closes the menu and opens the colour picker
+	 * through the {@link ColourPicker} seam; both tabs are drawn in the colour as the picker moves
+	 * ({@link #applyMoveColours}) and the choice is stored when it closes. A rule stands above the two rows (part J) so the
+	 * colours are a section of their own; directly under them stand the "Colour presets" (parts H and J:
+	 * {@link #addColourPresets}), a caption, one row each for Classic, 2h and Colour-blind, a "Slot 1" row for the reader's own
+	 * pair and the plain row "Save current colours to Slot 1". A click on a preset sets both colours at once
+	 * ({@link #pressColourPreset}), and the menu's tick stands on the preset in use ({@link #syncPresetTicks}). The Reset to
+	 * default button, in the last row, puts both colours back (Slot 1 is left alone) with the
+	 * preset bands ({@link #pressReset}).
 	 *
 	 * <p>Every check item reflects the switch it carries and writes it: the card's three go through
 	 * {@link #setHeroVisibility} and the view's four through {@link #setOptions}, which repaint at once and
@@ -1521,6 +1851,11 @@ public class BankPriceMovementPanel extends PluginPanel
 	 * that edits a control elsewhere on the panel rather than the panel's own reading of the bank, and they are
 	 * HERE because the fold they edit has no room to hold its own settings.
 	 *
+	 * <p><b>Then the net worth chart's group</b> (1.1.0 part A): a rule, the grey caption {@link #NET_WORTH_CHART_TEXT},
+	 * "Single chart colour" ({@link #singleChartRow}, part C: a check item whose swatch of the chart colour shows while it
+	 * is ticked) and - only while the record holds days recorded before 1.0.9 - the check item {@link #legacyItem}, which
+	 * {@link #syncLegacyItem} puts in and takes out as the record changes (and again as the menu opens).
+	 *
 	 * <p><b>And one row after all of them</b> (addendum AB, line AB2): the {@link #buildOkRow() OK row}, the menu's
 	 * drawn way out. It is last because it is what a reader presses when everything above it is as they want it.
 	 */
@@ -1533,19 +1868,31 @@ public class BankPriceMovementPanel extends PluginPanel
 		// buttons to be the bottom most things").
 		menu.add(support.header());
 		menu.addSeparator();
-		final JMenuItem refresh = new JMenuItem(REFRESH_MENU_TEXT);
-		refresh.setFont(Widgets.sans(12));
-		// AS 7.1 decision 2, kept by AS8: its name says PRICES, so it stays the price re-check ALONE with the bank open
-		// too - only the link also re-reads the items, because the link is what glows.
-		refresh.addActionListener(e -> refreshPricesNow());
-		menu.add(refresh);
-		menu.addSeparator();
 		showValueItem = checkItem(SHOW_VALUE_TEXT, SHOW_VALUE_TIP, on -> setHeroVisibility(heroVisibility.withValue(on)));
 		showGpItem = checkItem(SHOW_GP_TEXT, SHOW_GP_TIP, on -> setHeroVisibility(heroVisibility.withGp(on)));
 		showPctItem = checkItem(SHOW_PCT_TEXT, SHOW_PCT_TIP, on -> setHeroVisibility(heroVisibility.withPct(on)));
 		menu.add(showValueItem);
 		menu.add(showGpItem);
 		menu.add(showPctItem);
+		// 1.1.0 part J: a rule above the colour block (Up colour, Down colour, the presets, Slot 1 and its save row), so
+		// the block is a section of its own. The List options menu already has one above its colour rows.
+		menu.addSeparator();
+		// 1.1.0 part B: the colour a rise and a fall are drawn in, as two rows directly under the figures they colour. A
+		// row is not a switch but a way into the colour picker, so it carries a swatch of the colour in force rather than a
+		// tick - though it is a check item to Swing (SwatchRow), whose model never selects, so its words stand in the
+		// check items' own column (part C).
+		upColourRow = new SwatchRow(UP_COLOUR_TEXT, () -> upColour, false, null);
+		setHover(upColourRow, UP_COLOUR_TIP);
+		upColourRow.addActionListener(e -> pressColour(true));
+		downColourRow = new SwatchRow(DOWN_COLOUR_TEXT, () -> downColour, false, null);
+		setHover(downColourRow, DOWN_COLOUR_TIP);
+		downColourRow.addActionListener(e -> pressColour(false));
+		menu.add(upColourRow);
+		menu.add(downColourRow);
+		// 1.1.0 parts H and J: and the presets that set both at once - a caption, three rows, Slot 1 and the row that saves
+		// into it - directly under them, the tick on the one in use.
+		heroPresetRows.clear();
+		addColourPresets(menu, heroPresetRows);
 		menu.addSeparator();
 		livePricesItem = checkItem(LIVE_PRICES_TEXT, LIVE_PRICES_TIP, on -> setOptions(options.withLivePrices(on)));
 		countCashItem = checkItem(COUNT_CASH_TEXT, COUNT_CASH_TIP, on -> setOptions(options.withCountCash(on)));
@@ -1563,22 +1910,6 @@ public class BankPriceMovementPanel extends PluginPanel
 		menu.add(countUntradeablesItem);
 		menu.add(countInventoryItem);
 		menu.add(countGrandExchangeItem);
-		// AU: a group of its own - the caption and two dots. Choosing one writes the setting for the NEXT start and
-		// does not switch the tab that is showing. Plain radio items, so the menu closes on a choice as the check
-		// switches above do.
-		menu.addSeparator();
-		menu.add(buildStartTabCaption());
-		final ButtonGroup startTabGroup = new ButtonGroup();
-		for (final SidebarView tab : SidebarView.values())
-		{
-			final JRadioButtonMenuItem dot = new JRadioButtonMenuItem(tab.toString());
-			dot.setFont(Widgets.sans(12));
-			setHover(dot, START_TAB_TIP);
-			dot.addActionListener(e -> pressStartTab(tab));
-			startTabGroup.add(dot);
-			startTabItems[tab.ordinal()] = dot;
-			menu.add(dot);
-		}
 		// Z2: a third group, and the only one that is not a list of switches - the three quick bands, in boxes,
 		// with the way back to 100k / 1m / 10m now a button in the bottom row (AH2).
 		menu.addSeparator();
@@ -1594,6 +1925,24 @@ public class BankPriceMovementPanel extends PluginPanel
 		showHoverTextItem.setHorizontalTextPosition(SwingConstants.RIGHT);
 		showHoverTextItem.addActionListener(e -> setOptions(options.withShowHoverText(!options.showHoverText())));
 		menu.add(showHoverTextItem);
+		// 1.1.0 part A: the net worth chart's group, last before the way out. The item stays OUT of the menu until the
+		// record holds days before 1.0.9 (syncLegacyItem); its action is the press the History tab's check box used to
+		// answer, and the tick is put back to what the panel believes whichever way the question was answered.
+		// A JCheckBoxMenuItem like the Include items above it, with the same hover rule (LEGACY_TIP).
+		menu.addSeparator();
+		chartCaption = buildMenuCaption(NET_WORTH_CHART_TEXT);
+		menu.add(chartCaption);
+		// 1.1.0 part C: "Single chart colour" first - an ordinary check item whose swatch of the chart colour shows while
+		// it is ticked and opens the colour picker when pressed (pressChartColour); the item above the days switch.
+		singleChartRow = new SwatchRow(SINGLE_CHART_COLOUR_TEXT, () -> chartColour, true, this::pressChartColour);
+		setHover(singleChartRow, SINGLE_CHART_COLOUR_TIP);
+		singleChartRow.addActionListener(e -> pressSingleChartColour(singleChartRow.isSelected()));
+		menu.add(singleChartRow);
+		legacyItem = checkItem(LEGACY_TEXT, LEGACY_TIP, on ->
+		{
+			pressLegacy();
+			renderLegacy();
+		});
 		// AB2: and under everything, the way out.
 		okRow = buildOkRow();
 		menu.add(okRow);
@@ -1606,6 +1955,9 @@ public class BankPriceMovementPanel extends PluginPanel
 				// that was answered ("not saved"), and re-asking it on the next open would be the only place in
 				// this sidebar where a control kept text the plugin does not believe.
 				renderPresetFields();
+				// 1.1.0 part A: ...and on the record it holds now - the days-before-1.0.9 item is in the menu exactly
+				// while the record has such days, and the menu is laid out only after this event.
+				syncLegacyItem();
 				// Z6: ...and on NO box. The popup's window is focusable because of the row (see buildPresetRow),
 				// and Swing hands a fresh focusable window's focus to the first focusable thing in it - which was
 				// the first band, caret blinking, before the reader had asked for it. The ROW takes it instead, so
@@ -1637,17 +1989,117 @@ public class BankPriceMovementPanel extends PluginPanel
 		return menu;
 	}
 
-	/** The start-tab group's caption (AU): {@link #PRESETS_TEXT}'s look - grey 12 px, the same inset. */
-	private JPanel buildStartTabCaption()
+	/**
+	 * A group caption of the menu (the start-tab group's of AU, the net worth chart's since 1.1.0 part A):
+	 * {@link #PRESETS_TEXT}'s look - grey 12 px, the same inset. No hover: the words are the whole of it.
+	 */
+	private JPanel buildMenuCaption(String text)
 	{
 		final JPanel row = Widgets.column(0);
 		row.setOpaque(false);
 		row.setBorder(new EmptyBorder(4, ROW_GAP, 2, ROW_GAP));
-		final JLabel caption = Widgets.label(START_TAB_TEXT, Widgets.sans(12), ColorScheme.LIGHT_GRAY_COLOR);
-		setHover(caption, START_TAB_TIP);
-		row.add(caption);
-		setHover(row, START_TAB_TIP);
+		row.add(Widgets.label(text, Widgets.sans(12), ColorScheme.LIGHT_GRAY_COLOR));
 		return row;
+	}
+
+	/**
+	 * The colour presets' group (1.1.0 parts H and J), added to {@code menu} directly under its "Down colour" row: the grey
+	 * caption {@link #COLOUR_PRESETS_TEXT}, one {@link SetRow} per {@link ColourSet} (Classic, 2h, Colour-blind) and then
+	 * "Slot 1" (the reader's saved pair, read as the row paints), each showing its two colours and a press on it running
+	 * {@link #pressColourPreset}; and, last, the plain row {@link #SAVE_SLOT_TEXT}, whose press is {@link #pressSaveSlot}.
+	 * Both the settings menu and the List options menu call it, each getting caption and rows of its own (a component has
+	 * one parent). The four preset rows are added to {@code rows}, in that order, and ticked by {@link #syncPresetTicks}
+	 * (here once, for the menu just built).
+	 */
+	private void addColourPresets(JPopupMenu menu, List<SetRow> rows)
+	{
+		menu.add(buildMenuCaption(COLOUR_PRESETS_TEXT));
+		for (final ColourSet set : ColourSet.values())
+		{
+			final SetRow row = SetRow.preset(set.label(), set::up, set::down);
+			row.addActionListener(e -> pressColourPreset(set.up(), set.down()));
+			rows.add(row);
+			menu.add(row);
+		}
+		final SetRow slot = SetRow.preset(SLOT_TEXT, () -> slotUp, () -> slotDown);
+		slot.addActionListener(e -> pressColourPreset(slotUp, slotDown));
+		rows.add(slot);
+		menu.add(slot);
+		final SetRow save = SetRow.plain(SAVE_SLOT_TEXT);
+		save.addActionListener(e -> pressSaveSlot());
+		menu.add(save);
+		syncPresetTicks();
+	}
+
+	/**
+	 * Puts the menu's tick on the ONE preset row whose pair is the pair in use (1.1.0 part J): the first of Classic, 2h,
+	 * Colour-blind and Slot 1, in that order, whose rise and fall are the rise and fall now drawn - and on none when no row's
+	 * pair is. Both menus' rows, each time. The colours decide, never a click: every road that changes them
+	 * ({@link #applyMoveColours}), and every change of Slot 1's pair, ends here.
+	 */
+	private void syncPresetTicks()
+	{
+		final int inUse = presetInUse();
+		tickPresetRows(heroPresetRows, inUse);
+		tickPresetRows(listPresetRows, inUse);
+	}
+
+	private static void tickPresetRows(List<SetRow> rows, int inUse)
+	{
+		for (int i = 0; i < rows.size(); i++)
+		{
+			rows.get(i).setTicked(i == inUse);
+			// The squares are read as they paint, so a row whose pair changed (Slot 1) is drawn again either way.
+			rows.get(i).repaint();
+		}
+	}
+
+	/** The index, in menu order, of the first preset whose pair is the pair in use; -1 when none is. */
+	private int presetInUse()
+	{
+		final ColourSet[] sets = ColourSet.values();
+		for (int i = 0; i < sets.length; i++)
+		{
+			if (sameColour(sets[i].up(), upColour) && sameColour(sets[i].down(), downColour))
+			{
+				return i;
+			}
+		}
+		return sameColour(slotUp, upColour) && sameColour(slotDown, downColour) ? sets.length : -1;
+	}
+
+	/** Whether two colours are the same opaque colour: a rise and a fall are never see-through, so alpha is no part of it. */
+	private static boolean sameColour(Color a, Color b)
+	{
+		return (a.getRGB() & 0xFFFFFF) == (b.getRGB() & 0xFFFFFF);
+	}
+
+	/**
+	 * Puts "Include days before v1.0.9" into the menu directly under "Single chart colour" (1.1.0 part C; under the "Net
+	 * worth chart" caption itself before it) while the record
+	 * holds days recorded before 1.0.9 ({@link #legacyDaysPresent}), and takes it out when it does not - 1.1.0 part A,
+	 * which moved the check box out of the History tab's header (every row of which is added and removed, never hidden,
+	 * playbook 7.5) and into this menu. Called with every header sync, so the menu follows the record, and as the menu
+	 * opens, so it is right when it is laid out. It touches the menu only when the answer changed, and never while the
+	 * menu stands open: a reader looking at it keeps the menu they opened, and the next open has the new one.
+	 */
+	private void syncLegacyItem()
+	{
+		renderLegacy();
+		final boolean want = legacyDaysPresent();
+		final boolean has = legacyItem.getParent() == heroMenu;
+		if (want == has || heroMenu.isVisible())
+		{
+			return;
+		}
+		if (want)
+		{
+			heroMenu.insert(legacyItem, heroMenu.getComponentIndex(singleChartRow) + 1);
+		}
+		else
+		{
+			heroMenu.remove(legacyItem);
+		}
 	}
 
 	/**
@@ -1774,7 +2226,7 @@ public class BankPriceMovementPanel extends PluginPanel
 		// just aligned left, OK button align right as it is currently is". A JMenuItem cannot sit in a BoxLayout
 		// row and still look like one, so it is a small button like OK's, carrying the same text, the same
 		// tooltip and the same action as the menu item it replaces.
-		resetPresetsButton = Widgets.smallButton(RESET_PRESETS_TEXT, null, e -> setPresets(BandPresets.DEFAULT));
+		resetPresetsButton = Widgets.smallButton(RESET_PRESETS_TEXT, null, e -> pressReset());
 		setHover(resetPresetsButton, RESET_PRESETS_TIP);
 		resetPresetsButton.setFont(Widgets.sans(12));
 		resetPresetsButton.setMaximumSize(resetPresetsButton.getPreferredSize());
@@ -1873,6 +2325,180 @@ public class BankPriceMovementPanel extends PluginPanel
 		setHover(item, tooltip);
 		item.addActionListener(e -> onToggle.accept(item.isSelected()));
 		return item;
+	}
+
+	/**
+	 * A colour row's press (1.1.0 part B): takes the menu down and opens the colour picker on the colour in force. While the
+	 * reader moves the picker the panel draws in the colour at once and writes nothing ({@link #previewColour}); the colour
+	 * it closes on is stored ({@link #storeColour}). With no picker behind the seam the row does nothing.
+	 */
+	private void pressColour(boolean up)
+	{
+		// Either menu's row comes here (1.1.0 part G: the List options menu has the same two), so both are taken down.
+		closeGearMenu();
+		closeListMenu();
+		final ColourPicker picker = colourPicker;
+		if (stopped || picker == null)
+		{
+			return;
+		}
+		picker.open(this, up ? upColour : downColour, up ? UP_COLOUR_TEXT : DOWN_COLOUR_TEXT,
+			colour -> previewColour(up, colour), colour -> storeColour(up, colour));
+	}
+
+	/** The picker moved: both tabs are drawn in the colour, and nothing is written - the reader has not chosen yet. */
+	private void previewColour(boolean up, @Nullable Color colour)
+	{
+		if (colour == null)
+		{
+			return;
+		}
+		final Color chosen = colourOrDefault(colour, up ? Widgets.MOVE_UP_DEFAULT : Widgets.MOVE_DOWN_TEXT);
+		applyMoveColours(up ? chosen : upColour, up ? downColour : chosen);
+	}
+
+	/** The picker closed: its last colour is the reader's choice, drawn and stored. */
+	private void storeColour(boolean up, @Nullable Color colour)
+	{
+		if (colour == null || stopped)
+		{
+			return;
+		}
+		previewColour(up, colour);
+		if (up)
+		{
+			prefs.saveUpColour(upColour);
+		}
+		else
+		{
+			prefs.saveDownColour(downColour);
+		}
+	}
+
+	/**
+	 * A colour preset row's press (1.1.0 parts H and J): takes whichever menu is up down, then sets BOTH colours at once -
+	 * the rise's and the fall's - by the road a picked colour and "Reset to default" take: both tabs are drawn in them
+	 * ({@link #applyMoveColours}, which reads a colour equal to the built-in one as no palette, so "Classic" is the sidebar as
+	 * it ships, and which puts the menus' ticks right) and each key is stored through the guarded prefs write
+	 * ({@link Prefs#saveUpColour}, {@link Prefs#saveDownColour}). No picker is involved, so the seam being null changes
+	 * nothing. Nothing remembers which preset was pressed - the tick follows the colours - and either colour can be changed
+	 * afterwards. Slot 1's row comes here with the slot's pair, like any other.
+	 */
+	private void pressColourPreset(Color up, Color down)
+	{
+		closeGearMenu();
+		closeListMenu();
+		if (stopped)
+		{
+			return;
+		}
+		applyMoveColours(up, down);
+		prefs.saveUpColour(upColour);
+		prefs.saveDownColour(downColour);
+	}
+
+	/**
+	 * "Save current colours to Slot 1" (1.1.0 part J): takes whichever menu is up down, then stores the up and down colour
+	 * in use into the slot - the one place the slot changes besides a ConfigChanged from outside - and writes both of its
+	 * keys through the guarded prefs write ({@link Prefs#saveSlotUpColour}, {@link Prefs#saveSlotDownColour}). The colours
+	 * in use do not change, so no tab is redrawn; Slot 1's squares show the saved pair and the ticks are put right
+	 * ({@link #syncPresetTicks}). A stopped panel stores nothing.
+	 */
+	private void pressSaveSlot()
+	{
+		closeGearMenu();
+		closeListMenu();
+		if (stopped)
+		{
+			return;
+		}
+		slotUp = upColour;
+		slotDown = downColour;
+		syncPresetTicks();
+		prefs.saveSlotUpColour(slotUp);
+		prefs.saveSlotDownColour(slotDown);
+	}
+
+	/**
+	 * "Reset to default" (AH2, and 1.1.0 parts B, C and D): the three preset bands back to 100k / 1m / 10m as before, the
+	 * two colours back to the built-in green and red, and the net worth chart back to what ships - Single chart colour ON
+	 * (since part D), its colour the logo gold - all drawn at once and stored. It does not bring any tab into view: it is
+	 * not a request to look at the chart. Slot 1's saved pair is left alone (part J); the menus' tick lands on Classic.
+	 */
+	private void pressReset()
+	{
+		setPresets(BandPresets.DEFAULT);
+		if (stopped)
+		{
+			return;
+		}
+		applyMoveColours(null, null);
+		prefs.saveUpColour(upColour);
+		prefs.saveDownColour(downColour);
+		applyChartColour(true, null);
+		prefs.saveSingleChartColour(singleChartColour);
+		prefs.saveChartColour(chartColour);
+	}
+
+	/**
+	 * The "Single chart colour" row's press (1.1.0 part C), {@code on} being the tick it was left in: the Net Worth History
+	 * tab comes into view first - the chart is on that tab alone, and the change is to be seen as it is made, whichever
+	 * tab was showing (C-3b) - then the chart is drawn in one colour or in the range's own, and the choice is stored. The
+	 * tab it lands on is the one remembered, as for any press of the toggle ({@link #pressView}).
+	 */
+	private void pressSingleChartColour(boolean on)
+	{
+		if (stopped)
+		{
+			return;
+		}
+		pressView(SidebarView.HISTORY);
+		applyChartColour(on, chartColour);
+		prefs.saveSingleChartColour(on);
+	}
+
+	/**
+	 * The swatch of a ticked "Single chart colour" row (1.1.0 part C): takes the menu down and opens the colour picker on
+	 * the chart colour, under the title "Chart colour" - after bringing the Net Worth History tab into view, so the
+	 * chart is on screen to follow the picker. With no picker behind the seam it does nothing at all, the tab included.
+	 */
+	private void pressChartColour()
+	{
+		closeGearMenu();
+		final ColourPicker picker = colourPicker;
+		if (stopped || picker == null)
+		{
+			return;
+		}
+		pressView(SidebarView.HISTORY);
+		picker.open(this, chartColour, CHART_COLOUR_TEXT, this::previewChartColour, this::storeChartColour);
+	}
+
+	/** The picker moved: the chart alone is drawn in the colour, and nothing is written - the reader has not chosen yet. */
+	private void previewChartColour(@Nullable Color colour)
+	{
+		if (colour == null)
+		{
+			return;
+		}
+		applyChartColour(singleChartColour, colour);
+	}
+
+	/** The picker closed: its last colour is the reader's choice, drawn and stored. */
+	private void storeChartColour(@Nullable Color colour)
+	{
+		if (colour == null || stopped)
+		{
+			return;
+		}
+		previewChartColour(colour);
+		prefs.saveChartColour(chartColour);
+	}
+
+	/** {@code colour} made opaque, or {@code builtIn} for none: a rise and a fall are never see-through. */
+	private static Color colourOrDefault(@Nullable Color colour, Color builtIn)
+	{
+		return colour == null ? builtIn : new Color(colour.getRGB());
 	}
 
 	/**
@@ -1982,29 +2608,6 @@ public class BankPriceMovementPanel extends PluginPanel
 		strip.add(viewToggle);
 		strip.add(viewCaption);
 		return strip;
-	}
-
-	/**
-	 * The "Include days before v1.0.9" check box (1.0.9 part 5), built once and set into {@link #legacyHolder}: one 11 px
-	 * grey line, the box drawn by {@link Widgets#checkBox} on a plain label as the hover switch's menu item draws its own,
-	 * pressing {@link #pressLegacy()}. Its row has the control row's own gap above it and the same under it (the header's
-	 * bottom margin makes up the rest of the six), and its text starts where the caption's does.
-	 *
-	 * <p>The hover is one sentence, {@link #LEGACY_TIP}, behind "Show hover text" like every other here. There is no
-	 * second line: the reason is the question's, asked when the box is turned on.
-	 */
-	private JLabel buildLegacyRow()
-	{
-		final JLabel label = Widgets.linkLabel(LEGACY_TEXT, Widgets.sans(11), ColorScheme.LIGHT_GRAY_COLOR,
-			ColorScheme.BRAND_ORANGE, this::pressLegacy);
-		label.setIcon(Widgets.checkBox(includeLegacy));
-		label.setIconTextGap(ICON_GAP);
-		setHover(label, LEGACY_TIP);
-		legacyHolder = new JPanel(new BorderLayout());
-		legacyHolder.setBackground(ColorScheme.DARK_GRAY_COLOR);
-		legacyHolder.setBorder(new EmptyBorder(ROW_GAP, GAP, 2, GAP));
-		legacyHolder.add(label, BorderLayout.WEST);
-		return label;
 	}
 
 	/**
@@ -2255,8 +2858,156 @@ public class BankPriceMovementPanel extends PluginPanel
 		row.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		row.setBorder(new EmptyBorder(SEARCH_GAP, 0, 0, 0));
 		row.add(searchField, BorderLayout.CENTER);
+		// 1.1.0 part G: the List options icon at the row's right end - the box is shortened by the icon and its 6 px gap, and
+		// the icon's right edge stands where the box's right edge stood.
+		listMenu = buildListMenu();
+		listOptionsLabel = buildListOptionsIcon();
+		row.add(listOptionsLabel, BorderLayout.EAST);
 		Widgets.fixed(row, W, SEARCH_GAP + searchField.getPreferredSize().height);
 		return row;
+	}
+
+	/**
+	 * The List options icon (1.1.0 part G): {@link GearsIcon}'s two gears in the grey the search box paints its placeholder
+	 * in ({@link Widgets#PLACEHOLDER_COLOR}) at rest and white under the mouse, a hover that is always on
+	 * ({@link #LIST_OPTIONS_TIP}) and a LEFT press that opens the List options menu under it ({@link #openListMenu}). The label
+	 * is the icon's width plus {@link #LIST_OPTIONS_GAP} of empty air on its left, so the gap between the box and the icon is
+	 * part of the icon's hit area, as the settings icon's inset is; BorderLayout stretches it to the box's height and centres
+	 * the icon in it.
+	 */
+	private JLabel buildListOptionsIcon()
+	{
+		final JLabel icon = new JLabel();
+		icon.setBorder(new EmptyBorder(0, LIST_OPTIONS_GAP, 0, 0));
+		icon.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+		icon.addMouseListener(new MouseAdapter()
+		{
+			@Override
+			public void mousePressed(MouseEvent e)
+			{
+				if (Widgets.isPress(e))
+				{
+					openListMenu(icon);
+				}
+			}
+
+			@Override
+			public void mouseEntered(MouseEvent e)
+			{
+				listOptionsHot = true;
+				renderListOptionsIcon();
+			}
+
+			@Override
+			public void mouseExited(MouseEvent e)
+			{
+				listOptionsHot = false;
+				renderListOptionsIcon();
+			}
+		});
+		listOptionsLabel = icon;
+		renderListOptionsIcon();
+		return icon;
+	}
+
+	/** The icon drawn for the state it is in: grey, or - under the mouse - white; its hover never changes. */
+	private void renderListOptionsIcon()
+	{
+		listOptionsLabel.setIcon(GearsIcon.icon(listOptionsHot ? Color.WHITE : Widgets.PLACEHOLDER_COLOR));
+		listOptionsLabel.setToolTipText(LIST_OPTIONS_TIP);
+	}
+
+	/**
+	 * The List options menu (1.1.0 part G): "Show alch-only items" - a check item in the settings menu's look, ticking
+	 * {@code showAlchRows} - the settings menu's rule, and the same two colour rows the settings menu has ("Up colour" and
+	 * "Down colour"), which open the same picker and change the one palette, each row's swatch drawn from the colour in force
+	 * as it paints - and, since parts H and J, the settings menu's "Colour presets" caption and its preset rows (Classic, 2h,
+	 * Colour-blind, Slot 1) and the "Save current colours to Slot 1" row directly under them, with the tick on the preset in
+	 * use. The menu keeps the settings menu's border and fonts, and nothing else of it: no header, no OK row.
+	 */
+	private JPopupMenu buildListMenu()
+	{
+		final JPopupMenu menu = new JPopupMenu();
+		menu.setBorder(new EmptyBorder(5, 5, 5, 5));
+		showAlchItem = checkItem(SHOW_ALCH_TEXT, SHOW_ALCH_TIP, this::pressShowAlchRows);
+		showAlchItem.setSelected(showAlchRows);
+		menu.add(showAlchItem);
+		menu.addSeparator();
+		listUpColourRow = new SwatchRow(UP_COLOUR_TEXT, () -> upColour, false, null);
+		setHover(listUpColourRow, UP_COLOUR_TIP);
+		listUpColourRow.addActionListener(e -> pressColour(true));
+		listDownColourRow = new SwatchRow(DOWN_COLOUR_TEXT, () -> downColour, false, null);
+		setHover(listDownColourRow, DOWN_COLOUR_TIP);
+		listDownColourRow.addActionListener(e -> pressColour(false));
+		menu.add(listUpColourRow);
+		menu.add(listDownColourRow);
+		// 1.1.0 parts H and J: the settings menu's colour presets, the same caption and rows, directly under the colour rows.
+		listPresetRows.clear();
+		addColourPresets(menu, listPresetRows);
+		menu.addPopupMenuListener(new PopupMenuListener()
+		{
+			@Override
+			public void popupMenuWillBecomeVisible(PopupMenuEvent e)
+			{
+			}
+
+			@Override
+			public void popupMenuWillBecomeInvisible(PopupMenuEvent e)
+			{
+				// The settings menu's rule (AB1): the grabber's cancel arrives here BEFORE the icon's own press listener
+				// runs, which is what lets the icon read that press as the close half of a toggle.
+				listMenuClosedAtMillis = clock.getAsLong();
+			}
+
+			@Override
+			public void popupMenuCanceled(PopupMenuEvent e)
+			{
+			}
+		});
+		return menu;
+	}
+
+	/**
+	 * Opens the List options menu under {@code anchor}, the icon that was pressed, with the menu's right edge on the icon's
+	 * (1.1.0 part G) - the menu is wider than the icon and the icon is at the sidebar's right, so it opens leftward. A press
+	 * while the menu stands opens nothing and takes it down: the same toggle the settings icon has ({@link #openGearMenu}), by
+	 * the same rule ({@link #listPressOpens()}).
+	 */
+	void openListMenu(final JComponent anchor)
+	{
+		if (stopped)
+		{
+			return;
+		}
+		if (listMenu().isVisible())
+		{
+			closeListMenu();
+			return;
+		}
+		if (!listPressOpens() || !anchor.isShowing())
+		{
+			return;
+		}
+		listMenu().show(anchor, anchor.getWidth() - listMenu().getPreferredSize().width, anchor.getHeight());
+	}
+
+	/**
+	 * Whether a press on the List options icon right now OPENS the menu: true unless the menu went away within the last
+	 * {@link #GEAR_REOPEN_GUARD_MILLIS}, in which case this press is the one that took it away ({@link #gearPressOpens}'s
+	 * rule, over this menu's own stamp). Package-private for the reason that one is.
+	 */
+	boolean listPressOpens()
+	{
+		return listMenuClosedAtMillis == MENU_NEVER_CLOSED
+			|| clock.getAsLong() - listMenuClosedAtMillis >= GEAR_REOPEN_GUARD_MILLIS;
+	}
+
+	private void closeListMenu()
+	{
+		if (listMenu() != null && listMenu().isVisible())
+		{
+			listMenu().setVisible(false);
+		}
 	}
 
 	/**
@@ -2307,6 +3058,86 @@ public class BankPriceMovementPanel extends PluginPanel
 		holder.setOpaque(false);
 		holder.add(refreshLabel);
 		return holder;
+	}
+
+	/**
+	 * The card's top-right icons (1.1.0 part I): the eye, then {@code pair} - the Discord mark and the settings icon as
+	 * {@link SupportLinks#supportPair} makes them, which is kit code and is not touched - so the corner reads eye, Discord,
+	 * settings, the settings icon still the right-most thing. The gap between the eye and the Discord mark is the one between
+	 * the Discord mark and the settings icon, {@link SupportLinks#PAIR_GAP} px of clear ground measured between the ink boxes:
+	 * the eye's and the Discord mark's labels carry the same {@link SupportLinks#iconBorder} (6 px of hit area on the left, none
+	 * on the right), so the strip between them is the gap less that inset, exactly as {@link SupportLinks#supportPair} sets its
+	 * own. All three labels are 16 px tall - 12 px of icon and 2 px above and below - and the trio is as tall as they are, so
+	 * the eye's 12 x 12 box is centred on the very line theirs are.
+	 *
+	 * <p>The trio is exactly as wide as the eye, the strip and the pair, so the bar that holds it at its east end gives it no
+	 * more room than that, and the card's top row is as tall as it was.
+	 */
+	private JPanel iconTrio(JPanel pair)
+	{
+		final JPanel trio = new JPanel();
+		trio.setLayout(new BoxLayout(trio, BoxLayout.X_AXIS));
+		trio.setOpaque(false);
+		trio.add(eyeLabel);
+		final int strip = SupportLinks.PAIR_GAP - eyeLabel.getInsets().left;
+		trio.add(Box.createHorizontalStrut(strip));
+		trio.add(pair);
+		final int width = eyeLabel.getPreferredSize().width + strip + pair.getPreferredSize().width;
+		final int height = Math.max(eyeLabel.getPreferredSize().height, pair.getPreferredSize().height);
+		trio.setPreferredSize(new Dimension(width, height));
+		return trio;
+	}
+
+	/**
+	 * The "Hide amounts" eye (1.1.0 part E): {@link EyeIcon} in the ink {@link EyeIcon#ink} says - grey 52 at rest while the
+	 * amounts show, grey 165 while they are hidden, white under the mouse - a ONE-or-two-word hover that is always on
+	 * ({@link #HIDE_AMOUNTS_TIP} while the amounts show, {@link #SHOW_AMOUNTS_TIP} while they are hidden), and a LEFT press
+	 * that toggles the sidebar's amounts and stores the choice ({@link #pressHideAmounts}). It carries the settings icon's
+	 * insets ({@link SupportLinks#iconBorder}), so it has the same hit area. Its look is {@link #renderEye}'s business.
+	 */
+	private JLabel buildEye()
+	{
+		final JLabel eye = new JLabel();
+		eye.setBorder(SupportLinks.iconBorder());
+		eye.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+		eye.addMouseListener(new MouseAdapter()
+		{
+			@Override
+			public void mousePressed(MouseEvent e)
+			{
+				if (Widgets.isPress(e))
+				{
+					pressHideAmounts();
+				}
+			}
+
+			@Override
+			public void mouseEntered(MouseEvent e)
+			{
+				eyeHot = true;
+				renderEye();
+			}
+
+			@Override
+			public void mouseExited(MouseEvent e)
+			{
+				eyeHot = false;
+				renderEye();
+			}
+		});
+		eyeLabel = eye;
+		renderEye();
+		return eye;
+	}
+
+	/**
+	 * The eye drawn for the state it is in: open in grey 52 while the amounts show, slashed in grey 165 while they are hidden,
+	 * white in both under the mouse ({@link EyeIcon#ink}, part I) - and the hover that says what a press does.
+	 */
+	private void renderEye()
+	{
+		eyeLabel.setIcon(EyeIcon.icon(hideAmounts, EyeIcon.ink(hideAmounts, eyeHot)));
+		eyeLabel.setToolTipText(hideAmounts ? SHOW_AMOUNTS_TIP : HIDE_AMOUNTS_TIP);
 	}
 
 	/**
@@ -2679,7 +3510,7 @@ public class BankPriceMovementPanel extends PluginPanel
 		replaceChildren(moveLine, parts);
 	}
 
-	/** Ticks the nine menu items to the switches; {@code setSelected} fires no action, so nothing is written. */
+	/** Ticks the menu items to the switches; {@code setSelected} fires no action, so nothing is written. */
 	private void syncHeroMenu()
 	{
 		showValueItem.setSelected(heroVisibility.value());
@@ -2693,8 +3524,10 @@ public class BankPriceMovementPanel extends PluginPanel
 		// AH: not a check item, so it is the ICON that carries the state - redrawn here rather than toggled,
 		// which is what keeps it right when the switch is changed from RuneLite's settings page.
 		showHoverTextItem.setIcon(Widgets.checkBox(options.showHoverText()));
-		// AU: a radio item's setSelected fires no action either, and the group deselects the other dot.
-		startTabItems[startTab.ordinal()].setSelected(true);
+		renderLegacy();
+		// 1.1.0 part C: "Single chart colour" is ticked to the panel's belief, which a ConfigChanged from the settings page
+		// may have moved under an open menu.
+		singleChartRow.setSelected(singleChartColour);
 	}
 
 	// ---------------------------------------------------------------- the view switches (EDT, Q1-Q6)
@@ -2888,6 +3721,267 @@ public class BankPriceMovementPanel extends PluginPanel
 	public BandPresets presets()
 	{
 		return presets;
+	}
+
+	// ---------------------------------------------------------------- the rise and fall colours (EDT, 1.1.0 part B)
+
+	/**
+	 * Hands the panel the colour picker its settings menu's colour rows open (1.1.0 part B); null - the headless
+	 * renderer's and a throwaway test seam's - leaves the rows doing nothing. The plugin's is RuneLite's own.
+	 */
+	public void setColourPicker(@Nullable ColourPicker picker)
+	{
+		colourPicker = picker;
+	}
+
+	/**
+	 * The rise and fall colours changed - the plugin's {@code ConfigChanged} for {@code upColour} or {@code downColour},
+	 * the colour picker moving ({@link #previewColour}) or "Reset to default" - so the panel draws them: the one palette
+	 * every painter reads ({@link Widgets#setMoveColours}), the menu's two swatches, and BOTH tabs, from what the panel
+	 * already holds ({@link #redrawMoveColours}). A colour that is null is the built-in one. Saves nothing back and never
+	 * asks the service for anything - what is drawn changes and no figure does - and the same colours again is a redraw.
+	 */
+	public void applyMoveColours(@Nullable Color up, @Nullable Color down)
+	{
+		if (stopped)
+		{
+			return;
+		}
+		upColour = colourOrDefault(up, Widgets.MOVE_UP_DEFAULT);
+		downColour = colourOrDefault(down, Widgets.MOVE_DOWN_TEXT);
+		Widgets.setMoveColours(upColour, downColour);
+		// 1.1.0 part J: the one funnel of every colour change (a preset, the picker live and done, Reset, a ConfigChanged), so
+		// the menus' ticks are put right here, on the pair now in force.
+		syncPresetTicks();
+		redrawMoveColours();
+	}
+
+	/**
+	 * Slot 1's pair changed from outside - the plugin's {@code ConfigChanged} for {@code slotUpColour} or
+	 * {@code slotDownColour} (1.1.0 part J; the keys are hidden, so a hand-edited profile or another client's write) - so the
+	 * panel's Slot 1 row shows it and the ticks are put right. A colour that is null is Classic's. Saves nothing back and
+	 * never asks the service for anything; the colours in use do not change.
+	 */
+	public void applySlotColours(@Nullable Color up, @Nullable Color down)
+	{
+		if (stopped)
+		{
+			return;
+		}
+		slotUp = colourOrDefault(up, Widgets.MOVE_UP_DEFAULT);
+		slotDown = colourOrDefault(down, Widgets.MOVE_DOWN_TEXT);
+		syncPresetTicks();
+	}
+
+	/**
+	 * The net worth chart's colour changed - the plugin's {@code ConfigChanged} for {@code singleChartColour} or
+	 * {@code chartColour}, the colour picker moving ({@link #previewChartColour}), the menu's tick, or "Reset to default"
+	 * (1.1.0 part C) - so the panel draws it: the chart in {@code colour} when {@code single} is on and in the range's own
+	 * up and down colours when it is off, and the menu's row ticked to match. A null colour is the logo gold. The chart
+	 * alone is redrawn, whichever tab is showing (it is a colour for one component, so nothing is left stale for later);
+	 * nothing is saved back, no tab is brought into view, and the service is never asked for anything. The same values
+	 * again are a repaint.
+	 */
+	public void applyChartColour(boolean single, @Nullable Color colour)
+	{
+		if (stopped)
+		{
+			return;
+		}
+		singleChartColour = single;
+		chartColour = colourOrDefault(colour, Widgets.CHART_COLOUR_DEFAULT);
+		singleChartRow.setSelected(single);
+		singleChartRow.repaint();
+		historyView.setChartColour(single ? chartColour : null);
+	}
+
+	// ---------------------------------------------------------------- the eye (EDT, 1.1.0 part E)
+
+	/**
+	 * The eye's press (1.1.0 part E): hides every gp amount and item quantity in the sidebar, or shows them again, and stores
+	 * the choice through {@link Prefs#saveHideAmounts} (the plugin's seam guards that write, so the {@code ConfigChanged} it
+	 * posts is not echoed back at the panel). A stopped panel writes nothing (contract C33).
+	 */
+	public void pressHideAmounts()
+	{
+		if (stopped)
+		{
+			return;
+		}
+		final boolean next = !hideAmounts;
+		applyHideAmounts(next);
+		if (!updating)
+		{
+			prefs.saveHideAmounts(next);
+		}
+	}
+
+	/**
+	 * The amounts are hidden or shown - the eye's press, startUp's seed and the plugin's {@code ConfigChanged} for
+	 * {@code hideAmounts} all come here - so the sidebar is drawn that way: the eye itself, the card (both tabs share it),
+	 * and the tab on screen at once, from what the panel already holds. The item rows are built again in the mask, or out of
+	 * it, from the rows the panel holds; the History view is handed the switch and redraws its chart, readout and day list.
+	 * The tab that is NOT showing is flagged ({@link #itemsStale}, {@link #historyStale}) and drawn when the reader switches to
+	 * it ({@link #setView}) - part B's pattern, so a toggle never pays for a tab nobody is looking at. Nothing is saved back
+	 * and the service is never asked for anything: what is drawn changes and no figure does. Toggling back restores every
+	 * text exactly, because the masks replace what is DRAWN and the panel holds the real figures throughout. The same state
+	 * again is a redraw.
+	 */
+	public void applyHideAmounts(boolean hide)
+	{
+		if (stopped)
+		{
+			return;
+		}
+		hideAmounts = hide;
+		renderEye();
+		renderValue();
+		if (view == SidebarView.ITEMS)
+		{
+			rebuildRows(false);
+		}
+		else
+		{
+			itemsStale = true;
+		}
+		historyView.setAmountsHidden(hide);
+		if (view == SidebarView.HISTORY)
+		{
+			historyView.recolour();
+			historyStale = false;
+		}
+		else
+		{
+			historyStale = true;
+		}
+	}
+
+	// ---------------------------------------------------------------- the List options menu (EDT, 1.1.0 part G)
+
+	/**
+	 * The "Show alch-only items" tick's press (1.1.0 part G), {@code on} being the tick it was left in: the list shows its alch
+	 * rows or leaves them out, and the choice is stored through {@link Prefs#saveShowAlchRows} (the plugin's seam guards that
+	 * write, so the {@code ConfigChanged} it posts is not echoed back at the panel). A stopped panel writes nothing (contract
+	 * C33).
+	 */
+	public void pressShowAlchRows(boolean on)
+	{
+		if (stopped)
+		{
+			return;
+		}
+		applyShowAlchRows(on);
+		if (!updating)
+		{
+			prefs.saveShowAlchRows(on);
+		}
+	}
+
+	/**
+	 * The tick is on or off - the menu's press, startUp's seed and the plugin's {@code ConfigChanged} for {@code showAlchRows}
+	 * all come here - so the list is drawn that way: the menu's tick, then {@link #matching} cut from the rows the panel
+	 * already holds ({@link MovementMath#list}), the pages built again from it when the Items tab is showing (it is flagged
+	 * {@link #itemsStale} and drawn when the reader switches to it otherwise), the band button's count and the card. The
+	 * service is never asked for anything: which rows are listed changes and no figure does - the bank value and the History
+	 * tab are "Include alch-only untradeables"'s alone. The same state again is a redraw; nothing is saved back.
+	 */
+	public void applyShowAlchRows(boolean show)
+	{
+		if (stopped)
+		{
+			return;
+		}
+		showAlchRows = show;
+		showAlchItem.setSelected(show);
+		final List<MovementRow> next = MovementMath.list(rows, search, show);
+		// The same list - the seed at startUp, a tick with no alch row to show or hide - is nothing to build again.
+		final boolean changed = !next.equals(matching);
+		matching = next;
+		if (changed && view == SidebarView.ITEMS)
+		{
+			rebuildRows(true);
+		}
+		else if (changed)
+		{
+			itemsStale = true;
+		}
+		renderControl();
+		showCard(chooseCard());
+	}
+
+	/**
+	 * The m of "n of m items" (1.1.0 part G): the bank's stacks as the service counted them ({@link Status#bankItems()}), less
+	 * the alch stacks it counted ({@link Status#alchCounted()}), plus the alch stacks THIS list answers for - all of them with
+	 * the tick on, only the ones it lists with the tick off (a search that found one). So an alch row the list keeps out is in
+	 * neither n ({@link #matching}) nor m, and a listed one is in both, whatever "Include alch-only untradeables" says of the
+	 * bank value. With a status that carries no alch counts it is {@link Status#bankItems()} as it was.
+	 */
+	private int itemsTotal()
+	{
+		if (status == null)
+		{
+			return 0;
+		}
+		final int alchHere = showAlchRows ? status.alchStacks() : listedAlchRows();
+		return Math.max(0, status.bankItems() - status.alchCounted() + alchHere);
+	}
+
+	/** How many of the alch stacks in the bank value ({@link Status#alchCounted()}) this list keeps out (1.1.0 part G). */
+	private int hiddenAlchCounted()
+	{
+		if (status == null)
+		{
+			return 0;
+		}
+		final int listed = showAlchRows ? status.alchStacks() : listedAlchRows();
+		return Math.max(0, status.alchCounted() - listed);
+	}
+
+	/** How many of the rows the list shows are alch rows. */
+	private int listedAlchRows()
+	{
+		int listed = 0;
+		for (final MovementRow row : matching)
+		{
+			if (MovementMath.isAlch(row))
+			{
+				listed++;
+			}
+		}
+		return listed;
+	}
+
+	/**
+	 * Draws everything that carries a rise or a fall again, from what is already held. The card is shared by both tabs
+	 * (its figures, triangle and edge), so it is always redrawn. The tab on screen follows at once - the item rows are
+	 * built again from the rows the panel holds, the history view recolours its change line, chart and day list - and the
+	 * other tab is flagged ({@link #itemsStale}, {@link #historyStale}) and drawn when the reader switches to it
+	 * ({@link #setView}), so a picker dragged over one tab never pays for the other.
+	 */
+	private void redrawMoveColours()
+	{
+		upColourRow.repaint();
+		downColourRow.repaint();
+		listUpColourRow.repaint();
+		listDownColourRow.repaint();
+		renderValue();
+		if (view == SidebarView.ITEMS)
+		{
+			rebuildRows(false);
+		}
+		else
+		{
+			itemsStale = true;
+		}
+		if (view == SidebarView.HISTORY)
+		{
+			historyView.recolour();
+			historyStale = false;
+		}
+		else
+		{
+			historyStale = true;
+		}
 	}
 
 	/**
@@ -3197,7 +4291,7 @@ public class BankPriceMovementPanel extends PluginPanel
 		}
 		search = wanted;
 		liftBankHold();
-		matching = MovementMath.search(rows, search);
+		matching = MovementMath.list(rows, search, showAlchRows);
 		rebuildRows(true);
 		// The band button's hover counts the rows shown, and the card under the header follows the list: a search that
 		// leaves nothing is the empty card, one that is cleared brings the list back.
@@ -4055,7 +5149,8 @@ public class BankPriceMovementPanel extends PluginPanel
 		// The total shares its line with the Refresh link (1.0.9; it was the settings gear from Q1 until then), so what
 		// it may take is the card's inner width less the link's widest text and the BorderLayout gap - measured off the
 		// link rather than assumed, the way the band button is measured off the sort button one row down.
-		Widgets.setFitted(totalLabel, MovementMath.formatGp(summary.valueNow()),
+		// 1.1.0 part E: the total reads its fixed mask while the amounts are hidden - the card is the one place both tabs share.
+		Widgets.setFitted(totalLabel, AmountMask.amount(hideAmounts, MovementMath.formatGp(summary.valueNow())),
 			CARD_INNER - refreshReserve() - ROW_GAP);
 		adoptFittedHover(totalLabel);
 		if (history ? change == null : move == null)
@@ -4075,7 +5170,7 @@ public class BankPriceMovementPanel extends PluginPanel
 			final Double deltaPct = history ? change.pct() : move.deltaPct();
 			triangleLabel.setIcon(sign > 0 ? Widgets.triangleUp(moveColour) : sign < 0 ? Widgets.triangleDown(moveColour) : null);
 			triangleLabel.setBorder(sign == 0 ? null : new EmptyBorder(0, 0, 0, ICON_GAP));
-			deltaLabel.setText(MovementMath.formatDelta(deltaGp));
+			deltaLabel.setText(AmountMask.change(hideAmounts, MovementMath.formatDelta(deltaGp)));
 			deltaLabel.setForeground(textColour);
 			final boolean hasPct = deltaPct != null;
 			pctLabel.setText(hasPct ? MovementMath.formatPct(deltaPct, deltaGp) : MovementMath.DASH);
@@ -4098,7 +5193,9 @@ public class BankPriceMovementPanel extends PluginPanel
 
 		// AH: the card's hover is one the switch governs, so with it off no target carries a tooltip at all -
 		// not a blank one, which Swing would still open as an empty box.
-		final String tip = options.showHoverText() ? valueTooltip(summary, heroVisibility, warning) : "";
+		// 1.1.0 part E: with the amounts hidden the hover says the same thing about a figure it no longer prints - the mask.
+		final String tip = !options.showHoverText() ? ""
+			: hideAmounts ? hiddenValueTooltip(heroVisibility, warning) : valueTooltip(summary, heroVisibility, warning);
 		for (JComponent c : heroTipTargets)
 		{
 			setHover(c, tip.isEmpty() ? null : tip);
@@ -4286,9 +5383,12 @@ public class BankPriceMovementPanel extends PluginPanel
 	 */
 	private String countSentence()
 	{
-		final int total = status == null ? 0 : status.bankItems();
+		// 1.1.0 part G: m over the alch rows this list answers for, not the ones it keeps out (itemsTotal).
+		final int total = itemsTotal();
 		final PortfolioSummary summary = portfolio();
-		final int unpriced = Math.max(0, summary.itemsTotal() - summary.itemsPriced());
+		// An alch stack has no guide price, so the bank value's sums count it as unpriced; one this list keeps out is not
+		// "with no guide price" here either - it is not in this list at all (1.1.0 part G).
+		final int unpriced = Math.max(0, summary.itemsTotal() - summary.itemsPriced() - hiddenAlchCounted());
 		// 1.0.9 part 4: the rows SHOWN - after the search - against the bank's total, "1 of 13 items" with "rune" typed.
 		// The noun agrees with the last number said, so "1 item" is the one case of a lone row out of a lone item.
 		final int listed = matching.size();
@@ -4310,15 +5410,18 @@ public class BankPriceMovementPanel extends PluginPanel
 
 	/**
 	 * Puts the right rows into the header column, in order, and nothing else: the hero card (the chips are
-	 * inside it), the Items | Net Worth History strip (AU), then - in History only, while the record holds days before
-	 * 1.0.9 - the check box that shows them (1.0.9 part 5), then - in Items only - the control row and the fold while
+	 * inside it), the Items | Net Worth History strip (AU), then - in Items only - the control row and the fold while
 	 * open, and the problem row while there is a problem in both views, and - in Items only, last - the search box
 	 * (1.0.9 part 4) - all of them only while a bank is loaded (N
 	 * section 3 §3: LOGIN and NO_BANK empty the header). Rows are added and removed, never hidden (playbook 7.5), and
 	 * nothing is touched when the set is already right, so a status-only publish causes no flicker (C30).
+	 *
+	 * <p>The History tab's header holds no check box since 1.1.0 part A: "Include days before v1.0.9" is the settings
+	 * menu's, and this sync keeps that item in step with the record ({@link #syncLegacyItem}).
 	 */
 	private void syncHeader()
 	{
+		syncLegacyItem();
 		final List<Component> want = new ArrayList<>(6);
 		if (bankLoaded())
 		{
@@ -4327,12 +5430,6 @@ public class BankPriceMovementPanel extends PluginPanel
 			// only in Items, where there is a list for them to order and band. foldOpen is kept, not written, so the
 			// fold comes back as the reader left it.
 			want.add(viewStrip);
-			// 1.0.9 part 5: under the caption, in the History tab only, and only while the record holds days recorded
-			// before 1.0.9 - not hidden otherwise, absent, like every row of this header.
-			if (view == SidebarView.HISTORY && legacyDaysPresent())
-			{
-				want.add(legacyHolder);
-			}
 			if (view == SidebarView.ITEMS)
 			{
 				want.add(controlRow);
@@ -4425,10 +5522,10 @@ public class BankPriceMovementPanel extends PluginPanel
 	// ---------------------------------------------------------------- the two views (EDT, addendum AU)
 
 	/**
-	 * A dot of the settings menu's start-tab group - and the bridge's {@code starttab=}: moves the dot AND writes the
-	 * choice through {@link Prefs#saveStartTab}, so the sidebar opens on it next time. It does NOT switch the tab that
-	 * is showing: the setting is about the next start. Nothing is written when nothing changed, and a stopped panel
-	 * writes nothing (contract C33).
+	 * The bridge's {@code starttab=} (the settings menu's two dots were its hand version until 1.1.0 part A took them
+	 * out): sets the tab the sidebar opens on next time AND writes it through {@link Prefs#saveStartTab}, on the same
+	 * stored value {@link #pressView} writes. It does NOT switch the tab that is showing: the setting is about the next
+	 * start. Nothing is written when nothing changed, and a stopped panel writes nothing (contract C33).
 	 */
 	public void pressStartTab(@Nullable SidebarView next)
 	{
@@ -4446,8 +5543,8 @@ public class BankPriceMovementPanel extends PluginPanel
 	}
 
 	/**
-	 * The start tab changed under us - the plugin's {@code ConfigChanged} for {@code startTab} (the settings page) or
-	 * startUp's seed - so the menu's dot moves and nothing else happens: no tab switch, no write back, no service
+	 * The start tab changed under us - the plugin's {@code ConfigChanged} for {@code startTab} or startUp's seed - so
+	 * the panel takes it as the tab to remember and nothing else happens: no tab switch, no write back, no service
 	 * call. Null reads as {@link SidebarView#ITEMS}.
 	 */
 	public void setStartTab(@Nullable SidebarView next)
@@ -4457,18 +5554,19 @@ public class BankPriceMovementPanel extends PluginPanel
 			return;
 		}
 		startTab = next == null ? SidebarView.ITEMS : next;
-		syncHeroMenu();
 	}
 
-	/** The tab the menu's dot stands on (AU): the bridge's {@code state.startTab}. Never null. */
+	/** The tab the sidebar opens on next time, the one used last (AU; 1.1.0): the bridge's {@code state.startTab}. Never null. */
 	SidebarView startTab()
 	{
 		return startTab;
 	}
 
 	/**
-	 * The toggle's press - and the bridge's {@code view=} (amendment 9.11): shows {@code next} for this session and
-	 * writes NOTHING - the sidebar opens on Items every time it is built (2026-09-29).
+	 * The toggle's press - and the bridge's {@code view=} (amendment 9.11): shows {@code next} and REMEMBERS it - since
+	 * 1.1.0 part A the sidebar opens on the tab used last, so a press that changes the stored tab writes it through
+	 * {@link Prefs#saveStartTab} (the plugin's seam guards that write, so the {@code ConfigChanged} it posts is not
+	 * echoed back at the panel). Pressing the tab already stored writes nothing.
 	 *
 	 * <p><b>It never lifts the bank hold</b> (addendum AS; plan 7.2 item 8). Switching what the sidebar SHOWS is not
 	 * a request for a new list, so no publish answers it: both views are drawn from the last DRAWN status, and a
@@ -4483,7 +5581,13 @@ public class BankPriceMovementPanel extends PluginPanel
 		{
 			return;
 		}
-		setView(next);
+		final SidebarView want = next == null ? SidebarView.ITEMS : next;
+		setView(want);
+		if (want != startTab)
+		{
+			startTab = want;
+			prefs.saveStartTab(want);
+		}
 	}
 
 	/**
@@ -4503,6 +5607,18 @@ public class BankPriceMovementPanel extends PluginPanel
 		renderValue();
 		syncHeader();
 		showHistory();
+		// 1.1.0 part B: a colour chosen while this tab was away is drawn as it arrives (redrawMoveColours). The rows draw
+		// themselves again in the colours in force when they are rebuilt, which clears the flag; the history view is asked
+		// after showHistory, so what it re-draws is the series it was just handed.
+		if (view == SidebarView.ITEMS && itemsStale)
+		{
+			rebuildRows(false);
+		}
+		if (view == SidebarView.HISTORY && historyStale)
+		{
+			historyView.recolour();
+			historyStale = false;
+		}
 		showCard(chooseCard());
 	}
 
@@ -4562,7 +5678,7 @@ public class BankPriceMovementPanel extends PluginPanel
 		return includeLegacy ? record : record.fromFresh();
 	}
 
-	/** Whether the last-drawn status's record holds a day recorded before 1.0.9 - what puts the check box in the header. */
+	/** Whether the last-drawn status's record holds a day recorded before 1.0.9 - what puts the check item in the menu. */
 	private boolean legacyDaysPresent()
 	{
 		final BankHistorySeries record = status == null ? null : status.bankHistory();
@@ -4570,8 +5686,8 @@ public class BankPriceMovementPanel extends PluginPanel
 	}
 
 	/**
-	 * The check box's click (1.0.9 part 5): flips "Include days before v1.0.9". Turning it ON asks first
-	 * ({@link #LEGACY_ASK}); turning it off asks nothing.
+	 * The menu item's press (1.0.9 part 5, as the History tab's check box; the menu's since 1.1.0 part A): flips
+	 * "Include days before v1.0.9". Turning it ON asks first ({@link #LEGACY_ASK}); turning it off asks nothing.
 	 */
 	public void pressLegacy()
 	{
@@ -4579,7 +5695,7 @@ public class BankPriceMovementPanel extends PluginPanel
 	}
 
 	/**
-	 * The check box, said as the state it aims at - the click above and the bridge's {@code legacy=on|off} both come
+	 * The item, said as the state it aims at - the press above and the bridge's {@code legacy=on|off} both come
 	 * here (1.0.9 part 5). The same state again does nothing. Aiming at ON puts the question to the reader through the
 	 * {@link LegacyPrompt}; "Cancel" leaves the box off and unticked and writes nothing. Whatever is chosen is written
 	 * through {@link Prefs#saveIncludeLegacy}, so the stored config follows - the round trip {@link #pressFold} makes -
@@ -4617,7 +5733,7 @@ public class BankPriceMovementPanel extends PluginPanel
 	}
 
 	/**
-	 * The state of the check box changed under us - the plugin's {@code ConfigChanged} for {@code includeLegacyHistory}
+	 * The state of the setting changed under us - the plugin's {@code ConfigChanged} for {@code includeLegacyHistory}
 	 * or startUp's seed (1.0.9 part 5) - so the tab and the card are drawn from {@link #visibleHistory} again and nothing
 	 * else happens: no question (the answer was given where the change was made), no write back, no service call. The
 	 * same state again redraws what it drew.
@@ -4635,10 +5751,10 @@ public class BankPriceMovementPanel extends PluginPanel
 		showHistory();
 	}
 
-	/** The box ticked to the switch. */
+	/** The menu item ticked to the switch ({@code setSelected} fires no action, so nothing is written). */
 	private void renderLegacy()
 	{
-		legacyRow.setIcon(Widgets.checkBox(includeLegacy));
+		legacyItem.setSelected(includeLegacy);
 	}
 
 	/**
@@ -4836,6 +5952,7 @@ public class BankPriceMovementPanel extends PluginPanel
 	{
 		closeSortMenu();
 		closeGearMenu();
+		closeListMenu();
 	}
 
 	/**
@@ -4966,7 +6083,7 @@ public class BankPriceMovementPanel extends PluginPanel
 		{
 			rows = safe;
 			// 1.0.9 part 4: a publish during a search keeps the narrowing - the new rows are narrowed by what is typed.
-			matching = MovementMath.search(rows, search);
+			matching = MovementMath.list(rows, search, showAlchRows);
 			list = next;
 			rebuildRows(newList);
 		}
@@ -5006,6 +6123,8 @@ public class BankPriceMovementPanel extends PluginPanel
 	 */
 	private void rebuildRows(boolean newList)
 	{
+		// Every cell below is built in the move colours in force now (1.1.0 part B), so none is waiting for a redraw.
+		itemsStale = false;
 		final JScrollBar bar = scroll.getVerticalScrollBar();
 		// Pages, not rows: shown is only ever off a page boundary when it reached the end of the list, and a page
 		// count is what "Show n more" sold the reader.
@@ -5083,7 +6202,9 @@ public class BankPriceMovementPanel extends PluginPanel
 		for (int i = shown; i < end; i++)
 		{
 			final MovementRow row = matching.get(i);
-			rowsColumn.add(new MovementRowPanel(row, image(row), list.window, list.thenDay, options, expandedRows));
+			// 1.1.0 part E: every row is built in the mask the reader chose - its texts and its picture both.
+			rowsColumn.add(new MovementRowPanel(row, image(row), list.window, list.thenDay, options, LinkBrowser::browse,
+				expandedRows, hideAmounts));
 		}
 		shown = end;
 	}
@@ -5115,7 +6236,10 @@ public class BankPriceMovementPanel extends PluginPanel
 		}
 		try
 		{
-			final AsyncBufferedImage image = itemManager.getImage(row.id(), row.quantity(), row.stackable());
+			// 1.1.0 part E: with the amounts hidden the plain picture - one item, not stackable - which the game draws with no
+			// stack number on it (ItemManager.getImage(id) is exactly this call); a stack number is a quantity.
+			final AsyncBufferedImage image = hideAmounts ? itemManager.getImage(row.id(), 1, false)
+				: itemManager.getImage(row.id(), row.quantity(), row.stackable());
 			if (image != null)
 			{
 				images.put(key, image);
@@ -5130,8 +6254,13 @@ public class BankPriceMovementPanel extends PluginPanel
 	}
 
 	/** {@code ItemManager}'s own image key - id, quantity, stackable - packed into one long. */
-	private static long imageKey(MovementRow row)
+	private long imageKey(MovementRow row)
 	{
+		if (hideAmounts)
+		{
+			// The plain picture is the same picture whatever the stack: quantity 1, not stackable (see image).
+			return ((long) row.id() << 33) | (1L << 1);
+		}
 		return ((long) row.id() << 33) | ((long) Math.max(0, row.quantity()) << 1) | (row.stackable() ? 1L : 0L);
 	}
 
@@ -5423,16 +6552,30 @@ public class BankPriceMovementPanel extends PluginPanel
 	 */
 	static String valueTooltip(PortfolioSummary summary, @Nullable HeroVisibility shown, @Nullable String warning)
 	{
+		// The unit rides with the figure: the card's own total is drawn under the caption "Bank value", which
+		// says what it is, but a hover opens over the sidebar on its own and a bare nine-digit number there
+		// names no unit at all.
+		return tipOf(MovementMath.formatExact(summary.valueNow()) + GP_SUFFIX, shown, warning);
+	}
+
+	/**
+	 * {@link #valueTooltip(PortfolioSummary, HeroVisibility, String)} while the amounts are HIDDEN (1.1.0 part E): the same
+	 * hover with the exact figure replaced by the total's mask and its unit - {@link AmountMask#AMOUNT} then " gp" - so it
+	 * holds no digit of the total. The summary is not asked at all: nothing about it can reach the hover.
+	 */
+	static String hiddenValueTooltip(@Nullable HeroVisibility shown, @Nullable String warning)
+	{
+		return tipOf(AmountMask.AMOUNT + GP_SUFFIX, shown, warning);
+	}
+
+	/** The hover's shape, which both of the above share: the figure as printed, and the degraded sentence under it if there is one. */
+	private static String tipOf(String exact, @Nullable HeroVisibility shown, @Nullable String warning)
+	{
 		final HeroVisibility v = shown == null ? HeroVisibility.ALL : shown;
 		if (!v.value())
 		{
 			return "";
 		}
-
-		// The unit rides with the figure: the card's own total is drawn under the caption "Bank value", which
-		// says what it is, but a hover opens over the sidebar on its own and a bare nine-digit number there
-		// names no unit at all.
-		final String exact = MovementMath.formatExact(summary.valueNow()) + GP_SUFFIX;
 		if (warning == null || warning.isEmpty())
 		{
 			// One line, so no HTML: a plain string is the tooltip Swing draws fastest and the one a test can
@@ -5582,11 +6725,14 @@ public class BankPriceMovementPanel extends PluginPanel
 	 */
 	private void renderEmptyCard()
 	{
-		final boolean noTradeables = status != null && status.bankItems() == 0;
+		// 1.1.0 part G: alch rows the list keeps out are not items the reader could be shown (itemsTotal).
+		final boolean noTradeables = status != null && itemsTotal() == 0;
 		final boolean band = bandOn();
 		// 1.0.9 part 4: rows the service published and a search that took them all away. Said first, because it is the
 		// nearer cause - the band, if any, left rows - and with no button of its own: the box that did it is right above.
-		final boolean searchedAway = !rows.isEmpty() && matching.isEmpty();
+		// 1.1.0 part G: only a search can take rows away from the list the service sent that the band did not - the alch
+		// rows the tick keeps out are not "no match", and an empty search quotes nothing.
+		final boolean searchedAway = !search.isEmpty() && !rows.isEmpty() && matching.isEmpty();
 		if (searchedAway)
 		{
 			emptyMessage.setContent(NO_MATCH_TEXT, "\"" + Widgets.escapeHtml(searchQuote()) + "\"");
@@ -6203,12 +7349,6 @@ public class BankPriceMovementPanel extends PluginPanel
 		return foldOpen;
 	}
 
-	/** The "Include days before v1.0.9" check box (1.0.9 part 5), whether or not it is in the header right now. */
-	JLabel legacyRow()
-	{
-		return legacyRow;
-	}
-
 	/** The fold's chip {@code i}: "All", then the three presets smallest first (Z3). */
 	JLabel presetCell(int i)
 	{
@@ -6230,6 +7370,15 @@ public class BankPriceMovementPanel extends PluginPanel
 	Widgets.PlaceholderField searchField()
 	{
 		return searchField;
+	}
+
+	/**
+	 * The List options menu (1.1.0 part G): the tick, a rule, the Up / Down colour rows and the colour presets. The one way the
+	 * panel itself reaches it, to show it, hide it and ask whether it is up ({@link #openListMenu}, {@link #closeListMenu}).
+	 */
+	JPopupMenu listMenu()
+	{
+		return listMenu;
 	}
 
 	Widgets.PlaceholderField maxField()

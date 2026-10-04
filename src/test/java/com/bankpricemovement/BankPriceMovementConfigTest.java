@@ -71,7 +71,25 @@ public class BankPriceMovementConfigTest
 		"startTab",
 		// 1.0.9 part 5: the eighteenth key and the only HIDDEN one - whether the Net Worth History tab shows the days
 		// recorded before 1.0.9. The check box on the tab is its control; the settings page does not list it.
-		"includeLegacyHistory"
+		"includeLegacyHistory",
+		// 1.1.0 part B: the nineteenth and twentieth keys - the colour a rise and a fall are drawn in, on both tabs.
+		// VISIBLE on the page (a colour needs no question asked first), and rows of the sidebar's settings menu.
+		"upColour",
+		"downColour",
+		// 1.1.0 part C: the twenty-first and twenty-second keys - whether the Net Worth History chart is drawn in one
+		// colour, and which. VISIBLE on the page, and the menu's "Single chart colour" row and its swatch.
+		"singleChartColour",
+		"chartColour",
+		// 1.1.0 part E: the twenty-third key - whether the sidebar hides every gp amount and item quantity (the eye on
+		// the hero card). VISIBLE on the page.
+		"hideAmounts",
+		// 1.1.0 part G: the twenty-fourth key - whether the Items list shows its alch rows (the tick in the List options
+		// menu at the end of the search box). VISIBLE on the page.
+		"showAlchRows",
+		// 1.1.0 part J: the twenty-fifth and twenty-sixth keys - the rise and the fall the colour presets' Slot 1
+		// holds. HIDDEN: the menu's "Save current colours to Slot 1" row writes them.
+		"slotUpColour",
+		"slotDownColour"
 	);
 
 	/** Every zero-argument {@code @ConfigItem} method visible on the interface, inherited ones included. */
@@ -134,10 +152,13 @@ public class BankPriceMovementConfigTest
 			keys.add(m.getAnnotation(ConfigItem.class).keyName());
 		}
 		assertEquals("unexpected set of config keys", new TreeSet<>(EXPECTED_KEYS), keys);
-		// Eighteen: addendum AU's "view" (the last tab used) was deleted before it shipped and "startTab" (the
+		// Twenty-two: addendum AU's "view" (the last tab used) was deleted before it shipped and "startTab" (the
 		// player's choice) took the sixteenth place; 1.0.9 part 3's "countGrandExchange" is the seventeenth and
-		// 1.0.9 part 5's hidden "includeLegacyHistory" the eighteenth.
-		assertEquals("unexpected number of config items", 18, methods.size());
+		// 1.0.9 part 5's hidden "includeLegacyHistory" the eighteenth; 1.1.0 part B's "upColour" and "downColour"
+		// the nineteenth and the twentieth, part C's "singleChartColour" and "chartColour" the twenty-first and the
+		// twenty-second, part E's "hideAmounts" the twenty-third, part G's "showAlchRows" the twenty-fourth, part J's
+		// "slotUpColour" and "slotDownColour" the twenty-fifth and the twenty-sixth.
+		assertEquals("unexpected number of config items", 26, methods.size());
 	}
 
 	/**
@@ -444,18 +465,32 @@ public class BankPriceMovementConfigTest
 		assertEquals("Actively traded items use the wiki's live traded prices for every figure;"
 			+ " thin items keep the daily guide price", live.description());
 		assertEquals(15, live.position());
-		// Only addendum AU's startTab (16) and 1.0.9 part 5's hidden includeLegacyHistory (17) sit below it.
+		// Only addendum AU's startTab (16), 1.0.9 part 5's hidden includeLegacyHistory (17), 1.1.0 part B's two colours
+		// (18 and 19), part C's chart switch and colour (20 and 21), part E's hideAmounts (22), part G's showAlchRows (23)
+		// and part J's two hidden slot colours (24 and 25) sit below it.
 		for (Method m : itemMethods())
 		{
 			final ConfigItem other = m.getAnnotation(ConfigItem.class);
-			assertTrue("\"" + other.name() + "\" is drawn below the legacy item",
-				other.position() <= item("includeLegacyHistory").position());
-			assertTrue("\"" + other.name() + "\" is below livePrices but is not one of the last two",
+			assertTrue("\"" + other.name() + "\" is drawn below the slot colours",
+				other.position() <= item("slotDownColour").position());
+			assertTrue("\"" + other.name() + "\" is below livePrices but is not one of the last ten",
 				other.position() <= live.position() || other.keyName().equals("startTab")
-					|| other.keyName().equals("includeLegacyHistory"));
+					|| other.keyName().equals("includeLegacyHistory") || other.keyName().equals("upColour")
+					|| other.keyName().equals("downColour") || other.keyName().equals("singleChartColour")
+					|| other.keyName().equals("chartColour") || other.keyName().equals("hideAmounts")
+					|| other.keyName().equals("showAlchRows") || other.keyName().equals("slotUpColour")
+					|| other.keyName().equals("slotDownColour"));
 		}
 		assertEquals(16, item("startTab").position());
 		assertEquals(17, item("includeLegacyHistory").position());
+		assertEquals(18, item("upColour").position());
+		assertEquals(19, item("downColour").position());
+		assertEquals(20, item("singleChartColour").position());
+		assertEquals(21, item("chartColour").position());
+		assertEquals(22, item("hideAmounts").position());
+		assertEquals(23, item("showAlchRows").position());
+		assertEquals(24, item("slotUpColour").position());
+		assertEquals(25, item("slotDownColour").position());
 	}
 
 	/**
@@ -661,11 +696,12 @@ public class BankPriceMovementConfigTest
 	/**
 	 * 1.0.9 part 5: the eighteenth item - its key, its words, its position (17, the last on the page), its default
 	 * (off: the days before 1.0.9 stay hidden until the reader asks) and the one thing no other item here is: HIDDEN,
-	 * which is RuneLite's {@code ConfigItem.hidden}, so the settings page does not list it and the check box on the
-	 * History tab is the only control. Nothing else in the config is hidden.
+	 * which is RuneLite's {@code ConfigItem.hidden}, so the settings page does not list it and the check item in the
+	 * sidebar's settings menu (the History tab's check box until 1.1.0 part A) is the only control. Only
+	 * {@code startTab} - the tab used last, hidden by 1.1.0 part A - is hidden besides it.
 	 */
 	@Test
-	public void theIncludeLegacyItemIsHiddenOffAndLast()
+	public void theIncludeLegacyItemIsHiddenOffAndTheLastHiddenOne()
 	{
 		final ConfigItem legacy = item("includeLegacyHistory");
 		assertEquals("Include days before v1.0.9", legacy.name());
@@ -682,10 +718,158 @@ public class BankPriceMovementConfigTest
 			final ConfigItem other = m.getAnnotation(ConfigItem.class);
 			if (!other.keyName().equals("includeLegacyHistory"))
 			{
-				assertFalse("\"" + other.name() + "\" is listed on the settings page", other.hidden());
-				assertTrue(other.position() < legacy.position());
+				// 1.1.0 part J: the two slot colours are hidden as well (the menu's save row is their only control).
+				assertEquals("\"" + other.name() + "\" is listed on the settings page exactly when it is not startTab"
+					+ " or a slot colour", other.keyName().equals("startTab") || other.keyName().equals("slotUpColour")
+					|| other.keyName().equals("slotDownColour"), other.hidden());
+				// 1.1.0 parts B and C put the two colours, the chart switch and the chart colour after it: it is the last
+				// of the hidden items, not the last item.
+				assertTrue(other.keyName().equals("upColour") || other.keyName().equals("downColour")
+					|| other.keyName().equals("singleChartColour") || other.keyName().equals("chartColour")
+					|| other.keyName().equals("hideAmounts") || other.keyName().equals("showAlchRows")
+					|| other.keyName().equals("slotUpColour") || other.keyName().equals("slotDownColour")
+					|| other.position() < legacy.position());
 			}
 		}
+	}
+
+	/**
+	 * C1 (1.1.0 part C, default changed by part D): the two chart keys - {@code singleChartColour} (boolean, ON since part D,
+	 * position 20, "Single chart colour")
+	 * and {@code chartColour} (a colour, the logo gold - the 2h coin's face, 196 / 156 / 58 - position 21, "Chart colour"),
+	 * both VISIBLE on the settings page, with the words the contract gives and the keys the plugin's road names.
+	 */
+	@Test
+	public void c1_theTwoChartKeysAreNamedDefaultedAndPositionedAsTheContractSays()
+	{
+		final ConfigItem single = item("singleChartColour");
+		assertEquals("Single chart colour", single.name());
+		assertEquals(BankPriceMovementPanel.SINGLE_CHART_COLOUR_TEXT, single.name());
+		assertEquals("Draw the net worth chart in one colour instead of the up and down colours.",
+			single.description());
+		assertEquals(BankPriceMovementPanel.SINGLE_CHART_COLOUR_TIP, single.description());
+		assertEquals(20, single.position());
+		assertFalse("listed on the settings page", single.hidden());
+		assertTrue("on for a fresh profile (part D)", new BankPriceMovementConfig() {}.singleChartColour());
+		assertEquals(BankPriceMovementPlugin.SINGLE_CHART_KEY, single.keyName());
+
+		final ConfigItem colour = item("chartColour");
+		assertEquals("Chart colour", colour.name());
+		assertEquals(BankPriceMovementPanel.CHART_COLOUR_TEXT, colour.name());
+		assertEquals("The net worth chart's colour while Single chart colour is on.", colour.description());
+		assertEquals(21, colour.position());
+		assertFalse("listed on the settings page", colour.hidden());
+		assertEquals("the logo gold, the face of the 2h coin", new java.awt.Color(196, 156, 58),
+			new BankPriceMovementConfig() {}.chartColour());
+		assertEquals(Widgets.CHART_COLOUR_DEFAULT, new BankPriceMovementConfig() {}.chartColour());
+		assertEquals(BankPriceMovementPlugin.CHART_COLOUR_KEY, colour.keyName());
+	}
+
+	/**
+	 * D1 (1.1.0 part D): {@code singleChartColour} defaults to TRUE - the Net Worth History chart is the logo gold for a
+	 * player who never touched the switch - while its key, name, description, position and visibility are as part C
+	 * gave them, and the chart colour it draws in defaults to that gold.
+	 */
+	@Test
+	public void d1_singleChartColourDefaultsToTrue()
+	{
+		assertTrue(new BankPriceMovementConfig() {}.singleChartColour());
+		final ConfigItem single = item("singleChartColour");
+		assertEquals("singleChartColour", single.keyName());
+		assertEquals("Single chart colour", single.name());
+		assertEquals("Draw the net worth chart in one colour instead of the up and down colours.",
+			single.description());
+		assertEquals(20, single.position());
+		assertFalse(single.hidden());
+		assertEquals("and the colour it draws in is the logo gold", new java.awt.Color(196, 156, 58),
+			new BankPriceMovementConfig() {}.chartColour());
+	}
+
+	/**
+	 * E1 (1.1.0 part E): the key {@code hideAmounts} - boolean, OFF for a fresh profile, VISIBLE on the settings page, position
+	 * 22, named "Hide amounts" with the words the contract gives - and the key the plugin's road and prefs name.
+	 */
+	@Test
+	public void e1_theHideAmountsKeyIsNamedDefaultedAndPositionedAsTheContractSays()
+	{
+		final ConfigItem hide = item("hideAmounts");
+		assertEquals("hideAmounts", hide.keyName());
+		assertEquals("Hide amounts", hide.name());
+		assertEquals("Hide every gp amount and item quantity in the sidebar, keeping item names and percentages."
+			+ " For streaming.", hide.description());
+		assertEquals(22, hide.position());
+		assertFalse("listed on the settings page", hide.hidden());
+		assertFalse("off for a fresh profile", new BankPriceMovementConfig() {}.hideAmounts());
+		assertEquals(Boolean.TYPE, itemMethod("hideAmounts").getReturnType());
+		assertEquals("the key the plugin's road and prefs name", BankPriceMovementPlugin.HIDE_AMOUNTS_KEY,
+			hide.keyName());
+	}
+
+	/**
+	 * G1 (1.1.0 part G): the key {@code showAlchRows} - boolean, OFF for a fresh profile, VISIBLE on the settings page, position
+	 * 23, named "Show alch-only items" with the words the contract gives - and the key the plugin's road and prefs name.
+	 */
+	@Test
+	public void g1_theShowAlchRowsKeyIsNamedDefaultedAndPositionedAsTheContractSays()
+	{
+		final ConfigItem alch = item("showAlchRows");
+		assertEquals("showAlchRows", alch.keyName());
+		assertEquals("Show alch-only items", alch.name());
+		assertEquals(BankPriceMovementPanel.SHOW_ALCH_TEXT, alch.name());
+		assertEquals("Lists untradeables with no tradeable parts, at alch value. Searching finds them either way.",
+			alch.description());
+		assertEquals(BankPriceMovementPanel.SHOW_ALCH_TIP, alch.description());
+		assertEquals(23, alch.position());
+		assertFalse("listed on the settings page", alch.hidden());
+		assertFalse("off for a fresh profile", new BankPriceMovementConfig() {}.showAlchRows());
+		assertEquals(Boolean.TYPE, itemMethod("showAlchRows").getReturnType());
+		assertEquals("the key the plugin's road and prefs name", BankPriceMovementPlugin.SHOW_ALCH_KEY, alch.keyName());
+		// The switch that decides the bank value keeps its own words: the list is a different question.
+		assertEquals("Include alch-only untradeables", item("countUntradeables").name());
+	}
+
+	/**
+	 * J4 (1.1.0 part J): the two keys {@code slotUpColour} and {@code slotDownColour} - colours, defaulting to Classic's pair
+	 * (the built-in green and the lifted red), HIDDEN from the settings page, at positions 24 and 25 - and the keys the
+	 * plugin's road and prefs name.
+	 */
+	@Test
+	public void j4_theTwoSlotKeysAreHiddenColoursAtTwentyFourAndTwentyFiveDefaultingToClassic()
+	{
+		final ConfigItem up = item("slotUpColour");
+		assertEquals("slotUpColour", up.keyName());
+		assertEquals("Slot 1 up colour", up.name());
+		assertEquals("The colour of a rise saved in the colour presets' Slot 1.", up.description());
+		assertEquals(24, up.position());
+		assertTrue("hidden from the settings page", up.hidden());
+		assertEquals(java.awt.Color.class, itemMethod("slotUpColour").getReturnType());
+		assertEquals("Classic's rise", Widgets.MOVE_UP_DEFAULT, new BankPriceMovementConfig() {}.slotUpColour());
+		assertEquals(BankPriceMovementPlugin.SLOT_UP_KEY, up.keyName());
+
+		final ConfigItem down = item("slotDownColour");
+		assertEquals("slotDownColour", down.keyName());
+		assertEquals("Slot 1 down colour", down.name());
+		assertEquals("The colour of a fall saved in the colour presets' Slot 1.", down.description());
+		assertEquals(25, down.position());
+		assertTrue("hidden from the settings page", down.hidden());
+		assertEquals(java.awt.Color.class, itemMethod("slotDownColour").getReturnType());
+		assertEquals("Classic's fall", Widgets.MOVE_DOWN_TEXT, new BankPriceMovementConfig() {}.slotDownColour());
+		assertEquals(BankPriceMovementPlugin.SLOT_DOWN_KEY, down.keyName());
+		assertEquals("Classic's pair is the pair of up and down colours' own defaults",
+			new BankPriceMovementConfig() {}.upColour(), new BankPriceMovementConfig() {}.slotUpColour());
+		assertEquals(new BankPriceMovementConfig() {}.downColour(), new BankPriceMovementConfig() {}.slotDownColour());
+	}
+
+	private static Method itemMethod(String keyName)
+	{
+		for (Method m : itemMethods())
+		{
+			if (m.getAnnotation(ConfigItem.class).keyName().equals(keyName))
+			{
+				return m;
+			}
+		}
+		throw new AssertionError("no item " + keyName);
 	}
 
 	private static ConfigItem item(String keyName)

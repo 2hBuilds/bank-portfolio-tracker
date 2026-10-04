@@ -26,6 +26,12 @@ import static org.mockito.Mockito.verify;
  * <p>The fixture is {@link PriceServiceTest}'s own - the 31-stack bank worth 6,290,824 gp, the Crystal body over
  * three Crystal armour seeds, the carried half of addendum Y - used by composition, so these tests read the very
  * figures that class pins and cannot drift from them. Its {@code @Before} is run by hand here.
+ *
+ * <p><b>1.1.0 part G changed what "left out" means for the rows.</b> The service now publishes an alch row for every
+ * stack that ends on the alch rule whatever "Include alch-only untradeables" says - the Items list keeps it out by its own
+ * tick, off by default - and the switch decides the bank value and the counts alone. So where these tests used to say "not a
+ * row" they now say "not in the list the reader sees" ({@link PriceServiceTest#defaultList}) and add that the row is
+ * published; the value, the stack totals and the stack count they pin are untouched.
  */
 public class UntradeablePartsAlwaysCountTest
 {
@@ -56,7 +62,11 @@ public class UntradeablePartsAlwaysCountTest
 	{
 		f.warmUpWith(PriceServiceTest.bankWithCrystalBody(PriceServiceTest.T0));
 
-		assertNull("off: no row of any kind", PriceServiceTest.rowFor(f.lastRows(), PriceServiceTest.CRYSTAL_BODY));
+		// Part G: with the switch off the stack is an alch row the service publishes and the list keeps out - not a gp of the
+		// bank value, not a stack of the total.
+		assertNotNull("off: published as an alch row", PriceServiceTest.rowFor(f.lastRows(), PriceServiceTest.CRYSTAL_BODY));
+		assertNull("off: and no row in the list the reader sees",
+			PriceServiceTest.rowFor(PriceServiceTest.defaultList(f.lastRows()), PriceServiceTest.CRYSTAL_BODY));
 		final PortfolioSummary off = f.lastStatus().portfolio();
 		assertEquals("off: not a gp of it in the bank value", BANK_VALUE, off.valueNow());
 		assertEquals("off: nor a stack of the total", BANK_STACKS, off.itemsTotal());
@@ -92,7 +102,10 @@ public class UntradeablePartsAlwaysCountTest
 
 		assertEquals("31 + the Crystal body; the two alch-only stacks wait", BANK_STACKS + 1, f.lastStatus().bankItems());
 		assertNotNull(PriceServiceTest.rowFor(f.lastRows(), PriceServiceTest.CRYSTAL_BODY));
-		assertNull("an alch-only stack is still not a row", PriceServiceTest.rowFor(f.lastRows(), PriceServiceTest.DRAMEN));
+		assertNotNull("since part G an alch-only stack is a published row...",
+			PriceServiceTest.rowFor(f.lastRows(), PriceServiceTest.DRAMEN));
+		assertNull("...and still not one the list shows",
+			PriceServiceTest.rowFor(PriceServiceTest.defaultList(f.lastRows()), PriceServiceTest.DRAMEN));
 		assertEquals(BANK_VALUE + 3L * PriceServiceTest.SEED_NOW, f.lastStatus().portfolio().valueNow());
 
 		f.service.setOptions(ViewOptions.DEFAULT.withCountUntradeables(true));
@@ -140,7 +153,10 @@ public class UntradeablePartsAlwaysCountTest
 			Collections.<BankItem>emptyList(), Collections.singletonList(body), 0L, PriceServiceTest.T0));
 		f.warmUpWith(bank);
 
-		assertNull(PriceServiceTest.rowFor(f.lastRows(), PriceServiceTest.CRYSTAL_BODY));
+		assertNotNull("published as an alch row (part G)...",
+			PriceServiceTest.rowFor(f.lastRows(), PriceServiceTest.CRYSTAL_BODY));
+		assertNull("...which the list keeps out",
+			PriceServiceTest.rowFor(PriceServiceTest.defaultList(f.lastRows()), PriceServiceTest.CRYSTAL_BODY));
 		assertEquals(BANK_VALUE, f.lastStatus().portfolio().valueNow());
 		assertEquals(BANK_STACKS, f.lastStatus().portfolio().itemsTotal());
 	}
@@ -209,7 +225,9 @@ public class UntradeablePartsAlwaysCountTest
 
 		f.service.setBank(PriceServiceTest.bankWithCrystalBody(PriceServiceTest.T0 + 1L));
 
-		assertEquals(plain, f.lastRows());
+		// Part G: the stack the gate left out is a published alch row all the same; the list the reader sees is the plain bank's.
+		assertEquals(plain, PriceServiceTest.defaultList(f.lastRows()));
+		assertEquals(plain.size() + 1, f.lastRows().size());
 		assertEquals(plainSummary, f.lastStatus().portfolio());
 		assertEquals("and the stack count: the stack the gate left out is not one of the m of \"n of m items\"",
 			BANK_STACKS, f.lastStatus().bankItems());
@@ -275,7 +293,11 @@ public class UntradeablePartsAlwaysCountTest
 				new BankItem.Part(UNPRICED_PART, 1L, "Unpriced part"))));
 		f.warmUpWith(bank);
 
-		assertNull(PriceServiceTest.rowFor(f.lastRows(), PriceServiceTest.CRYSTAL_BODY));
+		// Part G: an alch row at its alch value, never a partial sum - published, kept out of the list, left out of the value.
+		final MovementRow published = PriceServiceTest.rowFor(f.lastRows(), PriceServiceTest.CRYSTAL_BODY);
+		assertNotNull(published);
+		assertEquals(MovementRow.PriceSource.ALCH, published.source());
+		assertNull(PriceServiceTest.rowFor(PriceServiceTest.defaultList(f.lastRows()), PriceServiceTest.CRYSTAL_BODY));
 		assertEquals(BANK_VALUE, f.lastStatus().portfolio().valueNow());
 		assertEquals(BANK_STACKS, f.lastStatus().portfolio().itemsTotal());
 		assertEquals(BANK_STACKS, f.lastStatus().bankItems());
@@ -302,7 +324,9 @@ public class UntradeablePartsAlwaysCountTest
 			Collections.singletonList(new BankItem.Part(PriceServiceTest.ARMOUR_SEED, 3L, PriceServiceTest.SEED_NAME))));
 		f.warmUpWith(bank);
 
-		assertTrue(f.lastRows().isEmpty());
+		// Part G: the one stack is published as an alch row; the list shows nothing and the summary is the empty one.
+		assertEquals(1, f.lastRows().size());
+		assertTrue(PriceServiceTest.defaultList(f.lastRows()).isEmpty());
 		assertEquals(PortfolioSummary.EMPTY, f.lastStatus().portfolio());
 		assertEquals(0, f.lastStatus().bankItems());
 	}
@@ -321,7 +345,9 @@ public class UntradeablePartsAlwaysCountTest
 		bank.items.addAll(alchOnly);
 		f.warmUpWith(bank);
 
-		assertTrue(f.lastRows().isEmpty());
+		// Part G: the two stacks are published as alch rows and the list shows none of them; nothing about the day changed.
+		assertEquals(2, f.lastRows().size());
+		assertTrue(PriceServiceTest.defaultList(f.lastRows()).isEmpty());
 		assertFalse("nothing to compare is not too little to compare", f.lastStatus().anchorDegraded());
 		assertEquals(PortfolioSummary.EMPTY, f.lastStatus().portfolio());
 		assertEquals(0, f.lastStatus().bankItems());

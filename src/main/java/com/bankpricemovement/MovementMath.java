@@ -136,8 +136,8 @@ public final class MovementMath
 	}
 
 	/**
-	 * The row an UNTRADEABLE stack that could not be parts-priced becomes while "Include alch-only untradeables" is
-	 * on (addendum Q, line Q5; addendum AV): its unit price is the item's High Alchemy value
+	 * The row an UNTRADEABLE stack that could not be parts-priced becomes (addendum Q, line Q5; addendum AV; produced
+	 * whatever "Include alch-only untradeables" says since 1.1.0 part G, which decides only whether it is in the bank value): its unit price is the item's High Alchemy value
 	 * ({@link BankItem#alchPrice()}), its source is {@link MovementRow.PriceSource#ALCH}, and it has no baseline and
 	 * therefore no move - an alch value is a constant of the item rather than a series, so subtracting one from
 	 * another would invent a movement that never happened.
@@ -317,12 +317,68 @@ public final class MovementMath
 	}
 
 	/**
+	 * Whether a row is an ALCH row (1.1.0 part G): an untradeable stack with no tradeable parts, at its High Alchemy
+	 * value ({@link MovementRow.PriceSource#ALCH}). False for null. The one test the list rule, the sort rule and the
+	 * counts share.
+	 */
+	public static boolean isAlch(@Nullable final MovementRow row)
+	{
+		return row != null && row.source() == MovementRow.PriceSource.ALCH;
+	}
+
+	/**
+	 * The rows the Items list SHOWS (1.1.0 part G, G-4): {@link #search} over {@code rows}, less the ALCH rows while the
+	 * "Show alch-only items" tick is off - unless the reader has typed something, in which case a row is listed when its
+	 * name matches, alch or not (a search finds an alch item whatever the tick says). With the tick on this is
+	 * {@link #search} exactly.
+	 *
+	 * <p>It narrows rows the panel already holds, like {@link #search}, and answers the SAME list instance it was given when
+	 * nothing is dropped and nothing is searched, so a panel nobody has searched in or ticked in holds one list and not two.
+	 *
+	 * @param rows     the rows to narrow; null reads as empty
+	 * @param query    what was typed; null reads as blank
+	 * @param showAlch whether the tick is on
+	 */
+	public static List<MovementRow> list(final List<MovementRow> rows, @Nullable final String query, final boolean showAlch)
+	{
+		final List<MovementRow> held = rows == null ? Collections.<MovementRow>emptyList() : rows;
+		final String wanted = query == null ? "" : query.trim();
+		if (showAlch || !wanted.isEmpty())
+		{
+			return search(held, wanted);
+		}
+
+		List<MovementRow> kept = null;
+		for (int i = 0; i < held.size(); i++)
+		{
+			final MovementRow row = held.get(i);
+			if (isAlch(row))
+			{
+				if (kept == null)
+				{
+					kept = new ArrayList<>(held.subList(0, i));
+				}
+			}
+			else if (kept != null)
+			{
+				kept.add(row);
+			}
+		}
+
+		return kept == null ? held : Collections.unmodifiableList(kept);
+	}
+
+	/**
 	 * The order one sort puts rows in (contract C9).
 	 *
 	 * <p>Two rules beyond "compare the key": a row WITHOUT the key - no move to speak of, or no price - is
 	 * always last whichever way the arrow points (flipping the direction must not fill the top of the list
 	 * with dashes), and equal keys fall back to name then id so the list never shuffles between two
 	 * recomputes of the same data.
+	 *
+	 * <p><b>An ALCH row sorts after every other row</b> (1.1.0 part G, G-5), those with no key included, in all four
+	 * columns and both directions: it never moved and its price is a constant, so it has no place among the items whose
+	 * price is a series. Among themselves the alch rows order by the rules above.
 	 *
 	 * <p><b>Every key is a property of the row alone.</b> {@code holdingOnRows} used to make
 	 * {@link SortMode#GP_MOVE} compare the whole STACK's change (Q6) and, for one addendum, {@link
@@ -342,6 +398,13 @@ public final class MovementMath
 
 		return (a, b) ->
 		{
+			final boolean alchA = isAlch(a);
+			final boolean alchB = isAlch(b);
+			if (alchA != alchB)
+			{
+				return alchA ? 1 : -1;
+			}
+
 			final Double keyA = key(a, used);
 			final Double keyB = key(b, used);
 

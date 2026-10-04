@@ -5,7 +5,9 @@ import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.AppenderBase;
 import com.google.gson.Gson;
 import com.google.inject.Guice;
+import java.awt.Color;
 import java.awt.Component;
+import java.awt.Window;
 import java.io.File;
 import java.io.InputStream;
 import java.lang.reflect.Field;
@@ -65,8 +67,10 @@ import net.runelite.client.game.ItemManager;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.ClientToolbar;
+import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.ClientUI;
 import net.runelite.client.ui.NavigationButton;
+import net.runelite.client.ui.components.colorpicker.ColorPickerManager;
 import net.runelite.client.util.Filepath;
 import okhttp3.OkHttpClient;
 import org.junit.After;
@@ -1963,6 +1967,945 @@ public class BankPriceMovementWiringTest
 		assertNotNull(hidden);
 		assertTrue(hidden.describe(), hidden.describe().contains("\"includeLegacy\":false"));
 		onEdt(fresh.plugin::shutDown);
+	}
+
+	// ---------------------------------------------------------------- 1.1.0 part B: the rise and fall colours
+
+	private static final Color UP_PICK = new Color(10, 20, 200);
+	private static final Color DOWN_PICK = new Color(200, 150, 0);
+
+	/**
+	 * 1.1.0 part B: the two colours are read straight off the stored keys - a mock config that answers none (null) is the
+	 * built-in colour - and round-trip through the pref seam: one {@code setConfiguration} of the {@code Color} per save,
+	 * and no manager is a no-op rather than an NPE.
+	 */
+	@Test
+	public void theTwoColourKeysAreReadStraightOffTheConfigAndRoundTripThroughThePrefs() throws Exception
+	{
+		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
+		final BankPriceMovementConfig config = mock(BankPriceMovementConfig.class);
+		final ConfigManager cm = mock(ConfigManager.class);
+		final PriceService service = mock(PriceService.class);
+		set(plugin, "config", config);
+		set(plugin, "configManager", cm);
+		set(plugin, "service", service);
+		assertEquals("upColour", BankPriceMovementPlugin.UP_COLOUR_KEY);
+		assertEquals("downColour", BankPriceMovementPlugin.DOWN_COLOUR_KEY);
+
+		assertNull("a config that answers none", plugin.configPrefs().loadUpColour());
+		when(config.upColour()).thenReturn(UP_PICK);
+		when(config.downColour()).thenReturn(DOWN_PICK);
+		final BankPriceMovementPanel.Prefs prefs = plugin.configPrefs();
+		assertEquals(UP_PICK, plugin.upColourFromConfig());
+		assertEquals(DOWN_PICK, plugin.downColourFromConfig());
+		assertEquals(UP_PICK, prefs.loadUpColour());
+		assertEquals(DOWN_PICK, prefs.loadDownColour());
+
+		prefs.saveUpColour(UP_PICK);
+		verify(cm).setConfiguration(BankPriceMovementConfig.GROUP, "upColour", UP_PICK);
+		prefs.saveDownColour(DOWN_PICK);
+		verify(cm).setConfiguration(BankPriceMovementConfig.GROUP, "downColour", DOWN_PICK);
+		// ONE key each and no service: which colour a rise is drawn in decides nothing the service computes.
+		verify(cm, times(2)).setConfiguration(anyString(), anyString(), any(Object.class));
+		verify(service, never()).setOptions(any());
+		verify(service, never()).setFilter(any());
+
+		// Nothing to write, or nowhere to write it: a no-op.
+		prefs.saveUpColour(null);
+		set(plugin, "configManager", null);
+		plugin.configPrefs().saveUpColour(UP_PICK);
+		verify(cm, times(2)).setConfiguration(anyString(), anyString(), any(Object.class));
+	}
+
+	/**
+	 * 1.1.0 part B (B5): the keys take a road of their own - the panel's {@code applyMoveColours} with the stored PAIR and
+	 * nobody else. Never the service (no figure moves), and no other key is mistaken for them.
+	 */
+	@Test
+	public void aColourChangeFromOutsideRecoloursThePanelAndTellsNobodyElse() throws Exception
+	{
+		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
+		final PriceService service = mock(PriceService.class);
+		final BankPriceMovementPanel panel = mock(BankPriceMovementPanel.class);
+		final BankPriceMovementConfig config = mock(BankPriceMovementConfig.class);
+		set(plugin, "service", service);
+		set(plugin, "panel", panel);
+		set(plugin, "config", config);
+		when(config.upColour()).thenReturn(UP_PICK);
+		when(config.downColour()).thenReturn(DOWN_PICK);
+
+		for (final String key : new String[]{"upColour", "downColour"})
+		{
+			assertTrue(BankPriceMovementPlugin.isColourKey(key));
+			plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, key));
+		}
+		onEdt(() ->
+		{
+		});
+		verify(panel, times(2)).applyMoveColours(UP_PICK, DOWN_PICK);
+		verify(service, never()).setFilter(any());
+		verify(service, never()).setOptions(any());
+		verify(panel, never()).applyFilter(any());
+		verify(panel, never()).applyOptions(any());
+		verify(panel, never()).applyPresets(any());
+		verify(panel, never()).applyHeroVisibility(any());
+		verify(panel, never()).setFoldOpen(anyBoolean());
+		verify(panel, never()).setStartTab(any());
+		verify(panel, never()).setIncludeLegacy(anyBoolean());
+
+		// The road is these two keys alone, and they are on no other road.
+		assertFalse(BankPriceMovementPlugin.isColourKey("gpMin"));
+		assertFalse(BankPriceMovementPlugin.isColourKey(BankPriceMovementPlugin.INCLUDE_LEGACY_KEY));
+		assertFalse(BankPriceMovementPlugin.isColourKey(BankPriceMovementPlugin.START_TAB_KEY));
+		assertFalse(BankPriceMovementPlugin.isColourKey(null));
+		for (final String key : new String[]{"upColour", "downColour"})
+		{
+			assertFalse(BankPriceMovementPlugin.isOptionKey(key));
+			assertFalse(BankPriceMovementPlugin.isHeroKey(key));
+			assertFalse(BankPriceMovementPlugin.isFoldKey(key));
+			assertFalse(BankPriceMovementPlugin.isPresetKey(key));
+			assertFalse(BankPriceMovementPlugin.isStartTabKey(key));
+			assertFalse(BankPriceMovementPlugin.isLegacyKey(key));
+		}
+
+		// After shutDown there is no sidebar to recolour, and the event must not throw.
+		set(plugin, "panel", null);
+		plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, "upColour"));
+	}
+
+	/** B5: the picker's own write does not come back and recolour the panel a second time ({@code prefsWriter}). */
+	@Test
+	public void thePickersOwnWriteDoesNotRecolourThePanelAgain() throws Exception
+	{
+		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
+		final BankPriceMovementPanel panel = mock(BankPriceMovementPanel.class);
+		final BankPriceMovementConfig config = mock(BankPriceMovementConfig.class);
+		final ConfigManager cm = mock(ConfigManager.class);
+		set(plugin, "panel", panel);
+		set(plugin, "config", config);
+		set(plugin, "configManager", cm);
+		doAnswer(invocation ->
+		{
+			final String key = invocation.getArgument(1);
+			if ("upColour".equals(key))
+			{
+				when(config.upColour()).thenReturn((Color) invocation.getArgument(2));
+			}
+			else
+			{
+				when(config.downColour()).thenReturn((Color) invocation.getArgument(2));
+			}
+			plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, key));
+			return null;
+		}).when(cm).setConfiguration(anyString(), anyString(), any(Object.class));
+
+		plugin.configPrefs().saveUpColour(UP_PICK);
+		plugin.configPrefs().saveDownColour(DOWN_PICK);
+		onEdt(() ->
+		{
+		});
+		verify(panel, never()).applyMoveColours(any(), any());
+
+		// The guard is over as soon as the save is: a change to the stored key from elsewhere still lands.
+		plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, "upColour"));
+		onEdt(() ->
+		{
+		});
+		verify(panel).applyMoveColours(UP_PICK, DOWN_PICK);
+	}
+
+	/**
+	 * 1.1.0 part B (B7): startUp sets the palette from the config BEFORE the sidebar is built, hands the panel a colour
+	 * picker that asks RuneLite's own manager for one (titled for the row, alpha hidden, opening on the stored colour),
+	 * and shutDown clears the palette so nothing is left drawing in the reader's colours.
+	 */
+	@Test
+	public void startUpHandsThePanelAPickerAndSetsThePaletteFromTheConfigAndShutDownClearsIt() throws Exception
+	{
+		try
+		{
+			final Fixture f = new Fixture(false);
+			when(f.config.upColour()).thenReturn(UP_PICK);
+			when(f.config.downColour()).thenReturn(DOWN_PICK);
+
+			onEdt(f.plugin::startUp);
+
+			assertEquals("a rise is drawn in the stored colour", UP_PICK, Widgets.move(1, Widgets.Kind.FIGURE));
+			assertEquals("a fall too, mark and all", DOWN_PICK, Widgets.move(-1, Widgets.Kind.MARK));
+			final BankPriceMovementPanel panel = (BankPriceMovementPanel) field(f.plugin, "panel");
+			assertNotNull(panel);
+			// The seam is wired: a press on the "Up colour" row asks RuneLite's own manager for a picker - this window-less
+			// panel passes no owner - with the stored colour, the row's title and the alpha slider hidden.
+			onEdt(() -> ((JMenuItem) panel.heroMenu().getComponent(6)).doClick(0));
+			verify(f.colorPickerManager).create(org.mockito.ArgumentMatchers.<Window>isNull(), eq(UP_PICK), eq("Up colour"),
+				eq(true));
+			onEdt(() -> ((JMenuItem) panel.heroMenu().getComponent(7)).doClick(0));
+			verify(f.colorPickerManager).create(org.mockito.ArgumentMatchers.<Window>isNull(), eq(DOWN_PICK),
+				eq("Down colour"), eq(true));
+
+			onEdt(f.plugin::shutDown);
+
+			assertEquals("shutDown clears the palette: a rise is the built-in green again",
+				ColorScheme.PROGRESS_COMPLETE_COLOR, Widgets.move(1, Widgets.Kind.FIGURE));
+			assertEquals(ColorScheme.PROGRESS_ERROR_COLOR, Widgets.move(-1, Widgets.Kind.MARK));
+			assertNull(field(f.plugin, "panel"));
+		}
+		finally
+		{
+			Widgets.setMoveColours(null, null);
+		}
+	}
+
+	/**
+	 * B7: a config that stores the DEFAULTS - or answers nothing, as a mock does - leaves no palette, so the sidebar of a
+	 * reader who never touched the setting is the one it always was.
+	 */
+	@Test
+	public void startUpWithTheDefaultColoursStoredLeavesNoPalette() throws Exception
+	{
+		try
+		{
+			final Fixture none = new Fixture(false);
+			onEdt(none.plugin::startUp);
+			assertEquals(ColorScheme.PROGRESS_ERROR_COLOR, Widgets.move(-1, Widgets.Kind.MARK));
+			onEdt(none.plugin::shutDown);
+
+			final Fixture defaults = new Fixture(false);
+			when(defaults.config.upColour()).thenReturn(ColorScheme.PROGRESS_COMPLETE_COLOR);
+			when(defaults.config.downColour()).thenReturn(Widgets.MOVE_DOWN_TEXT);
+			onEdt(defaults.plugin::startUp);
+			assertEquals("the built-in red mark, not the lifted red the stored default spells",
+				ColorScheme.PROGRESS_ERROR_COLOR, Widgets.move(-1, Widgets.Kind.MARK));
+			assertEquals(ColorScheme.PROGRESS_COMPLETE_COLOR.darker(), Widgets.move(1, Widgets.Kind.EDGE));
+			onEdt(defaults.plugin::shutDown);
+		}
+		finally
+		{
+			Widgets.setMoveColours(null, null);
+		}
+	}
+
+	// ---------------------------------------------------------------- 1.1.0 part C: the net worth chart's colour
+
+	private static final Color CHART_PICK = new Color(120, 30, 160);
+
+	/**
+	 * 1.1.0 part C: the two chart keys are read straight off the stored keys - a mock config that answers none (false and
+	 * a null colour) is "off" and the gold - and round-trip through the pref seam: one {@code setConfiguration} per save,
+	 * a boolean as a boolean and a colour as a colour, and no manager is a no-op rather than an NPE.
+	 */
+	@Test
+	public void theTwoChartKeysAreReadStraightOffTheConfigAndRoundTripThroughThePrefs() throws Exception
+	{
+		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
+		final BankPriceMovementConfig config = mock(BankPriceMovementConfig.class);
+		final ConfigManager cm = mock(ConfigManager.class);
+		final PriceService service = mock(PriceService.class);
+		set(plugin, "config", config);
+		set(plugin, "configManager", cm);
+		set(plugin, "service", service);
+		assertEquals("singleChartColour", BankPriceMovementPlugin.SINGLE_CHART_KEY);
+		assertEquals("chartColour", BankPriceMovementPlugin.CHART_COLOUR_KEY);
+
+		assertEquals("a config that answers none: off", Boolean.FALSE, plugin.configPrefs().loadSingleChartColour());
+		assertNull("...and no colour", plugin.configPrefs().loadChartColour());
+		when(config.singleChartColour()).thenReturn(true);
+		when(config.chartColour()).thenReturn(CHART_PICK);
+		final BankPriceMovementPanel.Prefs prefs = plugin.configPrefs();
+		assertTrue(plugin.singleChartFromConfig());
+		assertEquals(CHART_PICK, plugin.chartColourFromConfig());
+		assertEquals(Boolean.TRUE, prefs.loadSingleChartColour());
+		assertEquals(CHART_PICK, prefs.loadChartColour());
+
+		prefs.saveSingleChartColour(true);
+		verify(cm).setConfiguration(BankPriceMovementConfig.GROUP, "singleChartColour", true);
+		prefs.saveChartColour(CHART_PICK);
+		verify(cm).setConfiguration(BankPriceMovementConfig.GROUP, "chartColour", CHART_PICK);
+		// ONE key each and no service: which colour a chart is drawn in decides nothing the service computes.
+		verify(cm, times(2)).setConfiguration(anyString(), anyString(), any(Object.class));
+		verify(service, never()).setOptions(any());
+		verify(service, never()).setFilter(any());
+
+		// Nothing to write, or nowhere to write it: a no-op.
+		prefs.saveChartColour(null);
+		set(plugin, "configManager", null);
+		plugin.configPrefs().saveSingleChartColour(false);
+		verify(cm, times(2)).setConfiguration(anyString(), anyString(), any(Object.class));
+	}
+
+	/**
+	 * 1.1.0 part C (C6): the keys take a road of their own - the panel's {@code applyChartColour} with the stored PAIR and
+	 * nobody else. Never the service (no figure moves), and no other key is mistaken for them, nor they for another's.
+	 */
+	@Test
+	public void aChartChangeFromOutsideRedrawsThePanelAndTellsNobodyElse() throws Exception
+	{
+		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
+		final PriceService service = mock(PriceService.class);
+		final BankPriceMovementPanel panel = mock(BankPriceMovementPanel.class);
+		final BankPriceMovementConfig config = mock(BankPriceMovementConfig.class);
+		set(plugin, "service", service);
+		set(plugin, "panel", panel);
+		set(plugin, "config", config);
+		when(config.singleChartColour()).thenReturn(true);
+		when(config.chartColour()).thenReturn(CHART_PICK);
+
+		for (final String key : new String[]{"singleChartColour", "chartColour"})
+		{
+			assertTrue(BankPriceMovementPlugin.isChartKey(key));
+			plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, key));
+		}
+		onEdt(() ->
+		{
+		});
+		verify(panel, times(2)).applyChartColour(true, CHART_PICK);
+		verify(service, never()).setFilter(any());
+		verify(service, never()).setOptions(any());
+		verify(panel, never()).applyFilter(any());
+		verify(panel, never()).applyOptions(any());
+		verify(panel, never()).applyPresets(any());
+		verify(panel, never()).applyHeroVisibility(any());
+		verify(panel, never()).applyMoveColours(any(), any());
+		verify(panel, never()).setFoldOpen(anyBoolean());
+		verify(panel, never()).setStartTab(any());
+		verify(panel, never()).setIncludeLegacy(anyBoolean());
+		verify(panel, never()).pressView(any());
+
+		// The road is these two keys alone, and they are on no other road.
+		assertFalse(BankPriceMovementPlugin.isChartKey("gpMin"));
+		assertFalse(BankPriceMovementPlugin.isChartKey("upColour"));
+		assertFalse(BankPriceMovementPlugin.isChartKey(BankPriceMovementPlugin.INCLUDE_LEGACY_KEY));
+		assertFalse(BankPriceMovementPlugin.isChartKey(null));
+		assertFalse(BankPriceMovementPlugin.isColourKey("singleChartColour"));
+		assertFalse(BankPriceMovementPlugin.isColourKey("chartColour"));
+		for (final String key : new String[]{"singleChartColour", "chartColour"})
+		{
+			assertFalse(BankPriceMovementPlugin.isOptionKey(key));
+			assertFalse(BankPriceMovementPlugin.isHeroKey(key));
+			assertFalse(BankPriceMovementPlugin.isFoldKey(key));
+			assertFalse(BankPriceMovementPlugin.isPresetKey(key));
+			assertFalse(BankPriceMovementPlugin.isStartTabKey(key));
+			assertFalse(BankPriceMovementPlugin.isLegacyKey(key));
+		}
+
+		// After shutDown there is no sidebar to redraw, and the event must not throw.
+		set(plugin, "panel", null);
+		plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, "chartColour"));
+	}
+
+	/** C6: the menu's own writes - the tick, the picker's close, the reset - are not echoed back at the panel. */
+	@Test
+	public void theChartsOwnWritesDoNotRedrawThePanelAgain() throws Exception
+	{
+		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
+		final BankPriceMovementPanel panel = mock(BankPriceMovementPanel.class);
+		final BankPriceMovementConfig config = mock(BankPriceMovementConfig.class);
+		final ConfigManager cm = mock(ConfigManager.class);
+		set(plugin, "panel", panel);
+		set(plugin, "config", config);
+		set(plugin, "configManager", cm);
+		doAnswer(invocation ->
+		{
+			final String key = invocation.getArgument(1);
+			if ("singleChartColour".equals(key))
+			{
+				when(config.singleChartColour()).thenReturn((Boolean) invocation.getArgument(2));
+			}
+			else
+			{
+				when(config.chartColour()).thenReturn((Color) invocation.getArgument(2));
+			}
+			plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, key));
+			return null;
+		}).when(cm).setConfiguration(anyString(), anyString(), any(Object.class));
+
+		plugin.configPrefs().saveSingleChartColour(true);
+		plugin.configPrefs().saveChartColour(CHART_PICK);
+		onEdt(() ->
+		{
+		});
+		verify(panel, never()).applyChartColour(anyBoolean(), any());
+
+		// The guard is over as soon as the save is: a change to a stored key from elsewhere still lands.
+		plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, "chartColour"));
+		onEdt(() ->
+		{
+		});
+		verify(panel).applyChartColour(true, CHART_PICK);
+	}
+
+	/**
+	 * 1.1.0 part C: a panel built by the plugin opens with the chart in the stored colour - the config's two keys reach the
+	 * panel through the prefs it is handed - and the stored switch ticks the menu's row.
+	 */
+	@Test
+	public void startUpBuildsThePanelWithTheStoredChartSwitchAndColour() throws Exception
+	{
+		try
+		{
+			final Fixture f = new Fixture(false);
+			when(f.config.singleChartColour()).thenReturn(true);
+			when(f.config.chartColour()).thenReturn(CHART_PICK);
+
+			onEdt(f.plugin::startUp);
+
+			final BankPriceMovementPanel panel = (BankPriceMovementPanel) field(f.plugin, "panel");
+			assertNotNull(panel);
+			onEdt(() ->
+			{
+				final SwatchRow row = (SwatchRow) panel.heroMenu().getComponent(25);
+				assertEquals("Single chart colour", row.getText());
+				assertTrue("ticked from the stored switch", row.isSelected());
+			});
+			onEdt(f.plugin::shutDown);
+		}
+		finally
+		{
+			Widgets.setMoveColours(null, null);
+		}
+	}
+
+	// ---------------------------------------------------------------- 1.1.0 part E: hide amounts
+
+	/**
+	 * 1.1.0 part E: the key is read straight off the stored config - a mock config that answers none (false) is "shown" - and
+	 * round-trips through the pref seam: one {@code setConfiguration} of a boolean per save, never the service, and no manager
+	 * is a no-op rather than an NPE.
+	 */
+	@Test
+	public void theHideKeyIsReadStraightOffTheConfigAndRoundTripsThroughThePrefs() throws Exception
+	{
+		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
+		final BankPriceMovementConfig config = mock(BankPriceMovementConfig.class);
+		final ConfigManager cm = mock(ConfigManager.class);
+		final PriceService service = mock(PriceService.class);
+		set(plugin, "config", config);
+		set(plugin, "configManager", cm);
+		set(plugin, "service", service);
+		assertEquals("hideAmounts", BankPriceMovementPlugin.HIDE_AMOUNTS_KEY);
+
+		assertEquals("a config that answers none: shown", Boolean.FALSE, plugin.configPrefs().loadHideAmounts());
+		when(config.hideAmounts()).thenReturn(true);
+		final BankPriceMovementPanel.Prefs prefs = plugin.configPrefs();
+		assertTrue(plugin.hideAmountsFromConfig());
+		assertEquals(Boolean.TRUE, prefs.loadHideAmounts());
+
+		prefs.saveHideAmounts(true);
+		verify(cm).setConfiguration(BankPriceMovementConfig.GROUP, "hideAmounts", true);
+		prefs.saveHideAmounts(false);
+		verify(cm).setConfiguration(BankPriceMovementConfig.GROUP, "hideAmounts", false);
+		// ONE key and no service: whether the sidebar hides its numbers decides nothing the service computes.
+		verify(cm, times(2)).setConfiguration(anyString(), anyString(), any(Object.class));
+		verify(service, never()).setOptions(any());
+		verify(service, never()).setFilter(any());
+
+		// Nowhere to write it: a no-op.
+		set(plugin, "configManager", null);
+		plugin.configPrefs().saveHideAmounts(true);
+		verify(cm, times(2)).setConfiguration(anyString(), anyString(), any(Object.class));
+	}
+
+	/**
+	 * 1.1.0 part E (E7): a change of the key from outside - the settings page, a hand-edited profile - takes a road of its own:
+	 * the panel's {@code applyHideAmounts} with the stored switch and nobody else. Never the service (no figure moves), never
+	 * the eye's own press, and no other key is mistaken for it, nor it for another's.
+	 */
+	@Test
+	public void aHideChangeFromOutsideRedrawsThePanelAndTellsNobodyElse() throws Exception
+	{
+		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
+		final PriceService service = mock(PriceService.class);
+		final BankPriceMovementPanel panel = mock(BankPriceMovementPanel.class);
+		final BankPriceMovementConfig config = mock(BankPriceMovementConfig.class);
+		set(plugin, "service", service);
+		set(plugin, "panel", panel);
+		set(plugin, "config", config);
+		when(config.hideAmounts()).thenReturn(true);
+
+		assertTrue(BankPriceMovementPlugin.isHideKey("hideAmounts"));
+		plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, "hideAmounts"));
+		onEdt(() ->
+		{
+		});
+		verify(panel).applyHideAmounts(true);
+		when(config.hideAmounts()).thenReturn(false);
+		plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, "hideAmounts"));
+		onEdt(() ->
+		{
+		});
+		verify(panel).applyHideAmounts(false);
+		verify(panel, never()).pressHideAmounts();
+		verify(service, never()).setFilter(any());
+		verify(service, never()).setOptions(any());
+		verify(panel, never()).applyFilter(any());
+		verify(panel, never()).applyOptions(any());
+		verify(panel, never()).applyPresets(any());
+		verify(panel, never()).applyHeroVisibility(any());
+		verify(panel, never()).applyMoveColours(any(), any());
+		verify(panel, never()).applyChartColour(anyBoolean(), any());
+		verify(panel, never()).setFoldOpen(anyBoolean());
+		verify(panel, never()).setStartTab(any());
+		verify(panel, never()).setIncludeLegacy(anyBoolean());
+
+		// The road is this one key, and it is on no other road.
+		assertFalse(BankPriceMovementPlugin.isHideKey("gpMin"));
+		assertFalse(BankPriceMovementPlugin.isHideKey("chartColour"));
+		assertFalse(BankPriceMovementPlugin.isHideKey(BankPriceMovementPlugin.INCLUDE_LEGACY_KEY));
+		assertFalse(BankPriceMovementPlugin.isHideKey(null));
+		assertFalse(BankPriceMovementPlugin.isOptionKey("hideAmounts"));
+		assertFalse(BankPriceMovementPlugin.isHeroKey("hideAmounts"));
+		assertFalse(BankPriceMovementPlugin.isFoldKey("hideAmounts"));
+		assertFalse(BankPriceMovementPlugin.isPresetKey("hideAmounts"));
+		assertFalse(BankPriceMovementPlugin.isStartTabKey("hideAmounts"));
+		assertFalse(BankPriceMovementPlugin.isLegacyKey("hideAmounts"));
+		assertFalse(BankPriceMovementPlugin.isColourKey("hideAmounts"));
+		assertFalse(BankPriceMovementPlugin.isChartKey("hideAmounts"));
+
+		// After shutDown there is no sidebar to redraw, and the event must not throw.
+		set(plugin, "panel", null);
+		plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, "hideAmounts"));
+	}
+
+	/** E7: the eye's own write is not echoed back at the panel ({@code prefsWriter}); a change from elsewhere still lands. */
+	@Test
+	public void theEyesOwnWriteDoesNotRedrawThePanelAgain() throws Exception
+	{
+		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
+		final BankPriceMovementPanel panel = mock(BankPriceMovementPanel.class);
+		final BankPriceMovementConfig config = mock(BankPriceMovementConfig.class);
+		final ConfigManager cm = mock(ConfigManager.class);
+		set(plugin, "panel", panel);
+		set(plugin, "config", config);
+		set(plugin, "configManager", cm);
+		doAnswer(invocation ->
+		{
+			when(config.hideAmounts()).thenReturn((Boolean) invocation.getArgument(2));
+			plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, invocation.getArgument(1)));
+			return null;
+		}).when(cm).setConfiguration(anyString(), anyString(), any(Object.class));
+
+		plugin.configPrefs().saveHideAmounts(true);
+		onEdt(() ->
+		{
+		});
+		verify(panel, never()).applyHideAmounts(anyBoolean());
+
+		// The guard is over as soon as the save is: a change to the stored key from elsewhere still lands.
+		plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, "hideAmounts"));
+		onEdt(() ->
+		{
+		});
+		verify(panel).applyHideAmounts(true);
+	}
+
+	/**
+	 * 1.1.0 part E (E7): startUp seeds the panel from the stored switch - a profile that left the amounts hidden opens hidden:
+	 * the total reads its mask and the eye is shut - and a fresh profile opens shown. Seeding writes nothing back.
+	 */
+	@Test
+	public void startUpSeedsThePanelFromTheStoredHideAmounts() throws Exception
+	{
+		try
+		{
+			final Fixture hidden = new Fixture(false);
+			when(hidden.config.hideAmounts()).thenReturn(true);
+			onEdt(hidden.plugin::startUp);
+			final BankPriceMovementPanel shut = (BankPriceMovementPanel) field(hidden.plugin, "panel");
+			assertNotNull(shut);
+			onEdt(() ->
+			{
+				assertEquals("the total reads its mask", AmountMask.AMOUNT, shut.totalLabel().getText());
+				assertEquals("the eye is shut", BankPriceMovementPanel.SHOW_AMOUNTS_TIP, eyeTip(shut));
+			});
+			verify(hidden.configManager, never()).setConfiguration(anyString(), eq("hideAmounts"), any(Object.class));
+			onEdt(hidden.plugin::shutDown);
+
+			final Fixture shown = new Fixture(false);
+			onEdt(shown.plugin::startUp);
+			final BankPriceMovementPanel open = (BankPriceMovementPanel) field(shown.plugin, "panel");
+			onEdt(() ->
+			{
+				assertNotEquals("a fresh profile shows its amounts", AmountMask.AMOUNT, open.totalLabel().getText());
+				assertEquals("the eye is open", BankPriceMovementPanel.HIDE_AMOUNTS_TIP, eyeTip(open));
+			});
+			onEdt(shown.plugin::shutDown);
+		}
+		finally
+		{
+			Widgets.setMoveColours(null, null);
+		}
+	}
+
+	/** The hover of the eye in {@code panel}'s top row (the total's row until 1.1.0 part I): what a press on it would do. */
+	private static String eyeTip(BankPriceMovementPanel panel)
+	{
+		for (Component c : SidebarViewPanelTest.walk(panel.captionRow()))
+		{
+			if (c instanceof JLabel && ((JLabel) c).getIcon() != null && ((JLabel) c).getToolTipText() != null
+				&& ((JLabel) c).getToolTipText().endsWith(" amounts"))
+			{
+				return ((JLabel) c).getToolTipText();
+			}
+		}
+		throw new AssertionError("no eye in the card's top row");
+	}
+
+	/**
+	 * 1.1.0 part G: the key {@code showAlchRows} is read straight off the stored config - a mock config that answers none
+	 * (false) is "alch rows kept out of the list" - and round-trips through the pref seam: one {@code setConfiguration} of a
+	 * boolean per save, never the service, and no manager is a no-op rather than an NPE.
+	 */
+	@Test
+	public void theAlchKeyIsReadStraightOffTheConfigAndRoundTripsThroughThePrefs() throws Exception
+	{
+		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
+		final BankPriceMovementConfig config = mock(BankPriceMovementConfig.class);
+		final ConfigManager cm = mock(ConfigManager.class);
+		final PriceService service = mock(PriceService.class);
+		set(plugin, "config", config);
+		set(plugin, "configManager", cm);
+		set(plugin, "service", service);
+		assertEquals("showAlchRows", BankPriceMovementPlugin.SHOW_ALCH_KEY);
+
+		assertEquals("a config that answers none: kept out", Boolean.FALSE, plugin.configPrefs().loadShowAlchRows());
+		when(config.showAlchRows()).thenReturn(true);
+		final BankPriceMovementPanel.Prefs prefs = plugin.configPrefs();
+		assertTrue(plugin.showAlchFromConfig());
+		assertEquals(Boolean.TRUE, prefs.loadShowAlchRows());
+
+		prefs.saveShowAlchRows(true);
+		verify(cm).setConfiguration(BankPriceMovementConfig.GROUP, "showAlchRows", true);
+		prefs.saveShowAlchRows(false);
+		verify(cm).setConfiguration(BankPriceMovementConfig.GROUP, "showAlchRows", false);
+		// ONE key and no service: which rows the list shows decides nothing the service computes.
+		verify(cm, times(2)).setConfiguration(anyString(), anyString(), any(Object.class));
+		verify(service, never()).setOptions(any());
+		verify(service, never()).setFilter(any());
+
+		// Nowhere to write it: a no-op.
+		set(plugin, "configManager", null);
+		plugin.configPrefs().saveShowAlchRows(true);
+		verify(cm, times(2)).setConfiguration(anyString(), anyString(), any(Object.class));
+	}
+
+	/**
+	 * 1.1.0 part G (G3): a change of the key from outside - the settings page, a hand-edited profile - takes a road of its own:
+	 * the panel's {@code applyShowAlchRows} with the stored switch and nobody else. Never the service (no figure moves), never
+	 * the menu's own press, and no other key is mistaken for it, nor it for another's.
+	 */
+	@Test
+	public void anAlchChangeFromOutsideRedrawsThePanelAndTellsNobodyElse() throws Exception
+	{
+		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
+		final PriceService service = mock(PriceService.class);
+		final BankPriceMovementPanel panel = mock(BankPriceMovementPanel.class);
+		final BankPriceMovementConfig config = mock(BankPriceMovementConfig.class);
+		set(plugin, "service", service);
+		set(plugin, "panel", panel);
+		set(plugin, "config", config);
+		when(config.showAlchRows()).thenReturn(true);
+
+		assertTrue(BankPriceMovementPlugin.isAlchKey("showAlchRows"));
+		plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, "showAlchRows"));
+		onEdt(() ->
+		{
+		});
+		verify(panel).applyShowAlchRows(true);
+		when(config.showAlchRows()).thenReturn(false);
+		plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, "showAlchRows"));
+		onEdt(() ->
+		{
+		});
+		verify(panel).applyShowAlchRows(false);
+		verify(panel, never()).pressShowAlchRows(anyBoolean());
+		verify(service, never()).setFilter(any());
+		verify(service, never()).setOptions(any());
+		verify(panel, never()).applyFilter(any());
+		verify(panel, never()).applyOptions(any());
+		verify(panel, never()).applyPresets(any());
+		verify(panel, never()).applyHeroVisibility(any());
+		verify(panel, never()).applyMoveColours(any(), any());
+		verify(panel, never()).applyChartColour(anyBoolean(), any());
+		verify(panel, never()).applyHideAmounts(anyBoolean());
+		verify(panel, never()).setFoldOpen(anyBoolean());
+		verify(panel, never()).setStartTab(any());
+		verify(panel, never()).setIncludeLegacy(anyBoolean());
+
+		// The road is this one key, and it is on no other road - nor is another key on it.
+		assertFalse(BankPriceMovementPlugin.isAlchKey("gpMin"));
+		assertFalse(BankPriceMovementPlugin.isAlchKey("countUntradeables"));
+		assertFalse(BankPriceMovementPlugin.isAlchKey("hideAmounts"));
+		assertFalse(BankPriceMovementPlugin.isAlchKey(null));
+		assertFalse(BankPriceMovementPlugin.isHideKey("showAlchRows"));
+		assertFalse(BankPriceMovementPlugin.isOptionKey("showAlchRows"));
+		assertFalse(BankPriceMovementPlugin.isHeroKey("showAlchRows"));
+		assertFalse(BankPriceMovementPlugin.isFoldKey("showAlchRows"));
+		assertFalse(BankPriceMovementPlugin.isPresetKey("showAlchRows"));
+		assertFalse(BankPriceMovementPlugin.isStartTabKey("showAlchRows"));
+		assertFalse(BankPriceMovementPlugin.isLegacyKey("showAlchRows"));
+		assertFalse(BankPriceMovementPlugin.isColourKey("showAlchRows"));
+		assertFalse(BankPriceMovementPlugin.isChartKey("showAlchRows"));
+
+		// After shutDown there is no sidebar to redraw, and the event must not throw.
+		set(plugin, "panel", null);
+		plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, "showAlchRows"));
+	}
+
+	/** G3: the menu's own write is not echoed back at the panel ({@code prefsWriter}); a change from elsewhere still lands. */
+	@Test
+	public void theAlchTicksOwnWriteDoesNotRedrawThePanelAgain() throws Exception
+	{
+		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
+		final BankPriceMovementPanel panel = mock(BankPriceMovementPanel.class);
+		final BankPriceMovementConfig config = mock(BankPriceMovementConfig.class);
+		final ConfigManager cm = mock(ConfigManager.class);
+		set(plugin, "panel", panel);
+		set(plugin, "config", config);
+		set(plugin, "configManager", cm);
+		doAnswer(invocation ->
+		{
+			when(config.showAlchRows()).thenReturn((Boolean) invocation.getArgument(2));
+			plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, invocation.getArgument(1)));
+			return null;
+		}).when(cm).setConfiguration(anyString(), anyString(), any(Object.class));
+
+		plugin.configPrefs().saveShowAlchRows(true);
+		onEdt(() ->
+		{
+		});
+		verify(panel, never()).applyShowAlchRows(anyBoolean());
+
+		// The guard is over as soon as the save is: a change to the stored key from elsewhere still lands.
+		plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, "showAlchRows"));
+		onEdt(() ->
+		{
+		});
+		verify(panel).applyShowAlchRows(true);
+	}
+
+	/**
+	 * 1.1.0 part G (G3): startUp seeds the panel from the stored tick - a profile that left it on opens with the menu ticked -
+	 * and a fresh profile opens with it off. Seeding writes nothing back.
+	 */
+	@Test
+	public void startUpSeedsThePanelFromTheStoredShowAlchRows() throws Exception
+	{
+		try
+		{
+			final Fixture ticked = new Fixture(false);
+			when(ticked.config.showAlchRows()).thenReturn(true);
+			onEdt(ticked.plugin::startUp);
+			final BankPriceMovementPanel on = (BankPriceMovementPanel) field(ticked.plugin, "panel");
+			assertNotNull(on);
+			onEdt(() -> assertTrue("the menu opens ticked",
+				((javax.swing.JCheckBoxMenuItem) on.listMenu().getComponent(0)).isSelected()));
+			verify(ticked.configManager, never()).setConfiguration(anyString(), eq("showAlchRows"), any(Object.class));
+			onEdt(ticked.plugin::shutDown);
+
+			final Fixture fresh = new Fixture(false);
+			onEdt(fresh.plugin::startUp);
+			final BankPriceMovementPanel off = (BankPriceMovementPanel) field(fresh.plugin, "panel");
+			onEdt(() -> assertFalse("a fresh profile keeps the alch rows out",
+				((javax.swing.JCheckBoxMenuItem) off.listMenu().getComponent(0)).isSelected()));
+			onEdt(fresh.plugin::shutDown);
+		}
+		finally
+		{
+			Widgets.setMoveColours(null, null);
+		}
+	}
+
+	/**
+	 * 1.1.0 part J: the two Slot 1 keys are read straight off the stored config - a mock config that answers none reads as
+	 * null, which the panel takes for Classic's pair - and round-trip through the pref seam: one {@code setConfiguration} of a
+	 * colour per save, never the service, nothing to write is a no-op and no manager is a no-op rather than an NPE.
+	 */
+	@Test
+	public void theSlotKeysAreReadStraightOffTheConfigAndRoundTripThroughThePrefs() throws Exception
+	{
+		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
+		final BankPriceMovementConfig config = mock(BankPriceMovementConfig.class);
+		final ConfigManager cm = mock(ConfigManager.class);
+		final PriceService service = mock(PriceService.class);
+		set(plugin, "config", config);
+		set(plugin, "configManager", cm);
+		set(plugin, "service", service);
+		assertEquals("slotUpColour", BankPriceMovementPlugin.SLOT_UP_KEY);
+		assertEquals("slotDownColour", BankPriceMovementPlugin.SLOT_DOWN_KEY);
+
+		assertNull("a config that answers none: Classic's, for the panel", plugin.configPrefs().loadSlotUpColour());
+		assertNull(plugin.configPrefs().loadSlotDownColour());
+		when(config.slotUpColour()).thenReturn(UP_PICK);
+		when(config.slotDownColour()).thenReturn(DOWN_PICK);
+		final BankPriceMovementPanel.Prefs prefs = plugin.configPrefs();
+		assertEquals(UP_PICK, plugin.slotUpFromConfig());
+		assertEquals(DOWN_PICK, plugin.slotDownFromConfig());
+		assertEquals(UP_PICK, prefs.loadSlotUpColour());
+		assertEquals(DOWN_PICK, prefs.loadSlotDownColour());
+
+		prefs.saveSlotUpColour(UP_PICK);
+		verify(cm).setConfiguration(BankPriceMovementConfig.GROUP, "slotUpColour", UP_PICK);
+		prefs.saveSlotDownColour(DOWN_PICK);
+		verify(cm).setConfiguration(BankPriceMovementConfig.GROUP, "slotDownColour", DOWN_PICK);
+		// Two keys and no service: what Slot 1 holds decides nothing the service computes.
+		verify(cm, times(2)).setConfiguration(anyString(), anyString(), any(Object.class));
+		verify(service, never()).setOptions(any());
+		verify(service, never()).setFilter(any());
+
+		// Nothing to write, or nowhere to write it: a no-op.
+		prefs.saveSlotUpColour(null);
+		set(plugin, "configManager", null);
+		plugin.configPrefs().saveSlotDownColour(DOWN_PICK);
+		verify(cm, times(2)).setConfiguration(anyString(), anyString(), any(Object.class));
+	}
+
+	/**
+	 * 1.1.0 part J: the slot keys take a road of their own - the panel's {@code applySlotColours} with the stored PAIR and
+	 * nobody else. Never the service (no figure moves), never the colours in use, and no other key is mistaken for them nor
+	 * they for another's.
+	 */
+	@Test
+	public void aSlotChangeFromOutsideUpdatesThePanelsSlotAndTellsNobodyElse() throws Exception
+	{
+		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
+		final PriceService service = mock(PriceService.class);
+		final BankPriceMovementPanel panel = mock(BankPriceMovementPanel.class);
+		final BankPriceMovementConfig config = mock(BankPriceMovementConfig.class);
+		set(plugin, "service", service);
+		set(plugin, "panel", panel);
+		set(plugin, "config", config);
+		when(config.slotUpColour()).thenReturn(UP_PICK);
+		when(config.slotDownColour()).thenReturn(DOWN_PICK);
+
+		for (final String key : new String[]{"slotUpColour", "slotDownColour"})
+		{
+			assertTrue(BankPriceMovementPlugin.isSlotKey(key));
+			plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, key));
+		}
+		onEdt(() ->
+		{
+		});
+		verify(panel, times(2)).applySlotColours(UP_PICK, DOWN_PICK);
+		verify(panel, never()).applyMoveColours(any(), any());
+		verify(panel, never()).applyChartColour(anyBoolean(), any());
+		verify(service, never()).setFilter(any());
+		verify(service, never()).setOptions(any());
+		verify(panel, never()).applyFilter(any());
+		verify(panel, never()).applyOptions(any());
+		verify(panel, never()).applyPresets(any());
+		verify(panel, never()).applyHeroVisibility(any());
+		verify(panel, never()).applyHideAmounts(anyBoolean());
+		verify(panel, never()).applyShowAlchRows(anyBoolean());
+		verify(panel, never()).setFoldOpen(anyBoolean());
+		verify(panel, never()).setStartTab(any());
+		verify(panel, never()).setIncludeLegacy(anyBoolean());
+
+		// The road is these two keys, and they are on no other road - nor is another key on it.
+		assertFalse(BankPriceMovementPlugin.isSlotKey("upColour"));
+		assertFalse(BankPriceMovementPlugin.isSlotKey("downColour"));
+		assertFalse(BankPriceMovementPlugin.isSlotKey("gpMin"));
+		assertFalse(BankPriceMovementPlugin.isSlotKey(null));
+		assertFalse(BankPriceMovementPlugin.isColourKey("slotUpColour"));
+		for (final String key : new String[]{"slotUpColour", "slotDownColour"})
+		{
+			assertFalse(BankPriceMovementPlugin.isColourKey(key));
+			assertFalse(BankPriceMovementPlugin.isChartKey(key));
+			assertFalse(BankPriceMovementPlugin.isOptionKey(key));
+			assertFalse(BankPriceMovementPlugin.isHeroKey(key));
+			assertFalse(BankPriceMovementPlugin.isFoldKey(key));
+			assertFalse(BankPriceMovementPlugin.isPresetKey(key));
+			assertFalse(BankPriceMovementPlugin.isStartTabKey(key));
+			assertFalse(BankPriceMovementPlugin.isLegacyKey(key));
+			assertFalse(BankPriceMovementPlugin.isHideKey(key));
+			assertFalse(BankPriceMovementPlugin.isAlchKey(key));
+		}
+
+		// After shutDown there is no sidebar, and the event must not throw.
+		set(plugin, "panel", null);
+		plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, "slotUpColour"));
+	}
+
+	/** Part J: the save row's own write is not echoed back at the panel ({@code prefsWriter}); a change from elsewhere lands. */
+	@Test
+	public void theSaveRowsOwnWriteDoesNotUpdateThePanelAgain() throws Exception
+	{
+		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
+		final BankPriceMovementPanel panel = mock(BankPriceMovementPanel.class);
+		final BankPriceMovementConfig config = mock(BankPriceMovementConfig.class);
+		final ConfigManager cm = mock(ConfigManager.class);
+		set(plugin, "panel", panel);
+		set(plugin, "config", config);
+		set(plugin, "configManager", cm);
+		doAnswer(invocation ->
+		{
+			final String key = invocation.getArgument(1);
+			if ("slotUpColour".equals(key))
+			{
+				when(config.slotUpColour()).thenReturn((Color) invocation.getArgument(2));
+			}
+			else
+			{
+				when(config.slotDownColour()).thenReturn((Color) invocation.getArgument(2));
+			}
+			plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, key));
+			return null;
+		}).when(cm).setConfiguration(anyString(), anyString(), any(Object.class));
+
+		plugin.configPrefs().saveSlotUpColour(UP_PICK);
+		plugin.configPrefs().saveSlotDownColour(DOWN_PICK);
+		onEdt(() ->
+		{
+		});
+		verify(panel, never()).applySlotColours(any(), any());
+
+		// The guard is over as soon as the save is: a change to the stored key from elsewhere still lands.
+		plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, "slotUpColour"));
+		onEdt(() ->
+		{
+		});
+		verify(panel).applySlotColours(UP_PICK, DOWN_PICK);
+	}
+
+	/**
+	 * 1.1.0 part J: startUp seeds the panel from the stored colours and the stored slot - a profile whose colours are its
+	 * slot's pair opens with Slot 1 ticked in both menus - and writes nothing back.
+	 */
+	@Test
+	public void startUpSeedsThePanelFromTheStoredSlotAndTicksTheSlotItSpells() throws Exception
+	{
+		try
+		{
+			final Fixture f = new Fixture(false);
+			when(f.config.upColour()).thenReturn(UP_PICK);
+			when(f.config.downColour()).thenReturn(DOWN_PICK);
+			when(f.config.slotUpColour()).thenReturn(UP_PICK);
+			when(f.config.slotDownColour()).thenReturn(DOWN_PICK);
+			onEdt(f.plugin::startUp);
+			final BankPriceMovementPanel panel = (BankPriceMovementPanel) field(f.plugin, "panel");
+			assertNotNull(panel);
+			onEdt(() ->
+			{
+				for (final javax.swing.JPopupMenu menu : new javax.swing.JPopupMenu[]{panel.heroMenu(), panel.listMenu()})
+				{
+					final List<String> ticked = new ArrayList<>();
+					for (final Component c : menu.getComponents())
+					{
+						if (c instanceof SetRow && ((SetRow) c).isSelected())
+						{
+							ticked.add(((SetRow) c).getText());
+						}
+					}
+					assertEquals("the profile's own pair is Slot 1's", Arrays.asList("Slot 1"), ticked);
+				}
+			});
+			verify(f.configManager, never()).setConfiguration(anyString(), eq("slotUpColour"), any(Object.class));
+			verify(f.configManager, never()).setConfiguration(anyString(), eq("slotDownColour"), any(Object.class));
+			onEdt(f.plugin::shutDown);
+		}
+		finally
+		{
+			Widgets.setMoveColours(null, null);
+		}
 	}
 
 	/**
@@ -4944,6 +5887,7 @@ public class BankPriceMovementWiringTest
 		private final ClientThread clientThread = mock(ClientThread.class);
 		private final ClientToolbar clientToolbar = mock(ClientToolbar.class);
 		private final ClientUI clientUI = mock(ClientUI.class);
+		private final ColorPickerManager colorPickerManager = mock(ColorPickerManager.class);
 		private final ItemManager itemManager = mock(ItemManager.class);
 		private final ConfigManager configManager = mock(ConfigManager.class);
 		private final BankPriceMovementConfig config = mock(BankPriceMovementConfig.class);
@@ -4975,6 +5919,7 @@ public class BankPriceMovementWiringTest
 			set(plugin, "clientThread", clientThread);
 			set(plugin, "clientToolbar", clientToolbar);
 			set(plugin, "clientUI", clientUI);
+			set(plugin, "colorPickerManager", colorPickerManager);
 			set(plugin, "itemManager", itemManager);
 			set(plugin, "okHttpClient", mock(OkHttpClient.class));
 			set(plugin, "gson", new Gson());

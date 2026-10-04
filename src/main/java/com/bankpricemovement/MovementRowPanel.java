@@ -459,6 +459,8 @@ public class MovementRowPanel extends JPanel
 	@Nullable
 	private final LocalDate thenDay;
 	private final ViewOptions view;
+	/** 1.1.0 part E: whether this row prints its masks in place of every amount and quantity ({@link AmountMask}). */
+	private final boolean hide;
 	/**
 	 * The long description of addendum K8, which no sidebar has drawn since addendum AK moved the open cell to
 	 * {@link #detail}: written on the first call to {@link #tooltipHtml()} and kept, null until then. Every build
@@ -559,7 +561,24 @@ public class MovementRowPanel extends JPanel
 		@Nullable LocalDate thenDay, @Nullable ViewOptions options, Consumer<String> browser,
 		@Nullable Expansion expansion)
 	{
+		this(row, icon, window, thenDay, options, browser, expansion, false);
+	}
+
+	/**
+	 * The list builder's constructor since 1.1.0 part E ("Hide amounts").
+	 *
+	 * @param hideAmounts whether every gp amount and every quantity this row prints reads its fixed mask
+	 *                    ({@link AmountMask}) - the stack value, the stack's and the item's gp move, line 3's working, and the
+	 *                    open block's figures - while the name, the percentage and the dates stay. False draws the row as it
+	 *                    was drawn before the eye existed. The PICTURE is the caller's to choose (the plain one, with no
+	 *                    stack number on it, is what the panel hands a hidden row)
+	 */
+	MovementRowPanel(MovementRow row, @Nullable AsyncBufferedImage icon, MovementWindow window,
+		@Nullable LocalDate thenDay, @Nullable ViewOptions options, Consumer<String> browser,
+		@Nullable Expansion expansion, boolean hideAmounts)
+	{
 		this.row = Objects.requireNonNull(row, "row");
+		this.hide = hideAmounts;
 		this.icon = icon;
 		this.browser = Objects.requireNonNull(browser, "browser");
 		this.expansion = expansion == null ? new OwnExpansion() : expansion;
@@ -624,7 +643,7 @@ public class MovementRowPanel extends JPanel
 		// AL: the gp figure takes the QUIET role - the same green or red, mixed toward the row's background - so
 		// the percentage beside it is the one the eye lands on. The user, looking at a full list: "the change in
 		// gp ... and the percent change ... be more isolated from each other".
-		gpLabel = Widgets.label(stackGp(row), GP_FONT, quietChangeColor(row));
+		gpLabel = Widgets.label(AmountMask.change(hide, stackGp(row)), GP_FONT, quietChangeColor(row));
 		// Every gap on this line is an inset and never a layout hgap: BorderLayout charges its hgap for the WEST
 		// and the EAST child alike, so a 6 px hgap here would quietly cost 12 px and the fit would hand the
 		// price 6 px it does not have (measured, 2026-09-09, when the block was 156 px wide: the widest gp row
@@ -645,13 +664,13 @@ public class MovementRowPanel extends JPanel
 		// the widest stack value measures 36 and this leaves far more - but the day a formatter grows a
 		// character, a cut price is a readable failure and an overlap is not.
 		priceLabel = Widgets.label("", PRICE_FONT, Color.WHITE);
-		Widgets.setFitted(priceLabel, stackText(row), TEXT_WIDTH - figures.getPreferredSize().width);
+		Widgets.setFitted(priceLabel, AmountMask.amount(hide, stackText(row)), TEXT_WIDTH - figures.getPreferredSize().width);
 
 		final JPanel line2 = transparent(new BorderLayout(0, 0));
 		line2.add(priceLabel, BorderLayout.WEST);
 		line2.add(figures, BorderLayout.EAST);
 
-		final JPanel line3 = itemLine(row);
+		final JPanel line3 = itemLine(row, hide);
 		// Line 2's three labels only: line 3 is a line of its own, below them, and has nothing to sit level with.
 		alignBaselines(priceLabel, gpLabel, changeLabel);
 
@@ -794,6 +813,25 @@ public class MovementRowPanel extends JPanel
 	public static String detail(MovementRow row, @Nullable MovementWindow window, @Nullable LocalDate thenDay,
 		@Nullable ViewOptions options, boolean showName)
 	{
+		return detail(row, window, thenDay, options, showName, false);
+	}
+
+	/**
+	 * {@link #detail} while the amounts are HIDDEN (1.1.0 part E): the same four lines and notes with every gp amount and
+	 * every quantity of the player's replaced by its mask ({@link AmountMask}) - "Worth now (five dots) gp each", "Was (five dots) gp
+	 * (19 Sep)", "You have (three dots) = (five dots) gp", "Change 1d (three dots) each +10.2%" - and the split note's quantities too. The dates,
+	 * the percentage and the notes' words stay. Market facts - how many of an item traded yesterday, how many of a part one
+	 * untradeable item reverts to - say nothing about the player's holding and are left as they are.
+	 */
+	public static String maskedDetail(MovementRow row, @Nullable MovementWindow window, @Nullable LocalDate thenDay,
+		@Nullable ViewOptions options, boolean showName)
+	{
+		return detail(row, window, thenDay, options, showName, true);
+	}
+
+	private static String detail(MovementRow row, @Nullable MovementWindow window, @Nullable LocalDate thenDay,
+		@Nullable ViewOptions options, boolean showName, boolean hide)
+	{
 		Objects.requireNonNull(row, "row");
 		DETAIL_BUILDS.incrementAndGet();
 		final ViewOptions view = options == null ? ViewOptions.DEFAULT : options;
@@ -812,32 +850,33 @@ public class MovementRowPanel extends JPanel
 		sb.append("<table cellpadding=0 cellspacing=0>");
 
 		cell(sb, L_NOW, row.unitPrice() == null
-			? MovementMath.DASH : MovementMath.formatExact(row.unitPrice()) + " gp each", null);
+			? MovementMath.DASH : (hide ? AmountMask.AMOUNT : MovementMath.formatExact(row.unitPrice())) + " gp each", null);
 
 		if (!alch)
 		{
 			cell(sb, L_WAS, (row.thenPrice() == null
-				? MovementMath.DASH : MovementMath.formatExact(row.thenPrice()) + " gp")
+				? MovementMath.DASH : (hide ? AmountMask.AMOUNT : MovementMath.formatExact(row.thenPrice())) + " gp")
 				+ "&nbsp; (" + MovementMath.formatDay(stampedDay(row, w, thenDay, live)) + ")", null);
 		}
 
-		cell(sb, L_HAVE, MovementMath.formatExact(row.quantity()) + "&nbsp; =&nbsp; "
+		cell(sb, L_HAVE, AmountMask.quantity(hide, MovementMath.formatExact(row.quantity())) + "&nbsp; =&nbsp; "
 			+ (row.unitPrice() == null ? MovementMath.DASH
-			: MovementMath.formatExact(row.holdingValue()) + " gp"), null);
+			: (hide ? AmountMask.AMOUNT : MovementMath.formatExact(row.holdingValue())) + " gp"), null);
 
 		if (!alch)
 		{
 			// The one coloured figure in the block, in the row's own green or red - the FULL colour, not the
 			// quiet one its face uses (AL), because here it has nothing beside it to compete with.
 			cell(sb, L_CHANGE + w.label(), row.hasMovement()
-				? signedExact(row.deltaGp()) + " each&nbsp; " + MovementMath.formatPct(row.deltaPct(), row.deltaGp())
+				? (hide ? AmountMask.SHORT : signedExact(row.deltaGp())) + " each&nbsp; "
+				+ MovementMath.formatPct(row.deltaPct(), row.deltaGp())
 				: MovementMath.DASH, row.hasMovement() ? textChangeColor(row) : null);
 		}
 		sb.append("</table>");
 
 		final List<String> notes = new ArrayList<>(4);
 		addNote(notes, alch ? ALCH_NOTE : partsLine(row));
-		addNote(notes, view.countInventory() || view.countGrandExchange() ? splitLine(row) : "");
+		addNote(notes, view.countInventory() || view.countGrandExchange() ? splitLine(row, hide) : "");
 		addNote(notes, live ? liveRefusalLine(row) : "");
 		addNote(notes, live ? tradedNote(row) : "");
 		for (int i = 0; i < notes.size(); i++)
@@ -920,7 +959,9 @@ public class MovementRowPanel extends JPanel
 		{
 			// AK's rule, which is why this cannot run before the face is built: the name is repeated above the
 			// table only when the face had to CUT it, and that is read off the label the face drew.
-			detailLabel.setText(detail(row, window, thenDay, view, !row.name().equals(nameLabel.getText())));
+			final boolean showName = !row.name().equals(nameLabel.getText());
+			detailLabel.setText(hide ? maskedDetail(row, window, thenDay, view, showName)
+				: detail(row, window, thenDay, view, showName));
 			detailBuilt = true;
 		}
 		detailLabel.setVisible(open);
@@ -1031,20 +1072,22 @@ public class MovementRowPanel extends JPanel
 	 *
 	 * @param row the row being drawn; a stack of ONE prints its working but no gp figure (Q4.7)
 	 */
-	private static JPanel itemLine(MovementRow row)
+	private static JPanel itemLine(MovementRow row, boolean hide)
 	{
 		final JLabel workingLabel = Widgets.label("", SMALL_FONT, ColorScheme.LIGHT_GRAY_COLOR);
 		// Fitted, like line 2's price, since addendum AP gave the picture back its 4 px: the widest working a
 		// real bank makes ("9,999 x 9,999", 66 px) now fills the room the two columns leave EXACTLY, and an
 		// unfitted WEST label one character wider would be painted under the gp figure rather than cut. The
 		// hover setFitted hangs on a cut label is taken off again by clearHovers(), with every other one.
+		// 1.1.0 part E: the whole working is a quantity - how many, at what price - so while the amounts are hidden the
+		// line is the quantity's mask and nothing else.
 		Widgets.setFitted(workingLabel,
-			MovementMath.formatGp(row.quantity()) + " " + TIMES + " " + unitText(row),
+			AmountMask.quantity(hide, MovementMath.formatGp(row.quantity()) + " " + TIMES + " " + unitText(row)),
 			TEXT_WIDTH - GP_COLUMN - PCT_COLUMN);
 		// Q4.7: a stack of one IS the item, so its move is already printed on the line above. The working still
 		// shows ("1 x 10.7k", so every row reads the same way), but the figure beside it does not repeat itself
 		// - the user, on a render that did: "if there's only 1 item then only show the Total rows gp move".
-		final JLabel itemGpLabel = Widgets.label(row.quantity() > 1 ? itemGp(row) : "",
+		final JLabel itemGpLabel = Widgets.label(AmountMask.change(hide, row.quantity() > 1 ? itemGp(row) : ""),
 			GP_FONT, quietChangeColor(row));
 		itemGpLabel.setHorizontalAlignment(SwingConstants.RIGHT);
 		itemGpLabel.setBorder(new EmptyBorder(0, 0, 0, FIGURE_GAP));
@@ -1264,24 +1307,34 @@ public class MovementRowPanel extends JPanel
 	 */
 	public static String splitLine(MovementRow row)
 	{
+		return splitLine(row, false);
+	}
+
+	/**
+	 * {@link #splitLine(MovementRow)} while the amounts may be HIDDEN (1.1.0 part E): each part's quantity reads its mask
+	 * ({@link AmountMask#SHORT}) - "(three dots) in bank, (three dots) worn" - and which parts there are, being
+	 * words, stays.
+	 */
+	public static String splitLine(MovementRow row, boolean hide)
+	{
 		if (row.allInBank())
 		{
 			return "";
 		}
 		final List<String> parts = new ArrayList<>(4);
-		addWhere(parts, row.bankQuantity(), IN_BANK);
-		addWhere(parts, row.inventoryQuantity(), IN_INVENTORY);
-		addWhere(parts, row.wornQuantity(), WORN);
-		addWhere(parts, row.exchangeQuantity(), IN_EXCHANGE);
+		addWhere(parts, row.bankQuantity(), IN_BANK, hide);
+		addWhere(parts, row.inventoryQuantity(), IN_INVENTORY, hide);
+		addWhere(parts, row.wornQuantity(), WORN, hide);
+		addWhere(parts, row.exchangeQuantity(), IN_EXCHANGE, hide);
 		return String.join(", ", parts);
 	}
 
 	/** One non-zero part of {@link #splitLine}: "3 in bank". Nothing is added at zero (Y3). */
-	private static void addWhere(List<String> parts, int quantity, String where)
+	private static void addWhere(List<String> parts, int quantity, String where, boolean hide)
 	{
 		if (quantity > 0)
 		{
-			parts.add(MovementMath.formatExact(quantity) + where);
+			parts.add(AmountMask.quantity(hide, MovementMath.formatExact(quantity)) + where);
 		}
 	}
 

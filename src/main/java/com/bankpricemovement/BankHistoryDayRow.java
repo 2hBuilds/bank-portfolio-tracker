@@ -194,18 +194,21 @@ final class BankHistoryDayRow extends JPanel
 	 * compared - "vs 25 Sep", "vs 21 Sep, 2 days", or "first reading" for the first reading ever. A day with no
 	 * reading prints its date and nothing else.
 	 *
+	 * <p>With {@code hideAmounts} on (1.1.0 part E) the total, the exact total and the gp change read their masks
+	 * ({@link AmountMask}) and the date, the sub-line and the percentage are what they always are.
+	 *
 	 * @param series the series already cut to {@code today}
 	 */
 	static Model model(final BankHistorySeries series, final BankHistoryMath.Day day, final LocalDate today,
-		@Nullable final ViewOptions options)
+		@Nullable final ViewOptions options, final boolean hideAmounts)
 	{
 		final String date = dayText(day.day(), today);
 		if (day.carried())
 		{
 			return new Model(day.day(), true, date, "", "", "", "", "", 0, false);
 		}
-		final String total = MovementMath.formatGp(day.valueGp());
-		final String exact = MovementMath.formatExact(day.valueGp());
+		final String total = AmountMask.amount(hideAmounts, MovementMath.formatGp(day.valueGp()));
+		final String exact = AmountMask.amount(hideAmounts, MovementMath.formatExact(day.valueGp()));
 		final BankHistoryMath.Change change = BankHistoryMath.vsPrevious(series, day.day(), options);
 		if (change == null)
 		{
@@ -215,8 +218,8 @@ final class BankHistoryDayRow extends JPanel
 		final int span = change.spanDays();
 		final String sub = "vs " + MovementMath.formatDay(change.fromDay()) + (span > 1 ? ", " + span + " days" : "");
 		return new Model(day.day(), false, date, sub, total, exact,
-			MovementMath.formatPctCompact(change.pct(), delta), delta == 0L ? "" : MovementRowPanel.signedGp(delta),
-			Long.signum(delta), false);
+			MovementMath.formatPctCompact(change.pct(), delta),
+			delta == 0L ? "" : AmountMask.change(hideAmounts, MovementRowPanel.signedGp(delta)), Long.signum(delta), false);
 	}
 
 	/** "Tue 22 Sep" (amendment 9.14's weekday form). */

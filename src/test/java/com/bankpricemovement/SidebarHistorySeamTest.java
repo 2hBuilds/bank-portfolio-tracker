@@ -519,7 +519,14 @@ public class SidebarHistorySeamTest
 		assertFalse(state.getAsJsonObject("panel").get("includeLegacy").getAsBoolean());
 		onEdt(() ->
 		{
-			assertTrue("the box is on screen", SwingUtilities.isDescendingFrom(panel.legacyRow(), panel.header()));
+			// 1.1.0 part A: the check item is in the settings menu now, and the History header holds no box.
+			boolean inMenu = false;
+			for (java.awt.Component c : panel.heroMenu().getComponents())
+			{
+				inMenu |= c instanceof javax.swing.JMenuItem
+					&& BankPriceMovementPanel.LEGACY_TEXT.equals(((javax.swing.JMenuItem) c).getText());
+			}
+			assertTrue("the item is in the settings menu", inMenu);
 			assertEquals("1 day recorded", panel.updateLabel().getText());
 		});
 

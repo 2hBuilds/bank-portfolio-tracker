@@ -16,7 +16,6 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.annotation.Nullable;
 import javax.swing.JLabel;
-import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.ui.ColorScheme;
@@ -562,34 +561,26 @@ public class SidebarViewPanelTest
 		return Arrays.asList(panel.header().getComponents());
 	}
 
-	private boolean legacyRowShows()
+	/**
+	 * The settings menu's "Include days before v1.0.9" item, or null while it is not in the menu (1.1.0 part A moved
+	 * it there from the History tab's header).
+	 */
+	private javax.swing.JCheckBoxMenuItem legacyItem()
 	{
-		return SwingUtilities.isDescendingFrom(panel.legacyRow(), panel.header());
-	}
-
-	private static boolean sameIcon(javax.swing.Icon a, javax.swing.Icon b)
-	{
-		if (a.getIconWidth() != b.getIconWidth() || a.getIconHeight() != b.getIconHeight())
+		for (Component c : panel.heroMenu().getComponents())
 		{
-			return false;
-		}
-		final java.awt.image.BufferedImage x = new java.awt.image.BufferedImage(a.getIconWidth(), a.getIconHeight(),
-			java.awt.image.BufferedImage.TYPE_INT_ARGB);
-		final java.awt.image.BufferedImage y = new java.awt.image.BufferedImage(a.getIconWidth(), a.getIconHeight(),
-			java.awt.image.BufferedImage.TYPE_INT_ARGB);
-		a.paintIcon(null, x.getGraphics(), 0, 0);
-		b.paintIcon(null, y.getGraphics(), 0, 0);
-		for (int i = 0; i < x.getWidth(); i++)
-		{
-			for (int j = 0; j < x.getHeight(); j++)
+			if (c instanceof javax.swing.JCheckBoxMenuItem
+				&& BankPriceMovementPanel.LEGACY_TEXT.equals(((javax.swing.JCheckBoxMenuItem) c).getText()))
 			{
-				if (x.getRGB(i, j) != y.getRGB(i, j))
-				{
-					return false;
-				}
+				return (javax.swing.JCheckBoxMenuItem) c;
 			}
 		}
-		return true;
+		return null;
+	}
+
+	private boolean legacyItemShows()
+	{
+		return legacyItem() != null;
 	}
 
 	/** The words, the hover and the question are the user's; one place pins them. */
@@ -603,12 +594,12 @@ public class SidebarViewPanelTest
 	}
 
 	/**
-	 * With no legacy days the row is not in the tree at all - in either view, with an empty record and with a full
-	 * one - so every History picture stays what it was; and in Items it is not there even WITH legacy days, because the
-	 * caption it sits under is History's.
+	 * With no legacy days the item is not in the settings menu at all - with an empty record and with a full one - and
+	 * the History tab's header never holds a check box (1.1.0 part A moved it out for good); with such days the menu
+	 * carries it in either view, and the header stays what it was without it.
 	 */
 	@Test
-	public void theLegacyRowIsAbsentWithoutLegacyDaysAndInItems() throws Exception
+	public void theLegacyItemIsAbsentWithoutLegacyDaysAndTheHeaderNeverHoldsABox() throws Exception
 	{
 		build(new Asked(true));
 		publish(rows(3), status(series(TODAY.minusDays(2), TODAY.minusDays(1), TODAY), VALUE_NOW, NOW - 60_000L));
@@ -616,59 +607,66 @@ public class SidebarViewPanelTest
 		{
 			panel.pressView(SidebarView.HISTORY);
 			assertEquals(Arrays.asList(panel.hero(), strip()), legacyHeader());
-			assertFalse(legacyRowShows());
+			assertFalse(legacyItemShows());
 			assertTrue(panel.describe(), panel.describe().contains("\"legacyDays\":false"));
 		});
 		publish(rows(3), status(BankHistorySeries.EMPTY, VALUE_NOW, NOW - 60_000L));
 		onEdt(() ->
 		{
 			assertEquals(Arrays.asList(panel.hero(), strip()), legacyHeader());
-			assertFalse(legacyRowShows());
+			assertFalse(legacyItemShows());
 		});
 		// A mocked status that answers no series at all reads as empty.
 		publish(rows(3), status(null, VALUE_NOW, NOW - 60_000L));
-		onEdt(() -> assertFalse(legacyRowShows()));
+		onEdt(() -> assertFalse(legacyItemShows()));
 
 		publish(rows(3), status(withLegacyDays(), VALUE_NOW, NOW - 60_000L));
 		onEdt(() ->
 		{
 			assertTrue(panel.describe(), panel.describe().contains("\"legacyDays\":true"));
-			assertTrue("in History it is under the caption", legacyRowShows());
+			assertTrue("the menu carries it while the record holds such days", legacyItemShows());
+			assertEquals("and the History header holds no box", Arrays.asList(panel.hero(), strip()), legacyHeader());
 			panel.pressView(SidebarView.ITEMS);
-			assertFalse("in Items it is not there", legacyRowShows());
+			assertTrue("in Items too: it is the menu's", legacyItemShows());
 			assertEquals(Arrays.asList(panel.hero(), strip(), panel.controlRow(), panel.fold(), searchRow()), header());
 		});
 	}
 
-	/** Present: directly under the strip, the label verbatim, 11 px grey, the box unticked, a hand cursor. */
+	/**
+	 * Present: in the menu directly under the "Net worth chart" caption and above the OK row, the label verbatim, 12 px
+	 * like every item, unticked, its hover behind "Show hover text".
+	 */
 	@Test
-	public void theLegacyRowStandsUnderTheCaptionWithItsWordsItsBoxAndItsHover() throws Exception
+	public void theLegacyItemStandsUnderTheNetWorthChartCaptionWithItsWordsItsTickAndItsHover() throws Exception
 	{
 		build(new Asked(true));
 		publish(rows(3), status(withLegacyDays(), VALUE_NOW, NOW - 60_000L));
 		onEdt(() ->
 		{
 			panel.pressView(SidebarView.HISTORY);
-			assertEquals("hero, the strip, then the row - nothing between the caption and the chart",
-				3, legacyHeader().size());
-			assertSame(strip(), legacyHeader().get(1));
-			assertSame(panel.legacyRow().getParent(), legacyHeader().get(2));
-			final JLabel row = panel.legacyRow();
-			assertEquals(BankPriceMovementPanel.LEGACY_TEXT, row.getText());
-			assertEquals(11, row.getFont().getSize());
-			assertEquals(ColorScheme.LIGHT_GRAY_COLOR, row.getForeground());
-			assertTrue("an unticked box", sameIcon(Widgets.checkBox(false), row.getIcon()));
-			assertFalse("not a second line: one label", row.getText().contains("\n") || row.getText().contains("<"));
-			assertEquals(java.awt.Cursor.HAND_CURSOR, row.getCursor().getType());
-			assertEquals("the caption's own indent", 4,
-				((javax.swing.border.EmptyBorder) ((JPanel) row.getParent()).getBorder()).getBorderInsets().left);
+			assertEquals("hero and the strip - nothing between the caption and the chart", 2, legacyHeader().size());
+			final Component[] c = panel.heroMenu().getComponents();
+			final javax.swing.JCheckBoxMenuItem item = legacyItem();
+			assertNotNull(item);
+			assertSame("the OK row is still last", panel.okRow(), c[c.length - 1]);
+			assertSame("the item is directly above it", item, c[c.length - 2]);
+			// 1.1.0 part C: "Single chart colour" stands between the caption and the days item.
+			assertEquals("under the chart's own switch", BankPriceMovementPanel.SINGLE_CHART_COLOUR_TEXT,
+				((javax.swing.JCheckBoxMenuItem) c[c.length - 3]).getText());
+			assertEquals("under the caption", BankPriceMovementPanel.NET_WORTH_CHART_TEXT,
+				find(c[c.length - 4], JLabel.class).getText());
+			assertTrue("under a rule of its own", c[c.length - 5] instanceof javax.swing.JSeparator);
+			assertEquals(BankPriceMovementPanel.LEGACY_TEXT, item.getText());
+			assertEquals(12, item.getFont().getSize());
+			assertFalse("unticked", item.isSelected());
+			assertFalse("not a second line: one label", item.getText().contains("\n") || item.getText().contains("<"));
 
 			// Its hover is behind "Show hover text" like every sentence hover here.
-			assertNull("no hover with the switch off", row.getToolTipText());
+			assertNull("no hover with the switch off", item.getToolTipText());
 			panel.applyOptions(ViewOptions.DEFAULT.withShowHoverText(true));
-			assertEquals(BankPriceMovementPanel.LEGACY_TIP, row.getToolTipText());
+			assertEquals(BankPriceMovementPanel.LEGACY_TIP, item.getToolTipText());
 			panel.applyOptions(ViewOptions.DEFAULT);
-			assertNull(row.getToolTipText());
+			assertNull(item.getToolTipText());
 		});
 	}
 
@@ -703,10 +701,10 @@ public class SidebarViewPanelTest
 			assertEquals(BankPriceMovementPanel.historyRecorded(record), shown);
 			assertTrue(shown, shown.startsWith("6 days recorded since"));
 			assertNotEquals("the comparison line follows the cut", hiddenFootnote, panel.heroSubText());
-			assertTrue("the box is ticked", sameIcon(Widgets.checkBox(true), panel.legacyRow().getIcon()));
+			assertTrue("the item is ticked", legacyItem().isSelected());
 			assertTrue(panel.describe(), panel.describe().contains("\"includeLegacy\":true"));
 			assertEquals("written once", Arrays.asList(true), prefs.legacySaves);
-			assertTrue("the row stays while the days are there", legacyRowShows());
+			assertTrue("the item stays while the days are there", legacyItemShows());
 
 			// Turned off again: the cut comes back, nothing is asked, and the write follows.
 			panel.pressLegacy();
@@ -714,7 +712,7 @@ public class SidebarViewPanelTest
 			assertEquals(2, readings());
 			assertEquals(hidden, panel.updateLabel().getText());
 			assertEquals(Arrays.asList(true, false), prefs.legacySaves);
-			assertTrue(sameIcon(Widgets.checkBox(false), panel.legacyRow().getIcon()));
+			assertFalse(legacyItem().isSelected());
 		});
 		verify(service, never()).setOptions(any());
 	}
@@ -739,7 +737,7 @@ public class SidebarViewPanelTest
 			assertNull(panel.bankHistoryState().get("first"));
 			assertEquals("all", panel.bankHistoryState().get("freshFrom"));
 			assertEquals(MovementMath.DASH, panel.updateLabel().getText());
-			assertTrue("the way out is on screen", legacyRowShows());
+			assertTrue("the way out is in the menu", legacyItemShows());
 			assertEquals(BankPriceMovementPanel.CARD_HISTORY, panel.card());
 
 			panel.pressLegacy(true);
@@ -762,15 +760,15 @@ public class SidebarViewPanelTest
 			panel.pressLegacy(true);
 			assertEquals("asked each time, answered no each time", 2, no.questions.size());
 			assertEquals(2, readings());
-			assertTrue(sameIcon(Widgets.checkBox(false), panel.legacyRow().getIcon()));
+			assertFalse(legacyItem().isSelected());
 			assertTrue(panel.describe(), panel.describe().contains("\"includeLegacy\":false"));
 		});
 		assertTrue("nothing written", prefs.legacySaves.isEmpty());
 	}
 
-	/** Through the box's own mouse listener: a left press asks; a right press is not a press. */
+	/** Through the menu item's own action: a click asks, and the tick follows the answer. */
 	@Test
-	public void aLeftPressOnTheRowAsksAndARightPressDoesNot() throws Exception
+	public void aClickOnTheMenuItemAsks() throws Exception
 	{
 		final Asked yes = new Asked(true);
 		build(yes);
@@ -778,11 +776,10 @@ public class SidebarViewPanelTest
 		onEdt(() ->
 		{
 			panel.pressView(SidebarView.HISTORY);
-			press(panel.legacyRow(), MouseEvent.BUTTON3);
-			assertTrue(yes.questions.isEmpty());
-			press(panel.legacyRow(), MouseEvent.BUTTON1);
+			legacyItem().doClick(0);
 			assertEquals(1, yes.questions.size());
 			assertEquals(6, readings());
+			assertTrue(legacyItem().isSelected());
 		});
 		assertEquals(Arrays.asList(true), prefs.legacySaves);
 	}
@@ -800,12 +797,12 @@ public class SidebarViewPanelTest
 			assertEquals(2, readings());
 			panel.setIncludeLegacy(true);
 			assertEquals(6, readings());
-			assertTrue(sameIcon(Widgets.checkBox(true), panel.legacyRow().getIcon()));
+			assertTrue(legacyItem().isSelected());
 			panel.setIncludeLegacy(true);
 			assertEquals("the same state again redraws what it drew", 6, readings());
 			panel.setIncludeLegacy(false);
 			assertEquals(2, readings());
-			assertTrue(sameIcon(Widgets.checkBox(false), panel.legacyRow().getIcon()));
+			assertFalse(legacyItem().isSelected());
 
 			panel.stop();
 			panel.setIncludeLegacy(true);
@@ -872,7 +869,7 @@ public class SidebarViewPanelTest
 		{
 			panel.pressView(SidebarView.HISTORY);
 			assertEquals(6, readings());
-			assertTrue(sameIcon(Widgets.checkBox(true), panel.legacyRow().getIcon()));
+			assertTrue(legacyItem().isSelected());
 			assertTrue(panel.describe(), panel.describe().contains("\"includeLegacy\":true"));
 		});
 		assertTrue(prefs.legacySaves.isEmpty());
@@ -892,35 +889,42 @@ public class SidebarViewPanelTest
 		});
 	}
 
-	/** The row never touches the settings menu: still 21 components (23 before 1.0.9 part 7 took Troubleshoot out). */
+	/**
+	 * The menu is 27 components while the record holds no days before 1.0.9 (24 before 1.1.0 part J added a rule above the
+	 * colour rows and the Slot 1 and save rows, 20 before part H added the colour presets'
+	 * caption and its three rows, 21 before part A took Refresh and
+	 * the start-tab group out, 17 after it until part B added the two colour rows, and 19 until part C added the Single
+	 * chart colour row), and exactly one more - the item - while it does.
+	 */
 	@Test
-	public void theSettingsMenuIsStillTwentyOneComponents() throws Exception
+	public void theSettingsMenuIsTwentyComponentsAndOneMoreWhileTheItemIsThere() throws Exception
 	{
 		build(new Asked(true));
+		onEdt(() -> assertEquals(27, panel.heroMenu().getComponentCount()));
 		publish(rows(3), status(withLegacyDays(), VALUE_NOW, NOW - 60_000L));
 		onEdt(() ->
 		{
 			panel.pressView(SidebarView.HISTORY);
-			assertTrue(legacyRowShows());
-			assertEquals(21, panel.heroMenu().getComponentCount());
+			assertTrue(legacyItemShows());
+			assertEquals(28, panel.heroMenu().getComponentCount());
 		});
 	}
 
-	/** A status arriving while the row is up that carries no legacy days takes the row away again. */
+	/** A status arriving while the item is up that carries no legacy days takes the item away again. */
 	@Test
-	public void theRowGoesWhenALaterStatusHasNoLegacyDays() throws Exception
+	public void theItemGoesWhenALaterStatusHasNoLegacyDays() throws Exception
 	{
 		build(new Asked(true));
 		publish(rows(3), status(withLegacyDays(), VALUE_NOW, NOW - 60_000L));
 		onEdt(() ->
 		{
 			panel.pressView(SidebarView.HISTORY);
-			assertTrue(legacyRowShows());
+			assertTrue(legacyItemShows());
 		});
 		publish(rows(3), status(series(TODAY.minusDays(1), TODAY), VALUE_NOW, NOW - 60_000L));
-		onEdt(() -> assertFalse(legacyRowShows()));
+		onEdt(() -> assertFalse(legacyItemShows()));
 		publish(rows(3), status(withLegacyDays(), VALUE_NOW, NOW - 60_000L));
-		onEdt(() -> assertTrue(legacyRowShows()));
+		onEdt(() -> assertTrue(legacyItemShows()));
 	}
 
 	// ---------------------------------------------------------------- fixtures and helpers

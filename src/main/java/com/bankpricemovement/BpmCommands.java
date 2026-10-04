@@ -929,8 +929,9 @@ public class BpmCommands implements Function<String, String>
 	}
 
 	/**
-	 * 1.0.9 part 5's {@code legacy=} verb: the Net Worth History tab's "Include days before v1.0.9" check box, turned
-	 * on, off or flipped - by pressing the box's own road, {@link BankPriceMovementPanel#pressLegacy(boolean)} for the
+	 * 1.0.9 part 5's {@code legacy=} verb: the "Include days before v1.0.9" setting (the settings menu's item since
+	 * 1.1.0 part A, the Net Worth History tab's check box before), turned
+	 * on, off or flipped - by pressing the item's own road, {@link BankPriceMovementPanel#pressLegacy(boolean)} for the
 	 * two states and {@link BankPriceMovementPanel#pressLegacy()} for the gesture, the way {@code fold=} presses the
 	 * fold: that road applies the change AND writes the stored key, so a {@code /bpm} session leaves the same state
 	 * behind as a hand session.
@@ -970,9 +971,10 @@ public class BpmCommands implements Function<String, String>
 	}
 
 	/**
-	 * The settings menu's "Tab to open on startup" dots, pressed as the reader presses them (addendum AU): through
-	 * {@link BankPriceMovementPanel#pressStartTab}, so the choice is WRITTEN as a hand press writes it and the tab
-	 * that is showing does not change. Idempotent. The answer's top-level {@code startTab} is the echo.
+	 * The tab the sidebar opens on next time (addendum AU's "Tab to open on startup", the tab used last since 1.1.0
+	 * part A), set without switching the tab that is showing: through
+	 * {@link BankPriceMovementPanel#pressStartTab}, so the choice is WRITTEN to the same stored value the toggle's
+	 * press writes. Idempotent. The answer's top-level {@code startTab} is the echo.
 	 */
 	private Map<String, Object> startTab(@Nullable String value)
 	{
@@ -1287,7 +1289,7 @@ public class BpmCommands implements Function<String, String>
 		// answers null and an empty map; Gson leaves a null out.
 		final SidebarView v = panel.view();
 		m.put("view", v == null ? null : v.name());
-		// AU: the tab the settings menu's dot stands on - the setting, not the tab showing.
+		// AU: the tab the sidebar opens on next time (the one used last) - the setting, not the tab showing.
 		final SidebarView start = panel.startTab();
 		m.put("startTab", start == null ? null : start.name());
 		m.put("bankHistory", panel.bankHistoryState());

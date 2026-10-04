@@ -13,14 +13,10 @@ import java.util.Collections;
 import java.util.List;
 import javax.annotation.Nullable;
 import javax.swing.JLabel;
-import javax.swing.JPopupMenu;
-import javax.swing.JRadioButtonMenuItem;
-import javax.swing.JSeparator;
 import net.runelite.client.config.ConfigItem;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.game.ItemManager;
-import net.runelite.client.ui.ColorScheme;
 import org.junit.After;
 import org.junit.Test;
 import static com.bankpricemovement.SidebarViewPanelTest.NOW;
@@ -36,7 +32,6 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -46,9 +41,11 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Addendum AU's start-tab setting, "Tab to open on startup" (the user, 2026-09-29): the sixteenth config item, the
- * tab the sidebar opens on - Items unless it says Net Worth History. The player's choice, not the last tab used: the
- * toggle writes nothing, the settings menu's two dots write the key, and neither switches the tab that is showing.
+ * Addendum AU's start-tab setting, the sixteenth config item, the tab the sidebar opens on - Items unless it says Net
+ * Worth History. Since 1.1.0 part A it is the tab used LAST (the user, 2026-10-03): the toggle's press writes it, the
+ * settings menu's two dots are gone, and the item is hidden from the settings page; the bridge's {@code starttab=} still
+ * sets it without switching the tab that is showing. The toggle and the menu are pinned by
+ * {@link SettingsMenuTidyTest}.
  */
 public class StartTabTest
 {
@@ -134,19 +131,6 @@ public class StartTabTest
 		return gson.fromJson(panel.describe(), JsonObject.class).get("card").getAsString();
 	}
 
-	private List<JRadioButtonMenuItem> dots()
-	{
-		final List<JRadioButtonMenuItem> out = new ArrayList<>();
-		for (Component c : panel.heroMenu().getComponents())
-		{
-			if (c instanceof JRadioButtonMenuItem)
-			{
-				out.add((JRadioButtonMenuItem) c);
-			}
-		}
-		return out;
-	}
-
 	private Widgets.Toggle toggle()
 	{
 		for (Component row : panel.header().getComponents())
@@ -160,19 +144,15 @@ public class StartTabTest
 		throw new AssertionError("no toggle in the header");
 	}
 
-	private void assertDot(SidebarView on)
+	private void assertStored(SidebarView on)
 	{
-		final List<JRadioButtonMenuItem> dots = dots();
-		assertEquals(2, dots.size());
-		assertEquals(on == SidebarView.ITEMS, dots.get(0).isSelected());
-		assertEquals(on == SidebarView.HISTORY, dots.get(1).isSelected());
 		assertEquals(on, panel.startTab());
 	}
 
 	// ---------------------------------------------------------------- the setting
 
 	@Test
-	public void theDefaultIsItemsAndTheItemIsTheSeventeenthAndLast() throws Exception
+	public void theDefaultIsItemsAndTheItemIsTheLastTabHiddenFromTheSettingsPage() throws Exception
 	{
 		final BankPriceMovementConfig config = new BankPriceMovementConfig()
 		{
@@ -181,25 +161,36 @@ public class StartTabTest
 		final Method m = BankPriceMovementConfig.class.getMethod("startTab");
 		final ConfigItem item = m.getAnnotation(ConfigItem.class);
 		assertEquals("startTab", item.keyName());
-		assertEquals("Tab to open on startup", item.name());
-		assertEquals("Which tab the sidebar shows when the plugin starts.", item.description());
+		assertEquals("A4: the plugin reads and writes the same key", "startTab", BankPriceMovementPlugin.START_TAB_KEY);
+		assertEquals("1.1.0 part A: the item is the tab used last", "Last tab", item.name());
+		assertEquals("The tab the sidebar showed last. It opens there next time.", item.description());
 		assertEquals("1.0.9 part 3 put the Grand Exchange switch above it and moved it down one", 16, item.position());
+		assertTrue("hidden from the settings page since 1.1.0 part A", item.hidden());
 		assertEquals(SidebarView.class, m.getReturnType());
 		int items = 0;
+		int hidden = 0;
 		for (Method other : BankPriceMovementConfig.class.getMethods())
 		{
 			final ConfigItem o = other.getAnnotation(ConfigItem.class);
 			if (o != null && other.getParameterCount() == 0)
 			{
 				items++;
-				// 1.0.9 part 5's hidden includeLegacyHistory sits at 17; the last item the settings page LISTS is this.
-				assertTrue(o.position() <= 16 || (o.hidden() && o.position() == 17));
+				if (o.hidden())
+				{
+					hidden++;
+					assertTrue("the hidden ones are startTab, includeLegacyHistory and (part J) the two slot colours",
+						"startTab".equals(o.keyName()) || "includeLegacyHistory".equals(o.keyName())
+							|| "slotUpColour".equals(o.keyName()) || "slotDownColour".equals(o.keyName()));
+				}
 			}
 		}
-		assertEquals("seventeen items on the page and the hidden eighteenth", 18, items);
-		assertEquals("the same sentence in the menu's hover", item.description(), BankPriceMovementPanel.START_TAB_TIP);
-		assertEquals(item.name(), BankPriceMovementPanel.START_TAB_TEXT);
+		// 1.1.0 part B added the two colours, part C the chart switch and colour, part E the hide switch and part G the
+		// alch tick, all listed on the page: twenty-two on the page and the two hidden ones; part J added two more hidden
+		// ones (the slot colours): twenty-two on the page and the four hidden ones.
+		assertEquals("twenty-two items on the page and the four hidden ones", 26, items);
+		assertEquals(4, hidden);
 	}
+
 
 	@Test
 	public void aBarePrefsHasNothingStoredAndWritesNothing()
@@ -224,7 +215,7 @@ public class StartTabTest
 	// ---------------------------------------------------------------- the panel opens on it
 
 	@Test
-	public void aFreshPanelOpensOnItemsWithItsDotThere() throws Exception
+	public void aFreshPanelOpensOnItems() throws Exception
 	{
 		final Memory prefs = new Memory();
 		final PriceService.Listener l = build(prefs, service());
@@ -234,7 +225,7 @@ public class StartTabTest
 			assertEquals(SidebarView.ITEMS, panel.view());
 			assertEquals(BankPriceMovementPanel.CARD_LIST, card());
 			assertTrue(toggle().isLit(0));
-			assertDot(SidebarView.ITEMS);
+			assertStored(SidebarView.ITEMS);
 		});
 		assertTrue(prefs.saves.isEmpty());
 	}
@@ -248,7 +239,7 @@ public class StartTabTest
 		onEdt(() ->
 		{
 			assertEquals(SidebarView.HISTORY, panel.view());
-			assertDot(SidebarView.HISTORY);
+			assertStored(SidebarView.HISTORY);
 		});
 		loadBank(l);
 		onEdt(() ->
@@ -287,33 +278,10 @@ public class StartTabTest
 		return null;
 	}
 
-	// ---------------------------------------------------------------- the toggle and the dots
+	// ---------------------------------------------------------------- the bridge's starttab= and the config road
 
 	@Test
-	public void theTogglePressedEitherWayWritesNothingAndLeavesTheDotsWhereTheyWere() throws Exception
-	{
-		final Memory prefs = new Memory();
-		prefs.stored = SidebarView.HISTORY;
-		final PriceService.Listener l = build(prefs, service());
-		loadBank(l);
-		onEdt(() ->
-		{
-			final Component items = toggle().getComponent(0);
-			final Component history = toggle().getComponent(1);
-			press(items, MouseEvent.BUTTON1);
-			assertEquals(SidebarView.ITEMS, panel.view());
-			assertDot(SidebarView.HISTORY);
-			press(history, MouseEvent.BUTTON1);
-			assertEquals(SidebarView.HISTORY, panel.view());
-			panel.pressView(SidebarView.ITEMS);
-			assertEquals(SidebarView.ITEMS, panel.view());
-			assertDot(SidebarView.HISTORY);
-		});
-		assertTrue("the toggle writes nothing", prefs.saves.isEmpty());
-	}
-
-	@Test
-	public void aDotPressedWritesTheKeyOnceMovesTheDotAndDoesNotSwitchTheShowingTab() throws Exception
+	public void theBridgesStartTabPressWritesTheKeyOnceAndDoesNotSwitchTheShowingTab() throws Exception
 	{
 		final Memory prefs = new Memory();
 		final PriceService service = service();
@@ -321,26 +289,26 @@ public class StartTabTest
 		loadBank(l);
 		onEdt(() ->
 		{
-			dots().get(1).doClick();
-			assertDot(SidebarView.HISTORY);
+			panel.pressStartTab(SidebarView.HISTORY);
+			assertStored(SidebarView.HISTORY);
 			assertEquals("the showing tab does not change", SidebarView.ITEMS, panel.view());
 			assertEquals(BankPriceMovementPanel.CARD_LIST, card());
 			assertEquals(Arrays.asList(SidebarView.HISTORY), prefs.saves);
 
-			// The same dot again writes nothing.
+			// The same tab again writes nothing.
 			panel.pressStartTab(SidebarView.HISTORY);
 			assertEquals(1, prefs.saves.size());
 
-			dots().get(0).doClick();
-			assertDot(SidebarView.ITEMS);
+			panel.pressStartTab(SidebarView.ITEMS);
+			assertStored(SidebarView.ITEMS);
 			assertEquals(SidebarView.ITEMS, panel.view());
 			assertEquals(Arrays.asList(SidebarView.HISTORY, SidebarView.ITEMS), prefs.saves);
 
-			// A dot pressed while History is showing leaves History showing too.
-			panel.pressView(SidebarView.HISTORY);
-			dots().get(0).doClick();
+			// Pressed while History is showing, it leaves History showing too.
+			panel.setView(SidebarView.HISTORY);
+			panel.pressStartTab(SidebarView.ITEMS);
 			assertEquals(SidebarView.HISTORY, panel.view());
-			assertEquals("Items was already chosen: no write", 2, prefs.saves.size());
+			assertEquals("Items was already stored: no write", 2, prefs.saves.size());
 			panel.pressStartTab(null);
 			assertEquals("null reads as Items", 2, prefs.saves.size());
 		});
@@ -350,7 +318,7 @@ public class StartTabTest
 	}
 
 	@Test
-	public void theConfigRoadMovesTheDotWithoutSwitchingTheTabOrWritingBack() throws Exception
+	public void theConfigRoadSetsTheRememberedTabWithoutSwitchingTheTabOrWritingBack() throws Exception
 	{
 		final Memory prefs = new Memory();
 		final PriceService service = service();
@@ -359,10 +327,10 @@ public class StartTabTest
 		onEdt(() ->
 		{
 			panel.setStartTab(SidebarView.HISTORY);
-			assertDot(SidebarView.HISTORY);
+			assertStored(SidebarView.HISTORY);
 			assertEquals(SidebarView.ITEMS, panel.view());
 			panel.setStartTab(null);
-			assertDot(SidebarView.ITEMS);
+			assertStored(SidebarView.ITEMS);
 			panel.stop();
 			panel.setStartTab(SidebarView.HISTORY);
 			panel.pressStartTab(SidebarView.HISTORY);
@@ -371,103 +339,6 @@ public class StartTabTest
 		assertTrue(prefs.saves.isEmpty());
 		verify(service, never()).setFilter(any());
 		verify(service, never()).setOptions(any());
-	}
-
-	// ---------------------------------------------------------------- the menu
-
-	@Test
-	public void theMenuHoldsTheCaptionAndTheTwoDotsInTheirOwnGroup() throws Exception
-	{
-		build(new Memory(), service());
-		onEdt(() ->
-		{
-			final JPopupMenu menu = panel.heroMenu();
-			final Component[] c = menu.getComponents();
-			int inventory = -1;
-			for (int i = 0; i < c.length; i++)
-			{
-				// 1.0.9 part 3: the Grand Exchange switch is the last of the five, so it is the anchor.
-				if (c[i] == panel.countGrandExchangeItem())
-				{
-					inventory = i;
-				}
-			}
-			assertTrue(inventory > 0);
-			assertTrue("a separator after the five switches", c[inventory + 1] instanceof JSeparator);
-			final JLabel caption = find((Container) c[inventory + 2], JLabel.class);
-			assertNotNull(caption);
-			assertEquals("Tab to open on startup", caption.getText());
-			assertEquals(ColorScheme.LIGHT_GRAY_COLOR, caption.getForeground());
-			assertEquals("Items", ((JRadioButtonMenuItem) c[inventory + 3]).getText());
-			assertEquals("Net Worth History", ((JRadioButtonMenuItem) c[inventory + 4]).getText());
-			assertTrue("a separator after the dots", c[inventory + 5] instanceof JSeparator);
-			final JLabel presets = find((Container) c[inventory + 6], JLabel.class);
-			assertEquals("Preset price ranges", presets.getText());
-			assertSame(dots().get(0), c[inventory + 3]);
-			assertEquals("the caption looks like the presets'", presets.getFont(), caption.getFont());
-			assertEquals(presets.getForeground(), caption.getForeground());
-		});
-	}
-
-	@Test
-	public void theDotsCloseTheMenuAsTheCheckSwitchesDo() throws Exception
-	{
-		build(new Memory(), service());
-		onEdt(() ->
-		{
-			// Neither kind is marked to stay open, so both close the menu on a click, which is what the four check
-			// switches above do (nothing in this panel sets the property).
-			assertNull(panel.countInventoryItem().getClientProperty("doNotCloseOnMouseClick"));
-			for (JRadioButtonMenuItem dot : dots())
-			{
-				assertNull(dot.getClientProperty("doNotCloseOnMouseClick"));
-			}
-		});
-	}
-
-	@Test
-	public void theHoverAppearsOnlyWithShowHoverTextOn() throws Exception
-	{
-		build(new Memory(), service());
-		onEdt(() ->
-		{
-			for (JRadioButtonMenuItem dot : dots())
-			{
-				assertNull("off by default", dot.getToolTipText());
-			}
-			final JLabel caption = findLabel(panel.heroMenu(), "Tab to open on startup");
-			assertNull(caption.getToolTipText());
-			panel.applyOptions(panel.options().withShowHoverText(true));
-			for (JRadioButtonMenuItem dot : dots())
-			{
-				assertEquals("Which tab the sidebar shows when the plugin starts.", dot.getToolTipText());
-			}
-			panel.applyOptions(panel.options().withShowHoverText(false));
-			for (JRadioButtonMenuItem dot : dots())
-			{
-				assertNull(dot.getToolTipText());
-			}
-		});
-	}
-
-	private static JLabel findLabel(Container root, String text)
-	{
-		for (Component c : root.getComponents())
-		{
-			if (c instanceof JLabel && text.equals(((JLabel) c).getText()))
-			{
-				return (JLabel) c;
-			}
-			if (c instanceof Container)
-			{
-				final JLabel found = findLabel((Container) c, text);
-				if (found != null)
-				{
-					return found;
-				}
-			}
-		}
-		return null;
 	}
 
 	// ---------------------------------------------------------------- the plugin's roads

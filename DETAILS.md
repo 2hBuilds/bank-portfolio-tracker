@@ -141,12 +141,19 @@ band and sort are set; the count under the card says how many matched. Empty the
 the whole list is back. It is not remembered between sessions, and it works on the list the panel already has, so
 typing never touches the game.
 
+**List options** (1.1.0). At the right end of the search box sit two small gears. Press them for a menu with *Show
+alch-only items* and the *Up colour* and *Down colour* swatches (the same two as in the settings menu). Alch-only
+untradeables never move, so by default they are not listed; tick the box to list them, always after every other
+row, whichever column you sort on. Searching finds an alch-only item either way. The tick changes the list and the
+count under the card and nothing else: what the Bank value and the Net Worth History count is still decided by
+*Include alch-only untradeables*.
+
 ## Net Worth History
 
 Under the Bank value card sit two buttons, **Items | Net Worth History**, with one grey line beneath them saying
 what the panel is showing: *Item price changes* for the list of your items, *Bank net worth history* for this
-view. They appear once the panel has your bank, and the panel opens on Items unless the *Tab to open on startup* setting says
-Net Worth History; the buttons themselves only switch the tab for that session. In the Net Worth History the sort and band buttons and the price ranges under them step
+view. They appear once the panel has your bank, and the panel opens on whichever of the two you used last. In the
+Net Worth History the sort and band buttons and the price ranges under them step
 aside - they order and filter the item list, which the Net Worth History does not show.
 
 **The Net Worth History is your bank's own total, one reading a day** - the Bank value figure, kept for every
@@ -164,8 +171,10 @@ though you can still click it. Instead of *Item prices update every 24hrs*, the 
 record is: *37 days recorded since 18 Aug*.
 
 **The chart** starts with the change over its range and the days it spans (*27 Aug - 26 Sep +24.2m +3.4%*), then
-a line naming a day and its total to the last gp, then the chart itself: a line of your total, green when the
-range rose and red when it fell, over a shading of the same colour that fades out towards the bottom, with the
+a line naming a day and its total to the last gp, then the chart itself: a line of your total, in the 2h logo's
+gold (*Single chart colour*, on by default, with any colour you pick), or - with that switch off - in your up colour
+when the range rose and your down colour when it fell, over a shading of the same colour that fades out towards the
+bottom, with the
 range's highest and lowest reading marked by a small grey dot and their short totals (*759m*, *712m*), and your
 latest reading by a dot in a soft glow. Rest the pointer on the chart and the line above it names the day under
 it; move away and it goes back to your latest reading. A day with no reading carries your last total across,
@@ -187,8 +196,8 @@ shows its year. The days come in pages of 250, like the items.
 carrying, each split into tradeable items, coins and platinum tokens, untradeables made from tradeable items,
 and alch-only untradeables, and since 1.0.9 the items and the coins in your Grand Exchange offers - so the Net
 Worth History always counts exactly what your settings count. Readings saved before 1.0.9 did not count offers,
-so the tracker hides them by default and your first bank read on 1.0.9 is day one. A checkbox above the chart,
-*Include days before v1.0.9*, shows them again after a short confirmation (those days did not count open G.E.
+so the tracker hides them by default and your first bank read on 1.0.9 is day one. *Include days before v1.0.9*,
+in the settings menu's *Net worth chart* section, shows them again after a short confirmation (those days did not count open G.E.
 orders, so their totals may read low); it appears only if you have such days, and it is remembered. Nothing is
 deleted. Turn off
 *Include coins and platinum tokens* and the whole line redraws without coins, past days included; it never shows
@@ -231,8 +240,8 @@ different - it is simply part of why the list redraws quickly.
 
 ## Hover text
 
-**Hover text is off until you ask for it.** Turn on **Show hover text** - last in the Options menu, behind the
-settings icon, in the row above *OK* - and the panel starts explaining itself when you rest the pointer on
+**Hover text is off until you ask for it.** Turn on **Show hover text** - in the Options menu, behind the
+settings icon, under the preset price ranges - and the panel starts explaining itself when you rest the pointer on
 something: the bank value gives you the exact total to the last gp, and the sort button, the band button, the
 Refresh link, the *"Item prices update every 24hrs"* line and every item in the Options menu say what they do.
 The Refresh link's hover reads *"Re-read your items and re-check the prices. Jagex publishes guide prices once a
@@ -278,10 +287,12 @@ is **always counted**, at what its **tradeable parts** are worth - crystal armou
 (three of them for a body), a slayer helmet at its black mask, a Bow of Faerdhinen at its inactive form - and
 such a row carries a real gp and percentage move, because the part it is made of has a guide price that moves.
 If one of its parts has no price on a given day, it is treated as alch-only for that day. The rest - graceful,
-void, barrows gloves, your fire cape - have only a **High Alchemy** value, so they are left out by default. Turn
-on *Include alch-only untradeables* and each of those gets a row at its alch value, tagged *alch* where the
-movement figures would be, and is counted in the Bank value. The ones at an alch value never appear in a
-percentage or a gp move: there is no earlier price to compare an alch value with.
+void, barrows gloves, your fire cape - have only a **High Alchemy** value, so they are left out of the Bank value
+by default. Turn on *Include alch-only untradeables* and each of those is counted in the Bank value, at its alch
+value. Whether they also get a row in the list is a separate choice, made in the *List options* menu (see *Search*
+above): off by default. A row at an alch value is tagged *alch* where the movement figures would be, and listed after
+every other row. The ones at an alch value never appear in a percentage or a gp move: there is no earlier price to
+compare an alch value with.
 
 **What you are carrying counts too.** *Include inventory and worn gear* is **on by default**: the items in your
 inventory and the gear you are wearing are valued and listed exactly like the bank's own stacks, by the same
@@ -384,20 +395,41 @@ follows.
 | Show change in gp | The bank's gp change for the chosen window. |
 | Show change in % | The bank's percentage change for the chosen window. |
 | Include coins and platinum tokens | Coins and platinum tokens (1,000 gp each) count in the bank value. On by default. |
-| Include alch-only untradeables | Counts untradeables with no tradeable parts, at alch value. Off by default. Untradeables made from tradeable items always count, at their parts' prices. |
+| Include alch-only untradeables | Counts untradeables with no tradeable parts, at alch value, in the Bank value and the Net Worth History. Off by default. It does not decide whether they are listed - see *Show alch-only items*. Untradeables made from tradeable items always count, at their parts' prices. |
+| Show alch-only items | Lists untradeables with no tradeable parts, at alch value, after the other rows. Off by default. Searching finds them either way. The tick is in the *List options* menu at the end of the search box. |
 | Include inventory and worn gear | Items in your inventory and worn gear count in the bank value and are listed with the bank's stacks. They are read when you open or close the bank, or press Refresh. On by default. |
 | Include Grand Exchange offers | Items in your Grand Exchange offers, and the coins committed to them or waiting to be collected, count in the bank value and are listed with the bank's stacks. They are read when you close the bank or press Refresh. On by default. |
 | Show hover text | The bank value and the panel's controls explain themselves when you rest the pointer on them. Off by default. Item rows never use hover text either way - click a row to open its detail. |
 | Use live prices | Actively traded items use the wiki's live traded prices for every figure; thin items keep the daily guide price. On by default. |
-| Tab to open on startup | Which tab the sidebar shows when the plugin starts: Items or Net Worth History. Items by default. The Items \| Net Worth History buttons switch the tab for that session only and never change this setting. |
+| Up colour | The colour of a rise, on both tabs: the figures, the rows, the card's edge and the chart. Green by default. |
+| Down colour | The colour of a fall, on both tabs. Red by default. |
+| Single chart colour | Draws the Net Worth History chart in one colour instead of the up and down colours. On by default. |
+| Chart colour | The chart's colour while *Single chart colour* is on. The 2h logo's gold by default. |
+| Hide amounts | Hides every gp amount and item quantity in the sidebar - the bank value, every gain or loss in gp, each item's stack value and count (its picture too), and the Net Worth History's totals - keeping item names, pictures and every percentage. The eye beside the Discord icon is the switch. Off by default; remembered. |
 
-Ten of them are also controls in the panel's own **Options** menu, behind the settings icon in the card's
-top-right corner - the three that decide what the card draws, then *Use live prices* and the four that decide what
-the card counts and which stacks get a row, then *Tab to open on startup* with a dot beside *Items* or *Net Worth History* (choosing
-one changes the setting for the next start, not the tab you are looking at), and last of all *Show hover text*. *Preset price ranges* is in that
-menu too, as three boxes, with *Refresh prices now* at its top and a *Reset to default* and an *OK* button along
-the bottom. *Show preset price ranges* has no entry of its own: the band button in the sidebar is the switch,
-and this row is where it reads back.
+Most of them are also controls in the panel's own **Options** menu, behind the settings icon in the card's
+top-right corner: the three that decide what the card draws, a line, and the *Up colour* and *Down colour* swatches,
+then *Colour presets* (see below), then *Use live prices* and the four that decide what the card counts and which stacks
+get a row, then *Preset price ranges* as three boxes and *Show hover text*, then a *Net worth chart* section with
+*Single chart colour* and, if you have days recorded before 1.0.9, *Include days before v1.0.9*. A swatch opens
+RuneLite's colour picker beside the sidebar, and the panel changes as you drag. *Reset to default* puts the preset
+ranges and the colours back (not Slot 1), and *OK* closes the menu. *Show preset price ranges* has no entry of its own: the band button in the sidebar is
+the switch, and this row is where it reads back. The sidebar opens on the tab you used last.
+
+### Colour presets
+
+Under *Down colour*, in the Options menu and in the *List options* menu beside the search box, each preset is one
+click on its row, anywhere on it, and sets both colours at once:
+
+- *Classic* - the green and red the sidebar ships with.
+- *2h* - a bright green and a light blue.
+- *Colour-blind* - orange for a rise and blue for a fall.
+- *Slot 1* - a pair of your own. It starts as Classic. Pick an up and a down colour, then press *Save current colours
+  to Slot 1* under it to keep them; press *Slot 1* any time to load them again. *Reset to default* leaves Slot 1
+  alone.
+
+A tick stands on the preset whose colours are the ones in use, and on none if you picked colours no preset has. It
+follows every change: a preset, the colour picker as you drag, Reset to default. Both menus show the same tick.
 
 ## Where its files live
 

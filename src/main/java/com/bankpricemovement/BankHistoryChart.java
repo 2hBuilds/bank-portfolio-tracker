@@ -28,12 +28,13 @@ import net.runelite.client.ui.ColorScheme;
  * {@link #PLOT_HEIGHT} px plot that is the whole component.
  *
  * <p><b>The mountain.</b> A 1.5 px line in the colour of the range's direction (a rise green, a fall the lifted red, no
- * change grey) over a fill that fades from a tint of that colour at the line's highest point down to nothing at the
- * plot's bottom. The range's HIGH and LOW - chosen among the days WITH a reading, the first of equals - each carry a
- * small grey dot and their compact total ("759m") in small grey figures, the high's above its point and the low's
- * below; they are drawn only when the range has two readings or more and the two differ, since a single reading or a
- * flat range has no high or low to tell (the readout already gives the total). The latest READING carries a filled dot
- * inside a soft halo. No gridline, axis or baseline.
+ * change grey - the reader's own up and down colours since 1.1.0, or ONE colour whatever the range did while "Single
+ * chart colour" is on, {@link #setFixedColour}) over a fill that fades from a tint of that colour at the line's
+ * highest point down to nothing at the plot's bottom. The range's HIGH and LOW - chosen among the days WITH a
+ * reading, the first of equals - each carry a small grey dot and their compact total ("759m") in small grey figures,
+ * the high's above its point and the low's below; they are drawn only when the range has two readings or more and the
+ * two differ, since a single reading or a flat range has no high or low to tell (the readout already gives the total).
+ * The latest READING carries a filled dot inside a soft halo. No gridline, axis or baseline.
  *
  * <p><b>A plain line</b> (the user: "plain line"). A day with no reading is carried forward flat from the last reading
  * ({@link BankHistoryMath#days}) and takes its place on the time axis, and NOTHING marks it: the same stroke, colour
@@ -119,6 +120,17 @@ final class BankHistoryChart extends JComponent
 	private boolean drawLine;
 	private int sign;
 	private Color line = ColorScheme.LIGHT_GRAY_COLOR;
+	/**
+	 * The one colour the line, its fill and the latest point are drawn in whatever the range did (1.1.0 part C's "Single
+	 * chart colour"), or null for the range's own - a rise or a fall in the reader's up and down colours.
+	 */
+	@Nullable
+	private Color fixed;
+	/**
+	 * 1.1.0 part E: whether the high's and the low's figures read their mask ({@link AmountMask#AMOUNT}) in place of the
+	 * compact totals. The line, its shape, the dots and the hover are the same either way: only the two words change.
+	 */
+	private boolean hideAmounts;
 	/** The latest reading among {@link #days}, or -1. */
 	private int latest = -1;
 	private int hover = -1;
@@ -179,7 +191,7 @@ final class BankHistoryChart extends JComponent
 		this.days = days == null ? Collections.emptyList() : days;
 		this.drawLine = drawLine;
 		this.sign = Integer.signum(sign);
-		line = Widgets.move(this.sign, Widgets.Kind.FIGURE);
+		line = lineFor(this.sign);
 		latest = -1;
 		for (int i = this.days.size() - 1; i >= 0; i--)
 		{
@@ -192,6 +204,37 @@ final class BankHistoryChart extends JComponent
 		hover = -1;
 		laidWidth = -1;
 		repaint();
+	}
+
+	/**
+	 * Draws the chart in one colour whatever the range did (1.1.0 part C), or in the range's own again for null: the line,
+	 * its fill, its latest point and its halo, and the hover ring. The days and the hover are untouched; only the colour
+	 * changes, so this costs a repaint and nothing else. Any transparency is dropped: the fill's tint is {@link #FILL_ALPHA}
+	 * of it, as for a rise.
+	 */
+	void setFixedColour(@Nullable final Color colour)
+	{
+		fixed = colour == null ? null : new Color(colour.getRGB());
+		line = lineFor(sign);
+		repaint();
+	}
+
+	/**
+	 * Hides or shows the high's and the low's figures (1.1.0 part E): each reads {@link AmountMask#AMOUNT} while hidden, so the
+	 * chart keeps its line and shape and says nothing about the totals. The figures are placed again at the next paint
+	 * (the mask is a different width from the total it replaces), so this costs a repaint and nothing else.
+	 */
+	void setAmountsHidden(final boolean hide)
+	{
+		hideAmounts = hide;
+		laidWidth = -1;
+		repaint();
+	}
+
+	/** The colour the line is drawn in for a range that went {@code direction}: the fixed colour, else the move rule's. */
+	private Color lineFor(final int direction)
+	{
+		return fixed != null ? fixed : Widgets.move(direction, Widgets.Kind.FIGURE);
 	}
 
 	List<BankHistoryMath.Day> days()
@@ -209,7 +252,10 @@ final class BankHistoryChart extends JComponent
 		return latest >= 0 ? latest : days.size() - 1;
 	}
 
-	/** The line's colour, which is every point's: a day with no reading is drawn like any other. */
+	/**
+	 * The line's colour, which is every point's: a day with no reading is drawn like any other. The fixed colour while
+	 * "Single chart colour" is on, whatever the range did; otherwise the range's direction in the up and down colours.
+	 */
 	Color lineColour()
 	{
 		return line;
@@ -345,7 +391,7 @@ final class BankHistoryChart extends JComponent
 
 	private Figure place(final int i, final boolean high, final FontMetrics fm, final int w, final int h)
 	{
-		final String text = MovementMath.formatGp(days.get(i).valueGp());
+		final String text = AmountMask.amount(hideAmounts, MovementMath.formatGp(days.get(i).valueGp()));
 		final int width = fm.stringWidth(text);
 		// The ink's height above the baseline, as the face draws this text (the figures have no descenders).
 		final int cap = -FIGURE_FONT.createGlyphVector(fm.getFontRenderContext(), text).getPixelBounds(null, 0, 0).y;
@@ -559,7 +605,8 @@ final class BankHistoryChart extends JComponent
 		area.lineTo(xs[n - 1], h);
 		area.lineTo(xs[0], h);
 		area.closePath();
-		final int alpha = sign < 0 ? FILL_ALPHA_FALL : FILL_ALPHA;
+		// A fall's red reads muddy at the rise's alpha; a colour the reader chose for the whole chart has no direction.
+		final int alpha = fixed == null && sign < 0 ? FILL_ALPHA_FALL : FILL_ALPHA;
 		g2.setPaint(new GradientPaint(0f, (float) top, withAlpha(line, alpha), 0f, (float) h, withAlpha(line, 0)));
 		g2.fill(area);
 	}

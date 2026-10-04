@@ -431,6 +431,55 @@ final class Widgets
 	 */
 	static final int QUIET_MIX_PERCENT = 55;
 
+	/**
+	 * The colour of a rise the reader chose (1.1.0 part B), or null for the built-in green. One palette for the whole
+	 * process, because {@link #move} is a static rule that a dozen painters call with a sign and a role and nothing else:
+	 * the plugin sets it at startUp and clears it at shutDown, and the sidebar changes it as the reader moves the colour
+	 * picker. Volatile - the EDT writes it and nothing promises that it alone reads it.
+	 */
+	@Nullable
+	private static volatile Color moveUp;
+
+	/** The colour of a fall the reader chose, or null for the built-in red; see {@link #moveUp}. */
+	@Nullable
+	private static volatile Color moveDown;
+
+	/** The colour a rise is drawn in when the reader has chosen none: the client's own green. */
+	static final Color MOVE_UP_DEFAULT = ColorScheme.PROGRESS_COMPLETE_COLOR;
+
+	/**
+	 * The net worth chart's colour while "Single chart colour" is on and the reader has chosen none (1.1.0 part C): the
+	 * logo gold, the face of the 2h coin ({@code CoinGlyph}'s own, which that kit file keeps private).
+	 */
+	static final Color CHART_COLOUR_DEFAULT = new Color(196, 156, 58);
+
+	/**
+	 * Sets the colours {@link #move} draws a rise and a fall in; null for a direction means the built-in colour. A colour
+	 * EQUAL to the built-in one (the config's defaults: {@link #MOVE_UP_DEFAULT} and {@link #MOVE_DOWN_TEXT}) is stored
+	 * as null, so a reader who never touched the setting - or who put the default back - gets the sidebar exactly as it was
+	 * drawn before the setting existed, down to the pixel (the built-in red is a deeper one for a mark than for a figure,
+	 * and a chosen colour is one colour for both). Any transparency is dropped: a rise is not see-through.
+	 *
+	 * <p>Not a rule on the neutral colour: a flat move or none at all is drawn as it always was.
+	 */
+	static void setMoveColours(@Nullable Color up, @Nullable Color down)
+	{
+		moveUp = chosen(up, MOVE_UP_DEFAULT);
+		moveDown = chosen(down, MOVE_DOWN_TEXT);
+	}
+
+	/** {@code colour} made opaque, or null when it is null or is the built-in one it would stand in for. */
+	@Nullable
+	private static Color chosen(@Nullable Color colour, Color builtIn)
+	{
+		if (colour == null)
+		{
+			return null;
+		}
+		final Color opaque = new Color(colour.getRGB());
+		return opaque.equals(builtIn) ? null : opaque;
+	}
+
 	/** {@code from} mixed {@code amount} of the way into {@code to}; 0 is unchanged, 1 is {@code to}. */
 	private static Color towards(Color from, Color to, double amount)
 	{
@@ -445,7 +494,9 @@ final class Widgets
 	 * The one move rule, in whichever role is asking: green for a rise, red for a fall, and the quiet grey - or,
 	 * for an {@link Kind#EDGE}, the card grey - for a flat move or none at all. Every colour in this sidebar that
 	 * says which way a price went comes from here, so a row's rail, its figures and the hero card's edge cannot
-	 * drift apart.
+	 * drift apart. Since 1.1.0 part B the green and the red are the reader's to choose ({@link #setMoveColours}); with a
+	 * colour chosen for a direction its figure and its mark ARE that colour, its quiet figure is that colour mixed
+	 * {@value #QUIET_MIX_PERCENT}% into the card, and its edge is {@code darker()} of it.
 	 *
 	 * @param signum which way it went: +1 up, -1 down, 0 for a flat move or no baseline at all - the caller reads
 	 *               it off its own gp figure ({@code Long.signum}), which is what signs the percentage too (L2)
@@ -455,6 +506,22 @@ final class Widgets
 		if (signum == 0)
 		{
 			return kind == Kind.EDGE ? ColorScheme.DARKER_GRAY_COLOR : ColorScheme.LIGHT_GRAY_COLOR;
+		}
+		final Color chosen = signum > 0 ? moveUp : moveDown;
+		if (chosen != null)
+		{
+			// The reader's own colour for this direction (1.1.0 part B): a figure and a mark are the colour itself, the
+			// quiet figure is that colour pushed toward the card exactly as the built-in ones are, and an edge is its
+			// darker() - the same three relations the built-in green and red stand in.
+			switch (kind)
+			{
+				case QUIET:
+					return towards(chosen, ColorScheme.DARKER_GRAY_COLOR, QUIET_MIX_PERCENT / 100.0);
+				case EDGE:
+					return chosen.darker();
+				default:
+					return chosen;
+			}
 		}
 		final Color colour = signum > 0 ? ColorScheme.PROGRESS_COMPLETE_COLOR : ColorScheme.PROGRESS_ERROR_COLOR;
 		switch (kind)

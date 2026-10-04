@@ -1,5 +1,6 @@
 package com.bankpricemovement;
 
+import java.awt.Color;
 import net.runelite.client.config.Config;
 import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigItem;
@@ -7,15 +8,19 @@ import net.runelite.client.config.ConfigItem;
 /**
  * The plugin's single config (contract C39; items 7-9 are addendum O line O2, items 10-11 addendum Q line Q3,
  * item 12 addendum Y line Y1, item 13 1.0.9 part 3, item 14 addendum AH, item 15 addendum T line T1, item 16
- * addendum AU, item 17 1.0.9 part 5). Eighteen items, and every one of them is also a widget in the sidebar: the
- * config panel and the sidebar are the same switch, so a change in either place is written here and read back by the
- * other through {@code ConfigChanged}. The one exception is the eighteenth, which the settings page does not list
- * at all (see {@code includeLegacyHistory}).
+ * addendum AU, item 17 1.0.9 part 5, items 18 and 19 1.1.0 part B, items 20 and 21 1.1.0 part C, item 22 1.1.0 part E,
+ * item 23 1.1.0 part G). Twenty-four items, and every one of them is also a widget in the sidebar: the config panel and the
+ * sidebar are the same switch, so a
+ * change in either place is written here and read back by the other through {@code ConfigChanged}. The two exceptions
+ * are the sixteenth and the eighteenth, which the settings page does not list at all (see {@code startTab}, the tab
+ * used last since 1.1.0, and {@code includeLegacyHistory}); the two colours added by 1.1.0 part B and the chart colour
+ * and its switch added by part C are listed, and are rows of the sidebar's settings menu as well.
  *
  * <p><b>1.0.9 part 5 added an eighteenth and hid it</b>: {@code includeLegacyHistory}, whether the Net Worth History
- * tab shows the days recorded before 1.0.9. It is the only item here that RuneLite's settings page does not draw
- * (RuneLite's {@code ConfigItem.hidden}): the check box on the tracker tab is its control, and a second one on
- * the page would be a way to turn on a dialog's worth of warning without seeing the warning.
+ * tab shows the days recorded before 1.0.9. It was the only item here that RuneLite's settings page did not draw
+ * (RuneLite's {@code ConfigItem.hidden}) until 1.1.0 hid {@code startTab} too: the check item in the sidebar's
+ * settings menu is its control, and a second one on the page would be a way to turn on a dialog's worth of warning
+ * without seeing the warning.
  *
  * <p><b>Addendum AU added a sixteenth, took it away before it shipped, and put a different one in its place</b>:
  * {@code view}, which remembered the last tab used, was deleted on 2026-09-29 ("Yes, always open on Items, no
@@ -455,21 +460,25 @@ public interface BankPriceMovementConfig extends Config
 	}
 
 	/**
-	 * Addendum AU, the sixteenth item and the LAST on the page: which tab the sidebar shows when the plugin starts -
-	 * Items, the list, or Net Worth History, the chart. The user, 2026-09-29: "in settings i want the default load
-	 * tab option, by default have the plugin load into the items tab but have the option there for them to change
-	 * that to open onto the net worth history tab".
+	 * Addendum AU, the sixteenth item: which tab the sidebar shows when the plugin starts - Items, the list, or Net
+	 * Worth History, the chart. The user, 2026-09-29: "in settings i want the default load tab option, by default have
+	 * the plugin load into the items tab but have the option there for them to change that to open onto the net worth
+	 * history tab".
 	 *
-	 * <p>It is the player's CHOICE and not the last tab used: the Items | Net Worth History toggle switches the tab
-	 * for the session and writes nothing. It is a piece of the sidebar's SHAPE, like {@code foldOpen}, so it takes a
-	 * road of its own ({@link BankPriceMovementPlugin#isStartTabKey}) that reaches the panel's settings menu and
-	 * nobody else: it does not switch the tab that is showing now, and the service is never told.
+	 * <p><b>Since 1.1.0 part A it is the tab used LAST and no longer a choice</b> (the user, 2026-10-03: one tidied
+	 * settings menu, and the sidebar opening on the tab it showed last): the Items | Net Worth History toggle's press
+	 * writes it, the menu's start-tab group is gone, and the item is HIDDEN from the settings page - the stored key is
+	 * unchanged, so a player's chosen start tab simply becomes their last tab, and no migration is needed. It is a
+	 * piece of the sidebar's SHAPE, like {@code foldOpen}, so it takes a road of its own
+	 * ({@link BankPriceMovementPlugin#isStartTabKey}) that reaches the panel and nobody else: it does not switch the
+	 * tab that is showing now, and the service is never told.
 	 */
 	@ConfigItem(
 		position = 16,
 		keyName = "startTab",
-		name = "Tab to open on startup",
-		description = "Which tab the sidebar shows when the plugin starts."
+		name = "Last tab",
+		description = "The tab the sidebar showed last. It opens there next time.",
+		hidden = true
 	)
 	default SidebarView startTab()
 	{
@@ -481,7 +490,7 @@ public interface BankPriceMovementConfig extends Config
 	 * before 1.0.9. Those readings did not count the Grand Exchange offers, so for a player who keeps much of their
 	 * bank on offer they read low; the tab hides them unless the reader asks for them, and nothing is deleted.
 	 *
-	 * <p>HIDDEN from the settings page: the check box under the tab's caption is the control, and turning it on asks
+	 * <p>HIDDEN from the settings page: the sidebar menu's check item is the control, and turning it on asks
 	 * a question the settings page has no room for. It is stored all the same, so the answer survives a restart.
 	 * It is a piece of the sidebar's SHAPE, like {@code foldOpen}, so it takes a road of its own
 	 * ({@link BankPriceMovementPlugin#isLegacyKey}) that reaches the panel and nobody else: the service is never
@@ -498,5 +507,173 @@ public interface BankPriceMovementConfig extends Config
 	default boolean includeLegacyHistory()
 	{
 		return false;
+	}
+
+	/**
+	 * 1.1.0 part B, the nineteenth item: the colour of a RISE on both tabs - the card's figures, triangle and edge, every
+	 * Items row's rail and figures, the Net Worth History card, its day list and its chart. Default the client's own green
+	 * ({@code ColorScheme.PROGRESS_COMPLETE_COLOR}), which is also what the sidebar drew before the item existed, so a
+	 * reader who never touches it sees nothing change.
+	 *
+	 * <p>VISIBLE on the settings page, unlike the three hidden items above it, because a colour needs no question asked
+	 * before it is changed: the page's own picker is as good as the sidebar's. It is also a row of the sidebar's settings
+	 * menu, whose picker redraws both tabs as it is moved. A stored colour equal to the default is read as "no colour
+	 * chosen" ({@code Widgets.setMoveColours}), so the two spellings of the default draw the same pixels. It takes a
+	 * road of its own ({@link BankPriceMovementPlugin#isColourKey}) of the fold's shape: the panel is told and the service
+	 * never is - what is drawn changes and no figure does.
+	 */
+	@ConfigItem(
+		position = 18,
+		keyName = "upColour",
+		name = "Up colour",
+		description = "The colour of a rise, on both tabs."
+	)
+	default Color upColour()
+	{
+		return Widgets.MOVE_UP_DEFAULT;
+	}
+
+	/**
+	 * 1.1.0 part B, the twentieth item: the colour of a FALL on both tabs, as {@link #upColour} is of a rise. Default the
+	 * lifted red the sidebar prints a falling figure in ({@code Widgets.MOVE_DOWN_TEXT}, 5.05:1 on the card where the
+	 * client's own red is 3.63:1), which is why a stored colour equal to it reads as "no colour chosen": the built-in
+	 * mark and edge keep the deeper red they have always had.
+	 */
+	@ConfigItem(
+		position = 19,
+		keyName = "downColour",
+		name = "Down colour",
+		description = "The colour of a fall, on both tabs."
+	)
+	default Color downColour()
+	{
+		return Widgets.MOVE_DOWN_TEXT;
+	}
+
+	/**
+	 * 1.1.0 part C, the twenty-first item: whether the Net Worth History chart is drawn in ONE colour - {@link #chartColour}
+	 * - instead of following its range in the up and down colours. Default ON since part D (the user's look, 2026-10-04:
+	 * "by default lets put 'single chart color' toggled on and have it as the 2h gold color"), so a player who never
+	 * touched it sees the chart in the gold; off, the chart follows its range as it did before the setting existed. A
+	 * check item of the sidebar's settings menu as well, under its "Net worth chart" caption, where ticking it also brings
+	 * the Net Worth History tab into view so the change is seen at once (the user, 2026-10-03).
+	 *
+	 * <p>VISIBLE on the settings page, like the two colours of part B, and on a road of their own
+	 * ({@link BankPriceMovementPlugin#isChartKey}): the panel is told and the service never is - what is drawn changes and
+	 * no figure does.
+	 */
+	@ConfigItem(
+		position = 20,
+		keyName = "singleChartColour",
+		name = "Single chart colour",
+		description = "Draw the net worth chart in one colour instead of the up and down colours."
+	)
+	default boolean singleChartColour()
+	{
+		return true;
+	}
+
+	/**
+	 * 1.1.0 part C, the twenty-second item: the one colour the Net Worth History chart's line, fill and latest point are
+	 * drawn in while {@link #singleChartColour} is on. Default the logo gold, the face of the 2h coin
+	 * ({@code Widgets.CHART_COLOUR_DEFAULT}). It is the swatch at the end of the menu's "Single chart colour" row, which
+	 * opens RuneLite's colour picker, and it is read on the same road as the switch above.
+	 */
+	@ConfigItem(
+		position = 21,
+		keyName = "chartColour",
+		name = "Chart colour",
+		description = "The net worth chart's colour while Single chart colour is on."
+	)
+	default Color chartColour()
+	{
+		return Widgets.CHART_COLOUR_DEFAULT;
+	}
+
+	/**
+	 * 1.1.0 part E, the twenty-third item: whether the sidebar HIDES every gp amount and every item quantity - the user's
+	 * streamer view (2026-10-04): an eye beside the Discord icon on the hero card turns it on and off. Default OFF, so the
+	 * sidebar is exactly what it was for a player who never presses the eye.
+	 *
+	 * <p>What hides is every number that says how much the player has or how much it is worth - the card's total and gp
+	 * move, each Items row's stack value, gp change and "n x price" line and the stack number in its picture, the open
+	 * row's amounts, the History readout, the day rows' totals and gp changes, the chart's high and low - each as a FIXED
+	 * mask that never depends on the number. What stays is names, pictures, every percentage, dates, the chart's shape,
+	 * the price band and the counts of rows ({@link AmountMask}).
+	 *
+	 * <p>VISIBLE on the settings page, like the colours, and on a road of its own
+	 * ({@link BankPriceMovementPlugin#isHideKey}) of the fold's shape: the panel is told and the service never is - what is
+	 * drawn changes and no figure does. The eye's own press comes back that way only when it was not the sidebar's write.
+	 */
+	@ConfigItem(
+		position = 22,
+		keyName = "hideAmounts",
+		name = "Hide amounts",
+		description = "Hide every gp amount and item quantity in the sidebar, keeping item names and percentages."
+			+ " For streaming."
+	)
+	default boolean hideAmounts()
+	{
+		return false;
+	}
+
+	/**
+	 * 1.1.0 part G, the twenty-fourth item: whether the Items list shows its ALCH rows - the untradeables with no tradeable
+	 * parts, at their High Alchemy value - which never move and, for a bank full of them, bloat the list. Default OFF: the
+	 * list is the items that have a price movement. The user, 2026-10-04: "people will want to see their alch only items in
+	 * the item cells sometimes, perhaps they want to alch one" - so the sidebar's List options menu (the two gears at the
+	 * end of the search box) carries the tick, and a search finds an alch item whatever the tick says.
+	 *
+	 * <p>It decides what is LISTED and nothing else: the bank value and the Net Worth History tab are still decided by
+	 * "Include alch-only untradeables" ({@code countUntradeables}) alone. VISIBLE on the settings page, and on a road of its
+	 * own ({@link BankPriceMovementPlugin#isAlchKey}) of the fold's shape: the panel is told and the service never is - which
+	 * rows are drawn changes and no figure does.
+	 */
+	@ConfigItem(
+		position = 23,
+		keyName = "showAlchRows",
+		name = "Show alch-only items",
+		description = "Lists untradeables with no tradeable parts, at alch value. Searching finds them either way."
+	)
+	default boolean showAlchRows()
+	{
+		return false;
+	}
+
+	/**
+	 * 1.1.0 part J, the twenty-fifth item: the colour of a RISE saved in the colour presets' "Slot 1" - the first half of the
+	 * one preset the reader writes themselves (the user, 2026-10-04: a slot for one up and one down colour "they can load
+	 * again at any point"). Default Classic's rise, the built-in green, so Slot 1 starts as Classic.
+	 *
+	 * <p>HIDDEN from the settings page, like {@code includeLegacyHistory} and {@code startTab}: the sidebar's "Save current
+	 * colours to Slot 1" row writes it and nothing else is a control for it. It takes a road of its own
+	 * ({@link BankPriceMovementPlugin#isSlotKey}) of the colours' shape: the panel is told and the service never is.
+	 */
+	@ConfigItem(
+		position = 24,
+		keyName = "slotUpColour",
+		name = "Slot 1 up colour",
+		description = "The colour of a rise saved in the colour presets' Slot 1.",
+		hidden = true
+	)
+	default Color slotUpColour()
+	{
+		return Widgets.MOVE_UP_DEFAULT;
+	}
+
+	/**
+	 * 1.1.0 part J, the twenty-sixth item: the colour of a FALL saved in Slot 1, {@link #slotUpColour}'s twin. Default
+	 * Classic's fall, the lifted red ({@code Widgets.MOVE_DOWN_TEXT}). Hidden for the same reason.
+	 */
+	@ConfigItem(
+		position = 25,
+		keyName = "slotDownColour",
+		name = "Slot 1 down colour",
+		description = "The colour of a fall saved in the colour presets' Slot 1.",
+		hidden = true
+	)
+	default Color slotDownColour()
+	{
+		return Widgets.MOVE_DOWN_TEXT;
 	}
 }

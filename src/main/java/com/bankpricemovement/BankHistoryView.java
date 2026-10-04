@@ -105,6 +105,12 @@ public final class BankHistoryView extends JPanel
 	/** The last show's series cut to its today; EMPTY before the first. */
 	private BankHistorySeries shown = BankHistorySeries.EMPTY;
 	private ViewOptions drawnOptions = ViewOptions.DEFAULT;
+	/**
+	 * 1.1.0 part E: whether every gp amount here reads its mask ({@link AmountMask}) - the change line's gp figure, the
+	 * readout's total, the chart's high and low and each day row's totals and gp change. Percentages, dates, the chart's line
+	 * and its shape are drawn as ever.
+	 */
+	private boolean hideAmounts;
 
 	// ---- the chart block
 	private final ChartBlock block;
@@ -198,6 +204,52 @@ public final class BankHistoryView extends JPanel
 		renderList();
 		revalidate();
 		repaint();
+	}
+
+	/**
+	 * Draws what is drawn again in the move colours now in force ({@link Widgets#setMoveColours}, 1.1.0 part B): the
+	 * change line, the chart's line, fill and ring, and every day row, which is built with its colours and so is built
+	 * again. EDT only. Nothing is read from anywhere - the series, the options and today are the last show's - so it
+	 * costs the service nothing, and a view that has never been shown has nothing to redraw (its first {@link #show}
+	 * reads the colours in force then).
+	 */
+	void recolour()
+	{
+		if (drawnToday == null)
+		{
+			return;
+		}
+		renderChart();
+		// A row whose strings did not change is kept by renderList, and a kept row keeps its old colours: forget them.
+		rows.clear();
+		renderList();
+		revalidate();
+		repaint();
+	}
+
+	/**
+	 * Draws the chart in one colour whatever the range did (1.1.0 part C's "Single chart colour"), or in the range's own for
+	 * null. EDT only. The chart alone takes it - its line, fill, latest point and hover ring - and the readout's ring with
+	 * it, which is the chart's own mark; the change line over it and the list of days keep the up and down colours. Nothing
+	 * is read from anywhere, so it costs the service nothing, and it is safe before any {@link #show}: the chart keeps the
+	 * colour for the data it is handed later.
+	 */
+	void setChartColour(@Nullable final Color colour)
+	{
+		chart.setFixedColour(colour);
+		renderReadout();
+	}
+
+	/**
+	 * Hides or shows every gp amount (1.1.0 part E): STORES the switch, for the chart and for what is drawn from here on, and
+	 * draws nothing - the panel follows it with {@link #recolour} when this view is on screen and when it next arrives, which
+	 * redraws the change line, the readout, the chart and every day row from what is already held. Safe before any
+	 * {@link #show}. Costs the service nothing: it is never asked.
+	 */
+	void setAmountsHidden(final boolean hide)
+	{
+		hideAmounts = hide;
+		chart.setAmountsHidden(hide);
 	}
 
 	/** Whether two option sets give every total the same figure: the five switches {@code valueFor} reads. */
@@ -367,7 +419,8 @@ public final class BankHistoryView extends JPanel
 		else
 		{
 			changeDays.setText(MovementMath.formatDay(change.fromDay()) + " - " + MovementMath.formatDay(change.toDay()));
-			changeGp.setText(change.deltaGp() == 0L ? "" : MovementRowPanel.signedGp(change.deltaGp()));
+			changeGp.setText(change.deltaGp() == 0L ? ""
+				: AmountMask.change(hideAmounts, MovementRowPanel.signedGp(change.deltaGp())));
 			changePct.setText(MovementMath.formatPctCompact(change.pct(), change.deltaGp()));
 		}
 		changeGp.setForeground(Widgets.move(sign, Widgets.Kind.QUIET));
@@ -393,7 +446,7 @@ public final class BankHistoryView extends JPanel
 		final BankHistoryMath.Day day = days.get(i);
 		ring.colour = chart.lineColour();
 		readoutDay.setText(BankHistoryDayRow.dayText(day.day(), drawnToday));
-		readoutTotal.setText(MovementMath.formatExact(day.valueGp()) + " gp");
+		readoutTotal.setText(AmountMask.amount(hideAmounts, MovementMath.formatExact(day.valueGp())) + " gp");
 		readoutDay.repaint();
 		block.doLayout();
 	}
@@ -424,7 +477,8 @@ public final class BankHistoryView extends JPanel
 		final List<BankHistoryDayRow> next = new ArrayList<>(want);
 		for (int i = 0; i < want; i++)
 		{
-			final BankHistoryDayRow.Model model = BankHistoryDayRow.model(shown, listDays.get(i), drawnToday, drawnOptions);
+			final BankHistoryDayRow.Model model = BankHistoryDayRow.model(shown, listDays.get(i), drawnToday, drawnOptions,
+				hideAmounts);
 			final BankHistoryDayRow kept = old.get(model.day());
 			next.add(kept != null && kept.model().equals(model) ? kept : new BankHistoryDayRow(model));
 		}

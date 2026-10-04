@@ -19,6 +19,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import javax.annotation.Nullable;
 import javax.imageio.ImageIO;
 import javax.swing.JComponent;
+import javax.swing.JLabel;
 import javax.swing.JScrollPane;
 import javax.swing.SwingUtilities;
 import net.runelite.client.game.ItemManager;
@@ -81,17 +82,48 @@ import static org.mockito.Mockito.when;
  * {@code ticker-hidden-2026-09-20-AK.png} to the byte; without it, neither matches while the picture is the
  * same), so a comparison against them has to be taken the same way.
  *
- * <p><b>The current pins are {@code docs/handoff/lab/ticker-{,hidden-,options-,live-}2026-10-01-C.png}</b> (1.0.9 part 4,
- * the search box): the B pictures below with the box above the first row - {@link #SEARCH_ROW_HEIGHT} px of header
- * inserted under the fold, everything under it that much lower, the pictures that much taller, and nothing else changed,
- * which {@code ViewStripPicturesTest} measures against the B files themselves. The History pictures
- * ({@link #HISTORY_FILE} and its three) have no search box and are untouched.
+ * <p><b>The current pins are {@code docs/handoff/lab/ticker-{,hidden-,options-,live-,amounts-hidden-}2026-10-04-I.png} and
+ * {@code history{,-one,-empty,-hidden,-amounts-hidden}-2026-10-04-I.png}</b> (1.1.0 part I, the eye beside Discord): the G
+ * pictures for Items and the E pictures for History with the "Hide amounts" eye moved out of the total's row - where it stood
+ * left of the Refresh link - into the card's top-right icons, first of three (eye, Discord, settings), and drawn in grey 52
+ * while the amounts show and grey 165 while hidden. Each differs from the pin it follows only inside the eye's old box
+ * ({@link #oldEyeIcon}) and its new one ({@link #eyeIcon}), which {@code ViewStripPicturesTest} and
+ * {@code HistorySidebarPicturesTest} measure against the kept files themselves.
+ *
+ * <p><b>The G pins are {@code docs/handoff/lab/ticker-{,hidden-,options-,live-,amounts-hidden-}2026-10-04-G.png}</b>
+ * (1.1.0 part G, "List options"): the E pictures with the search row's right end changed - the box shortened by the two
+ * gears' 12 px and their 6 px gap, the gears in the placeholder grey - and nothing else, which {@code ViewStripPicturesTest}
+ * measures against the E files themselves. The options picture is drawn with the tick "Show alch-only items" ON, because it
+ * is the picture that holds the two alch rows ({@link #build}'s prefs answer the tick as the switch that puts them in the
+ * fixture), so it still shows them. The History pins stay the E ones below: the History tab has no search row.
+ *
+ * <p><b>The E pins are {@code docs/handoff/lab/ticker-{,hidden-,options-,live-}2026-10-04-E.png} and
+ * {@code history{,-one,-empty,-hidden}-2026-10-04-E.png}</b> (1.1.0 part E, "Hide amounts"): the eye beside the Refresh
+ * link in the card's number row (until part I moved it), with the amounts SHOWN - every other pixel of every picture is what it was, which
+ * {@code ViewStripPicturesTest} and {@code HistorySidebarPicturesTest} measure against the previous pins (the C pictures
+ * for Items, the D pictures for History, the B one for the empty History) as "identical outside the eye's 12 x 12 box".
+ * Two more pictures are pinned as {@code ticker-amounts-hidden-2026-10-04-E.png} and
+ * {@code history-amounts-hidden-2026-10-04-E.png}: the same two sidebars with the eye shut - every amount and quantity
+ * masked, the picture of each item without its stack number.
+ *
+ * <p>The previous pins stay on disk as history. <b>The C pins</b> ({@code ticker-{,hidden-,options-,live-}2026-10-01-C.png},
+ * 1.0.9 part 4, the search box): the B pictures below with the box above the first row - {@link #SEARCH_ROW_HEIGHT} px of
+ * header inserted under the fold, everything under it that much lower, the pictures that much taller, and nothing else
+ * changed, which {@code ViewStripPicturesTest} measures against the B files themselves. The History pictures have no
+ * search box and are untouched by it.
+ *
+ * <p><b>The D pins</b> ({@code history{,-one,-hidden}-2026-10-04-D.png}, 1.1.0 part D): "Single chart colour" turned ON by
+ * default, the chart in them the logo gold. The empty History picture draws no chart and stayed the B picture until the
+ * eye. The B pins of the other three ({@code ...-2026-09-30-B.png}) are kept on disk: they are what this class drew with
+ * the switch OFF before the eye, which {@code HistorySidebarPicturesTest} still proves, apart from the eye's box. The four
+ * Items pictures show no chart.
  *
  * <p>The B pins before them ({@code ticker-{,hidden-,options-,live-}2026-09-30-B.png}, 1.0.9, the support pair): the AU
  * pictures below with the Discord mark beside the settings icon in the card's top row and the Refresh link moved down
  * to the number's row - the card's top two rows and nothing else, every pixel row from the number row down and every
  * row above the card identical, which {@code ViewStripPicturesTest} measured against the AU files themselves. The
- * History pictures ({@link #HISTORY_FILE} and its three) moved the same way, and are still pinned as B.
+ * History pictures ({@link #HISTORY_FILE} and its three) moved the same way and were pinned as B (three of them are
+ * pinned as D since 1.1.0 part D, the B files kept).
  *
  * <p>The AU pins before them ({@code ticker-{,hidden-,options-,live-}2026-09-28-AU.png}, addendum AU): the AV pictures
  * with the Items | Net Worth History strip inserted under the card - everything under it {@link #STRIP_HEIGHT} px lower,
@@ -508,6 +540,14 @@ public final class LookRenderer
 			{
 				return foldOpen;
 			}
+
+			// 1.1.0 part G: the list shows its alch rows exactly when the fixture holds them - the options picture's two - so
+			// every picture lists what it always listed. (The shipped default is off; the tick is not a picture's business.)
+			@Override
+			public Boolean loadShowAlchRows()
+			{
+				return view.countUntradeables();
+			}
 		};
 		final BankPriceMovementPanel panel = new BankPriceMovementPanel(itemManager, service, prefs);
 		// The picture must be the same one whenever it is rendered, so "today" is the fixture's own day and not
@@ -525,13 +565,13 @@ public final class LookRenderer
 	// ---------------------------------------------------------------- the whole sidebar in History (addendum AU)
 
 	/** The History pictures, by the names they are pinned under in {@code docs/handoff/lab/}. */
-	public static final String HISTORY_FILE = "history-2026-09-30-B.png";
+	public static final String HISTORY_FILE = "history-2026-10-04-I.png";
 	/** Day one: the one reading, today's (plan 7.5 item 3: the one point, its readout, its row, no sentence). */
-	public static final String HISTORY_ONE_FILE = "history-one-2026-09-30-B.png";
+	public static final String HISTORY_ONE_FILE = "history-one-2026-10-04-I.png";
 	/** No reading yet: the card's two History lines a dash each (ruling 9.7), the view its one sentence. */
-	public static final String HISTORY_EMPTY_FILE = "history-empty-2026-09-30-B.png";
+	public static final String HISTORY_EMPTY_FILE = "history-empty-2026-10-04-I.png";
 	/** The 40-day fixture with the card's three figures hidden (O3 in History: the card shrinks exactly as in Items). */
-	public static final String HISTORY_HIDDEN_FILE = "history-hidden-2026-09-30-B.png";
+	public static final String HISTORY_HIDDEN_FILE = "history-hidden-2026-10-04-I.png";
 	/** The card's lit chip in every History picture: 30d, mock 5's own. */
 	public static final MovementWindow HISTORY_WINDOW = MovementWindow.D30;
 	/**
@@ -599,6 +639,92 @@ public final class LookRenderer
 	{
 		final Component view = find(panel, BankHistoryView.class);
 		return (JScrollPane) SwingUtilities.getAncestorOfClass(JScrollPane.class, view);
+	}
+
+	/**
+	 * EDT, on a panel already laid out: the 12 x 12 box the "Hide amounts" eye's icon is painted in, in {@code panel}'s own
+	 * coordinates (1.1.0 part E) - the label's bounds less its insets, which is where an icon-only label paints a 12 px icon
+	 * it is exactly wide and tall enough for. Since part I the eye is in the card's top row, first of the three top-right icons,
+	 * and this is that place. The one rectangle a picture with the eye may differ from one without it in - and, with
+	 * {@link #oldEyeIcon}, from the pictures of parts E and G, which drew it in the total's row.
+	 */
+	static java.awt.Rectangle eyeIcon(BankPriceMovementPanel panel)
+	{
+		final JLabel eye = findLabel(panel.captionRow(), l -> BankPriceMovementPanel.HIDE_AMOUNTS_TIP.equals(l.getToolTipText())
+			|| BankPriceMovementPanel.SHOW_AMOUNTS_TIP.equals(l.getToolTipText()));
+		if (eye == null)
+		{
+			throw new AssertionError("no eye in the card's top row");
+		}
+		final java.awt.Insets in = eye.getInsets();
+		return SwingUtilities.convertRectangle(eye.getParent(), new java.awt.Rectangle(eye.getX() + in.left,
+			eye.getY() + in.top, eye.getIcon().getIconWidth(), eye.getIcon().getIconHeight()), panel);
+	}
+
+	/**
+	 * EDT, on a panel already laid out: the 12 x 12 box the eye's icon was painted in BEFORE 1.1.0 part I moved it, in
+	 * {@code panel}'s own coordinates - in the total's row, ending where the Refresh link's box begins (the eye's label had no
+	 * right inset), centred in the link's height the way the holder that carried both centred the eye's 16 px label (12 px of
+	 * icon and 2 px above and below) in the link's cell. The pictures pinned for parts E and G, kept on disk, show the eye
+	 * there, and nothing is drawn there now: it is the second rectangle a part I picture may differ from them in.
+	 */
+	static java.awt.Rectangle oldEyeIcon(BankPriceMovementPanel panel)
+	{
+		final java.awt.Rectangle link = SwingUtilities.convertRectangle(panel.refreshLabel().getParent(),
+			panel.refreshLabel().getBounds(), panel);
+		final int label = EyeIcon.SIZE + 4;
+		return new java.awt.Rectangle(link.x - EyeIcon.SIZE, link.y + (link.height - label) / 2 + 2, EyeIcon.SIZE,
+			EyeIcon.SIZE);
+	}
+
+	/**
+	 * EDT, on a panel already laid out: the 12 x 12 box the List options icon (the two gears at the right end of the search row)
+	 * is painted in, in {@code panel}'s own coordinates (1.1.0 part G): at the label's left inset (the 6 px of air on its left) and
+	 * centred in the label's height, which the search row stretches to the box's. The one rectangle, with the shortened box beside
+	 * it, a picture with the gears may differ in from one without.
+	 */
+	static java.awt.Rectangle listOptionsIcon(BankPriceMovementPanel panel)
+	{
+		final JLabel gears = listOptionsLabel(panel);
+		final java.awt.Insets in = gears.getInsets();
+		final int h = gears.getIcon().getIconHeight();
+		return SwingUtilities.convertRectangle(gears.getParent(), new java.awt.Rectangle(gears.getX() + in.left,
+			gears.getY() + in.top + (gears.getHeight() - in.top - in.bottom - h) / 2, gears.getIcon().getIconWidth(), h),
+			panel);
+	}
+
+	/** EDT: the List options label of {@code panel}'s search row (1.1.0 part G); fails when the row has none. */
+	static JLabel listOptionsLabel(BankPriceMovementPanel panel)
+	{
+		final JLabel gears = findLabel(panel.searchField().getParent(),
+			l -> BankPriceMovementPanel.LIST_OPTIONS_TIP.equals(l.getToolTipText()));
+		if (gears == null)
+		{
+			throw new AssertionError("no List options icon in the search row");
+		}
+		return gears;
+	}
+
+	/** The first label of {@code root}'s tree that {@code wanted} accepts, or null. */
+	@Nullable
+	private static JLabel findLabel(Component root, java.util.function.Predicate<JLabel> wanted)
+	{
+		if (root instanceof JLabel && wanted.test((JLabel) root))
+		{
+			return (JLabel) root;
+		}
+		if (root instanceof Container)
+		{
+			for (Component child : ((Container) root).getComponents())
+			{
+				final JLabel found = findLabel(child, wanted);
+				if (found != null)
+				{
+					return found;
+				}
+			}
+		}
+		return null;
 	}
 
 	/** The first component of {@code type} in {@code root}'s tree, or null. */

@@ -187,8 +187,8 @@ public final class BankHistorySeries
 
 	/**
 	 * Whether any reading here was recorded before 1.0.9 (1.0.9 part 5): a {@link #freshFrom()} is named and at least
-	 * one day lies before it - {@link LocalDate#MAX} counts as long as the series is not empty. The History tab
-	 * shows its "Include days before v1.0.9" check box only while this is true.
+	 * one day lies before it - {@link LocalDate#MAX} counts as long as the series is not empty. The settings menu
+	 * carries its "Include days before v1.0.9" item only while this is true.
 	 */
 	public boolean hasLegacyDays()
 	{

@@ -22,14 +22,16 @@
 5. **Sort.** By % change, gp change, item price or stack price. Click the lit one again to flip.
 6. **Filter.** Items over 100k, 1m or 10m, or your own min and max. Or type part of a name in the search box above the list.
 7. **Open an item.** Click any item to see its exact figures. Click it again to close.
-8. **Settings.** Click the settings icon to include or exclude your inventory, worn gear, Grand Exchange offers, coins and alch-only untradeables, and to turn live prices and hover text on or off.
+8. **Settings.** Click the settings icon to include or exclude your inventory, worn gear, Grand Exchange offers, coins and alch-only untradeables, to turn live prices and hover text on or off, and to pick your up, down and chart colours or a colour preset.
 
 ## Good to know
 
 - **Prices** are the Grand Exchange guide price, updated daily, plus live prices for actively traded items.
 - **Untradeables** made from tradeable items, like a charged bow or crystal armour, count at their parts' prices.
+- **Alch-only items** stay out of the list. Tick *Show alch-only items* under the two gears beside the search box to see them. Searching finds them either way.
 - **Grand Exchange offers** count too: unsold items, bought items waiting to be collected, and the coins committed or waiting in your offers.
 - **Privacy.** No account or bank data is ever uploaded. The plugin only fetches prices.
+- **Streaming?** Click the eye beside the Discord icon to hide every gp amount and item quantity. Names and percentages stay.
 - **Something wrong?** Tell us in the Discord.
 
 </td>
@@ -38,7 +40,7 @@
 
 <br>
 
-<img width="248" src="images/sidebar.png" alt="The Items tab: bank value on top, a search box, every item below">
+<img width="242" src="images/sidebar.png" alt="The Items tab: bank value on top, a search box, every item below">
 
 </td>
 </tr>
@@ -57,7 +59,8 @@
 - **Chart.** Pick 7d, 30d, 90d or all. Rest the pointer on the line to read that day's total.
 - **Every day listed.** Each day's total and its change, newest first.
 - **Follows your settings.** Turn coins off and the whole chart redraws.
-- **Start on it.** Pick "Tab to open on startup" in the settings to open on this tab.
+- **Your colours.** The chart is the 2h gold by default. Pick any colour, or let it follow your up and down colours.
+- **Opens where you left it.** The sidebar opens on the tab you used last.
 
 </td>
 <td width="28"></td>
@@ -65,7 +68,7 @@
 
 <br>
 
-<img width="248" src="images/history.png" alt="The Net Worth History tab: a chart of your bank's total over a list of days">
+<img width="242" src="images/history.png" alt="The Net Worth History tab: a chart of your bank's total over a list of days">
 
 </td>
 </tr>

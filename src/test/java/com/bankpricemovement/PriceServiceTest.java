@@ -1997,13 +1997,20 @@ public class PriceServiceTest
 
 		service.setBank(bank(T0 + 1L));
 
-		assertEquals("the same rows, in the same order", withThem, lastRows());
+		// 1.1.0 part G: the service now publishes the two alch rows whatever the switch says (the Items list keeps them out by
+		// its own tick, off by default), so "exactly what it published before Q" is the list the reader sees - the published
+		// rows less the alch ones - and the two extra rows are the only thing the status's row count gained.
+		assertEquals("the same rows, in the same order, in the default list", defaultList(withThem), lastRows());
+		assertEquals("the alch rows are published and the default list keeps them out", lastRows().size() + 2,
+			withThem.size());
 		assertEquals(statusWithThem.portfolio(), lastStatus().portfolio());
-		assertEquals(statusWithThem.totalRows(), lastStatus().totalRows());
+		assertEquals(statusWithThem.totalRows() - 2, lastStatus().totalRows());
 		assertEquals("and the same stack count", statusWithThem.bankItems(), lastStatus().bankItems());
 		assertEquals(31, statusWithThem.bankItems());
 		assertEquals(6_290_824L, statusWithThem.portfolio().valueNow());
-		assertNull("no alch row was drawn", rowFor(withThem, DRAMEN));
+		assertNotNull("the alch row is published, at its alch value", rowFor(withThem, DRAMEN));
+		assertEquals(MovementRow.PriceSource.ALCH, rowFor(withThem, DRAMEN).source());
+		assertNull("and no alch row is in the list the reader sees", rowFor(defaultList(withThem), DRAMEN));
 	}
 
 	/**
@@ -2042,17 +2049,24 @@ public class PriceServiceTest
 	{
 		warmUpWith(bankWithUntradeables(T0));
 		final int requests = tableRequests.size();
-		assertNull(rowFor(lastRows(), DRAMEN));
+		// 1.1.0 part G: the alch row is published whatever the switch says; the switch decides the bank value (and the list
+		// keeps the row out by its own tick, off by default).
+		assertNotNull("published, switch off", rowFor(lastRows(), DRAMEN));
+		assertNull("...and not in the default list", rowFor(defaultList(lastRows()), DRAMEN));
+		assertEquals("...and not in the bank value", 6_290_824L, lastStatus().portfolio().valueNow());
 
 		service.setOptions(ViewOptions.DEFAULT.withCountUntradeables(true));
 
 		assertNotNull(rowFor(lastRows(), DRAMEN));
+		assertEquals("the bank value counts it with the switch on", 6_290_824L + 3_500L,
+			lastStatus().portfolio().valueNow());
 		assertEquals("no table was asked for", requests, tableRequests.size());
 		assertEquals(1, indexFutures.size());
 
 		service.setOptions(ViewOptions.DEFAULT);
 
-		assertNull("and back again", rowFor(lastRows(), DRAMEN));
+		assertNotNull("and back again: still published", rowFor(lastRows(), DRAMEN));
+		assertNull("...and not in the default list", rowFor(defaultList(lastRows()), DRAMEN));
 		assertEquals(6_290_824L, lastStatus().portfolio().valueNow());
 	}
 
@@ -4300,10 +4314,16 @@ public class PriceServiceTest
 		assertEquals(Long.valueOf(1_500L), dramen.unitPrice());
 		assertEquals(1, dramen.wornQuantity());
 		assertEquals(0, dramen.bankQuantity());
+		final long counted = lastStatus().portfolio().valueNow();
 
 		service.setOptions(ViewOptions.DEFAULT);
 
-		assertNull("the switch is the switch, wherever the stack is", rowFor(lastRows(), DRAMEN));
+		// 1.1.0 part G: the worn stack is still a published row (the list's tick, off by default, keeps it out of the list);
+		// the switch is the switch for the bank value, wherever the stack is.
+		assertNotNull("published all the same", rowFor(lastRows(), DRAMEN));
+		assertNull("the default list keeps it out", rowFor(defaultList(lastRows()), DRAMEN));
+		assertEquals("the switch is the switch, wherever the stack is", counted - 1_500L,
+			lastStatus().portfolio().valueNow());
 	}
 
 	/**
@@ -5223,6 +5243,17 @@ public class PriceServiceTest
 	{
 		assertFalse("nothing was published", publishedRows.isEmpty());
 		return publishedRows.get(publishedRows.size() - 1);
+	}
+
+	/**
+	 * The rows the Items list shows at its default tick (1.1.0 part G): what the service published, less the ALCH rows. Since
+	 * part G the service publishes an alch row whatever "Include alch-only untradeables" says - that switch decides the bank
+	 * value alone - and the panel's own tick ("Show alch-only items", off by default) decides whether the list shows it, so a
+	 * test that means "the list the reader sees" asks here.
+	 */
+	static List<MovementRow> defaultList(final List<MovementRow> rows)
+	{
+		return MovementMath.list(rows, "", false);
 	}
 
 	static MovementRow rowFor(final List<MovementRow> rows, final int id)

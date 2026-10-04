@@ -166,6 +166,16 @@ public class HistoryWalkthroughTest
 			// BankPriceMovementPlugin.saveOptions: the keys written under the prefs-writer guard, then the service told.
 			service.setOptions(next);
 		}
+
+		/**
+		 * Single chart colour is stored OFF here: the walkthrough reads the chart's line following the range's direction
+		 * colour, which part D's default (the one gold colour, ON) would hide.
+		 */
+		@Override
+		public Boolean loadSingleChartColour()
+		{
+			return Boolean.FALSE;
+		}
 	}
 
 	/** The five lines of the Bank value card, as drawn. */
@@ -261,7 +271,10 @@ public class HistoryWalkthroughTest
 		assertEquals("Item price changes", caption());
 		assertNotNull("AV: the Crystal body is a row with untradeables off",
 			PriceServiceTest.rowFor(f.lastRows(), PriceServiceTest.CRYSTAL_BODY));
-		assertNull("and the alch-only staffs are not", PriceServiceTest.rowFor(f.lastRows(), PriceServiceTest.DRAMEN));
+		// 1.1.0 part G: the service publishes the alch-only staffs as rows all the same, and the list - whose tick is off by
+		// default - keeps them out; the card's total is what this walk is about, and it does not count them.
+		assertNull("and the alch-only staffs are not in the list",
+			PriceServiceTest.rowFor(PriceServiceTest.defaultList(f.lastRows()), PriceServiceTest.DRAMEN));
 
 		final PriceService.Status atLogin = panel.status();
 		final long loginTotal = atLogin.portfolio().valueNow();

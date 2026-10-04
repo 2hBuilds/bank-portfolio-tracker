@@ -72,7 +72,8 @@ public final class MovementRow
 		/**
 		 * The item's HIGH ALCHEMY value ({@code ItemComposition.getHaPrice()}, carried on the stack as
 		 * {@link BankItem#haPrice}) - the only price an item the Grand Exchange does not list has (addendum Q,
-		 * line Q5). Produced only while "Include alch-only untradeables" is on (addendum AV), and never with a
+		 * line Q5). Produced whatever "Include alch-only untradeables" says since 1.1.0 part G - the switch now decides only
+		 * whether the stack is in the bank value; the list shows the row by its own tick - and never with a
 		 * baseline: an alch value is a constant of the item, not a series, so such a row has no
 		 * {@link MovementRow#thenPrice()}, {@link MovementRow#deltaGp()} or {@link MovementRow#deltaPct()} and the
 		 * panel prints a small grey "alch" tag where the move would go.
