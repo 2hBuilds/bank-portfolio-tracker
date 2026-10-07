@@ -56,7 +56,7 @@ public class VersionTest
 		final PluginDescriptor d = BankPriceMovementPlugin.class.getAnnotation(PluginDescriptor.class);
 		assertNotNull(d);
 		assertTrue(d.description(), d.description().endsWith(" (v" + Version.CURRENT + ")"));
-		assertTrue("and this build is the one the contract names", d.description().endsWith("(v1.1.0)"));
+		assertTrue("and this build is the one the contract names", d.description().endsWith("(v1.1.1)"));
 	}
 
 	@Test

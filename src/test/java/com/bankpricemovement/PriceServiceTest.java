@@ -52,6 +52,7 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
+import net.runelite.api.Item;
 import net.runelite.api.ItemComposition;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.game.ItemManager;
@@ -1001,7 +1002,7 @@ public class PriceServiceTest
 		verify(store).loadBankHistory(NEG_ACCOUNT, PROFILE);
 		final ArgumentCaptor<BankHistoryPoint> point = ArgumentCaptor.forClass(BankHistoryPoint.class);
 		verify(store, atLeastOnce()).recordBankHistory(eq(NEG_ACCOUNT), eq(PROFILE), point.capture(),
-			eq(SEP_8));
+			eq(SEP_8), any());
 		assertEquals("the reading is the card's own total", lastStatus().portfolio().valueNow(),
 			point.getValue().valueFor(lastStatus().options()));
 		assertEquals("and the series the sidebar draws holds it", 1, lastStatus().bankHistory().size());
@@ -1036,7 +1037,7 @@ public class PriceServiceTest
 		assertEquals("the login costs exactly one computation", trips + 1, clientThread.invocations);
 		assertNotNull("and the day of the login has its reading", lastStatus().bankHistory().on(SEP_9));
 		final ArgumentCaptor<BankHistoryPoint> points = ArgumentCaptor.forClass(BankHistoryPoint.class);
-		verify(store, atLeastOnce()).recordBankHistory(eq(NEG_ACCOUNT), eq(PROFILE), points.capture(), any());
+		verify(store, atLeastOnce()).recordBankHistory(eq(NEG_ACCOUNT), eq(PROFILE), points.capture(), any(), any());
 		assertEquals(SEP_9, points.getValue().day());
 
 		// A second re-login the same day finds the reading and costs no computation.
@@ -4271,6 +4272,48 @@ public class PriceServiceTest
 		assertTrue("it was computed with the switch on, so it does know", whip.split());
 	}
 
+	/**
+	 * 1.1.1, the reporter's bank (GitHub issue #1): the bank placeholder of an item the player is WEARING is not a
+	 * second one in the bank. The REAL reader reads a bank holding that placeholder with a quantity of 1 - as the
+	 * reporter's client sent it - and the worn container holding the item; the service's merge must say 0 in the bank
+	 * and 1 worn. The old quantity-only rule said 1 and 1, and the item showed as "1 in bank" beside the one on the
+	 * player.
+	 */
+	@Test
+	public void aBankPlaceholderOfAWornItemIsNotASecondOneInTheBank()
+	{
+		final int vesselPlaceholder = 93_157;
+		final ItemManager items = mock(ItemManager.class);
+		when(items.canonicalize(anyInt())).thenAnswer(invocation ->
+		{
+			final int id = invocation.getArgument(0);
+			return id == vesselPlaceholder ? VESSEL : id;
+		});
+		final ItemComposition vesselDefinition = composition("Karambwan vessel");
+		when(vesselDefinition.isGeTradeable()).thenReturn(true);
+		final ItemComposition placeholderDefinition = composition("Karambwan vessel");
+		when(placeholderDefinition.getPlaceholderTemplateId()).thenReturn(14_401);
+		final ItemComposition sharkDefinition = composition("Shark");
+		when(sharkDefinition.isGeTradeable()).thenReturn(true);
+		when(sharkDefinition.isStackable()).thenReturn(true);
+		when(items.getItemComposition(VESSEL)).thenReturn(vesselDefinition);
+		when(items.getItemComposition(vesselPlaceholder)).thenReturn(placeholderDefinition);
+		when(items.getItemComposition(SHARK)).thenReturn(sharkDefinition);
+		final BankReader reader = new BankReader(items);
+
+		final BankSnapshot read = reader.read(
+			new Item[]{new Item(vesselPlaceholder, 1), new Item(SHARK, 500)}, ACCOUNT, PROFILE, T0);
+		warmUpWith(read.withCarried(reader.readContainers(null, new Item[]{new Item(VESSEL, 1)}, null, T0)));
+
+		final MovementRow vessel = rowFor(lastRows(), VESSEL);
+		assertNotNull(vessel);
+		assertEquals("nothing of it in the bank", 0, vessel.bankQuantity());
+		assertEquals("the one the player wears", 1, vessel.wornQuantity());
+		assertEquals("one vessel, not two", 1, vessel.quantity());
+		assertEquals("and it is priced like any other guide row", Long.valueOf(3_235L), vessel.unitPrice());
+		assertEquals("the shark beside it is untouched", 500, rowFor(lastRows(), SHARK).quantity());
+	}
+
 	/** Y3: the coins in your pocket follow the COINS switch, exactly as the bank's do (Q4). */
 	@Test
 	public void theCarriedCoinsFollowTheCashSwitch()
@@ -5230,6 +5273,9 @@ public class PriceServiceTest
 	{
 		final ItemComposition composition = mock(ItemComposition.class);
 		when(composition.getMembersName()).thenReturn(membersName);
+		// 1.1.1: a mock answers 0 for an int and 0 is not -1, so unstubbed it would read as a placeholder definition to
+		// the one test here that feeds a real BankReader.
+		when(composition.getPlaceholderTemplateId()).thenReturn(-1);
 		return composition;
 	}
 

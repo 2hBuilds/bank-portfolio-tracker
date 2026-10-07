@@ -144,7 +144,7 @@ public class PriceStoreHistoryTest
 	{
 		final PriceStore store = store();
 		final BankHistoryPoint p = point(TODAY, 5_000L, 100L, 200L);
-		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, p, TODAY));
+		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, p, TODAY, null));
 		final PriceStore.BankHistoryLoad load = store.loadBankHistory(ACCOUNT, PROFILE);
 		assertEquals(PriceStore.BankHistoryLoad.State.LOADED, load.state());
 		assertEquals(BankHistorySeries.EMPTY.with(p), load.series());
@@ -158,7 +158,7 @@ public class PriceStoreHistoryTest
 		final PriceStore store = new PriceStore(gson, missing);
 		assertEquals(PriceStore.BankHistoryLoad.State.MISSING, store.loadBankHistory(ACCOUNT, PROFILE).state());
 		assertFalse(missing.exists());
-		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 1L, 1L), TODAY));
+		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 1L, 1L), TODAY, null));
 		assertTrue(store.historyFile(ACCOUNT, PROFILE).exists());
 	}
 
@@ -171,12 +171,14 @@ public class PriceStoreHistoryTest
 		final long read = 1_790_000_000_000L;
 		final long[] card = {10L, 1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L};
 		final long[] guide = {9L, 1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L};
-		store.recordBankHistory(ACCOUNT, PROFILE, new BankHistoryPoint(sep(27), read, read - 5L, card, card), TODAY);
+		store.recordBankHistory(ACCOUNT, PROFILE, new BankHistoryPoint(sep(27), read, read - 5L, card, card), TODAY,
+			null);
 		assertEquals("{\"schema\":2,\"points\":[{\"day\":\"2026-09-27\",\"readAtMillis\":1790000000000,"
 				+ "\"bankAtMillis\":1789999999995,\"card\":[10,1,2,3,4,5,6,7,8,9]}]}",
 			TestFilepaths.read(file(store)));
 
-		store.recordBankHistory(ACCOUNT, PROFILE, new BankHistoryPoint(TODAY, read + 1L, read, card, guide), TODAY);
+		store.recordBankHistory(ACCOUNT, PROFILE, new BankHistoryPoint(TODAY, read + 1L, read, card, guide), TODAY,
+			null);
 		assertEquals("{\"schema\":2,\"points\":[{\"day\":\"2026-09-27\",\"readAtMillis\":1790000000000,"
 				+ "\"bankAtMillis\":1789999999995,\"card\":[10,1,2,3,4,5,6,7,8,9]},"
 				+ "{\"day\":\"2026-09-28\",\"readAtMillis\":1790000000001,\"bankAtMillis\":1790000000000,"
@@ -190,10 +192,10 @@ public class PriceStoreHistoryTest
 	public void lastWinsWithinADayAndPastDaysAreKept()
 	{
 		final PriceStore store = store();
-		store.recordBankHistory(ACCOUNT, PROFILE, point(sep(27), 100L, 1L), TODAY);
-		store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 200L, 2L), TODAY);
+		store.recordBankHistory(ACCOUNT, PROFILE, point(sep(27), 100L, 1L), TODAY, null);
+		store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 200L, 2L), TODAY, null);
 		// A later reading of the same day with an EARLIER stamp (a clock set back) still replaces it: last wins.
-		store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 150L, 3L), TODAY);
+		store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 150L, 3L), TODAY, null);
 		final BankHistorySeries s = store.loadBankHistory(ACCOUNT, PROFILE).series();
 		assertEquals(2, s.size());
 		assertEquals(1L, s.on(sep(27)).card(0));
@@ -205,9 +207,9 @@ public class PriceStoreHistoryTest
 	{
 		final PriceStore first = store();
 		final PriceStore second = store();
-		assertTrue(first.recordBankHistory(ACCOUNT, PROFILE, point(sep(27), 1L, 27L), TODAY));
-		assertTrue(second.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 2L, 28L), TODAY));
-		assertTrue(first.recordBankHistory(ACCOUNT, PROFILE, point(sep(26), 3L, 26L), TODAY));
+		assertTrue(first.recordBankHistory(ACCOUNT, PROFILE, point(sep(27), 1L, 27L), TODAY, null));
+		assertTrue(second.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 2L, 28L), TODAY, null));
+		assertTrue(first.recordBankHistory(ACCOUNT, PROFILE, point(sep(26), 3L, 26L), TODAY, null));
 		final BankHistorySeries s = second.loadBankHistory(ACCOUNT, PROFILE).series();
 		assertEquals(Arrays.asList(sep(26), sep(27), TODAY), BankHistorySeriesTest.days(s));
 	}
@@ -220,7 +222,7 @@ public class PriceStoreHistoryTest
 			+ entry("2026-10-05", 2L, CELLS_1) + "]}");
 		assertEquals("the load keeps what is on disk", 2, store.loadBankHistory(ACCOUNT, PROFILE).series().size());
 
-		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 3L, 5L), TODAY));
+		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 3L, 5L), TODAY, null));
 		assertEquals(Arrays.asList(sep(20), TODAY),
 			BankHistorySeriesTest.days(store.loadBankHistory(ACCOUNT, PROFILE).series()));
 	}
@@ -229,9 +231,10 @@ public class PriceStoreHistoryTest
 	public void aPointDatedAfterTodayIsNotRecorded()
 	{
 		final PriceStore store = store();
-		assertFalse(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY.plusDays(1), 1L, 1L), TODAY));
+		assertFalse(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY.plusDays(1), 1L, 1L), TODAY, null));
 		assertFalse(file(store).exists());
-		assertTrue("today itself is fine", store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 1L, 1L), TODAY));
+		assertTrue("today itself is fine", store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 1L, 1L), TODAY,
+			null));
 	}
 
 	@Test
@@ -239,15 +242,15 @@ public class PriceStoreHistoryTest
 	{
 		final PriceStore store = store();
 		final BankHistoryPoint p = point(TODAY, 7L, 70L);
-		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, p, TODAY));
+		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, p, TODAY, null));
 		// The same document spelled with spaces: were it rewritten, the spaces would be gone.
 		final String spaced = TestFilepaths.read(file(store)).replace(",", ", ");
 		TestFilepaths.write(file(store), spaced);
 
-		assertTrue("the point is already there", store.recordBankHistory(ACCOUNT, PROFILE, p, TODAY));
+		assertTrue("the point is already there", store.recordBankHistory(ACCOUNT, PROFILE, p, TODAY, null));
 		assertEquals("and nothing was written", spaced, TestFilepaths.read(file(store)));
 
-		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 7L, 71L), TODAY));
+		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 7L, 71L), TODAY, null));
 		assertFalse("any changed cell is a write", spaced.equals(TestFilepaths.read(file(store))));
 	}
 
@@ -255,10 +258,10 @@ public class PriceStoreHistoryTest
 	public void anAccountWithNoOwnerIsRefused()
 	{
 		final PriceStore store = store();
-		assertFalse(store.recordBankHistory(0L, PROFILE, point(TODAY, 1L, 1L), TODAY));
-		assertFalse(store.recordBankHistory(-1L, PROFILE, point(TODAY, 1L, 1L), TODAY));
-		assertFalse(store.recordBankHistory(ACCOUNT, PROFILE, null, TODAY));
-		assertFalse(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 1L, 1L), null));
+		assertFalse(store.recordBankHistory(0L, PROFILE, point(TODAY, 1L, 1L), TODAY, null));
+		assertFalse(store.recordBankHistory(-1L, PROFILE, point(TODAY, 1L, 1L), TODAY, null));
+		assertFalse(store.recordBankHistory(ACCOUNT, PROFILE, null, TODAY, null));
+		assertFalse(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 1L, 1L), null, null));
 		assertTrue(names().isEmpty());
 	}
 
@@ -277,14 +280,14 @@ public class PriceStoreHistoryTest
 		final PriceStore store = store();
 		final BankHistoryPoint p = point(TODAY, 5_000L, 100L, 200L);
 
-		assertTrue(store.recordBankHistory(negative, PROFILE, p, TODAY));
+		assertTrue(store.recordBankHistory(negative, PROFILE, p, TODAY, null));
 
 		assertEquals(Arrays.asList("history--7123456789012345678-STANDARD.json"), names());
 		final PriceStore.BankHistoryLoad load = store.loadBankHistory(negative, PROFILE);
 		assertEquals(PriceStore.BankHistoryLoad.State.LOADED, load.state());
 		assertEquals(BankHistorySeries.EMPTY.with(p), load.series());
 
-		assertFalse("-1 still has no owner", store.recordBankHistory(-1L, PROFILE, p, TODAY));
+		assertFalse("-1 still has no owner", store.recordBankHistory(-1L, PROFILE, p, TODAY, null));
 		assertEquals(PriceStore.BankHistoryLoad.State.MISSING, store.loadBankHistory(-1L, PROFILE).state());
 		assertEquals("and wrote nothing", 1, names().size());
 	}
@@ -293,9 +296,9 @@ public class PriceStoreHistoryTest
 	public void accountsAndProfilesKeepTheirOwnHistories()
 	{
 		final PriceStore store = store();
-		store.recordBankHistory(42L, "STANDARD", point(TODAY, 1L, 1L), TODAY);
-		store.recordBankHistory(42L, "DEADMAN", point(TODAY, 1L, 2L), TODAY);
-		store.recordBankHistory(43L, "STANDARD", point(TODAY, 1L, 3L), TODAY);
+		store.recordBankHistory(42L, "STANDARD", point(TODAY, 1L, 1L), TODAY, null);
+		store.recordBankHistory(42L, "DEADMAN", point(TODAY, 1L, 2L), TODAY, null);
+		store.recordBankHistory(43L, "STANDARD", point(TODAY, 1L, 3L), TODAY, null);
 		assertEquals(Arrays.asList("history-42-DEADMAN.json", "history-42-STANDARD.json",
 			"history-43-STANDARD.json"), names());
 		assertEquals(1L, store.loadBankHistory(42L, "STANDARD").series().on(TODAY).card(0));
@@ -318,7 +321,7 @@ public class PriceStoreHistoryTest
 		final Filepath history = file(store);
 		history.createDirectories();
 
-		assertFalse(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 1L, 1L), TODAY));
+		assertFalse(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 1L, 1L), TODAY, null));
 		assertTrue("the obstacle is untouched", history.isDirectory());
 		assertEquals(PriceStore.BankHistoryLoad.State.FAILED, store.loadBankHistory(ACCOUNT, PROFILE).state());
 		assertSame(BankHistorySeries.EMPTY, store.loadBankHistory(ACCOUNT, PROFILE).series());
@@ -329,14 +332,14 @@ public class PriceStoreHistoryTest
 		history.delete();
 		TestFilepaths.write(history, "{\"schema\":1,\"points\":[" + entry("2026-09-01", 1L, CELLS_1) + "]}");
 		final String before = TestFilepaths.read(history);
-		assertFalse(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 2L, 2L), TODAY));
+		assertFalse(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 2L, 2L), TODAY, null));
 		assertEquals(before, TestFilepaths.read(history));
 
 		assertTrue("another owner is unaffected",
-			store.recordBankHistory(ACCOUNT, "DEADMAN", point(TODAY, 1L, 1L), TODAY));
+			store.recordBankHistory(ACCOUNT, "DEADMAN", point(TODAY, 1L, 1L), TODAY, null));
 
 		final PriceStore restarted = store();
-		assertTrue(restarted.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 3L, 3L), TODAY));
+		assertTrue(restarted.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 3L, 3L), TODAY, null));
 		assertEquals(Arrays.asList(sep(1), TODAY),
 			BankHistorySeriesTest.days(restarted.loadBankHistory(ACCOUNT, PROFILE).series()));
 	}
@@ -349,7 +352,7 @@ public class PriceStoreHistoryTest
 		history.createDirectories();
 		assertEquals(PriceStore.BankHistoryLoad.State.FAILED, store.loadBankHistory(ACCOUNT, PROFILE).state());
 		history.delete();
-		assertFalse(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 1L, 1L), TODAY));
+		assertFalse(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 1L, 1L), TODAY, null));
 		assertFalse(history.exists());
 	}
 
@@ -363,7 +366,7 @@ public class PriceStoreHistoryTest
 			final Filepath history = file(store);
 			TestFilepaths.write(history, bad);
 
-			assertFalse("[" + bad + "]", store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 1L, 1L), TODAY));
+			assertFalse("[" + bad + "]", store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 1L, 1L), TODAY, null));
 			assertFalse("[" + bad + "] is moved aside", history.exists());
 			final List<String> quarantined = namesContaining(".corrupt-");
 			assertEquals("[" + bad + "]", 1, quarantined.size());
@@ -372,7 +375,7 @@ public class PriceStoreHistoryTest
 				TestFilepaths.read(TestFilepaths.at(tmp.getRoot(), quarantined.get(0))));
 
 			assertFalse("and the owner stays refused", store.recordBankHistory(ACCOUNT, PROFILE,
-				point(TODAY, 2L, 2L), TODAY));
+				point(TODAY, 2L, 2L), TODAY, null));
 			assertFalse(history.exists());
 			TestFilepaths.at(tmp.getRoot(), quarantined.get(0)).delete();
 		}
@@ -415,7 +418,7 @@ public class PriceStoreHistoryTest
 		assertTrue(load.series().on(sep(8)).hasGuide());
 		assertTrue("nothing was quarantined", namesContaining(".corrupt-").isEmpty());
 
-		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 1L, 1L), TODAY));
+		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 1L, 1L), TODAY, null));
 		assertEquals(Arrays.asList(sep(1), sep(8), sep(9), TODAY),
 			BankHistorySeriesTest.days(store.loadBankHistory(ACCOUNT, PROFILE).series()));
 	}
@@ -455,7 +458,7 @@ public class PriceStoreHistoryTest
 			assertEquals("[" + header + "]", PriceStore.BankHistoryLoad.State.LOADED, load.state());
 			assertEquals(2, load.series().size());
 
-			assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 3L, 3L), TODAY));
+			assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 3L, 3L), TODAY, null));
 			final String written = TestFilepaths.read(file(store));
 			assertTrue("rewritten at this build's schema", written.startsWith("{\"schema\":2,"));
 			assertEquals(3, store.loadBankHistory(ACCOUNT, PROFILE).series().size());
@@ -513,7 +516,7 @@ public class PriceStoreHistoryTest
 			+ "\"guide\":[19,1,2,3,4,5,6,7]}]}");
 		store.loadBankHistory(ACCOUNT, PROFILE);
 
-		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 9L, 30L), TODAY));
+		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 9L, 30L), TODAY, null));
 
 		final JsonObject root = new JsonParser().parse(TestFilepaths.read(file(store))).getAsJsonObject();
 		assertEquals(2, root.get("schema").getAsInt());
@@ -547,7 +550,7 @@ public class PriceStoreHistoryTest
 		final long[] card = {1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 52_000_000L, 1_300_000L};
 		final long[] guide = {1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 51_000_000L, 1_300_000L};
 		final BankHistoryPoint p = new BankHistoryPoint(sep(27), 100L, 90L, card, guide);
-		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, p, TODAY));
+		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, p, TODAY, null));
 		final String written = TestFilepaths.read(file(store));
 		assertTrue(written, written.contains("\"card\":[1,2,3,4,5,6,7,8,52000000,1300000]"));
 		assertTrue(written, written.contains("\"guide\":[1,2,3,4,5,6,7,8,51000000,1300000]"));
@@ -592,7 +595,7 @@ public class PriceStoreHistoryTest
 		TestFilepaths.write(file(store), newer);
 
 		assertEquals(PriceStore.BankHistoryLoad.State.FAILED, store.loadBankHistory(ACCOUNT, PROFILE).state());
-		assertFalse(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 1L, 1L), TODAY));
+		assertFalse(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 1L, 1L), TODAY, null));
 		assertEquals("not a byte changed", newer, TestFilepaths.read(file(store)));
 		assertTrue("and not moved aside", namesContaining(".corrupt-").isEmpty());
 	}
@@ -664,7 +667,7 @@ public class PriceStoreHistoryTest
 		final PriceStore store = store();
 		writeSchemaOne(store);
 
-		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 9L, 30L), TODAY));
+		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 9L, 30L), TODAY, null));
 
 		final JsonObject root = writtenRoot(store);
 		assertEquals(2, root.get("schema").getAsInt());
@@ -693,7 +696,7 @@ public class PriceStoreHistoryTest
 		final PriceStore store = store();
 		writeSchemaOne(store);
 
-		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(sep(27), 99L, 70L), sep(27)));
+		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(sep(27), 99L, 70L), sep(27), null));
 
 		final BankHistorySeries back = store().loadBankHistory(ACCOUNT, PROFILE).series();
 		assertEquals(sep(27), back.freshFrom());
@@ -710,11 +713,11 @@ public class PriceStoreHistoryTest
 	{
 		final PriceStore store = store();
 		writeSchemaOne(store);
-		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 9L, 30L), TODAY));
+		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 9L, 30L), TODAY, null));
 
-		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(sep(29), 10L, 31L), sep(29)));
-		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(sep(29), 11L, 32L), sep(29)));
-		assertTrue(store().recordBankHistory(ACCOUNT, PROFILE, point(sep(30), 12L, 33L), sep(30)));
+		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(sep(29), 10L, 31L), sep(29), null));
+		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(sep(29), 11L, 32L), sep(29), null));
+		assertTrue(store().recordBankHistory(ACCOUNT, PROFILE, point(sep(30), 12L, 33L), sep(30), null));
 
 		assertEquals("2026-09-28", writtenRoot(store).get("freshFrom").getAsString());
 		final BankHistorySeries back = store().loadBankHistory(ACCOUNT, PROFILE).series();
@@ -732,7 +735,7 @@ public class PriceStoreHistoryTest
 		final BankHistoryPoint same = new BankHistoryPoint(sep(27), 7L, 6L,
 			new long[]{20L, 1L, 2L, 3L, 4L, 5L, 6L, 7L, 0L, 0L}, null);
 
-		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, same, sep(27)));
+		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, same, sep(27), null));
 
 		assertEquals("2026-09-27", writtenRoot(store).get("freshFrom").getAsString());
 	}
@@ -754,7 +757,7 @@ public class PriceStoreHistoryTest
 		assertTrue(load.series().hasLegacyDays());
 		assertEquals(Arrays.asList(sep(27)), BankHistorySeriesTest.days(load.series().fromFresh()));
 
-		assertTrue(store().recordBankHistory(ACCOUNT, PROFILE, point(sep(28), 3L, 3L), sep(28)));
+		assertTrue(store().recordBankHistory(ACCOUNT, PROFILE, point(sep(28), 3L, 3L), sep(28), null));
 		assertEquals("2026-09-27", writtenRoot(store).get("freshFrom").getAsString());
 		assertTrue("a known key does not copy the file aside", namesContaining(".corrupt-").isEmpty());
 		assertEquals(sep(27), store().loadBankHistory(ACCOUNT, PROFILE).series().freshFrom());
@@ -772,7 +775,7 @@ public class PriceStoreHistoryTest
 		assertNull(series.freshFrom());
 		assertFalse(series.hasLegacyDays());
 
-		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(sep(28), 3L, 3L), sep(28)));
+		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(sep(28), 3L, 3L), sep(28), null));
 		assertFalse("none is written for a file that never had one", writtenRoot(store).has("freshFrom"));
 		assertNull(store().loadBankHistory(ACCOUNT, PROFILE).series().freshFrom());
 	}
@@ -782,7 +785,7 @@ public class PriceStoreHistoryTest
 	public void aNewFileHasNoFreshStart() throws IOException
 	{
 		final PriceStore store = store();
-		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 1L, 1L), TODAY));
+		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 1L, 1L), TODAY, null));
 		assertFalse(writtenRoot(store).has("freshFrom"));
 		assertNull(store.loadBankHistory(ACCOUNT, PROFILE).series().freshFrom());
 	}
@@ -799,7 +802,7 @@ public class PriceStoreHistoryTest
 		assertTrue(load.lossy());
 		assertNull(load.series().freshFrom());
 
-		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(sep(28), 3L, 3L), sep(28)));
+		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(sep(28), 3L, 3L), sep(28), null));
 		assertEquals(1, namesContaining(".corrupt-").size());
 		assertFalse(writtenRoot(store).has("freshFrom"));
 	}
@@ -823,7 +826,7 @@ public class PriceStoreHistoryTest
 		assertEquals(PriceStore.BankHistoryLoad.State.FAILED, store.loadBankHistory(ACCOUNT, PROFILE).state());
 		// The directory answers now. Nothing was ever read, so nothing could be written over: the record reads the
 		// file fresh and writes.
-		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 1L, 1L), TODAY));
+		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 1L, 1L), TODAY, null));
 		assertNotNull(store.historyFile(ACCOUNT, PROFILE));
 		assertTrue(store.historyFile(ACCOUNT, PROFILE).exists());
 	}
@@ -834,8 +837,8 @@ public class PriceStoreHistoryTest
 	public void theSweepLeavesHistoryFilesAndTheirBackupsAlone() throws IOException
 	{
 		final PriceStore store = store();
-		store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 1L, 1L), TODAY);
-		store.recordBankHistory(ACCOUNT, "DEADMAN", point(TODAY, 1L, 1L), TODAY);
+		store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 1L, 1L), TODAY, null);
+		store.recordBankHistory(ACCOUNT, "DEADMAN", point(TODAY, 1L, 1L), TODAY, null);
 		TestFilepaths.write(TestFilepaths.at(tmp.getRoot(), "history-42-STANDARD.json.corrupt-123"), "kept");
 		TestFilepaths.write(TestFilepaths.at(tmp.getRoot(), "history-1-UNKNOWN.json"), "{ not even JSON");
 		TestFilepaths.write(TestFilepaths.at(tmp.getRoot(), PriceStore.LEGACY_LATEST_FILE), "{}");

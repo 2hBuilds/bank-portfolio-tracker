@@ -229,6 +229,35 @@ public class BankSnapshotTest
 		assertEquals(bank, back);
 	}
 
+	/**
+	 * 1.1.1 part B: {@code placeholderSlots} says how the bank was read, not what it holds - -1 ("not judged by a fresh
+	 * read") on every snapshot no read made, never written to the file and -1 again when it is read back, copied by the
+	 * carried re-stamp, and read by neither {@code sameContentAs} nor {@code equals}.
+	 */
+	@Test
+	public void thePlaceholderCountIsHowTheBankWasReadAndNeverReachesTheFile()
+	{
+		final Gson gson = new Gson();
+		final BankSnapshot bank = snapshot(new BankItem(4151, 2, "Abyssal whip", false));
+		assertEquals("a snapshot no read made", -1, bank.placeholderSlots);
+		assertEquals(-1, new BankSnapshot().placeholderSlots);
+		assertEquals(-1, BankSnapshot.EMPTY.placeholderSlots);
+
+		bank.placeholderSlots = 5;
+		final String json = gson.toJson(bank);
+		assertFalse(json, json.contains("placeholderSlots"));
+		final BankSnapshot back = gson.fromJson(json, BankSnapshot.class);
+		back.normalize();
+		assertEquals("a bank loaded from disk is not a fresh read", -1, back.placeholderSlots);
+		assertEquals("and equal all the same", bank, back);
+		assertTrue(bank.sameContentAs(back));
+
+		final BankSnapshot restamped = bank.withCarried(new BankReader.Carried(Arrays.asList(
+			new BankItem(385, 3, "Shark", true)), new ArrayList<BankItem>(), 0L, 1_700_000_009_000L));
+		assertEquals("the carried re-stamp keeps it", 5, restamped.placeholderSlots);
+		assertEquals(-1, back.withCarried(null).placeholderSlots);
+	}
+
 	/** A hand-edited or truncated file cannot make the bank worth less than nothing. */
 	@Test
 	public void normalizeClampsANegativeCurrencyToZero()

@@ -25,10 +25,11 @@ import net.runelite.client.ui.ColorScheme;
 
 /**
  * The question the Net Worth History tab asks before it shows the days recorded before 1.0.9 (1.0.9 part 5): the
- * sentence {@link BankPriceMovementPanel#LEGACY_ASK} over two buttons, <i>Include</i> and <i>Cancel</i>, in RuneLite's
- * dark colours. <i>Include</i> is the default button and takes the focus, so Enter answers yes; Escape, <i>Cancel</i>
- * and the window's close box all answer no. It is modal to the client window that owns it: the reader has been asked
- * something about their own numbers, and the sidebar behind it waits for the answer.
+ * sentence {@link BankPriceMovementPanel#LEGACY_ASK} - or, for a record restarted because its days counted bank
+ * placeholders, {@link BankPriceMovementPanel#LEGACY_PLACEHOLDERS_ASK} (1.1.1 part B) - over two buttons, <i>Include</i>
+ * and <i>Cancel</i>, in RuneLite's dark colours. <i>Include</i> is the default button and takes the focus, so Enter
+ * answers yes; Escape, <i>Cancel</i> and the window's close box all answer no. It is modal to the client window that
+ * owns it: the reader has been asked something about their own numbers, and the sidebar behind it waits for the answer.
  *
  * <p><b>The model and the window are apart.</b> The panel of controls ({@link #content}) is built without a window,
  * so a test can press its buttons on a machine with no screen; the {@link JDialog} that hosts it is made only by
@@ -104,27 +105,28 @@ final class LegacyDialog
 	 * is modal - until it is closed. Answers false at once on a machine with no display, which is a test or a server.
 	 *
 	 * @param owner the RuneLite frame (the panel's window ancestor), or null
+	 * @param title the check item's own words, which the panel picks by the record's reason (1.1.1 part B)
 	 */
-	static boolean ask(@Nullable final Window owner, final String question)
+	static boolean ask(@Nullable final Window owner, final String title, final String question)
 	{
 		if (GraphicsEnvironment.isHeadless())
 		{
 			return false;
 		}
-		final LegacyDialog window = window(owner, question);
+		final LegacyDialog window = window(owner, title, question);
 		window.dialog.setVisible(true);
 		return window.included;
 	}
 
 	/**
 	 * The window built and sized but not yet shown: a {@link JDialog} owned by {@code owner}, titled with the check
-	 * box's own words, modal to its owner's windows, closing by disposing, with <i>Include</i> as its default button and
-	 * the focus on it when the window first gets it. Needs a display.
+	 * box's own words ({@code title}), modal to its owner's windows, closing by disposing, with <i>Include</i> as its
+	 * default button and the focus on it when the window first gets it. Needs a display.
 	 */
-	static LegacyDialog window(@Nullable final Window owner, final String question)
+	static LegacyDialog window(@Nullable final Window owner, final String title, final String question)
 	{
 		final LegacyDialog window = new LegacyDialog(question);
-		final JDialog dialog = new JDialog(owner, BankPriceMovementPanel.LEGACY_TEXT);
+		final JDialog dialog = new JDialog(owner, title);
 		dialog.setModalityType(Dialog.ModalityType.DOCUMENT_MODAL);
 		dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
 		dialog.setContentPane(window.content);

@@ -107,11 +107,11 @@ public class PriceStoreHistoryReviewTest
 		TestFilepaths.write(file, september);
 
 		final LocalDate y2k = LocalDate.of(2000, 1, 1);
-		assertFalse(store.recordBankHistory(ACCOUNT, PROFILE, point(y2k, 1L, 5L), y2k));
+		assertFalse(store.recordBankHistory(ACCOUNT, PROFILE, point(y2k, 1L, 5L), y2k, null));
 		assertEquals("not a byte changed", september, TestFilepaths.read(file));
 
 		assertTrue("the clock put right, it records again",
-			store.recordBankHistory(ACCOUNT, PROFILE, point(sep(29), 2L, 5L), sep(29)));
+			store.recordBankHistory(ACCOUNT, PROFILE, point(sep(29), 2L, 5L), sep(29), null));
 		assertEquals(29, store.loadBankHistory(ACCOUNT, PROFILE).series().size());
 	}
 
@@ -126,7 +126,7 @@ public class PriceStoreHistoryReviewTest
 		final Filepath file = store.historyFile(ACCOUNT, PROFILE);
 		TestFilepaths.write(file, days(sep(20), sep(30)));
 		// 20..27 and today: 9 on or before today; 29 and 30: 2 ahead.
-		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 1L, 5L), TODAY));
+		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 1L, 5L), TODAY, null));
 		final BankHistorySeries s = store.loadBankHistory(ACCOUNT, PROFILE).series();
 		assertEquals(9, s.size());
 		assertEquals(TODAY, s.last().day());
@@ -135,7 +135,7 @@ public class PriceStoreHistoryReviewTest
 		final Filepath other = store.historyFile(ACCOUNT, "DEADMAN");
 		final String even = days(sep(26), sep(26));
 		TestFilepaths.write(other, even);
-		assertFalse(store.recordBankHistory(ACCOUNT, "DEADMAN", point(sep(25), 1L, 5L), sep(25)));
+		assertFalse(store.recordBankHistory(ACCOUNT, "DEADMAN", point(sep(25), 1L, 5L), sep(25), null));
 		assertEquals(even, TestFilepaths.read(other));
 	}
 
@@ -156,7 +156,7 @@ public class PriceStoreHistoryReviewTest
 		assertFalse("the premise: the store's own path says the file is not there", file.exists());
 
 		assertEquals(PriceStore.BankHistoryLoad.State.LOADED, store.loadBankHistory(ACCOUNT, PROFILE).state());
-		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 1L, 5L), TODAY));
+		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 1L, 5L), TODAY, null));
 
 		assertEquals("every September reading kept", 28, store().loadBankHistory(ACCOUNT, PROFILE).series().size());
 	}
@@ -169,7 +169,7 @@ public class PriceStoreHistoryReviewTest
 		assertEquals(PriceStore.BankHistoryLoad.State.MISSING,
 			inMissingFolder.loadBankHistory(ACCOUNT, PROFILE).state());
 		assertEquals(PriceStore.BankHistoryLoad.State.MISSING, store().loadBankHistory(ACCOUNT, PROFILE).state());
-		assertTrue(store().recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 1L, 5L), TODAY));
+		assertTrue(store().recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 1L, 5L), TODAY, null));
 	}
 
 	// ---- H6: durable
@@ -180,7 +180,7 @@ public class PriceStoreHistoryReviewTest
 	{
 		final Watched watched = new Watched();
 		final PriceStore store = new PriceStore(gson, watchedRoot(watched));
-		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 1L, 5L), TODAY));
+		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 1L, 5L), TODAY, null));
 		store.saveBank(new BankSnapshot(new ArrayList<BankItem>(), 5L, ACCOUNT, PROFILE));
 
 		final List<String> historyTemps = new ArrayList<>();
@@ -218,7 +218,7 @@ public class PriceStoreHistoryReviewTest
 		final String damaged = "{\"schema\":1,\"points\":[" + entry(sep(1), 1L) + ",{\"day\":\"2026-09-02\"}]}";
 		TestFilepaths.write(file, damaged);
 
-		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 1L, 5L), TODAY));
+		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 1L, 5L), TODAY, null));
 		final List<String> copies = namesContaining(".corrupt-");
 		assertEquals(1, copies.size());
 		assertTrue(copies.get(0).startsWith("history-42-STANDARD.json.corrupt-"));
@@ -229,7 +229,7 @@ public class PriceStoreHistoryReviewTest
 
 		// Once a session is enough: the copy already holds what this build could not keep.
 		TestFilepaths.write(file, damaged);
-		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 2L, 6L), TODAY));
+		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 2L, 6L), TODAY, null));
 		assertEquals(1, namesContaining(".corrupt-").size());
 	}
 
@@ -246,7 +246,7 @@ public class PriceStoreHistoryReviewTest
 			final PriceStore store = store();
 			final Filepath file = store.historyFile(ACCOUNT, PROFILE);
 			TestFilepaths.write(file, kind);
-			assertTrue(kind, store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 1L, 5L), TODAY));
+			assertTrue(kind, store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 1L, 5L), TODAY, null));
 			final List<String> copies = namesContaining(".corrupt-");
 			assertEquals(kind, 1, copies.size());
 			final Filepath copy = TestFilepaths.at(tmp.getRoot(), copies.get(0));
@@ -261,9 +261,9 @@ public class PriceStoreHistoryReviewTest
 	public void aCleanFileIsRewrittenWithNoCopy()
 	{
 		final PriceStore store = store();
-		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(sep(27), 1L, 5L), TODAY));
-		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 2L, 5L), TODAY));
-		assertTrue(store().recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 3L, 6L), TODAY));
+		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(sep(27), 1L, 5L), TODAY, null));
+		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 2L, 5L), TODAY, null));
+		assertTrue(store().recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 3L, 6L), TODAY, null));
 		assertTrue(namesContaining(".corrupt-").isEmpty());
 	}
 

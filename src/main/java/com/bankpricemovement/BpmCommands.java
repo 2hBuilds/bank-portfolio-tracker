@@ -942,7 +942,9 @@ public class BpmCommands implements Function<String, String>
 	 * {@code off} name a STATE and are idempotent; {@code toggle} always flips.
 	 *
 	 * <p>The echoes are {@code state.panel.includeLegacy}, {@code state.panel.legacyDays} (whether the record holds
-	 * any such day, i.e. whether the box is in the sidebar at all) and {@code state.bankHistory.freshFrom}.
+	 * any such day, i.e. whether the box is in the sidebar at all) and {@code state.bankHistory.freshFrom} - with, since
+	 * 1.1.1 part B, {@code state.bankHistory.freshWhy} (why those days are hidden; null for 1.0.9's reason) and
+	 * {@code state.bankHistory.placeholdersChecked} (the day the record was judged for counted placeholders).
 	 */
 	private Map<String, Object> legacy(@Nullable String value)
 	{

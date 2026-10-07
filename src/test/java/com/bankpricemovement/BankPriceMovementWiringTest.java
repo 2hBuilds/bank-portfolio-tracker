@@ -5419,6 +5419,8 @@ public class BankPriceMovementWiringTest
 	{
 		final ItemComposition c = mock(ItemComposition.class);
 		when(c.getMembersName()).thenReturn(name);
+		// 1.1.1: a mock answers 0 for an int and 0 is not -1, so unstubbed it would read as a placeholder definition.
+		when(c.getPlaceholderTemplateId()).thenReturn(-1);
 		when(c.isGeTradeable()).thenReturn(true);
 		when(c.isStackable()).thenReturn(stackable);
 		return c;
@@ -5992,6 +5994,53 @@ public class BankPriceMovementWiringTest
 			r.reads());
 		assertEquals(1, field(r.plugin, "bankReads"));
 		verify(r.service, times(1)).setBank(any(BankSnapshot.class));
+	}
+
+	/**
+	 * 1.1.1 (GitHub issue #1): the first bank read of a run says at INFO how many bank placeholders the reader dropped
+	 * although they held a quantity, so a real client can tell us whether the game ever sends one.
+	 */
+	@Test
+	public void theFirstBankReadLineCarriesThePlaceholderCount() throws Exception
+	{
+		final BankRig r = new BankRig();
+		when(r.reader.placeholdersSkipped()).thenReturn(3);
+
+		final List<String> info = infoLinesOf(() -> r.bankEvent(bank()));
+
+		assertEquals(info.toString(), 1, info.size());
+		assertEquals("bank-portfolio-tracker: first bank read of the session: 0 stacks, 3 placeholders with a quantity"
+			+ " skipped", info.get(0));
+	}
+
+	/**
+	 * 1.1.1: a LATER read that finds placeholders with a quantity says so once at INFO and never again - no line per
+	 * event, none for a read that finds none - and start-up re-arms the line, because RuneLite reuses the instance.
+	 */
+	@Test
+	public void aLaterReadWithPlaceholdersSaysSoOnceAndStartUpRearmsIt() throws Exception
+	{
+		final BankRig r = new BankRig();
+		when(r.reader.placeholdersSkipped()).thenReturn(0, 0, 2, 5);
+
+		final List<String> info = infoLinesOf(() ->
+		{
+			r.bankEvent(bank());
+			r.bankEvent(withdrew28Sharks());
+			r.bankEvent(new Item[]{WHIP, new Item(385, 100), COINS});
+			r.bankEvent(new Item[]{WHIP, new Item(385, 50), COINS});
+		});
+
+		assertEquals(info.toString(), 2, info.size());
+		assertEquals("bank-portfolio-tracker: first bank read of the session: 0 stacks, 0 placeholders with a quantity"
+			+ " skipped", info.get(0));
+		assertEquals("bank-portfolio-tracker: 2 bank placeholders with a quantity skipped", info.get(1));
+
+		final Fixture f = new Fixture(false);
+		set(f.plugin, "placeholdersLogged", true);
+		onEdt(f.plugin::startUp);
+		assertEquals("start-up re-arms the once-a-run line", false, field(f.plugin, "placeholdersLogged"));
+		onEdt(f.plugin::shutDown);
 	}
 
 	/** 1.0.8 part 1: start-up writes ONE line at INFO naming the build and the client it runs on. */

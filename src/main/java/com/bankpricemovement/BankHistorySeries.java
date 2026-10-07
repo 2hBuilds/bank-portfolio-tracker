@@ -28,11 +28,26 @@ import javax.annotation.Nullable;
  * them. It is part of the value - two series holding the same readings but cut at different days are not equal - and
  * every copy carries it, so the store and the panel never have to remember it on the side. A series built by
  * {@link #of} has none: every day counts.
+ *
+ * <p><b>The placeholder judgement</b> (1.1.1 part B). Until 1.1.1 a bank placeholder that arrived with a quantity was
+ * counted as one of its item, so every reading such a player recorded reads HIGH. The first reading taken from a fresh
+ * bank read after the update judges the series, once: {@link #placeholdersChecked()} is the day it was judged, and when
+ * that read dropped placeholders with a quantity and the series held an earlier day, the fresh start moves up to that day
+ * with {@link #freshWhy()} {@value #WHY_PLACEHOLDERS} ({@link #judged}). Both are part of the value and carried by every
+ * copy, as {@link #freshFrom()} is. An EMPTY series carries none of the three: it has nothing to hide or judge.
  */
 public final class BankHistorySeries
 {
 	/** No readings at all. */
-	public static final BankHistorySeries EMPTY = new BankHistorySeries(Collections.<BankHistoryPoint>emptyList(), null);
+	public static final BankHistorySeries EMPTY = new BankHistorySeries(Collections.<BankHistoryPoint>emptyList(), null,
+		null, null);
+
+	/**
+	 * The {@link #freshWhy()} of a fresh start made because the days before it counted bank placeholders as items (1.1.1
+	 * part B). A series with no reason stands for 1.0.9 part 5's: the days before it did not count the Grand Exchange
+	 * offers.
+	 */
+	public static final String WHY_PLACEHOLDERS = "placeholders";
 
 	/** Ascending by day, one per day, unmodifiable. */
 	private final List<BankHistoryPoint> points;
@@ -41,10 +56,21 @@ public final class BankHistorySeries
 	@Nullable
 	private final LocalDate freshFrom;
 
-	private BankHistorySeries(final List<BankHistoryPoint> sorted, @Nullable final LocalDate freshFrom)
+	/** 1.1.1 part B: the day this series was judged for counted placeholders; null = not judged yet. */
+	@Nullable
+	private final LocalDate placeholdersChecked;
+
+	/** 1.1.1 part B: why the days before {@link #freshFrom} are hidden; null = 1.0.9 part 5's reason. */
+	@Nullable
+	private final String freshWhy;
+
+	private BankHistorySeries(final List<BankHistoryPoint> sorted, @Nullable final LocalDate freshFrom,
+		@Nullable final LocalDate placeholdersChecked, @Nullable final String freshWhy)
 	{
 		this.points = sorted;
 		this.freshFrom = freshFrom;
+		this.placeholdersChecked = placeholdersChecked;
+		this.freshWhy = freshWhy;
 	}
 
 	/**
@@ -65,7 +91,7 @@ public final class BankHistorySeries
 				byDay.merge(point.day(), point, BankHistorySeries::later);
 			}
 		}
-		return fromMap(byDay, null);
+		return fromMap(byDay, null, null, null);
 	}
 
 	/** Of two readings of one day, the one taken later; {@code b} on a tie. */
@@ -75,13 +101,14 @@ public final class BankHistorySeries
 	}
 
 	private static BankHistorySeries fromMap(final TreeMap<LocalDate, BankHistoryPoint> byDay,
-		@Nullable final LocalDate freshFrom)
+		@Nullable final LocalDate freshFrom, @Nullable final LocalDate placeholdersChecked, @Nullable final String freshWhy)
 	{
 		if (byDay.isEmpty())
 		{
 			return EMPTY;
 		}
-		return new BankHistorySeries(Collections.unmodifiableList(new ArrayList<>(byDay.values())), freshFrom);
+		return new BankHistorySeries(Collections.unmodifiableList(new ArrayList<>(byDay.values())), freshFrom,
+			placeholdersChecked, freshWhy);
 	}
 
 	private TreeMap<LocalDate, BankHistoryPoint> toMap()
@@ -106,7 +133,7 @@ public final class BankHistorySeries
 		}
 		final TreeMap<LocalDate, BankHistoryPoint> byDay = toMap();
 		byDay.put(point.day(), point);
-		return fromMap(byDay, freshFrom);
+		return fromMap(byDay, freshFrom, placeholdersChecked, freshWhy);
 	}
 
 	/**
@@ -120,7 +147,69 @@ public final class BankHistorySeries
 		{
 			return this;
 		}
-		return new BankHistorySeries(points, freshFrom);
+		return new BankHistorySeries(points, freshFrom, placeholdersChecked, freshWhy);
+	}
+
+	/**
+	 * This series with {@code day} as the day it was judged for counted placeholders (1.1.1 part B): the store's way to
+	 * put back what a file says. Null clears it. An EMPTY series answers itself.
+	 */
+	public BankHistorySeries withPlaceholdersChecked(@Nullable final LocalDate day)
+	{
+		if (points.isEmpty() || Objects.equals(placeholdersChecked, day))
+		{
+			return this;
+		}
+		return new BankHistorySeries(points, freshFrom, day, freshWhy);
+	}
+
+	/**
+	 * This series with {@code why} as the reason for its fresh start (1.1.1 part B), as a file says it. Null is 1.0.9 part
+	 * 5's reason. An EMPTY series answers itself.
+	 */
+	public BankHistorySeries withFreshWhy(@Nullable final String why)
+	{
+		if (points.isEmpty() || Objects.equals(freshWhy, why))
+		{
+			return this;
+		}
+		return new BankHistorySeries(points, freshFrom, placeholdersChecked, why);
+	}
+
+	/**
+	 * This series judged for counted placeholders (1.1.1 part B) - the ONE rule, which the service applies to the series
+	 * in memory and the store to the file it re-reads, so the two cannot come to disagree. A series already judged answers
+	 * itself whatever {@code check} says: the judgement is made once per file. So do a null check (a reading that was not
+	 * taken from a fresh bank read) and an EMPTY series.
+	 *
+	 * <p>Otherwise the series is marked judged as of {@link PlaceholderCheck#day()}; and when the check is a restart, the
+	 * fresh start moves up to that day - never back: a later {@link #freshFrom()} already standing stays - with
+	 * {@link #WHY_PLACEHOLDERS} as its reason.
+	 */
+	public BankHistorySeries judged(@Nullable final PlaceholderCheck check)
+	{
+		if (check == null || points.isEmpty() || placeholdersChecked != null)
+		{
+			return this;
+		}
+		if (!check.restart())
+		{
+			return new BankHistorySeries(points, freshFrom, check.day(), freshWhy);
+		}
+		final LocalDate from = freshFrom != null && freshFrom.isAfter(check.day()) ? freshFrom : check.day();
+		return new BankHistorySeries(points, from, check.day(), WHY_PLACEHOLDERS);
+	}
+
+	/**
+	 * The judgement this series carries (1.1.1 part B), or null while it has none: the day it was judged, and whether that
+	 * judgement restarted it - which is what a {@link #freshWhy()} of {@link #WHY_PLACEHOLDERS} records. What the service
+	 * hands the store with every write, so a file not yet judged gets the decision the series in memory already holds.
+	 */
+	@Nullable
+	public PlaceholderCheck placeholderCheck()
+	{
+		return placeholdersChecked == null ? null
+			: new PlaceholderCheck(placeholdersChecked, WHY_PLACEHOLDERS.equals(freshWhy));
 	}
 
 	/**
@@ -143,7 +232,8 @@ public final class BankHistorySeries
 				kept.add(point);
 			}
 		}
-		return kept.isEmpty() ? EMPTY : new BankHistorySeries(Collections.unmodifiableList(kept), freshFrom);
+		return kept.isEmpty() ? EMPTY
+			: new BankHistorySeries(Collections.unmodifiableList(kept), freshFrom, placeholdersChecked, freshWhy);
 	}
 
 	/**
@@ -161,8 +251,8 @@ public final class BankHistorySeries
 	/**
 	 * This series cut to the days recorded by 1.0.9 or later - the days at or after {@link #freshFrom()}: the whole
 	 * series when there is none, {@link #EMPTY} when every day is a legacy day. The cut series has no legacy days of
-	 * its own, so its {@link #freshFrom()} is null. The panel hands the History view and the card THIS unless the
-	 * reader has asked to see the old days.
+	 * its own, so its {@link #freshFrom()} is null; it keeps the placeholder judgement and the reason (1.1.1 part B). The
+	 * panel hands the History view and the card THIS unless the reader has asked to see the old days.
 	 */
 	public BankHistorySeries fromFresh()
 	{
@@ -182,7 +272,8 @@ public final class BankHistorySeries
 				kept.add(point);
 			}
 		}
-		return kept.isEmpty() ? EMPTY : new BankHistorySeries(Collections.unmodifiableList(kept), null);
+		return kept.isEmpty() ? EMPTY
+			: new BankHistorySeries(Collections.unmodifiableList(kept), null, placeholdersChecked, freshWhy);
 	}
 
 	/**
@@ -197,6 +288,27 @@ public final class BankHistorySeries
 			return false;
 		}
 		return points.get(0).day().isBefore(freshFrom);
+	}
+
+	/**
+	 * The day this series was judged for bank placeholders counted as items (1.1.1 part B), or null while it has not been:
+	 * every series an older build wrote, and every series no fresh bank read has recorded into since the update.
+	 */
+	@Nullable
+	public LocalDate placeholdersChecked()
+	{
+		return placeholdersChecked;
+	}
+
+	/**
+	 * Why the days before {@link #freshFrom()} are hidden (1.1.1 part B): {@link #WHY_PLACEHOLDERS} when they counted bank
+	 * placeholders as items, or null for 1.0.9 part 5's reason - they did not count the Grand Exchange offers. A reason
+	 * this build does not know is kept, and read as null's.
+	 */
+	@Nullable
+	public String freshWhy()
+	{
+		return freshWhy;
 	}
 
 	/** Every reading, ascending by day; unmodifiable. */
@@ -284,13 +396,14 @@ public final class BankHistorySeries
 			return false;
 		}
 		final BankHistorySeries that = (BankHistorySeries) o;
-		return points.equals(that.points) && Objects.equals(freshFrom, that.freshFrom);
+		return points.equals(that.points) && Objects.equals(freshFrom, that.freshFrom)
+			&& Objects.equals(placeholdersChecked, that.placeholdersChecked) && Objects.equals(freshWhy, that.freshWhy);
 	}
 
 	@Override
 	public int hashCode()
 	{
-		return 31 * points.hashCode() + Objects.hashCode(freshFrom);
+		return Objects.hash(points, freshFrom, placeholdersChecked, freshWhy);
 	}
 
 	@Override
@@ -300,6 +413,64 @@ public final class BankHistorySeries
 		final BankHistoryPoint last = last();
 		return "BankHistorySeries{readings=" + points.size()
 			+ (first == null ? "" : ", first=" + first.day() + ", last=" + last.day())
-			+ (freshFrom == null ? "" : ", freshFrom=" + (LocalDate.MAX.equals(freshFrom) ? "all" : freshFrom)) + '}';
+			+ (freshFrom == null ? "" : ", freshFrom=" + (LocalDate.MAX.equals(freshFrom) ? "all" : freshFrom))
+			+ (freshWhy == null ? "" : ", freshWhy=" + freshWhy)
+			+ (placeholdersChecked == null ? "" : ", placeholdersChecked=" + placeholdersChecked) + '}';
+	}
+
+	/**
+	 * One placeholder judgement (1.1.1 part B): the LOCAL day a reading from a fresh bank read judged a series, and
+	 * whether that read found placeholders with a quantity while the series held an earlier day - a restart. Made by the
+	 * service in its fold, carried to the store with the write, applied at both sites by {@link #judged}. Immutable.
+	 */
+	public static final class PlaceholderCheck
+	{
+		private final LocalDate day;
+		private final boolean restart;
+
+		public PlaceholderCheck(final LocalDate day, final boolean restart)
+		{
+			this.day = Objects.requireNonNull(day, "day");
+			this.restart = restart;
+		}
+
+		/** The day of the judging reading. */
+		public LocalDate day()
+		{
+			return day;
+		}
+
+		/** Whether the days before {@link #day()} are hidden because they counted placeholders. */
+		public boolean restart()
+		{
+			return restart;
+		}
+
+		@Override
+		public boolean equals(final Object o)
+		{
+			if (this == o)
+			{
+				return true;
+			}
+			if (!(o instanceof PlaceholderCheck))
+			{
+				return false;
+			}
+			final PlaceholderCheck that = (PlaceholderCheck) o;
+			return restart == that.restart && day.equals(that.day);
+		}
+
+		@Override
+		public int hashCode()
+		{
+			return 31 * day.hashCode() + (restart ? 1 : 0);
+		}
+
+		@Override
+		public String toString()
+		{
+			return "PlaceholderCheck{" + day + (restart ? ", restart" : "") + '}';
+		}
 	}
 }

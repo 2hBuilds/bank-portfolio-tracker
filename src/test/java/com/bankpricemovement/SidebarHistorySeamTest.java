@@ -117,9 +117,10 @@ public class SidebarHistorySeamTest
 		disk = new PriceStore(new Gson(), TestFilepaths.rooted(tmp.getRoot()));
 		when(f.store.loadBankHistory(anyLong(), any())).thenAnswer(invocation ->
 			disk.loadBankHistory(invocation.<Long>getArgument(0), invocation.<String>getArgument(1)));
-		when(f.store.recordBankHistory(anyLong(), any(), any(), any())).thenAnswer(invocation ->
+		when(f.store.recordBankHistory(anyLong(), any(), any(), any(), any())).thenAnswer(invocation ->
 			disk.recordBankHistory(invocation.<Long>getArgument(0), invocation.<String>getArgument(1),
-				invocation.<BankHistoryPoint>getArgument(2), invocation.<LocalDate>getArgument(3)));
+				invocation.<BankHistoryPoint>getArgument(2), invocation.<LocalDate>getArgument(3),
+				invocation.<BankHistorySeries.PlaceholderCheck>getArgument(4)));
 		today = BankHistoryMath.dayOf(f.clock.get(), ZONE);
 		seed();
 
@@ -173,7 +174,8 @@ public class SidebarHistorySeamTest
 			cells[BankHistoryPoint.CARRIED_TRADEABLE] = 250_000L;
 			cells[BankHistoryPoint.CARRIED_CASH] = CARRIED_CASH;
 			final long noon = day.atTime(12, 0).atZone(ZONE).toInstant().toEpochMilli();
-			assertTrue(disk.recordBankHistory(ACCOUNT, PROFILE, new BankHistoryPoint(day, noon, noon, cells, null), today));
+			assertTrue(disk.recordBankHistory(ACCOUNT, PROFILE, new BankHistoryPoint(day, noon, noon, cells, null), today,
+				null));
 		}
 		assertEquals(SEEDED_DAYS - GAPS.size(), disk.loadBankHistory(ACCOUNT, PROFILE).series().size());
 	}

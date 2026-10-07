@@ -591,6 +591,14 @@ public class PriceService
 	 */
 	private BankHistorySeries bankHistoryBehind = BankHistorySeries.EMPTY;
 	/**
+	 * How many series this service has restarted because their days counted bank placeholders as items (1.1.1 part B) -
+	 * 0 or 1 in practice, a restart being made once per file. Never reset: the panel compares it with the last one it
+	 * answered and turns "Include days before ..." off once for each new one ({@link Status#placeholderRestarts()}), so a
+	 * box ticked for the 1.0.9 reason cannot silently show the inflated days. A counter rather than a flag, so a publish
+	 * the panel stores while hidden and replaces with a later one still carries it.
+	 */
+	private int placeholderRestarts;
+	/**
 	 * Who {@link #loggedIn} is (review finding H4): the account hash and profile of the last
 	 * {@code setLoggedIn(true, ...)}, 0 and "" while logged out. A computation of ANOTHER owner's bank - the one
 	 * still held between a login and that account's own bank landing - is not that owner's login, and records only
@@ -1086,6 +1094,8 @@ public class PriceService
 		private final int alchStacks;
 		/** How many of those {@link #bankItems} counts (all of them with "Include alch-only untradeables" on, none off). */
 		private final int alchCounted;
+		/** The service's count of placeholder restarts when this status was built (1.1.1 part B); 0 from every public constructor. */
+		private final int placeholderRestarts;
 
 		/**
 		 * @param pricesAtMillis          when the guide prices in the rows were read (the last computation that
@@ -1211,16 +1221,19 @@ public class PriceService
 			this.bankHistory = BankHistorySeries.EMPTY;
 			this.alchStacks = 0;
 			this.alchCounted = 0;
+			this.placeholderRestarts = 0;
 		}
 
 		/**
-		 * Every field of {@code base}, with {@code bankHistory} in place of its series (amendment 9.3) and the two alch
-		 * counts of 1.1.0 part G.
+		 * Every field of {@code base}, with {@code bankHistory} in place of its series (amendment 9.3), the two alch
+		 * counts of 1.1.0 part G and the placeholder restarts of 1.1.1 part B.
 		 */
-		private Status(final Status base, final BankHistorySeries bankHistory, final int alchStacks, final int alchCounted)
+		private Status(final Status base, final BankHistorySeries bankHistory, final int alchStacks, final int alchCounted,
+			final int placeholderRestarts)
 		{
 			this.alchStacks = alchStacks;
 			this.alchCounted = alchCounted;
+			this.placeholderRestarts = placeholderRestarts;
 			this.pricesAtMillis = base.pricesAtMillis;
 			this.bankAtMillis = base.bankAtMillis;
 			this.bankLoaded = base.bankLoaded;
@@ -1257,7 +1270,8 @@ public class PriceService
 		 */
 		public Status withBankHistory(@Nullable final BankHistorySeries series)
 		{
-			return new Status(this, series == null ? BankHistorySeries.EMPTY : series, alchStacks, alchCounted);
+			return new Status(this, series == null ? BankHistorySeries.EMPTY : series, alchStacks, alchCounted,
+				placeholderRestarts);
 		}
 
 		/**
@@ -1267,7 +1281,25 @@ public class PriceService
 		 */
 		public Status withAlchStacks(final int all, final int counted)
 		{
-			return new Status(this, bankHistory, Math.max(0, all), Math.max(0, counted));
+			return new Status(this, bankHistory, Math.max(0, all), Math.max(0, counted), placeholderRestarts);
+		}
+
+		/**
+		 * This status carrying the service's count of placeholder restarts (1.1.1 part B). Negative reads as 0.
+		 */
+		public Status withPlaceholderRestarts(final int restarts)
+		{
+			return new Status(this, bankHistory, alchStacks, alchCounted, Math.max(0, restarts));
+		}
+
+		/**
+		 * How many Net Worth History series the service had restarted, when this status was built, because their days
+		 * counted bank placeholders as items (1.1.1 part B). It only ever grows; the panel turns "Include days before ..."
+		 * off once each time it does. 0 for a status the service did not build.
+		 */
+		public int placeholderRestarts()
+		{
+			return placeholderRestarts;
 		}
 
 		/**
@@ -1628,7 +1660,8 @@ public class PriceService
 				&& portfolio.equals(other.portfolio)
 				&& options.equals(other.options)
 				&& live.equals(other.live)
-				&& bankHistory.equals(other.bankHistory);
+				&& bankHistory.equals(other.bankHistory)
+				&& placeholderRestarts == other.placeholderRestarts;
 		}
 
 		@Override
@@ -1637,7 +1670,7 @@ public class PriceService
 			return Objects.hash(pricesAtMillis, bankAtMillis, bankLoaded, loggedIn, source, problem, totalRows,
 				bankItems, window, baselineLoaded, baselineRevisionSeconds, baselineRevId, mappingAtMillis,
 				indexAtMillis, anchorDay, agree, agreeSamples, r0Day, r0RevId, degraded, anchorDegraded,
-				degradedReason, portfolio, options, live, bankHistory);
+				degradedReason, portfolio, options, live, bankHistory, placeholderRestarts);
 		}
 
 		@Override
@@ -1744,9 +1777,15 @@ public class PriceService
 		final long carriedCashGp;
 		/** {@link BankSnapshot#exchangeGp}, whatever the coins and Grand Exchange switches say (1.0.9 part 3). */
 		final long exchangeCashGp;
+		/**
+		 * {@link BankSnapshot#placeholderSlots} (1.1.1 part B): the placeholders with a quantity the read behind this bank
+		 * dropped, or -1 when it was not a fresh read - a bank loaded from disk, a made-up one.
+		 */
+		final int placeholderSlots;
 
 		PricedBank(final BankSnapshot snapshot, final boolean persist)
 		{
+			this.placeholderSlots = snapshot.placeholderSlots;
 			this.accountHash = snapshot.accountHash;
 			this.profileType = snapshot.profileType == null ? "" : snapshot.profileType;
 			this.capturedAtMillis = snapshot.capturedAtMillis;
@@ -5861,9 +5900,10 @@ public class PriceService
 		final BankHistorySeries unwritten;
 		final BankHistorySeries behind;
 		final long capture;
+		final int restarts;
 
 		HistoryState(final BankHistorySeries series, final long hash, final String profile, final boolean failed,
-			final BankHistorySeries unwritten, final BankHistorySeries behind, final long capture)
+			final BankHistorySeries unwritten, final BankHistorySeries behind, final long capture, final int restarts)
 		{
 			this.series = series;
 			this.hash = hash;
@@ -5872,6 +5912,7 @@ public class PriceService
 			this.unwritten = unwritten;
 			this.behind = behind;
 			this.capture = capture;
+			this.restarts = restarts;
 		}
 	}
 
@@ -5879,7 +5920,7 @@ public class PriceService
 	private HistoryState historyStateLocked()
 	{
 		return new HistoryState(bankHistory, bankHistoryHash, bankHistoryProfile, bankHistoryFailed,
-			bankHistoryUnwritten, bankHistoryBehind, bankHistoryCapture);
+			bankHistoryUnwritten, bankHistoryBehind, bankHistoryCapture, placeholderRestarts);
 	}
 
 	/** Under the lock. Puts back what {@link #historyStateLocked} took. */
@@ -5892,6 +5933,7 @@ public class PriceService
 		bankHistoryUnwritten = state.unwritten;
 		bankHistoryBehind = state.behind;
 		bankHistoryCapture = state.capture;
+		placeholderRestarts = state.restarts;
 	}
 
 	/**
@@ -5972,6 +6014,19 @@ public class PriceService
 	 * stamps the file when it writes the same reading, and the History tab shows it from the next publish. That first
 	 * reading is always recorded, even when a held one of the same day has the same cells.
 	 *
+	 * <p><b>The placeholder judgement</b> (1.1.1 part B): HERE is where it is decided, once per series. A reading taken
+	 * from a fresh bank read ({@link PricedBank#placeholderSlots} 0 or more - never a bank loaded from disk, which is -1
+	 * and leaves the judgement for a later reading), recorded with the clock right (a reading the clock-behind rule keeps
+	 * in memory only judges nothing), into a series not yet judged judges it as of today, and that reading is always
+	 * written - even when a held one of today has the same cells - so the judgement reaches the file in the session that
+	 * made it: when that read dropped placeholders with a quantity and the series holds a day before today, it is a
+	 * RESTART - the days before today counted those placeholders as items, so the fresh start moves up to today with the
+	 * reason {@link BankHistorySeries#WHY_PLACEHOLDERS} and {@link #placeholderRestarts} grows by one; otherwise the
+	 * series is only marked judged, and a later read with placeholders never judges it again.
+	 * {@link BankHistorySeries#judged} applies the decision, and every write carries
+	 * it ({@link BankHistorySeries#placeholderCheck()}) for the store to apply by the same rule to the file it re-reads,
+	 * while that file has none.
+	 *
 	 * @return what to hand the store - the owner, taken from the PRICED snapshot, and every reading not yet on disk
 	 */
 	@Nullable
@@ -6021,9 +6076,17 @@ public class PriceService
 		// has the same cells, which is how a player with no offers meets it - and the series in memory is stamped
 		// with its day, exactly as the store stamps the file, so the tab shows today's reading as soon as it is drawn.
 		final boolean firstSinceUpdate = LocalDate.MAX.equals(bankHistory.freshFrom());
+		// 1.1.1 part B: the placeholder judgement, made once per series by the first reading of a fresh bank read (see the
+		// javadoc). A judgement is a change like the 1.0.9 stamp above - a restart or not - so its reading is always
+		// written, and the file is judged in the session that judged the series.
+		final BankHistorySeries.PlaceholderCheck check = bank.placeholderSlots >= 0
+			&& bankHistory.placeholdersChecked() == null
+			? new BankHistorySeries.PlaceholderCheck(today, bank.placeholderSlots > 0 && hasDayBefore(bankHistory, today))
+			: null;
+		final boolean restart = check != null && check.restart();
 		// A held reading stamped after this one was taken under a clock that was AHEAD (walk-through AU-W1): it is not
 		// the day's last reading, whatever its cells say, so this one replaces it and is written.
-		final boolean changed = firstSinceUpdate || held == null || held.readAtMillis() > readAt
+		final boolean changed = firstSinceUpdate || check != null || held == null || held.readAtMillis() > readAt
 			|| !sameCells(held, point);
 		BankHistorySeries added = changed ? bankHistory.with(point) : bankHistory;
 		if (firstSinceUpdate)
@@ -6036,7 +6099,8 @@ public class PriceService
 		{
 			// The clock is BEHIND the record, by the store's own rule (H1): the store would refuse the write, so none
 			// is sent - nor sent again later (AU-W2). The reading is drawn while the clock stays here and is dropped by
-			// the first reading taken with the clock right (below).
+			// the first reading taken with the clock right (below). Nor is the placeholder judgement made on a day the
+			// clock has wrong: it waits for a fresh read recorded with the clock right (1.1.1 part B).
 			bankHistory = added;
 			if (changed)
 			{
@@ -6049,8 +6113,14 @@ public class PriceService
 		// The clock is right: readings dated after today (a clock that WAS ahead) are no longer drawn - the store drops
 		// them from the file at this write (plan 7.1 item 7; AU-W1) - and neither are the readings taken while it
 		// stood behind the record.
-		bankHistory = withoutBehind(kept);
+		bankHistory = withoutBehind(kept).judged(check);
 		bankHistoryBehind = BankHistorySeries.EMPTY;
+		if (restart)
+		{
+			placeholderRestarts++;
+			log.debug("bank-portfolio-tracker: bank history restarted on {} - {} bank placeholders with a quantity were"
+				+ " counted before it", today, bank.placeholderSlots);
+		}
 		if (changed)
 		{
 			if (!bankHistoryFailed)
@@ -6064,9 +6134,16 @@ public class PriceService
 			return null;
 		}
 		final BankHistoryWrite write = new BankHistoryWrite(bank.accountHash, bank.profileType, bankHistoryUnwritten,
-			today);
+			today, bankHistory.placeholderCheck());
 		bankHistoryUnwritten = BankHistorySeries.EMPTY;
 		return write;
+	}
+
+	/** Whether {@code series} holds a reading of a day before {@code today} - what makes a placeholder judgement a restart. */
+	private static boolean hasDayBefore(final BankHistorySeries series, final LocalDate today)
+	{
+		final BankHistoryPoint first = series.first();
+		return first != null && first.day().isBefore(today);
 	}
 
 	/**
@@ -6080,7 +6157,7 @@ public class PriceService
 		BankHistorySeries failed = BankHistorySeries.EMPTY;
 		for (final BankHistoryPoint point : write.points.points())
 		{
-			if (!store.recordBankHistory(write.accountHash, write.profileType, point, write.today))
+			if (!store.recordBankHistory(write.accountHash, write.profileType, point, write.today, write.check))
 			{
 				failed = failed.with(point);
 			}
@@ -6121,14 +6198,21 @@ public class PriceService
 		final BankHistorySeries points;
 		/** The LOCAL today of the commit that built it. */
 		final LocalDate today;
+		/**
+		 * The placeholder judgement the owner's series held in memory when it was built (1.1.1 part B), or null for none:
+		 * the store applies it to a file not yet judged, so the file gets the decision the series already has.
+		 */
+		@Nullable
+		final BankHistorySeries.PlaceholderCheck check;
 
 		BankHistoryWrite(final long accountHash, final String profileType, final BankHistorySeries points,
-			final LocalDate today)
+			final LocalDate today, @Nullable final BankHistorySeries.PlaceholderCheck check)
 		{
 			this.accountHash = accountHash;
 			this.profileType = profileType;
 			this.points = points;
 			this.today = today;
+			this.check = check;
 		}
 	}
 
@@ -6147,8 +6231,10 @@ public class PriceService
 				kept.add(point);
 			}
 		}
-		// Rebuilt from its readings, so the fresh start (1.0.9 part 5) has to be put back on it.
-		return BankHistorySeries.of(kept).withFreshFrom(series.freshFrom());
+		// Rebuilt from its readings, so the fresh start (1.0.9 part 5) and the placeholder judgement and its reason (1.1.1
+		// part B) have to be put back on it.
+		return BankHistorySeries.of(kept).withFreshFrom(series.freshFrom())
+			.withPlaceholdersChecked(series.placeholdersChecked()).withFreshWhy(series.freshWhy());
 	}
 
 	/** Whether two readings carry the same eight cells, card and guide - what a write is decided on (plan 7.7 item 7). */
@@ -6467,6 +6553,8 @@ public class PriceService
 				: Status.LiveStatus.OFF)
 			// AU, amendment 9.3: the one place a status is built, so a status-only publish carries the series too.
 			.withBankHistory(bankHistory)
+			// 1.1.1 part B: and the restarts, so every status after one carries it to the panel.
+			.withPlaceholderRestarts(placeholderRestarts)
 			// 1.1.0 part G: how many stacks ended on the alch rule, and how many of them bankItems has in it - all of them
 			// while the switch is on, none while it is off - so the panel can say "n of m items" over the alch rows it lists.
 			.withAlchStacks(alchStacksAll, optionsUsed.countUntradeables() ? alchStacksAll : 0);

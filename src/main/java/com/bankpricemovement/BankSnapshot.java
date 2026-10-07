@@ -136,6 +136,18 @@ public class BankSnapshot
 	public long carriedAtMillis;
 
 	/**
+	 * The bank slots the read that made this snapshot dropped as placeholders although they held a quantity (1.1.1 part
+	 * B) - {@link BankReader#placeholdersSkipped()}, put here by {@link BankReader#read}. A count above 0 is what tells
+	 * the Net Worth History that the readings an older build recorded counted placeholders as items.
+	 *
+	 * <p>{@code -1} means "not judged by a fresh read": a snapshot loaded from disk (the field is {@code transient}, so
+	 * Gson never writes it and its no-arg road leaves this default), the dev verb's made-up bank, or any snapshot not
+	 * built by a bank read. {@link #withCarried} copies it, because a carried re-stamp is the same bank; neither
+	 * {@link #sameContentAs} nor {@link #equals} reads it, because it says how the bank was read, not what it holds.
+	 */
+	public transient int placeholderSlots = -1;
+
+	/**
 	 * Whether {@code accountHash} names a real RuneScape account - the one test every site that files, loads or reads a
 	 * bank by its owner asks (1.0.10). False for exactly two values: {@code 0}, this plugin's own spelling of "nobody",
 	 * and {@code -1}, what {@code OAuthApi.getAccountHash()} answers while the client has not logged in yet ("or -1 if
@@ -234,8 +246,12 @@ public class BankSnapshot
 	public BankSnapshot withCarried(final BankReader.Carried carried)
 	{
 		final BankReader.Carried next = carried == null ? BankReader.Carried.EMPTY : carried;
-		return new BankSnapshot(items, capturedAtMillis, accountHash, profileType, currencyGp, next.inventory,
-			next.worn, next.exchange, next.carriedGp, next.exchangeGp, next.readAtMillis);
+		final BankSnapshot copy = new BankSnapshot(items, capturedAtMillis, accountHash, profileType, currencyGp,
+			next.inventory, next.worn, next.exchange, next.carriedGp, next.exchangeGp, next.readAtMillis);
+		// 1.1.1 part B: the same bank, read the same way - a fresh read keeps its count through the carried half the
+		// plugin folds into it, and a bank from disk stays unjudged.
+		copy.placeholderSlots = placeholderSlots;
+		return copy;
 	}
 
 	/**

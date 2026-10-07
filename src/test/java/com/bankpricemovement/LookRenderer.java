@@ -82,7 +82,13 @@ import static org.mockito.Mockito.when;
  * {@code ticker-hidden-2026-09-20-AK.png} to the byte; without it, neither matches while the picture is the
  * same), so a comparison against them has to be taken the same way.
  *
- * <p><b>The current pins are {@code docs/handoff/lab/ticker-{,hidden-,options-,live-,amounts-hidden-}2026-10-04-I.png} and
+ * <p><b>The current History pins are {@code docs/handoff/lab/history{,-one,-empty,-hidden,-amounts-hidden}-2026-10-07-G2.png}</b>
+ * (1.1.1 part G2, the two gears on the Net Worth History tab): the I pictures below with the History options icon added at
+ * the right end of the "Bank net worth history" caption's row - {@link #historyOptionsIcon}'s 12 x 12 box - and nothing else
+ * changed (the fixture holds no hidden days, so none shows the notice), which {@code HistorySidebarPicturesTest} measures
+ * against the I files themselves. The Items pins are still the I ones below.
+ *
+ * <p><b>The I pins are {@code docs/handoff/lab/ticker-{,hidden-,options-,live-,amounts-hidden-}2026-10-04-I.png} and
  * {@code history{,-one,-empty,-hidden,-amounts-hidden}-2026-10-04-I.png}</b> (1.1.0 part I, the eye beside Discord): the G
  * pictures for Items and the E pictures for History with the "Hide amounts" eye moved out of the total's row - where it stood
  * left of the Refresh link - into the card's top-right icons, first of three (eye, Discord, settings), and drawn in grey 52
@@ -565,13 +571,13 @@ public final class LookRenderer
 	// ---------------------------------------------------------------- the whole sidebar in History (addendum AU)
 
 	/** The History pictures, by the names they are pinned under in {@code docs/handoff/lab/}. */
-	public static final String HISTORY_FILE = "history-2026-10-04-I.png";
+	public static final String HISTORY_FILE = "history-2026-10-07-G2.png";
 	/** Day one: the one reading, today's (plan 7.5 item 3: the one point, its readout, its row, no sentence). */
-	public static final String HISTORY_ONE_FILE = "history-one-2026-10-04-I.png";
+	public static final String HISTORY_ONE_FILE = "history-one-2026-10-07-G2.png";
 	/** No reading yet: the card's two History lines a dash each (ruling 9.7), the view its one sentence. */
-	public static final String HISTORY_EMPTY_FILE = "history-empty-2026-10-04-I.png";
+	public static final String HISTORY_EMPTY_FILE = "history-empty-2026-10-07-G2.png";
 	/** The 40-day fixture with the card's three figures hidden (O3 in History: the card shrinks exactly as in Items). */
-	public static final String HISTORY_HIDDEN_FILE = "history-hidden-2026-10-04-I.png";
+	public static final String HISTORY_HIDDEN_FILE = "history-hidden-2026-10-07-G2.png";
 	/** The card's lit chip in every History picture: 30d, mock 5's own. */
 	public static final MovementWindow HISTORY_WINDOW = MovementWindow.D30;
 	/**
@@ -691,6 +697,34 @@ public final class LookRenderer
 		return SwingUtilities.convertRectangle(gears.getParent(), new java.awt.Rectangle(gears.getX() + in.left,
 			gears.getY() + in.top + (gears.getHeight() - in.top - in.bottom - h) / 2, gears.getIcon().getIconWidth(), h),
 			panel);
+	}
+
+	/**
+	 * EDT, on a panel already laid out and showing History: the 12 x 12 box the History options icon (the two gears at the right end
+	 * of the caption's row, 1.1.1 part G2) is painted in, in {@code panel}'s own coordinates - at the label's left inset and centred in
+	 * what the label's top inset leaves of the row, which the caption row's grid-bag layout stretches to the caption's height. The one rectangle a History
+	 * picture with the gears may differ in from one without them.
+	 */
+	static java.awt.Rectangle historyOptionsIcon(BankPriceMovementPanel panel)
+	{
+		final JLabel gears = historyOptionsLabel(panel);
+		final java.awt.Insets in = gears.getInsets();
+		final int h = gears.getIcon().getIconHeight();
+		return SwingUtilities.convertRectangle(gears.getParent(), new java.awt.Rectangle(gears.getX() + in.left,
+			gears.getY() + in.top + (gears.getHeight() - in.top - in.bottom - h) / 2, gears.getIcon().getIconWidth(), h),
+			panel);
+	}
+
+	/** EDT: the History options label of {@code panel}'s caption row (1.1.1 part G2); fails when the row has none. */
+	static JLabel historyOptionsLabel(BankPriceMovementPanel panel)
+	{
+		final JLabel gears = findLabel(panel.viewCaptionRow(),
+			l -> BankPriceMovementPanel.HISTORY_OPTIONS_TIP.equals(l.getToolTipText()));
+		if (gears == null)
+		{
+			throw new AssertionError("no History options icon in the caption row");
+		}
+		return gears;
 	}
 
 	/** EDT: the List options label of {@code panel}'s search row (1.1.0 part G); fails when the row has none. */

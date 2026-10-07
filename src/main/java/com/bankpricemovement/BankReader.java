@@ -42,10 +42,16 @@ import org.slf4j.LoggerFactory;
  * <li>{@code null} entries and {@code id <= 0}: core's own bank valuation walks the array with exactly this
  * guard (clone {@code .../plugins/bank/BankPlugin.java:608-634}, the {@code id <= 0 || qty == 0} test at
  * :624) because an item container is a fixed-size array padded with empty slots.</li>
- * <li>{@code quantity <= 0}: this is what removes BANK PLACEHOLDERS. A placeholder sits in container 95 as
- * its own item id with quantity 0 (research claim C9, 2026-09-08). Note the order matters: the quantity test
- * runs BEFORE {@link ItemManager#canonicalize(int)}, which would otherwise fold a placeholder onto the real
- * item and let a ghost row add nothing but noise to the fold map.</li>
+ * <li>{@code quantity <= 0}: the empty slot. Until 1.1.1 this was also the rule that removed BANK PLACEHOLDERS, on
+ * the belief that one sits in container 95 as its own item id with quantity 0 (research claim C9, 2026-09-08); a
+ * client that puts a quantity on a placeholder let it through, {@link ItemManager#canonicalize(int)} folded it onto
+ * the real item and it was counted (GitHub issue #1, 2026-10-07). The test stays as the free first filter, so a slot
+ * of 0 never costs a lookup, and the placeholders themselves are dropped by their definition, next.</li>
+ * <li>A placeholder DEFINITION: the RAW id's composition answers {@code getPlaceholderTemplateId() != -1} (14401 on a
+ * placeholder, -1 on every other item - the real item that OWNS a placeholder, a note and a worn variant included).
+ * Whatever quantity the client put on it, it is dropped, and it is asked BEFORE {@link ItemManager#canonicalize(int)},
+ * which would otherwise fold it onto the real item and count a ghost. The dropped slots that held a quantity are
+ * counted per bank read ({@link #placeholdersSkipped}), so a real client can say whether the game ever sends one.</li>
  * <li>{@code BANK_FILLER} (20594, clone {@code runelite-api/.../gameval/ItemID.java:50013}): the grey filler
  * the bank layout uses for spacing. Core skips it in the same place (BankPlugin.java:589-606, the test at
  * :600).</li>
@@ -53,7 +59,8 @@ import org.slf4j.LoggerFactory;
  * traded item. RuneLite hard-codes their prices at 1 and 1000 rather than looking them up
  * (ItemManager.java:328-337), and the wiki price feed has no market for them, so a movement row would always
  * read 0 %. They are tested on the RAW id only, which is enough: the sole way a currency id could appear
- * after canonicalisation is as its own bank placeholder, and that carries quantity 0 and has already gone.
+ * after canonicalisation is as its own bank placeholder, and that is dropped by its definition (a placeholder
+ * has an id of its own, so its raw id is no currency id and it is never worth cash either).
  * Skipped as a ROW is not the same as thrown away, though: since B097 their WORTH leaves with the snapshot as
  * {@link BankSnapshot#currencyGp}, because a "bank value" that omits the player's cash disagrees with the total
  * the bank interface itself has just shown them. {@link #currencyWorth} is that sum, and the only place it is
@@ -287,6 +294,17 @@ public class BankReader
 	private boolean warnedRead;
 
 	/**
+	 * Slots dropped as placeholders (each held a quantity above 0 - an empty one never gets that far) by the walk in
+	 * progress. Zeroed at the start of {@link #read} and handed on to {@link #placeholdersSkipped} at its end; the
+	 * carried containers' walks add to it too and are never published, because the next {@link #read} zeroes it.
+	 * Client thread only, like every read.
+	 */
+	private int placeholdersFolded;
+
+	/** The bank slots the LAST {@link #read} dropped as placeholders although they held a quantity; 0 before any read. */
+	private int placeholdersSkipped;
+
+	/**
 	 * @param itemManager RuneLite's item manager, used for {@code canonicalize} and {@code getItemComposition}
 	 *                    only - never for prices, which come from the wiki client
 	 */
@@ -328,15 +346,33 @@ public class BankReader
 	 * @return a snapshot whose items are canonical, quantity-summed and name-ordered - every GE-tradeable stack,
 	 *         plus (Q5) every untradeable one worth alching, marked as such and carrying the tradeable parts
 	 *         RuneLite maps it onto (R1) - carrying the worth of the coins and platinum tokens it did NOT make rows
-	 *         of as {@link BankSnapshot#currencyGp} (B097)
+	 *         of as {@link BankSnapshot#currencyGp} (B097), and the placeholders this read dropped although they held
+	 *         a quantity as {@link BankSnapshot#placeholderSlots} (1.1.1 part B)
 	 */
 	public BankSnapshot read(final Item[] items, final long accountHash, final String profileType, final long nowMillis)
 	{
 		final Map<Integer, BankItem> folded = new LinkedHashMap<>();
+		placeholdersFolded = 0;
 		final long currencyGp = fold(items, folded);
+		placeholdersSkipped = placeholdersFolded;
 
-		return new BankSnapshot(rowsOf(folded), nowMillis, accountHash, profileType == null ? "" : profileType,
-			currencyGp);
+		final BankSnapshot snapshot = new BankSnapshot(rowsOf(folded), nowMillis, accountHash,
+			profileType == null ? "" : profileType, currencyGp);
+		// 1.1.1 part B: the count rides the snapshot it describes, so the Net Worth History can tell a fresh read from a
+		// bank loaded from disk, and a player whose placeholders were counted from one whose were not.
+		snapshot.placeholderSlots = placeholdersSkipped;
+		return snapshot;
+	}
+
+	/**
+	 * How many bank slots the last {@link #read} dropped as placeholders although they held a quantity above 0 - the
+	 * ghosts the quantity rule alone used to count (GitHub issue #1, 1.1.1). The bank's own read only: the inventory,
+	 * the worn items and the offers do not add to it. 0 before any read, and for every player whose placeholders hold 0,
+	 * which is what RuneLite's own bank code assumes; the plugin logs it so a client that does send one can be told.
+	 */
+	public int placeholdersSkipped()
+	{
+		return placeholdersSkipped;
 	}
 
 	/**
@@ -532,11 +568,23 @@ public class BankReader
 	}
 
 	/**
-	 * The part of {@link #accept} that asks the client about an item: the canonical id, the composition and what is
-	 * built from them. Split out so that one {@code try} in {@link #accept} covers every client read of a slot.
+	 * The part of {@link #accept} that asks the client about an item: the raw composition (is it a placeholder?), the
+	 * canonical id, the composition and what is built from them. Split out so that one {@code try} in {@link #accept}
+	 * covers every client read of a slot.
 	 */
 	private void foldSlot(final Map<Integer, BankItem> folded, final int id, final int quantity)
 	{
+		// 1.1.1 (GitHub issue #1): a bank placeholder is dropped by its DEFINITION, before canonicalize folds it onto the
+		// real item it stands for and the ghost is counted. The quantity rule in accept only catches the ones whose
+		// quantity is 0; a client that puts a quantity on a placeholder slipped past it. -1 is the template id of every
+		// other item, the real item that owns a placeholder included. A null composition reads as "not a placeholder".
+		final ItemComposition raw = itemManager.getItemComposition(id);
+		if (raw != null && raw.getPlaceholderTemplateId() != -1)
+		{
+			placeholdersFolded++;
+			return;
+		}
+
 		final int canonical = itemManager.canonicalize(id);
 		final ItemComposition composition = itemManager.getItemComposition(canonical);
 		if (composition == null)

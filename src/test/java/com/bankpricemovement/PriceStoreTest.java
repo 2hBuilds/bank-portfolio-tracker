@@ -10,6 +10,8 @@ import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import com.google.gson.Gson;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -294,13 +296,278 @@ public class PriceStoreTest
 			cells[i] = 100L + i;
 		}
 		assertTrue(store.recordBankHistory(NEG, "STANDARD", new BankHistoryPoint(LocalDate.of(2026, 9, 28), 2L, 1L,
-			cells, null), LocalDate.of(2026, 9, 28)));
+			cells, null), LocalDate.of(2026, 9, 28), null));
 		write(TestFilepaths.at(tmp.getRoot(), PriceStore.LEGACY_LATEST_FILE), "{\"points\":{\"658\":[1848,999]}}");
 
 		assertEquals("only the stale price file goes", 1, store.deleteStaleFiles());
 
 		assertEquals(Arrays.asList("bank--7123456789012345678-STANDARD.json",
 			"history--7123456789012345678-STANDARD.json"), names());
+	}
+
+	// ---- 1.1.1 part B: the Net Worth History restarts for counted placeholders
+
+	private static final long HISTORY_ACCOUNT = 42L;
+	private static final String HISTORY_PROFILE = "STANDARD";
+
+	private static LocalDate oct(final int day)
+	{
+		return LocalDate.of(2026, 10, day);
+	}
+
+	/** A reading of {@code day} whose every cell is {@code base}. */
+	private static BankHistoryPoint reading(final LocalDate day, final long base)
+	{
+		final long[] cells = new long[BankHistoryPoint.CELLS];
+		Arrays.fill(cells, base);
+		final long readAt = day.toEpochDay() * 86_400_000L + 43_200_000L;
+		return new BankHistoryPoint(day, readAt, readAt - 1_000L, cells, null);
+	}
+
+	private static BankHistorySeries.PlaceholderCheck restart(final LocalDate day)
+	{
+		return new BankHistorySeries.PlaceholderCheck(day, true);
+	}
+
+	private static BankHistorySeries.PlaceholderCheck unaffected(final LocalDate day)
+	{
+		return new BankHistorySeries.PlaceholderCheck(day, false);
+	}
+
+	private Filepath historyFile(final PriceStore store)
+	{
+		return store.historyFile(HISTORY_ACCOUNT, HISTORY_PROFILE);
+	}
+
+	private boolean record(final PriceStore store, final LocalDate day, final long base,
+		@javax.annotation.Nullable final BankHistorySeries.PlaceholderCheck check)
+	{
+		return store.recordBankHistory(HISTORY_ACCOUNT, HISTORY_PROFILE, reading(day, base), day, check);
+	}
+
+	private PriceStore.BankHistoryLoad loadHistory()
+	{
+		return store().loadBankHistory(HISTORY_ACCOUNT, HISTORY_PROFILE);
+	}
+
+	private JsonObject historyRoot(final PriceStore store) throws IOException
+	{
+		return new JsonParser().parse(TestFilepaths.read(historyFile(store))).getAsJsonObject();
+	}
+
+	/** Days 1-3 recorded the way every reading before part B was: no judgement at all. */
+	private PriceStore threeUnjudgedDays()
+	{
+		final PriceStore store = store();
+		for (int day = 1; day <= 3; day++)
+		{
+			assertTrue(record(store, oct(day), 100L * day, null));
+		}
+		return store;
+	}
+
+	/**
+	 * The two new root keys round-trip: a restart writes {@code freshWhy} and {@code placeholdersChecked} beside
+	 * {@code freshFrom}, a fresh store reads all three back, and the next recording keeps them.
+	 */
+	@Test
+	public void theRestartKeysRoundTrip() throws IOException
+	{
+		final PriceStore store = threeUnjudgedDays();
+
+		assertTrue(record(store, oct(4), 400L, restart(oct(4))));
+
+		final JsonObject root = historyRoot(store);
+		assertEquals("2026-10-04", root.get("freshFrom").getAsString());
+		assertEquals("placeholders", root.get("freshWhy").getAsString());
+		assertEquals("2026-10-04", root.get("placeholdersChecked").getAsString());
+		assertEquals("still schema 2", 2, root.get("schema").getAsInt());
+		assertTrue("schema, the fresh start, its reason, the judgement, then the days", TestFilepaths.read(
+			historyFile(store)).startsWith("{\"schema\":2,\"freshFrom\":\"2026-10-04\",\"freshWhy\":\"placeholders\","
+			+ "\"placeholdersChecked\":\"2026-10-04\",\"points\":["));
+		final BankHistorySeries back = loadHistory().series();
+		assertEquals(oct(4), back.freshFrom());
+		assertEquals(BankHistorySeries.WHY_PLACEHOLDERS, back.freshWhy());
+		assertEquals(oct(4), back.placeholdersChecked());
+		assertEquals("nothing is deleted", 4, back.size());
+		assertTrue(back.hasLegacyDays());
+
+		assertTrue(store().recordBankHistory(HISTORY_ACCOUNT, HISTORY_PROFILE, reading(oct(5), 500L), oct(5), null));
+		final BankHistorySeries later = loadHistory().series();
+		assertEquals(oct(4), later.freshFrom());
+		assertEquals(BankHistorySeries.WHY_PLACEHOLDERS, later.freshWhy());
+		assertEquals(oct(4), later.placeholdersChecked());
+	}
+
+	/** A schema 2 file WITH the keys loads clean - nothing lossy, nothing copied aside at its next write. */
+	@Test
+	public void aSchemaTwoFileWithTheRestartKeysLoadsClean() throws IOException
+	{
+		final PriceStore store = store();
+		write(historyFile(store), "{\"schema\":2,\"freshFrom\":\"2026-10-03\",\"freshWhy\":\"placeholders\","
+			+ "\"placeholdersChecked\":\"2026-10-03\",\"points\":["
+			+ "{\"day\":\"2026-10-02\",\"readAtMillis\":1,\"bankAtMillis\":1,\"card\":[1,1,1,1,1,1,1,1,1,1]},"
+			+ "{\"day\":\"2026-10-03\",\"readAtMillis\":2,\"bankAtMillis\":2,\"card\":[2,2,2,2,2,2,2,2,2,2]}]}");
+
+		final PriceStore.BankHistoryLoad load = loadHistory();
+
+		assertEquals(PriceStore.BankHistoryLoad.State.LOADED, load.state());
+		assertFalse("the two keys are known root keys", load.lossy());
+		assertEquals(oct(3), load.series().freshFrom());
+		assertEquals(BankHistorySeries.WHY_PLACEHOLDERS, load.series().freshWhy());
+		assertEquals(oct(3), load.series().placeholdersChecked());
+		assertTrue(record(store, oct(4), 4L, null));
+		assertTrue("a clean file is not copied aside", names().stream().noneMatch(n -> n.contains(".corrupt-")));
+	}
+
+	/** A schema 2 file without them loads as it always did: not judged, no reason, nothing lossy. */
+	@Test
+	public void aSchemaTwoFileWithoutTheRestartKeysLoadsAsBefore() throws IOException
+	{
+		final PriceStore store = store();
+		write(historyFile(store), "{\"schema\":2,\"freshFrom\":\"2026-10-03\",\"points\":["
+			+ "{\"day\":\"2026-10-02\",\"readAtMillis\":1,\"bankAtMillis\":1,\"card\":[1,1,1,1,1,1,1,1,1,1]},"
+			+ "{\"day\":\"2026-10-03\",\"readAtMillis\":2,\"bankAtMillis\":2,\"card\":[2,2,2,2,2,2,2,2,2,2]}]}");
+
+		final PriceStore.BankHistoryLoad load = loadHistory();
+
+		assertFalse(load.lossy());
+		assertEquals("the 1.0.9 fresh start, as ever", oct(3), load.series().freshFrom());
+		assertNull(load.series().freshWhy());
+		assertNull(load.series().placeholdersChecked());
+		assertTrue(record(store, oct(4), 4L, null));
+		final JsonObject root = historyRoot(store);
+		assertFalse("a write with no judgement adds no key", root.has("placeholdersChecked"));
+		assertFalse(root.has("freshWhy"));
+	}
+
+	/** A schema 1 file is still every day legacy - the part 5 rule is untouched by the new keys. */
+	@Test
+	public void aSchemaOneFileIsStillAllLegacy() throws IOException
+	{
+		final PriceStore store = store();
+		write(historyFile(store), "{\"schema\":1,\"points\":["
+			+ "{\"day\":\"2026-10-01\",\"readAtMillis\":5,\"bankAtMillis\":4,\"card\":[10,1,2,3,4,5,6,7]},"
+			+ "{\"day\":\"2026-10-02\",\"readAtMillis\":7,\"bankAtMillis\":6,\"card\":[20,1,2,3,4,5,6,7]}]}");
+
+		final BankHistorySeries series = loadHistory().series();
+
+		assertEquals(LocalDate.MAX, series.freshFrom());
+		assertNull(series.freshWhy());
+		assertNull(series.placeholdersChecked());
+		assertTrue(series.fromFresh().isEmpty());
+	}
+
+	/**
+	 * The restart is stamped only by a judgement that is one - a fresh read that dropped placeholders with a quantity:
+	 * an unaffected judgement marks the file and hides nothing, and no judgement at all leaves it as it was.
+	 */
+	@Test
+	public void onlyAFreshReadWithPlaceholdersStampsTheRestart() throws IOException
+	{
+		final PriceStore store = threeUnjudgedDays();
+		assertTrue(record(store, oct(4), 400L, restart(oct(4))));
+		assertEquals(oct(4), loadHistory().series().freshFrom());
+
+		// Another account, the same three days, and a fourth recorded with no judgement at all.
+		final long other = HISTORY_ACCOUNT + 1L;
+		for (int day = 1; day <= 4; day++)
+		{
+			assertTrue(store.recordBankHistory(other, HISTORY_PROFILE, reading(oct(day), 100L * day), oct(day), null));
+		}
+		final BankHistorySeries untouched = store().loadBankHistory(other, HISTORY_PROFILE).series();
+		assertEquals(4, untouched.size());
+		assertNull(untouched.freshFrom());
+		assertNull(untouched.freshWhy());
+		assertNull(untouched.placeholdersChecked());
+	}
+
+	/** Once per file: the day after a restart, another restart moves nothing - not the fresh start, not the day judged. */
+	@Test
+	public void aFileIsJudgedOnce() throws IOException
+	{
+		final PriceStore store = threeUnjudgedDays();
+		assertTrue(record(store, oct(4), 400L, restart(oct(4))));
+
+		assertTrue("a later session's store", record(store(), oct(5), 500L, restart(oct(5))));
+
+		final BankHistorySeries back = loadHistory().series();
+		assertEquals("the fresh start stays", oct(4), back.freshFrom());
+		assertEquals("and so does the day judged", oct(4), back.placeholdersChecked());
+		assertEquals(5, back.size());
+		assertEquals("2026-10-04", historyRoot(store).get("freshFrom").getAsString());
+	}
+
+	/** An unaffected file gets the mark and no fresh start - and a later restart cannot judge it again. */
+	@Test
+	public void anUnaffectedFileGetsTheMarkAndNoFreshStart() throws IOException
+	{
+		final PriceStore store = threeUnjudgedDays();
+
+		assertTrue(record(store, oct(4), 400L, unaffected(oct(4))));
+
+		final JsonObject root = historyRoot(store);
+		assertEquals("2026-10-04", root.get("placeholdersChecked").getAsString());
+		assertFalse("nothing hidden", root.has("freshFrom"));
+		assertFalse(root.has("freshWhy"));
+		assertFalse(loadHistory().series().hasLegacyDays());
+
+		assertTrue(record(store, oct(5), 500L, restart(oct(5))));
+		final BankHistorySeries back = loadHistory().series();
+		assertNull("judged once: a later read with placeholders hides nothing", back.freshFrom());
+		assertEquals(oct(4), back.placeholdersChecked());
+	}
+
+	/**
+	 * A reading from the stored bank (no judgement: the service had no fresh read) does not use the judgement up: the
+	 * file stays unjudged through it, and the first fresh read after it still restarts.
+	 */
+	@Test
+	public void aReadingWithNoJudgementDoesNotUseTheJudgementUp() throws IOException
+	{
+		final PriceStore store = threeUnjudgedDays();
+		assertTrue(record(store, oct(4), 400L, null));
+		assertNull(loadHistory().series().placeholdersChecked());
+
+		assertTrue(record(store, oct(5), 500L, restart(oct(5))));
+
+		final BankHistorySeries back = loadHistory().series();
+		assertEquals(oct(5), back.freshFrom());
+		assertEquals(oct(5), back.placeholdersChecked());
+		assertEquals(Arrays.asList(oct(5)), BankHistorySeriesTest.days(back.fromFresh()));
+	}
+
+	/** A restart never moves the fresh start backward: a later one already standing stays. */
+	@Test
+	public void aRestartNeverMovesTheFreshStartBack() throws IOException
+	{
+		final PriceStore store = store();
+		write(historyFile(store), "{\"schema\":2,\"freshFrom\":\"2026-10-05\",\"points\":["
+			+ "{\"day\":\"2026-10-02\",\"readAtMillis\":1,\"bankAtMillis\":1,\"card\":[1,1,1,1,1,1,1,1,1,1]},"
+			+ "{\"day\":\"2026-10-05\",\"readAtMillis\":2,\"bankAtMillis\":2,\"card\":[2,2,2,2,2,2,2,2,2,2]}]}");
+
+		assertTrue(store.recordBankHistory(HISTORY_ACCOUNT, HISTORY_PROFILE, reading(oct(3), 3L), oct(5),
+			restart(oct(3))));
+
+		final BankHistorySeries back = loadHistory().series();
+		assertEquals("the later fresh start stays", oct(5), back.freshFrom());
+		assertEquals(oct(3), back.placeholdersChecked());
+	}
+
+	/** A file that fails to read is never written over, judgement or not. */
+	@Test
+	public void aFailedFileWritesNothing() throws IOException
+	{
+		final PriceStore store = store();
+		// A directory standing where the file should be: the portable way to make the read fail.
+		historyFile(store).createDirectories();
+		assertTrue("the premise", historyFile(store).isDirectory());
+
+		assertFalse(record(store, oct(4), 400L, restart(oct(4))));
+		assertFalse("and the owner stays refused", record(store, oct(5), 500L, unaffected(oct(5))));
+
+		assertTrue("still a directory", historyFile(store).isDirectory());
+		assertEquals(PriceStore.BankHistoryLoad.State.FAILED, loadHistory().state());
 	}
 
 	/**

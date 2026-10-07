@@ -43,6 +43,8 @@ public class BankReaderTest
 	private static final int WHIP = 4151;
 	private static final int WHIP_NOTED = 4152;
 	private static final int WHIP_PLACEHOLDER = 14032;
+	/** 1.1.1: the template id every placeholder definition carries (-1 on every other item). */
+	private static final int PLACEHOLDER_TEMPLATE = 14401;
 	private static final String WHIP_NAME = "Abyssal whip";
 
 	private static final int BONES = 526;
@@ -88,7 +90,7 @@ public class BankReaderTest
 		define(BONES, BONES_NAME, true, false);
 		define(SHARK, SHARK_NAME, true, false);
 		folds.put(WHIP_NOTED, WHIP);
-		folds.put(WHIP_PLACEHOLDER, WHIP);
+		definePlaceholder(WHIP_PLACEHOLDER, WHIP, WHIP_NAME);
 	}
 
 	// ---------------------------------------------------------------- C12: the container id and isBank
@@ -815,6 +817,190 @@ public class BankReaderTest
 		assertTrue(snapshot.items.isEmpty());
 	}
 
+	// ---------------------------------------------------------------- 1.1.1: placeholders by their definition (issue #1)
+
+	private static final int BONES_PLACEHOLDER = 14_033;
+	private static final int SHARK_PLACEHOLDER = 14_034;
+
+	/**
+	 * GitHub issue #1: a client that puts a quantity above 0 on a bank placeholder used to have it counted - the quantity
+	 * rule never saw it, and {@code canonicalize} folded it onto the real item. It is dropped by its definition now.
+	 */
+	@Test
+	public void aPlaceholderWithAQuantityIsSkippedByItsDefinition()
+	{
+		final BankSnapshot snapshot = reader.read(
+			new Item[]{item(WHIP_PLACEHOLDER, 1), item(BONES, 3)}, ACCOUNT, PROFILE, NOW);
+
+		assertEquals("only the bones", 1, snapshot.items.size());
+		assertEquals(BONES, snapshot.items.get(0).id);
+	}
+
+	/** The reporter's case: the real stack and its placeholder side by side must read as the real stack alone. */
+	@Test
+	public void aPlaceholderWithAQuantityAddsNothingToTheRealStack()
+	{
+		final BankSnapshot snapshot = reader.read(
+			new Item[]{item(WHIP, 3), item(WHIP_PLACEHOLDER, 1)}, ACCOUNT, PROFILE, NOW);
+
+		assertEquals(1, snapshot.items.size());
+		assertEquals("3 whips, not 4", 3, rowFor(snapshot, WHIP).quantity);
+	}
+
+	/** The definition is asked before {@code canonicalize}, which would fold the placeholder onto the real item. */
+	@Test
+	public void aPlaceholderWithAQuantityIsNeverCanonicalised()
+	{
+		reader.read(new Item[]{item(WHIP_PLACEHOLDER, 1)}, ACCOUNT, PROFILE, NOW);
+
+		verify(itemManager, never()).canonicalize(WHIP_PLACEHOLDER);
+	}
+
+	/** The quantity rule stays the free first filter: a placeholder holding 0 never reaches the new lookup. */
+	@Test
+	public void aZeroQuantityPlaceholderCostsNoLookup()
+	{
+		final BankSnapshot snapshot = reader.read(
+			new Item[]{item(WHIP_PLACEHOLDER, 0), item(BONES, 3)}, ACCOUNT, PROFILE, NOW);
+
+		verify(itemManager, never()).getItemComposition(WHIP_PLACEHOLDER);
+		assertEquals(1, snapshot.items.size());
+		assertEquals("a zero is not a skip with a quantity", 0, reader.placeholdersSkipped());
+	}
+
+	/**
+	 * The real item that OWNS a placeholder has {@code getPlaceholderId()} set and a template id of -1, so the rule
+	 * keeps it: it is the placeholder DEFINITION that carries 14401, never the item it stands for.
+	 */
+	@Test
+	public void theRealItemThatOwnsAPlaceholderIdIsKept()
+	{
+		when(compositions.get(WHIP).getPlaceholderId()).thenReturn(WHIP_PLACEHOLDER);
+
+		final BankSnapshot snapshot = reader.read(new Item[]{item(WHIP, 2)}, ACCOUNT, PROFILE, NOW);
+
+		assertEquals(1, snapshot.items.size());
+		assertEquals(2, rowFor(snapshot, WHIP).quantity);
+		assertEquals(0, reader.placeholdersSkipped());
+	}
+
+	/**
+	 * A placeholder of an untradeable item the client gave a quantity: it adds no row, so it adds no parts either - the
+	 * crystal armour seed's composition is never even asked for, which is what {@code partsOf} does for a kept stack.
+	 */
+	@Test
+	public void anUntradeablePlaceholderWithAQuantityAddsNoParts()
+	{
+		final int bodyPlaceholder = 23_976;
+		when(define(CRYSTAL_BODY, "Crystal body", false, false).getHaPrice()).thenReturn(900_000);
+		define(ARMOUR_SEED, SEED_NAME, true, false);
+		definePlaceholder(bodyPlaceholder, CRYSTAL_BODY, "Crystal body");
+
+		final BankSnapshot snapshot = reader.read(
+			new Item[]{item(bodyPlaceholder, 1), item(BONES, 3)}, ACCOUNT, PROFILE, NOW);
+
+		assertEquals("no Crystal body row", 1, snapshot.items.size());
+		assertEquals(BONES, snapshot.items.get(0).id);
+		verify(itemManager, never()).getItemComposition(ARMOUR_SEED);
+	}
+
+	/**
+	 * A platinum token's placeholder has an id of its own, so the raw-id currency test cannot see it; folded onto the
+	 * token it would have been a row of the token. It is neither cash nor a row.
+	 */
+	@Test
+	public void aPlatinumPlaceholderWithAQuantityIsNeitherCashNorARow()
+	{
+		final int platinumPlaceholder = 14_036;
+		define(PLATINUM, "Platinum token", true, true);
+		definePlaceholder(platinumPlaceholder, PLATINUM, "Platinum token");
+
+		final BankSnapshot snapshot = reader.read(
+			new Item[]{item(platinumPlaceholder, 2), item(BONES, 3)}, ACCOUNT, PROFILE, NOW);
+
+		assertEquals("no platinum row", 1, snapshot.items.size());
+		assertEquals(BONES, snapshot.items.get(0).id);
+		assertEquals("and no cash", 0L, snapshot.currencyGp);
+	}
+
+	/**
+	 * The raw lookup sits inside {@code accept}'s try: a client that throws for one id skips that slot and nothing else.
+	 * The poisoned id folds onto the whip, so a read that carried on past it would have counted three.
+	 */
+	@Test
+	public void aThrowOnTheRawCompositionSkipsOnlyThatSlot()
+	{
+		final int poisoned = 14_040;
+		folds.put(poisoned, WHIP);
+		when(itemManager.getItemComposition(poisoned)).thenThrow(new IllegalStateException("planted: raw lookup"));
+
+		final BankSnapshot snapshot = reader.read(
+			new Item[]{item(poisoned, 1), item(WHIP, 2), item(BONES, 3)}, ACCOUNT, PROFILE, NOW);
+
+		assertEquals(2, snapshot.items.size());
+		assertEquals("the poisoned slot added nothing", 2, rowFor(snapshot, WHIP).quantity);
+		assertEquals(3, rowFor(snapshot, BONES).quantity);
+		verify(itemManager, never()).canonicalize(poisoned);
+	}
+
+	/** A raw id the client has no composition for reads as "not a placeholder": a noted stack is still folded and kept. */
+	@Test
+	public void aNullRawCompositionReadsAsNotAPlaceholder()
+	{
+		assertNull("the premise: the noted id has no composition of its own", compositions.get(WHIP_NOTED));
+
+		final BankSnapshot snapshot = reader.read(new Item[]{item(WHIP_NOTED, 7)}, ACCOUNT, PROFILE, NOW);
+
+		assertEquals(1, snapshot.items.size());
+		assertEquals(7, rowFor(snapshot, WHIP).quantity);
+		assertEquals(0, reader.placeholdersSkipped());
+	}
+
+	/**
+	 * The count is the bank slots dropped WITH a quantity, per read: 0 before any read, two for two such slots among a
+	 * zero one, 0 again for a read with none, and untouched by the carried containers' own reads.
+	 */
+	@Test
+	public void thePlaceholderCountIsTheSlotsDroppedWithAQuantity()
+	{
+		assertEquals("0 before any read", 0, new BankReader(itemManager).placeholdersSkipped());
+		definePlaceholder(BONES_PLACEHOLDER, BONES, BONES_NAME);
+		definePlaceholder(SHARK_PLACEHOLDER, SHARK, SHARK_NAME);
+
+		reader.read(new Item[]{item(WHIP_PLACEHOLDER, 1), item(BONES_PLACEHOLDER, 5), item(SHARK_PLACEHOLDER, 0),
+			item(WHIP, 1)}, ACCOUNT, PROFILE, NOW);
+		assertEquals("two with a quantity, one of 0 not counted", 2, reader.placeholdersSkipped());
+
+		final BankReader.Carried carried = reader.readContainers(new Item[]{item(WHIP_PLACEHOLDER, 1)}, null, null, NOW);
+		assertTrue("a placeholder in the inventory is dropped too", carried.inventory.isEmpty());
+		assertEquals("but the count is the bank's alone", 2, reader.placeholdersSkipped());
+
+		reader.read(new Item[]{item(WHIP, 1), item(BONES, 3)}, ACCOUNT, PROFILE, NOW);
+		assertEquals("a read with none", 0, reader.placeholdersSkipped());
+	}
+
+	/**
+	 * 1.1.1 part B: the count rides the snapshot the read made - the Net Worth History's sign of a fresh read, and of a
+	 * player whose placeholders were counted - and the carried half hung on it keeps it.
+	 */
+	@Test
+	public void theSnapshotAReadMakesCarriesItsPlaceholderCount()
+	{
+		definePlaceholder(BONES_PLACEHOLDER, BONES, BONES_NAME);
+		definePlaceholder(SHARK_PLACEHOLDER, SHARK, SHARK_NAME);
+
+		final BankSnapshot counted = reader.read(new Item[]{item(WHIP_PLACEHOLDER, 1), item(BONES_PLACEHOLDER, 5),
+			item(SHARK_PLACEHOLDER, 0), item(WHIP, 1)}, ACCOUNT, PROFILE, NOW);
+		assertEquals("two with a quantity", 2, counted.placeholderSlots);
+		final BankReader.Carried carried = reader.readContainers(new Item[]{item(SHARK, 3)}, null, null, NOW);
+		assertEquals("the carried half is the same bank, read the same way", 2,
+			counted.withCarried(carried).placeholderSlots);
+
+		final BankSnapshot clean = reader.read(new Item[]{item(WHIP, 1), item(BONES, 3)}, ACCOUNT, PROFILE, NOW);
+		assertEquals("a fresh read with none is 0, not the -1 of a bank never read", 0, clean.placeholderSlots);
+		assertEquals("the earlier snapshot keeps its own count", 2, counted.placeholderSlots);
+	}
+
 	// ---------------------------------------------------------------- Y2: the inventory and the worn gear
 
 	@Test
@@ -1112,9 +1298,30 @@ public class BankReaderTest
 		final ItemComposition composition = mock(ItemComposition.class);
 		// getMembersName, not getName: on a free world getName carries " (Members)" (L8 b).
 		when(composition.getMembersName()).thenReturn(name);
+		// 1.1.1, THE MOCKITO TRAP: a mock answers 0 for an int, and 0 is not -1, so without this line every mocked item
+		// would read as a placeholder definition (template id != -1) and the reader would drop the whole bank.
+		when(composition.getPlaceholderTemplateId()).thenReturn(-1);
 		when(composition.isGeTradeable()).thenReturn(geTradeable);
 		when(composition.isStackable()).thenReturn(stackable);
 		compositions.put(id, composition);
+		return composition;
+	}
+
+	/**
+	 * Registers a bank PLACEHOLDER definition (1.1.1): template 14401, the real item's id as its placeholder id, never
+	 * on the exchange and worth nothing to alch - and {@code canonicalize} folds it onto the real item, as the client's
+	 * does, which is exactly how a ghost used to be counted.
+	 */
+	private ItemComposition definePlaceholder(final int placeholderId, final int realId, final String name)
+	{
+		final ItemComposition composition = mock(ItemComposition.class);
+		when(composition.getMembersName()).thenReturn(name);
+		when(composition.getPlaceholderTemplateId()).thenReturn(PLACEHOLDER_TEMPLATE);
+		when(composition.getPlaceholderId()).thenReturn(realId);
+		when(composition.isGeTradeable()).thenReturn(false);
+		when(composition.getHaPrice()).thenReturn(0);
+		compositions.put(placeholderId, composition);
+		folds.put(placeholderId, realId);
 		return composition;
 	}
 

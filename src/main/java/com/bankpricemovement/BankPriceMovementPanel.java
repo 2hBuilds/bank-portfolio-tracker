@@ -14,8 +14,10 @@ import java.awt.FlowLayout;
 import java.awt.FontMetrics;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
+import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.GridLayout;
+import java.awt.Point;
 import java.awt.Rectangle;
 import java.awt.RenderingHints;
 import java.awt.event.ActionEvent;
@@ -60,11 +62,13 @@ import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JScrollBar;
 import javax.swing.JScrollPane;
+import javax.swing.JToolTip;
 import javax.swing.KeyStroke;
 import javax.swing.ScrollPaneConstants;
 import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
+import javax.swing.ToolTipManager;
 import javax.swing.border.CompoundBorder;
 import javax.swing.border.EmptyBorder;
 import javax.swing.border.MatteBorder;
@@ -192,6 +196,21 @@ import org.slf4j.LoggerFactory;
  * "Net worth chart" caption (1.1.0 part A: it stood under the tab's caption until then),
  * "Include days before v1.0.9" ({@link #pressLegacy()}), which shows them again after a question
  * ({@link LegacyPrompt}). Nothing is deleted: the days stay in the file whatever the box says.
+ *
+ * <p><b>And, for a player whose bank placeholders were counted, the days before 1.1.1</b> (1.1.1 part B). The same cut,
+ * the same item and the same question, in the words of the record's {@link BankHistorySeries#freshWhy()}: "Include days
+ * before v1.1.1" when the days before its fresh start counted placeholders as items ({@link #LEGACY_PLACEHOLDERS_TEXT}),
+ * 1.0.9's words otherwise. When the service restarts a record for that reason with the box already ticked, the box is
+ * turned off once ({@link #followPlaceholderRestarts}): it is one setting for every account, and a tick given for the
+ * 1.0.9 reason must not show the inflated days without being asked.
+ *
+ * <p><b>The History tab has gears of its own</b> (1.1.1 part G2). The same two gears the Items tab carries at the search
+ * box's right end stand at the right end of the "Bank net worth history" caption ({@link #renderHistoryGears}) and open a
+ * small "History options" menu ({@link #buildHistoryMenu}): the hidden-days check item - while such days exist - and "Single
+ * chart colour", each the settings menu's own item with the same press. And while the record's early days are hidden for the
+ * placeholder bug ({@link #placeholderDays}) with the box off, a small "i" disc stands directly left of the gears
+ * ({@link #syncLegacyInfo}, {@link InfoIcon}): its hover says why the days may read high and where to restore them, and a press
+ * on it asks the include question as the box does (part I2 - part G2 had said so in three grey lines under the caption).
  *
  * <p><b>The colour of a rise and of a fall is the reader's</b> (1.1.0 part B). The settings menu's "Up colour" and "Down
  * colour" rows open a colour picker through the {@link ColourPicker} seam; while it moves, {@link #applyMoveColours} hands
@@ -596,6 +615,16 @@ public class BankPriceMovementPanel extends PluginPanel
 	/** What the reader is asked when they turn it ON; the dialog's two buttons are "Include" and "Cancel". */
 	public static final String LEGACY_ASK = "Days before v1.0.9 did not count open G.E. orders, so their net worth totals"
 		+ " may read low. Include them anyway?";
+	/**
+	 * The same item while the record's fresh start is a placeholder restart (1.1.1 part B,
+	 * {@link BankHistorySeries#WHY_PLACEHOLDERS}): the days before it counted bank placeholders as items.
+	 */
+	public static final String LEGACY_PLACEHOLDERS_TEXT = "Include days before v1.1.1";
+	/** Its hover, behind "Show hover text" like {@link #LEGACY_TIP}. */
+	public static final String LEGACY_PLACEHOLDERS_TIP = "Days before v1.1.1 counted bank placeholders as items.";
+	/** What the reader is asked when they turn it ON; the same two buttons. */
+	public static final String LEGACY_PLACEHOLDERS_ASK = "Days before v1.1.1 counted bank placeholders as items, so their"
+		+ " net worth totals may read high. Include them anyway?";
 
 	public static final String TITLE = "2h Bank Portfolio Tracker";
 	public static final String LOGIN_TEXT = "Log in to load your bank";
@@ -927,6 +956,26 @@ public class BankPriceMovementPanel extends PluginPanel
 		"Lists untradeables with no tradeable parts, at alch value. Searching finds them either way.";
 	/** The gap between the search box and the List options icon, in px (1.1.0 part G). */
 	static final int LIST_OPTIONS_GAP = 6;
+	/**
+	 * The History options icon's hover (1.1.1 part G2): the same two gears at the right end of the Net Worth History tab's
+	 * caption row. Like {@link #LIST_OPTIONS_TIP} it is ALWAYS on - an icon with no word beside it has nothing else on the
+	 * screen to say what it is - so it is set on the label directly and never offered to "Show hover text".
+	 */
+	public static final String HISTORY_OPTIONS_TIP = "History options";
+	/**
+	 * The hover of the "i" icon on the History caption's row (1.1.1 part I2, the user's words), shown only while the record's
+	 * early days are hidden because they counted bank placeholders ({@link #syncLegacyInfo}). Like {@link #HISTORY_OPTIONS_TIP}
+	 * it is ALWAYS on - the icon is the only place the sidebar says why those days are hidden - so it is set on the label
+	 * directly and never offered to "Show hover text". Said in the user's words ({@link #LEGACY_INFO_TIP_TEXT}) but SET as three
+	 * short rows, because one long line opened far to the right of the pointer, which stands at the sidebar's right edge
+	 * ({@link #legacyInfoTipLocation} opens it leftward under the icon).
+	 */
+	public static final String LEGACY_INFO_TIP =
+		"<html>Days before v1.1.1 counted bank placeholders<br>as items, so they may read high.<br>"
+			+ "Restore them in settings.</html>";
+	/** The words of {@link #LEGACY_INFO_TIP} on one line, with no markup: the sentence the user wrote. */
+	public static final String LEGACY_INFO_TIP_TEXT =
+		"Days before v1.1.1 counted bank placeholders as items, so they may read high. Restore them in settings.";
 	public static final String SINGLE_CHART_COLOUR_TIP =
 		"Draw the net worth chart in one colour instead of the up and down colours.";
 	/** A swatch row's swatch, in px (1.1.0 part B): wide enough to read as a colour, as tall as the 12 px menu face's caps. */
@@ -950,6 +999,8 @@ public class BankPriceMovementPanel extends PluginPanel
 	public static final String SEARCH_PLACEHOLDER = "Search items";
 	/** The search box's hover, behind "Show hover text" like every sentence-class hover here (1.0.9 part 4). */
 	static final String SEARCH_TIP = "Type part of an item's name to show only the matching rows.";
+	/** The hover of the search box's clear "x" (1.1.1 part X); behind "Show hover text" like the box's own. */
+	static final String CLEAR_SEARCH_TIP = "Clear the search";
 	/**
 	 * The EMPTY card's title when the search matched nothing though the list has rows (1.0.9 part 4): the band's
 	 * {@link #EMPTY_TEXT} names a price range and a clear-range button, neither of which is the way out of this - the
@@ -1063,6 +1114,8 @@ public class BankPriceMovementPanel extends PluginPanel
 	static final int SEARCH_GAP = 4;
 	/** The "Show n more" row (N section 3 §5). */
 	static final int SHOW_MORE_HEIGHT = 26;
+	/** The air between two row cells, in px: {@link #rowsColumn}'s gap, and what {@link #fullListNeedsBar} counts. */
+	private static final int ROWS_GAP = 2;
 	/**
 	 * How many bands a {@link BandPresets} holds - the fold's chips after "All", and the boxes in the gear menu
 	 * (addendum Z, lines Z2 and Z3).
@@ -1234,6 +1287,34 @@ public class BankPriceMovementPanel extends PluginPanel
 	private Widgets.Toggle viewToggle;
 	/** {@link #ITEMS_CAPTION} or {@link #HISTORY_CAPTION}, grey, one line. */
 	private JLabel viewCaption;
+	/**
+	 * The caption's row (1.1.1 part G2): the caption stretched across the row and, in History only, the History options icon
+	 * at the east end and - while {@link #syncLegacyInfo} says so (part I2) - the "i" icon directly left of it. A grid-bag row,
+	 * so the two icons can stand side by side at the east end ({@link #captionRowCell}). The strip holds this row where it
+	 * held the caption itself.
+	 */
+	private JPanel viewCaptionRow;
+	/** The History options icon (1.1.1 part G2): the List options gears again, at the right end of the History caption's row. */
+	private JLabel historyOptionsLabel;
+	/** Whether the pointer is over the icon, so a hover redraws it white and a leave redraws it grey. */
+	private boolean historyOptionsHot;
+	/**
+	 * The History options menu (1.1.1 part G2): "Include days before ..." and a rule while the record holds hidden days,
+	 * then "Single chart colour" - each the same component road as its twin in the settings menu.
+	 */
+	private JPopupMenu historyMenu;
+	private JCheckBoxMenuItem historyLegacyItem;
+	private JPopupMenu.Separator historyLegacyRule;
+	private SwatchRow historyChartRow;
+	/** When the History options menu last became invisible, by {@link #clock}: {@link #listMenuClosedAtMillis}'s twin. */
+	private long historyMenuClosedAtMillis = MENU_NEVER_CLOSED;
+	/**
+	 * The "i" icon (1.1.1 part I2) that stands in the caption's row, directly left of the History options icon, while
+	 * {@link #syncLegacyInfo} says so: a filled grey disc with an "i" cut out of it ({@link InfoIcon}), white under the mouse.
+	 */
+	private JLabel legacyInfoLabel;
+	/** Whether the pointer is over the "i" icon, so a hover redraws it white and a leave redraws it grey. */
+	private boolean legacyInfoHot;
 	/** The sort menu that is open, if any - one at a time (the BeamPickerPopup idiom). */
 	@Nullable
 	private JPopupMenu sortMenu;
@@ -1330,6 +1411,13 @@ public class BankPriceMovementPanel extends PluginPanel
 	private long menuClosedAtMillis = MENU_NEVER_CLOSED;
 	/** The scrollbar gutter the header is currently reserving on its right; see {@link #syncGutter}. */
 	private int gutter;
+	/**
+	 * The gutter the Items list had the last time its card was showing (1.1.1 part S), written only by
+	 * {@link #syncGutter} while {@link #CARD_LIST} shows. The cards that stand in for the list - the empty one, the
+	 * login and no-bank ones - hand the header this, so a search or a band that leaves nothing never reads a bar off a
+	 * pane that is not on screen, and a trip to History does not leave History's gutter behind.
+	 */
+	private int itemsGutter;
 	/** Set while {@link #syncHeader} restructures the header, so a focus lost to that cannot apply a bound. */
 	private boolean syncingHeader;
 	/** Whether the sidebar is showing this panel: false between {@link #onDeactivate} and {@link #onActivate}. */
@@ -1446,6 +1534,11 @@ public class BankPriceMovementPanel extends PluginPanel
 	private final LegacyPrompt legacyPrompt;
 	/** Set while the question is open, so a second press (a script's) cannot open a second dialog on top of it. */
 	private boolean askingLegacy;
+	/**
+	 * 1.1.1 part B: the service's count of placeholder restarts the panel has already answered
+	 * ({@link Status#placeholderRestarts()}) - each new one turns the days switch off once.
+	 */
+	private int placeholderRestartsSeen;
 	/** Which of the two views is showing (addendum AU); never null. */
 	private SidebarView view = SidebarView.ITEMS;
 	/** Set while {@link #applyFilter} repaints the widgets, so the change is not saved a second time. */
@@ -1476,7 +1569,7 @@ public class BankPriceMovementPanel extends PluginPanel
 		this.service = Objects.requireNonNull(service, "service");
 		this.prefs = Objects.requireNonNull(prefs, "prefs");
 		this.legacyPrompt = prompt != null ? prompt
-			: question -> LegacyDialog.ask(SwingUtilities.getWindowAncestor(this), question);
+			: question -> LegacyDialog.ask(SwingUtilities.getWindowAncestor(this), legacyText(), question);
 		// The panel's own close of the settings menu is the hook a pressed header mark ends with; closeGearMenu reads the
 		// menu lazily, so handing it over before the menu exists is fine.
 		this.support = new SupportLinks(VERSION_NAME_TEXT, Version.CURRENT, GITHUB_URL, browser, this::closeGearMenu);
@@ -1578,7 +1671,7 @@ public class BankPriceMovementPanel extends PluginPanel
 		emptyCard = Widgets.north(emptyColumn);
 
 		// The 2 px gutter between row cards is the DARK_GRAY ground showing through (N section 3 §4).
-		rowsColumn = Widgets.column(2);
+		rowsColumn = Widgets.column(ROWS_GAP);
 		showMoreLabel = Widgets.linkLabel("", Widgets.sans(12), ColorScheme.LIGHT_GRAY_COLOR, Color.WHITE,
 			this::showMore);
 		showMoreLabel.setHorizontalAlignment(SwingConstants.CENTER);
@@ -1621,6 +1714,19 @@ public class BankPriceMovementPanel extends PluginPanel
 			}
 		};
 		scroll.getVerticalScrollBar().addComponentListener(gutterWatch);
+		// 1.1.1 part S: whether a typed search keeps the bar depends on the height of the window the list scrolls in
+		// (syncBarPolicy), so the panel growing or shrinking asks again.
+		scroll.getViewport().addComponentListener(new ComponentAdapter()
+		{
+			@Override
+			public void componentResized(ComponentEvent e)
+			{
+				if (!stopped)
+				{
+					syncBarPolicy();
+				}
+			}
+		});
 
 		// AU (amendments 9.1 and 9.8): the History view, mounted exactly as the list above is - a column with the
 		// list's margins, anchored north, in a scroll pane with the list pane's settings. Its clock is a lambda
@@ -1707,13 +1813,15 @@ public class BankPriceMovementPanel extends PluginPanel
 		}
 		Widgets.fixed(chipRow, CARD_INNER, CHIP_HEIGHT);
 
+		// 1.1.1 part G2: the strip before the card and its menu - the settings menu's sync ticks the History options menu's
+		// twin items as well (renderLegacy), so they must exist when it first runs.
+		viewStrip = buildViewStrip();
 		hero = buildHero();
 		// Q2: the menu moved off the card's right button and onto the gear, so the card sets NO component popup
 		// and its children inherit none - a right-click anywhere on it now does nothing, which is the point of a
 		// visible control. The gear opens the same JPopupMenu on a LEFT click (openGearMenu).
 		heroMenu = buildHeroMenu();
 
-		viewStrip = buildViewStrip();
 		controlRow = buildControlRow();
 		fold = buildFold();
 		problemLabel = buildProblemLabel();
@@ -2086,19 +2194,35 @@ public class BankPriceMovementPanel extends PluginPanel
 	private void syncLegacyItem()
 	{
 		renderLegacy();
+		renderLegacyWords();
 		final boolean want = legacyDaysPresent();
 		final boolean has = legacyItem.getParent() == heroMenu;
-		if (want == has || heroMenu.isVisible())
+		if (want != has && !heroMenu.isVisible())
 		{
-			return;
+			if (want)
+			{
+				heroMenu.insert(legacyItem, heroMenu.getComponentIndex(singleChartRow) + 1);
+			}
+			else
+			{
+				heroMenu.remove(legacyItem);
+			}
 		}
-		if (want)
+		// 1.1.1 part G2: the History options menu holds the same item - first, with a rule under it - on the same condition and
+		// by the same rule: never changed while that menu stands open.
+		final boolean hasHistory = historyLegacyItem.getParent() == historyMenu;
+		if (want != hasHistory && !historyMenu.isVisible())
 		{
-			heroMenu.insert(legacyItem, heroMenu.getComponentIndex(singleChartRow) + 1);
-		}
-		else
-		{
-			heroMenu.remove(legacyItem);
+			if (want)
+			{
+				historyMenu.insert(historyLegacyItem, 0);
+				historyMenu.insert(historyLegacyRule, 1);
+			}
+			else
+			{
+				historyMenu.remove(historyLegacyItem);
+				historyMenu.remove(historyLegacyRule);
+			}
 		}
 	}
 
@@ -2464,7 +2588,9 @@ public class BankPriceMovementPanel extends PluginPanel
 	 */
 	private void pressChartColour()
 	{
+		// Either menu's row comes here (1.1.1 part G2: the History options menu has the same one), so both are taken down.
 		closeGearMenu();
+		closeHistoryMenu();
 		final ColourPicker picker = colourPicker;
 		if (stopped || picker == null)
 		{
@@ -2596,6 +2722,12 @@ public class BankPriceMovementPanel extends PluginPanel
 	 * is the 11 px face of the card's own caption, indented like the problem row's sentence.
 	 *
 	 * <p>No hover anywhere on it (ruling 9.7): the two words say what they do, and a hover would be invented text.
+	 *
+	 * <p><b>The caption stands in a row of its own since 1.1.1 part G2</b>: in History alone, the same two gears the Items
+	 * tab carries at the search box's right end sit at the row's east end ({@link #renderHistoryGears}) and open the History
+	 * options menu ({@link #buildHistoryMenu}); and, while the record's early days are hidden for the placeholder bug, the
+	 * "i" icon stands directly left of them ({@link #syncLegacyInfo}, part I2). The row is as tall as the caption was, so the
+	 * strip is exactly the strip it was whichever icons show - the Items tab is untouched, and nothing under the row ever moves.
 	 */
 	private JPanel buildViewStrip()
 	{
@@ -2603,11 +2735,324 @@ public class BankPriceMovementPanel extends PluginPanel
 			index -> pressView(SidebarView.values()[index]));
 		viewCaption = Widgets.label("", Widgets.sans(11), ColorScheme.LIGHT_GRAY_COLOR);
 		viewCaption.setBorder(new EmptyBorder(VIEW_CAPTION_GAP, GAP, 0, GAP));
+		viewCaptionRow = new JPanel(new GridBagLayout());
+		viewCaptionRow.setBackground(ColorScheme.DARK_GRAY_COLOR);
+		viewCaptionRow.add(viewCaption, captionRowCell(0, 1.0));
+		historyMenu = buildHistoryMenu();
+		historyOptionsLabel = buildHistoryOptionsIcon();
+		legacyInfoLabel = buildLegacyInfoIcon();
 		final JPanel strip = Widgets.column(0);
 		strip.setBorder(new EmptyBorder(ROW_GAP, 0, 0, 0));
 		strip.add(viewToggle);
-		strip.add(viewCaption);
+		strip.add(viewCaptionRow);
 		return strip;
+	}
+
+	/**
+	 * Where a component stands in the caption's row: column {@code column}, the whole height of the row, and the width left over
+	 * (the caption's, {@code weightx} 1) or just its own (an icon's, 0). The same geometry the row's BorderLayout gave the caption
+	 * and the gears before part I2 - a grid-bag row only because it can hold two icons at its east end.
+	 */
+	private static GridBagConstraints captionRowCell(final int column, final double weightx)
+	{
+		final GridBagConstraints cell = new GridBagConstraints();
+		cell.gridx = column;
+		cell.gridy = 0;
+		cell.weightx = weightx;
+		cell.weighty = 1.0;
+		cell.fill = GridBagConstraints.BOTH;
+		return cell;
+	}
+
+	/**
+	 * The "i" icon on the History caption's row (1.1.1 part I2): {@link InfoIcon}'s disc, grey like the gears and white under the
+	 * mouse, with an always-on hover ({@link #LEGACY_INFO_TIP}) and a LEFT press that asks the include question by the box's own
+	 * road ({@link #pressLegacy()}: the {@link LegacyPrompt}, the stored key, the cut). It is exactly the icon's width wide - the
+	 * 6 px gap to the gears beside it is the gears' own air ({@link #LIST_OPTIONS_GAP}) - with {@link #VIEW_CAPTION_GAP} of air
+	 * above, the caption's: the row stretches it and the icon is centred in what is left, which is the caption's text line, as
+	 * the gears are.
+	 */
+	private JLabel buildLegacyInfoIcon()
+	{
+		final JLabel icon = new JLabel()
+		{
+			@Override
+			public Point getToolTipLocation(MouseEvent e)
+			{
+				return legacyInfoTipLocation(this);
+			}
+		};
+		icon.setBorder(new EmptyBorder(VIEW_CAPTION_GAP, 0, 0, 0));
+		icon.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+		icon.addMouseListener(new MouseAdapter()
+		{
+			@Override
+			public void mousePressed(MouseEvent e)
+			{
+				if (Widgets.isPress(e))
+				{
+					// The question is modal: the hover must not stay on screen over it, nor be shown again while it is up.
+					ToolTipManager.sharedInstance().mousePressed(e);
+					icon.setToolTipText(null);
+					try
+					{
+						// The settings item's own road: the answer is put right in both menus whichever way the question went.
+						pressLegacy();
+					}
+					finally
+					{
+						icon.setToolTipText(LEGACY_INFO_TIP);
+					}
+					renderLegacy();
+				}
+			}
+
+			@Override
+			public void mouseEntered(MouseEvent e)
+			{
+				legacyInfoHot = true;
+				renderLegacyInfoIcon();
+			}
+
+			@Override
+			public void mouseExited(MouseEvent e)
+			{
+				legacyInfoHot = false;
+				renderLegacyInfoIcon();
+			}
+		});
+		legacyInfoLabel = icon;
+		renderLegacyInfoIcon();
+		return icon;
+	}
+
+	/** The icon drawn for the state it is in: grey, or - under the mouse - white; its hover never changes. */
+	private void renderLegacyInfoIcon()
+	{
+		legacyInfoLabel.setIcon(InfoIcon.icon(legacyInfoHot ? Color.WHITE : Widgets.PLACEHOLDER_COLOR));
+		legacyInfoLabel.setToolTipText(LEGACY_INFO_TIP);
+	}
+
+	/**
+	 * Where the "i" icon's hover opens (1.1.1 part I2, the user's look): in {@code label}'s own coordinates, as Swing asks, UNDER
+	 * the icon with the tip's RIGHT edge on the icon's right edge, so it grows leftward over the sidebar instead of running off
+	 * to the right of a pointer that already stands at the sidebar's right edge. The tip's width is what Swing will show - the
+	 * label's own {@code createToolTip()} with the text set, at its preferred size. It never starts left of the panel's left
+	 * edge: a tip wider than the panel is aligned to that edge.
+	 */
+	Point legacyInfoTipLocation(final JLabel label)
+	{
+		final JToolTip tip = label.createToolTip();
+		tip.setTipText(label.getToolTipText());
+		int x = label.getWidth() - tip.getPreferredSize().width;
+		if (SwingUtilities.isDescendingFrom(label, this))
+		{
+			x = Math.max(x, SwingUtilities.convertPoint(this, 0, 0, label).x);
+		}
+		return new Point(x, label.getHeight() + 2);
+	}
+
+	/**
+	 * The History options icon (1.1.1 part G2): {@link GearsIcon}'s two gears in the same grey and the same white under the
+	 * mouse as the List options icon's, with an always-on hover ({@link #HISTORY_OPTIONS_TIP}) and a LEFT press that opens the
+	 * History options menu under it ({@link #openHistoryMenu}). The label is the icon's width plus {@link #LIST_OPTIONS_GAP} of
+	 * air on its left, so the gap is part of the hit area as the List options icon's is, and {@link #VIEW_CAPTION_GAP} of air
+	 * above, the caption's own: BorderLayout stretches it to the row and the icon is centred in what is left, which is the
+	 * caption's text line.
+	 */
+	private JLabel buildHistoryOptionsIcon()
+	{
+		final JLabel icon = new JLabel();
+		icon.setBorder(new EmptyBorder(VIEW_CAPTION_GAP, LIST_OPTIONS_GAP, 0, 0));
+		icon.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+		icon.addMouseListener(new MouseAdapter()
+		{
+			@Override
+			public void mousePressed(MouseEvent e)
+			{
+				if (Widgets.isPress(e))
+				{
+					openHistoryMenu(icon);
+				}
+			}
+
+			@Override
+			public void mouseEntered(MouseEvent e)
+			{
+				historyOptionsHot = true;
+				renderHistoryOptionsIcon();
+			}
+
+			@Override
+			public void mouseExited(MouseEvent e)
+			{
+				historyOptionsHot = false;
+				renderHistoryOptionsIcon();
+			}
+		});
+		historyOptionsLabel = icon;
+		renderHistoryOptionsIcon();
+		return icon;
+	}
+
+	/** The icon drawn for the state it is in: grey, or - under the mouse - white; its hover never changes. */
+	private void renderHistoryOptionsIcon()
+	{
+		historyOptionsLabel.setIcon(GearsIcon.icon(historyOptionsHot ? Color.WHITE : Widgets.PLACEHOLDER_COLOR));
+		historyOptionsLabel.setToolTipText(HISTORY_OPTIONS_TIP);
+	}
+
+	/**
+	 * The History options menu (1.1.1 part G2), built like the List options menu: the settings menu's border and fonts, no
+	 * header and no OK row. Its items are the settings menu's own twins - a component has one parent, so each is built again
+	 * by the same factory and its press is the same method, never a second implementation:
+	 * <ol>
+	 * <li>{@link #historyLegacyItem}, "Include days before v1.0.9" or "... v1.1.1" with the same hover, whose press is the
+	 * settings item's ({@link #pressLegacy()}: the {@link LegacyPrompt} question, the stored key, the cut), and the rule
+	 * under it - both IN the menu only while the record holds hidden days ({@link #syncLegacyItem}, as for the settings
+	 * menu's item);</li>
+	 * <li>"Single chart colour" ({@link #historyChartRow}), the settings menu's {@link SwatchRow} again: its tick runs
+	 * {@link #pressSingleChartColour} and its swatch {@link #pressChartColour}.</li>
+	 * </ol>
+	 */
+	private JPopupMenu buildHistoryMenu()
+	{
+		final JPopupMenu menu = new JPopupMenu();
+		menu.setBorder(new EmptyBorder(5, 5, 5, 5));
+		historyLegacyItem = checkItem(LEGACY_TEXT, LEGACY_TIP, on ->
+		{
+			pressLegacy();
+			renderLegacy();
+		});
+		historyLegacyRule = new JPopupMenu.Separator();
+		historyChartRow = new SwatchRow(SINGLE_CHART_COLOUR_TEXT, () -> chartColour, true, this::pressChartColour);
+		setHover(historyChartRow, SINGLE_CHART_COLOUR_TIP);
+		historyChartRow.setSelected(singleChartColour);
+		historyChartRow.addActionListener(e -> pressSingleChartColour(historyChartRow.isSelected()));
+		menu.add(historyChartRow);
+		menu.addPopupMenuListener(new PopupMenuListener()
+		{
+			@Override
+			public void popupMenuWillBecomeVisible(PopupMenuEvent e)
+			{
+				// The menu is laid out only after this event, so it opens on the record it holds now (the settings menu's rule)
+				// and on the tick the panel believes.
+				syncLegacyItem();
+				historyChartRow.setSelected(singleChartColour);
+			}
+
+			@Override
+			public void popupMenuWillBecomeInvisible(PopupMenuEvent e)
+			{
+				// The settings menu's rule (AB1): the grabber's cancel arrives here BEFORE the icon's own press listener
+				// runs, which is what lets the icon read that press as the close half of a toggle.
+				historyMenuClosedAtMillis = clock.getAsLong();
+			}
+
+			@Override
+			public void popupMenuCanceled(PopupMenuEvent e)
+			{
+			}
+		});
+		return menu;
+	}
+
+	/**
+	 * Opens the History options menu under {@code anchor}, the icon that was pressed, with the menu's right edge on the icon's
+	 * (1.1.1 part G2) - the icon is at the sidebar's right, so the menu opens leftward, as the List options menu does. A press
+	 * while the menu stands opens nothing and takes it down: the same toggle the List options icon has ({@link #openListMenu}),
+	 * by the same rule ({@link #historyPressOpens()}).
+	 */
+	void openHistoryMenu(final JComponent anchor)
+	{
+		if (stopped)
+		{
+			return;
+		}
+		if (historyMenu().isVisible())
+		{
+			closeHistoryMenu();
+			return;
+		}
+		if (!historyPressOpens() || !anchor.isShowing())
+		{
+			return;
+		}
+		historyMenu().show(anchor, anchor.getWidth() - historyMenu().getPreferredSize().width, anchor.getHeight());
+	}
+
+	/**
+	 * Whether a press on the History options icon right now OPENS the menu: true unless the menu went away within the last
+	 * {@link #GEAR_REOPEN_GUARD_MILLIS}, in which case this press is the one that took it away ({@link #listPressOpens()}'s rule,
+	 * over this menu's own stamp). Package-private for the reason that one is.
+	 */
+	boolean historyPressOpens()
+	{
+		return historyMenuClosedAtMillis == MENU_NEVER_CLOSED
+			|| clock.getAsLong() - historyMenuClosedAtMillis >= GEAR_REOPEN_GUARD_MILLIS;
+	}
+
+	private void closeHistoryMenu()
+	{
+		if (historyMenu() != null && historyMenu().isVisible())
+		{
+			historyMenu().setVisible(false);
+		}
+	}
+
+	/**
+	 * Puts the icon at the caption row's east end in History and takes it out in Items (1.1.1 part G2) - added and removed,
+	 * never hidden, like every row here - and takes its menu down with it. Touches nothing when it is already right.
+	 */
+	private void renderHistoryGears()
+	{
+		final boolean want = view == SidebarView.HISTORY;
+		if (want == (historyOptionsLabel.getParent() == viewCaptionRow))
+		{
+			return;
+		}
+		if (want)
+		{
+			viewCaptionRow.add(historyOptionsLabel, captionRowCell(2, 0.0));
+		}
+		else
+		{
+			closeHistoryMenu();
+			viewCaptionRow.remove(historyOptionsLabel);
+		}
+		viewCaptionRow.revalidate();
+		viewCaptionRow.repaint();
+	}
+
+	/**
+	 * Puts the "i" icon into the caption row, directly left of the gears, or takes it out (1.1.1 part I2; part G2 stood three grey
+	 * lines under the row in its place). It is there exactly while ALL of these hold: the History tab is showing, the record hides
+	 * its early days for the placeholder bug ({@link #placeholderDays} - never for 1.0.9's reason), there ARE hidden days
+	 * ({@link #legacyDaysPresent}), and "Include days before ..." is off. Ticking the box from either menu, or from the icon's own
+	 * press, takes it away and unticking brings it back. Added and removed, never hidden, like every row here; nothing under the row
+	 * moves with it, because the row is as tall with it as without it. Touches nothing when the row is already right.
+	 */
+	private void syncLegacyInfo()
+	{
+		final boolean want = view == SidebarView.HISTORY && placeholderDays() && legacyDaysPresent() && !includeLegacy;
+		if (want == (legacyInfoLabel.getParent() == viewCaptionRow))
+		{
+			return;
+		}
+		if (want)
+		{
+			// Right after the caption, so the row's children stand in the order they are drawn: the caption, this, the gears.
+			viewCaptionRow.add(legacyInfoLabel, captionRowCell(1, 0.0), 1);
+		}
+		else
+		{
+			// A label that leaves under the pointer is never sent the exit, so it must not come back white.
+			legacyInfoHot = false;
+			renderLegacyInfoIcon();
+			viewCaptionRow.remove(legacyInfoLabel);
+		}
+		viewCaptionRow.revalidate();
+		viewCaptionRow.repaint();
 	}
 
 	/**
@@ -2660,8 +3105,10 @@ public class BankPriceMovementPanel extends PluginPanel
 	 * <p>It answers EVERY change of its text, a character at a time, because the answer costs nothing: the list is
 	 * narrowed from the rows this panel already holds ({@link #applySearch}), with no trip to the service and no
 	 * recompute. Enter does the same at once, which after a keystroke has already been done, so it changes nothing more;
-	 * Escape clears the box, and the clearing is itself a change of text and so clears the search. There is no clear
-	 * button and no magnifier - the user chose the plain box.
+	 * Escape clears the box, and the clearing is itself a change of text and so clears the search. There is no magnifier -
+	 * the user chose the plain box - but since 1.1.1 part X a small "x" ({@link Widgets.ClearX}) stands at the box's right end
+	 * while it holds any text: its press empties the box through the same document, which clears the search as Escape does,
+	 * and leaves the caret in the box. Its hover is {@link #CLEAR_SEARCH_TIP}, registered as the box's own is.
 	 *
 	 * <p><b>Nothing here ever takes the focus</b> (addendum Z's Z6 rule): not building, not the sidebar being shown, not
 	 * the tab changing. A caret that appears in a box nobody clicked is a box that eats the next keystroke - a hotkey
@@ -2672,6 +3119,7 @@ public class BankPriceMovementPanel extends PluginPanel
 		final Widgets.PlaceholderField field = Widgets.searchField(SEARCH_PLACEHOLDER);
 		setHover(field, SEARCH_TIP);
 		setHover(field.getTextField(), SEARCH_TIP);
+		setHover(field.clearX(), CLEAR_SEARCH_TIP);
 		final DocumentListener typing = new DocumentListener()
 		{
 			@Override
@@ -3279,15 +3727,37 @@ public class BankPriceMovementPanel extends PluginPanel
 	 *
 	 * <p>So the header reserves the same gutter, MEASURED off the bar rather than hard-coded - the look and feel
 	 * owns that number and the test JVM's is not the client's - and gives it back when the bar goes. The policy
-	 * stays {@code AS_NEEDED}: reserving it always would leave a permanent empty track, and at a narrower host
-	 * width it would push the header's content under the 213 px the design is measured at.
+	 * stays {@code AS_NEEDED}, except while a search is typed ({@link #syncBarPolicy}): reserving it always would
+	 * leave a permanent empty track, and at a narrower host width it would push the header's content under the 213 px
+	 * the design is measured at.
+	 *
+	 * <p><b>Only a card that shows a list is read (1.1.1 part S).</b> A bar is read off the pane that is ON SCREEN: the
+	 * Items list's while {@link #CARD_LIST} shows, History's while {@link #CARD_HISTORY} does. Any other card is a
+	 * message standing in for the list - the one a search or a band empties, the login and no-bank ones - and the
+	 * pane behind it is hidden: the queued layout still lays it out, its bar is hidden by that layout, and the header
+	 * used to follow it, so the search box and its clear x jumped 7 px to the right the moment a typed search matched
+	 * nothing. The stand-in keeps what the Items list had ({@link #itemsGutter}), so the header does not move when the
+	 * list does, and coming back from History to an empty Items card does not inherit History's gutter either.
 	 */
 	private void syncGutter()
 	{
-		// AU (amendment 9.8): the bar of the SHOWING card's pane - the History card has a scroll pane of its own, and
-		// the header must line up with whichever of the two lists is under it.
-		final Component bar = (CARD_HISTORY.equals(card) ? historyScroll : scroll).getVerticalScrollBar();
-		final int want = bar.isVisible() ? bar.getWidth() : 0;
+		final int want;
+		if (CARD_HISTORY.equals(card))
+		{
+			// AU (amendment 9.8): the History card has a scroll pane of its own, and the header must line up with it.
+			final JScrollBar bar = historyScroll.getVerticalScrollBar();
+			want = bar.isVisible() ? bar.getWidth() : 0;
+		}
+		else if (CARD_LIST.equals(card))
+		{
+			final JScrollBar bar = scroll.getVerticalScrollBar();
+			itemsGutter = bar.isVisible() ? bar.getWidth() : 0;
+			want = itemsGutter;
+		}
+		else
+		{
+			want = itemsGutter;
+		}
 		if (want == gutter)
 		{
 			return;
@@ -3296,6 +3766,55 @@ public class BankPriceMovementPanel extends PluginPanel
 		header.setBorder(new EmptyBorder(MARGIN, MARGIN, GAP, MARGIN + want));
 		header.revalidate();
 		header.repaint();
+	}
+
+	/**
+	 * Decides whether the Items list's scroll bar is reserved while a search is typed (1.1.1 part S): ALWAYS if the
+	 * list the box would show EMPTY - every row the panel holds, before {@link MovementMath#search}, less the alch rows
+	 * the tick keeps out - is taller than the window it scrolls in, {@code AS_NEEDED} otherwise and whenever the box is
+	 * empty.
+	 *
+	 * <p><b>The bar belongs to the bank, not to the search result.</b> Left to {@code AS_NEEDED} a search that narrows a
+	 * long list below a screenful took the bar away, and the header - which reserves the bar's gutter so its cards end
+	 * on the same pixel as the rows (B038) - followed it 7 px to the right, under the reader's cursor, on a keystroke.
+	 * Kept as an empty track the bar costs nothing the reader sees, and nothing in the header or the rows moves; a
+	 * short bank that never needed a bar never gets one. The decision is made again on every search change, publish and
+	 * change of the tick (all through {@link #rebuildRows} or {@link #applyShowAlchRows}) and on the window's resize.
+	 *
+	 * <p>The height is the rows' own: {@link MovementRowPanel#ROW_HEIGHT} each with {@link #ROWS_GAP} between and the
+	 * list's bottom margin, a row opened in place counted at its closed height. A window that has not been laid out
+	 * yet has no height to compare with and reads as no bar; the resize asks again.
+	 */
+	private void syncBarPolicy()
+	{
+		final int want = !search.isEmpty() && fullListNeedsBar()
+			? ScrollPaneConstants.VERTICAL_SCROLLBAR_ALWAYS : ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED;
+		// setVerticalScrollBarPolicy revalidates even when nothing changed, so it is only called for a change.
+		if (scroll.getVerticalScrollBarPolicy() != want)
+		{
+			scroll.setVerticalScrollBarPolicy(want);
+		}
+	}
+
+	/** {@link #syncBarPolicy}'s question: is the whole list, with no search, taller than the window it scrolls in. */
+	private boolean fullListNeedsBar()
+	{
+		final int window = scroll.getViewport().getHeight();
+		if (window <= 0)
+		{
+			return false;
+		}
+		final int count = MovementMath.list(rows, "", showAlchRows).size();
+		if (count == 0)
+		{
+			return false;
+		}
+		if (count > ROWS_PER_PAGE)
+		{
+			// More than a page is some 16,000 px and its "Show n more" row: no window is that tall.
+			return true;
+		}
+		return count * MovementRowPanel.ROW_HEIGHT + (count - 1) * ROWS_GAP + MARGIN > window;
 	}
 
 	/** The gutter the header reserves for the list's scrollbar right now, in px (0 while there is no bar). */
@@ -3528,6 +4047,7 @@ public class BankPriceMovementPanel extends PluginPanel
 		// 1.1.0 part C: "Single chart colour" is ticked to the panel's belief, which a ConfigChanged from the settings page
 		// may have moved under an open menu.
 		singleChartRow.setSelected(singleChartColour);
+		historyChartRow.setSelected(singleChartColour);
 	}
 
 	// ---------------------------------------------------------------- the view switches (EDT, Q1-Q6)
@@ -3792,6 +4312,8 @@ public class BankPriceMovementPanel extends PluginPanel
 		chartColour = colourOrDefault(colour, Widgets.CHART_COLOUR_DEFAULT);
 		singleChartRow.setSelected(single);
 		singleChartRow.repaint();
+		historyChartRow.setSelected(single);
+		historyChartRow.repaint();
 		historyView.setChartColour(single ? chartColour : null);
 	}
 
@@ -3893,6 +4415,8 @@ public class BankPriceMovementPanel extends PluginPanel
 		}
 		showAlchRows = show;
 		showAlchItem.setSelected(show);
+		// 1.1.1 part S: the tick changes the list a typed search is measured against, whether or not the rows shown change.
+		syncBarPolicy();
 		final List<MovementRow> next = MovementMath.list(rows, search, show);
 		// The same list - the seed at startUp, a tick with no alch row to show or hide - is nothing to build again.
 		final boolean changed = !next.equals(matching);
@@ -5633,6 +6157,9 @@ public class BankPriceMovementPanel extends PluginPanel
 	{
 		viewToggle.setLit(view.ordinal());
 		viewCaption.setText(view == SidebarView.HISTORY ? HISTORY_CAPTION : ITEMS_CAPTION);
+		// 1.1.1 part G2: the gears, and the "i" icon of part I2, belong to the History tab alone.
+		renderHistoryGears();
+		syncLegacyInfo();
 	}
 
 	/**
@@ -5659,6 +6186,11 @@ public class BankPriceMovementPanel extends PluginPanel
 		final BankHistorySeries record = status == null ? null : status.bankHistory();
 		final LocalDate fresh = record == null ? null : record.freshFrom();
 		map.put("freshFrom", fresh == null ? null : LocalDate.MAX.equals(fresh) ? "all" : fresh.toString());
+		// 1.1.1 part B: why the days before it are hidden (null = 1.0.9's reason) and the day the record was judged for
+		// counted placeholders (null = not yet).
+		map.put("freshWhy", record == null ? null : record.freshWhy());
+		final LocalDate checked = record == null ? null : record.placeholdersChecked();
+		map.put("placeholdersChecked", checked == null ? null : checked.toString());
 		return map;
 	}
 
@@ -5686,8 +6218,76 @@ public class BankPriceMovementPanel extends PluginPanel
 	}
 
 	/**
+	 * Whether the last-drawn status's record hides its early days because they counted bank placeholders (1.1.1 part B) -
+	 * which picks the item's words, its hover and its question. Any other reason, or none, is 1.0.9's.
+	 */
+	private boolean placeholderDays()
+	{
+		final BankHistorySeries record = status == null ? null : status.bankHistory();
+		return record != null && BankHistorySeries.WHY_PLACEHOLDERS.equals(record.freshWhy());
+	}
+
+	/** The item's words for the record's reason (1.1.1 part B) - also the dialog's title. */
+	private String legacyText()
+	{
+		return placeholderDays() ? LEGACY_PLACEHOLDERS_TEXT : LEGACY_TEXT;
+	}
+
+	/** The question for the record's reason (1.1.1 part B). */
+	private String legacyAsk()
+	{
+		return placeholderDays() ? LEGACY_PLACEHOLDERS_ASK : LEGACY_ASK;
+	}
+
+	/** The item's words and hover put to the record's reason (1.1.1 part B); untouched while they already are. */
+	private void renderLegacyWords()
+	{
+		final String text = legacyText();
+		if (!text.equals(legacyItem.getText()))
+		{
+			legacyItem.setText(text);
+			setHover(legacyItem, placeholderDays() ? LEGACY_PLACEHOLDERS_TIP : LEGACY_TIP);
+		}
+		// 1.1.1 part G2: and the History options menu's twin of it.
+		if (!text.equals(historyLegacyItem.getText()))
+		{
+			historyLegacyItem.setText(text);
+			setHover(historyLegacyItem, placeholderDays() ? LEGACY_PLACEHOLDERS_TIP : LEGACY_TIP);
+		}
+	}
+
+	/**
+	 * 1.1.1 part B: a status counting a placeholder restart this panel has not answered yet turns "Include days before
+	 * ..." OFF, once, when it is on - and writes that through {@link Prefs#saveIncludeLegacy}, so the stored config follows.
+	 * The box is one setting for every account and profile, and a tick given for the 1.0.9 reason must not silently show
+	 * days that read high. Answered as the status ARRIVES, before the bank-open or hidden-sidebar hold, so a restart made
+	 * while nobody looks is answered all the same; the next drawing reads the switch as it is left. A reader who ticks it
+	 * again keeps it: the restart is made once per file, and the count only grows when another is made.
+	 */
+	private void followPlaceholderRestarts(@Nullable Status next)
+	{
+		final int restarts = next == null ? 0 : next.placeholderRestarts();
+		if (restarts <= placeholderRestartsSeen)
+		{
+			return;
+		}
+		placeholderRestartsSeen = restarts;
+		if (!includeLegacy)
+		{
+			return;
+		}
+		includeLegacy = false;
+		renderLegacy();
+		if (!updating)
+		{
+			prefs.saveIncludeLegacy(false);
+		}
+	}
+
+	/**
 	 * The menu item's press (1.0.9 part 5, as the History tab's check box; the menu's since 1.1.0 part A): flips
-	 * "Include days before v1.0.9". Turning it ON asks first ({@link #LEGACY_ASK}); turning it off asks nothing.
+	 * "Include days before v1.0.9". Turning it ON asks first ({@link #LEGACY_ASK}, or {@link #LEGACY_PLACEHOLDERS_ASK}
+	 * for a placeholder restart, 1.1.1 part B); turning it off asks nothing.
 	 */
 	public void pressLegacy()
 	{
@@ -5713,7 +6313,7 @@ public class BankPriceMovementPanel extends PluginPanel
 			final boolean agreed;
 			try
 			{
-				agreed = legacyPrompt.ask(LEGACY_ASK);
+				agreed = legacyPrompt.ask(legacyAsk());
 			}
 			finally
 			{
@@ -5751,10 +6351,15 @@ public class BankPriceMovementPanel extends PluginPanel
 		showHistory();
 	}
 
-	/** The menu item ticked to the switch ({@code setSelected} fires no action, so nothing is written). */
+	/**
+	 * Both menus' items ticked to the switch ({@code setSelected} fires no action, so nothing is written), and - since 1.1.1
+	 * part I2 - the History tab's "i" icon put right with it: every road that moves the box or the record ends here.
+	 */
 	private void renderLegacy()
 	{
 		legacyItem.setSelected(includeLegacy);
+		historyLegacyItem.setSelected(includeLegacy);
+		syncLegacyInfo();
 	}
 
 	/**
@@ -5953,6 +6558,7 @@ public class BankPriceMovementPanel extends PluginPanel
 		closeSortMenu();
 		closeGearMenu();
 		closeListMenu();
+		closeHistoryMenu();
 	}
 
 	/**
@@ -6052,6 +6658,7 @@ public class BankPriceMovementPanel extends PluginPanel
 			SwingUtilities.invokeLater(() -> onRows(newRows, newStatus));
 			return;
 		}
+		followPlaceholderRestarts(newStatus);
 		if (carriesNewBank(newStatus))
 		{
 			// A read, not a re-statement: the hold is lifted for it (AS; see carriesNewBank). A no-op with the bank
@@ -6130,6 +6737,9 @@ public class BankPriceMovementPanel extends PluginPanel
 		// count is what "Show n more" sold the reader.
 		final int keepPages = newList ? 1 : Math.max(1, (shown + ROWS_PER_PAGE - 1) / ROWS_PER_PAGE);
 		final int keepScroll = newList ? 0 : bar.getValue();
+		// 1.1.1 part S: before the pages are built, so the bar is decided by the rows the panel holds and never by the
+		// ones the search left.
+		syncBarPolicy();
 		rowsColumn.removeAll();
 		shown = 0;
 		for (int page = 0; page < keepPages && shown < matching.size(); page++)
@@ -7379,6 +7989,31 @@ public class BankPriceMovementPanel extends PluginPanel
 	JPopupMenu listMenu()
 	{
 		return listMenu;
+	}
+
+	/**
+	 * The History options menu (1.1.1 part G2): the hidden-days item and its rule while the record holds such days, then
+	 * "Single chart colour". The one way the panel itself reaches it, to show it, hide it and ask whether it is up
+	 * ({@link #openHistoryMenu}, {@link #closeHistoryMenu}).
+	 */
+	JPopupMenu historyMenu()
+	{
+		return historyMenu;
+	}
+
+	/** The History options icon (1.1.1 part G2): in the caption row's east end while History shows, in no row otherwise. */
+	JLabel historyOptionsLabel()
+	{
+		return historyOptionsLabel;
+	}
+
+	/**
+	 * The caption's row (1.1.1 part G2): {@link #viewCaption} and, in History, the History options icon and - while the
+	 * record's early days are hidden for the placeholder bug and the box is off (part I2) - the "i" icon left of it.
+	 */
+	JPanel viewCaptionRow()
+	{
+		return viewCaptionRow;
 	}
 
 	Widgets.PlaceholderField maxField()

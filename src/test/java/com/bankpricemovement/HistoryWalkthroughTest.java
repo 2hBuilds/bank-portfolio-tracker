@@ -98,6 +98,7 @@ public class HistoryWalkthroughTest
 	private static final LocalDate THU = LocalDate.of(2026, 10, 1);
 	private static final LocalDate FRI = LocalDate.of(2026, 10, 2);
 	private static final LocalDate SAT = LocalDate.of(2026, 10, 3);
+	private static final LocalDate SUN = LocalDate.of(2026, 10, 4);
 	private static final LocalDate MON = LocalDate.of(2026, 10, 5);
 	/** The live fixture's own days: {@link PriceServiceTest#T0} is Tue 08 Sep 16:20 in Toronto. */
 	private static final LocalDate SEP_7 = PriceServiceTest.SEP_7;
@@ -139,6 +140,10 @@ public class HistoryWalkthroughTest
 		@Nullable
 		SidebarView view;
 		int optionSaves;
+		/** "Include days before ..." as stored (null = nothing stored), and how many times the panel wrote it. */
+		@Nullable
+		Boolean includeLegacy;
+		int legacySaves;
 
 		@Override
 		public RowFilter load()
@@ -165,6 +170,19 @@ public class HistoryWalkthroughTest
 			optionSaves++;
 			// BankPriceMovementPlugin.saveOptions: the keys written under the prefs-writer guard, then the service told.
 			service.setOptions(next);
+		}
+
+		@Override
+		public Boolean loadIncludeLegacy()
+		{
+			return includeLegacy;
+		}
+
+		@Override
+		public void saveIncludeLegacy(boolean include)
+		{
+			includeLegacy = include;
+			legacySaves++;
 		}
 
 		/**
@@ -211,9 +229,9 @@ public class HistoryWalkthroughTest
 		disk = store();
 		when(f.store.loadBankHistory(anyLong(), any())).thenAnswer(i ->
 			disk.loadBankHistory(i.<Long>getArgument(0), i.<String>getArgument(1)));
-		when(f.store.recordBankHistory(anyLong(), any(), any(), any())).thenAnswer(i ->
+		when(f.store.recordBankHistory(anyLong(), any(), any(), any(), any())).thenAnswer(i ->
 			disk.recordBankHistory(i.<Long>getArgument(0), i.<String>getArgument(1), i.<BankHistoryPoint>getArgument(2),
-				i.<LocalDate>getArgument(3)));
+				i.<LocalDate>getArgument(3), i.<BankHistorySeries.PlaceholderCheck>getArgument(4)));
 		when(f.store.loadBank(anyLong(), anyString())).thenAnswer(i ->
 			disk.loadBank(i.<Long>getArgument(0), i.<String>getArgument(1)));
 		doAnswer(i ->
@@ -1299,6 +1317,255 @@ public class HistoryWalkthroughTest
 		assertEquals(0, hist("carriedRows"));
 	}
 
+	/**
+	 * 17 (1.1.1 part B). A player with bank placeholders on - every reading until the update counted each placeholder as
+	 * one of its item - who had ticked "Include days before v1.0.9". Thursday to Saturday: a launch and a login a day,
+	 * the bank never opened, so every reading comes from the stored bank, and that judges nothing. Sunday: the login
+	 * records from the stored bank again; then the first FRESH read finds 5 placeholders with a quantity - the record
+	 * restarts on Sunday for the placeholder reason, the reading is written although its cells are the stored bank's,
+	 * the box is turned off once, and the series in memory is the file's. The reader ticks the box again; a second fresh
+	 * read that day and a fresh read on Monday move nothing, and the tick stands.
+	 */
+	@Test
+	public void s17_theFirstFreshReadWithPlaceholdersRestartsTheRecordOnce() throws Exception
+	{
+		store().saveBank(PriceServiceTest.bank(at(WED_30, 19, 0)));
+		config.includeLegacy = Boolean.TRUE;
+		for (LocalDate day : Arrays.asList(THU, FRI, SAT))
+		{
+			f.clock.set(at(day, 18, 0));
+			launch(false);
+			login(MAIN);
+			openSidebar();
+			assertNotNull(day + ": the login records from the stored bank", panel.status().bankHistory().on(day));
+		}
+		assertEquals(Arrays.asList(THU, FRI, SAT), days(onDisk(MAIN)));
+		assertNull("the stored bank judges nothing", onDisk(MAIN).placeholdersChecked());
+		assertNull(onDisk(MAIN).freshFrom());
+
+		f.clock.set(at(SUN, 18, 0));
+		launch(false);
+		login(MAIN);
+		openSidebar();
+		assertNotNull("Sunday's login reading", onDisk(MAIN).on(SUN));
+		assertNull("still not judged", panel.status().bankHistory().placeholdersChecked());
+		assertEquals(Boolean.TRUE, config.includeLegacy);
+
+		f.clock.set(at(SUN, 18, 30));
+		final BankSnapshot fresh = PriceServiceTest.bank(f.clock.get());
+		fresh.placeholderSlots = 5;
+		bankVisit(fresh);
+
+		final BankHistorySeries memory = panel.status().bankHistory();
+		assertEquals("the fresh start is the judging day", SUN, memory.freshFrom());
+		assertEquals(BankHistorySeries.WHY_PLACEHOLDERS, memory.freshWhy());
+		assertEquals(SUN, memory.placeholdersChecked());
+		assertEquals("the series in memory is the file's", onDisk(MAIN), memory);
+		assertEquals("nothing deleted", Arrays.asList(THU, FRI, SAT, SUN), days(onDisk(MAIN)));
+		assertEquals("written although its cells are the stored bank's", fresh.capturedAtMillis,
+			onDisk(MAIN).on(SUN).bankAtMillis());
+		assertEquals(1, panel.status().placeholderRestarts());
+		assertEquals("the box turned off", Boolean.FALSE, config.includeLegacy);
+		assertEquals("once", 1, config.legacySaves);
+		assertEquals("placeholders", hist("freshWhy"));
+		assertEquals("2026-10-04", hist("placeholdersChecked"));
+		assertEquals("2026-10-04", hist("freshFrom"));
+		pressView(SidebarView.HISTORY);
+		assertEquals("only Sunday is drawn", 1, hist("readings"));
+
+		// The reader ticks it again (the dialog answered Include; the config's road hands it back to the panel).
+		config.includeLegacy = Boolean.TRUE;
+		onEdt(() -> panel.setIncludeLegacy(true));
+		settle();
+		assertEquals("every day again", 4, hist("readings"));
+		f.clock.set(at(SUN, 19, 0));
+		final BankSnapshot later = withQuantity(PriceServiceTest.bank(f.clock.get()), BOX, 23);
+		later.placeholderSlots = 5;
+		bankVisit(later);
+		assertEquals("the same day's second fresh read restarts nothing", 1, panel.status().placeholderRestarts());
+		assertEquals(Boolean.TRUE, config.includeLegacy);
+		assertEquals(4, hist("readings"));
+		assertEquals(later.capturedAtMillis, onDisk(MAIN).on(SUN).bankAtMillis());
+		assertEquals(SUN, onDisk(MAIN).freshFrom());
+
+		// Monday, a new launch: judged once per file.
+		final byte[] beforeMonday = fileBytes(MAIN);
+		f.clock.set(at(MON, 18, 0));
+		launch(false);
+		login(MAIN);
+		openSidebar();
+		f.clock.set(at(MON, 18, 30));
+		final BankSnapshot monday = withQuantity(PriceServiceTest.bank(f.clock.get()), BOX, 40);
+		monday.placeholderSlots = 5;
+		bankVisit(monday);
+		final BankHistorySeries after = onDisk(MAIN);
+		assertNotEquals("Monday was written", Arrays.toString(beforeMonday), Arrays.toString(fileBytes(MAIN)));
+		assertEquals(Arrays.asList(THU, FRI, SAT, SUN, MON), days(after));
+		assertEquals(monday.capturedAtMillis, after.on(MON).bankAtMillis());
+		assertEquals("the fresh start stays on Sunday", SUN, after.freshFrom());
+		assertEquals(SUN, after.placeholdersChecked());
+		assertEquals(BankHistorySeries.WHY_PLACEHOLDERS, after.freshWhy());
+		assertEquals(after, panel.status().bankHistory());
+		assertEquals("no restart this session", 0, panel.status().placeholderRestarts());
+		assertEquals("the reader's tick stands", Boolean.TRUE, config.includeLegacy);
+		assertEquals(1, config.legacySaves);
+	}
+
+	/**
+	 * 18 (1.1.1 part B). The same three days for a player with NO placeholders: Sunday's first fresh read drops none, so
+	 * the record is judged and nothing is hidden - the file gains the day it was judged at that write and nothing else,
+	 * the box ticked for 1.0.9 is left alone. Monday, with placeholders turned on since: judged once, nothing moves.
+	 */
+	@Test
+	public void s18_aFreshReadWithNoPlaceholdersJudgesTheRecordAndHidesNothing() throws Exception
+	{
+		store().saveBank(PriceServiceTest.bank(at(WED_30, 19, 0)));
+		config.includeLegacy = Boolean.TRUE;
+		for (LocalDate day : Arrays.asList(THU, FRI, SAT, SUN))
+		{
+			f.clock.set(at(day, 18, 0));
+			launch(false);
+			login(MAIN);
+			openSidebar();
+		}
+		f.clock.set(at(SUN, 18, 30));
+		final BankSnapshot fresh = withQuantity(PriceServiceTest.bank(f.clock.get()), BOX, 23);
+		fresh.placeholderSlots = 0;
+		bankVisit(fresh);
+
+		final BankHistorySeries memory = panel.status().bankHistory();
+		assertEquals(SUN, memory.placeholdersChecked());
+		assertNull("nothing hidden", memory.freshFrom());
+		assertNull(memory.freshWhy());
+		assertFalse(memory.hasLegacyDays());
+		assertEquals("the series in memory is the file's", onDisk(MAIN), memory);
+		final String written = new String(fileBytes(MAIN), StandardCharsets.UTF_8);
+		assertTrue(written, written.contains("\"placeholdersChecked\":\"2026-10-04\""));
+		assertFalse(written, written.contains("freshFrom"));
+		assertFalse(written, written.contains("freshWhy"));
+		assertEquals(0, panel.status().placeholderRestarts());
+		assertEquals("the box is left alone", Boolean.TRUE, config.includeLegacy);
+		assertEquals(0, config.legacySaves);
+		pressView(SidebarView.HISTORY);
+		assertEquals("every day drawn", 4, hist("readings"));
+
+		f.clock.set(at(MON, 18, 0));
+		launch(false);
+		login(MAIN);
+		openSidebar();
+		f.clock.set(at(MON, 18, 30));
+		final BankSnapshot monday = withQuantity(PriceServiceTest.bank(f.clock.get()), BOX, 40);
+		monday.placeholderSlots = 5;
+		bankVisit(monday);
+		final BankHistorySeries after = onDisk(MAIN);
+		assertEquals(Arrays.asList(THU, FRI, SAT, SUN, MON), days(after));
+		assertNull("judged once: a later read with placeholders hides nothing", after.freshFrom());
+		assertEquals(SUN, after.placeholdersChecked());
+		assertEquals(after, panel.status().bankHistory());
+		assertEquals(0, panel.status().placeholderRestarts());
+		assertEquals(Boolean.TRUE, config.includeLegacy);
+		assertEquals(5, hist("readings"));
+	}
+
+	/**
+	 * 19 (1.1.1 part B, with 10b2's clock). The first fresh read with placeholders lands while the clock stands a year
+	 * back: the reading is drawn and never sent (H1), and the judgement waits too - made on a day the clock has wrong it
+	 * would use the file's one judgement up and hide nothing. The clock corrected while the client runs, the re-check's
+	 * reading of the same bank judges the record on the real day.
+	 */
+	@Test
+	public void s19_aFreshReadUnderAClockAYearBackJudgesNothingUntilTheClockIsRight() throws Exception
+	{
+		seedMonToWed();
+		final byte[] bytes = fileBytes(MAIN);
+		f.clock.set(at(THU.minusYears(1), 12, 0));
+		launch(false);
+		login(MAIN);
+		openSidebar();
+		final BankSnapshot fresh = PriceServiceTest.bank(f.clock.get());
+		fresh.placeholderSlots = 5;
+		bankVisit(fresh);
+
+		assertArrayEquals("nothing written", bytes, fileBytes(MAIN));
+		assertNull("and nothing judged", panel.status().bankHistory().placeholdersChecked());
+		assertNull(panel.status().bankHistory().freshWhy());
+		assertEquals(0, panel.status().placeholderRestarts());
+
+		f.clock.set(at(THU, 12, 5));
+		tick();
+
+		final BankHistorySeries after = onDisk(MAIN);
+		assertEquals(Arrays.asList(MON_28, TUE_29, WED_30, THU), days(after));
+		assertEquals("judged on the real day", THU, after.placeholdersChecked());
+		assertEquals(THU, after.freshFrom());
+		assertEquals(BankHistorySeries.WHY_PLACEHOLDERS, after.freshWhy());
+		assertEquals(after, panel.status().bankHistory());
+		assertEquals(1, panel.status().placeholderRestarts());
+	}
+
+	/**
+	 * 20 (1.1.1 part B). The judgement reaches the file in the session that made it. Friday's first fresh read drops no
+	 * placeholder and holds exactly what the stored bank held, so its cells equal the login's reading of the same day -
+	 * and it is written all the same: the file carries {@code placeholdersChecked} and no fresh start. Saturday, a new
+	 * launch: a fresh read with placeholders judges nothing again, and with its cells unchanged writes nothing.
+	 */
+	@Test
+	public void s20_anUnaffectedJudgementIsWrittenEvenWithUnchangedCells() throws Exception
+	{
+		store().saveBank(PriceServiceTest.bank(at(WED_30, 19, 0)));
+		for (LocalDate day : Arrays.asList(THU, FRI))
+		{
+			f.clock.set(at(day, 18, 0));
+			launch(false);
+			login(MAIN);
+			openSidebar();
+		}
+		final BankHistoryPoint login = onDisk(MAIN).on(FRI);
+		assertNotNull("Friday's login reading", login);
+
+		f.clock.set(at(FRI, 18, 30));
+		final BankSnapshot fresh = PriceServiceTest.bank(f.clock.get());
+		fresh.placeholderSlots = 0;
+		final int before = writes();
+		bankVisit(fresh);
+
+		assertEquals("the judging reading is written", before + 1, writes());
+		final BankHistorySeries judged = onDisk(MAIN);
+		for (int cell = 0; cell < BankHistoryPoint.CELLS; cell++)
+		{
+			assertEquals("its cells are the login reading's", login.card(cell), judged.on(FRI).card(cell));
+			assertEquals(login.guide(cell), judged.on(FRI).guide(cell));
+		}
+		assertEquals(fresh.capturedAtMillis, judged.on(FRI).bankAtMillis());
+		assertEquals(FRI, judged.placeholdersChecked());
+		assertNull(judged.freshFrom());
+		assertNull(judged.freshWhy());
+		final String written = new String(fileBytes(MAIN), StandardCharsets.UTF_8);
+		assertTrue(written, written.contains("\"placeholdersChecked\":\"2026-10-02\""));
+		assertFalse(written, written.contains("freshFrom"));
+		assertFalse(written, written.contains("freshWhy"));
+		assertEquals(judged, panel.status().bankHistory());
+
+		f.clock.set(at(SAT, 18, 0));
+		launch(false);
+		login(MAIN);
+		openSidebar();
+		assertEquals("the second launch reads the judgement back", FRI, panel.status().bankHistory().placeholdersChecked());
+		f.clock.set(at(SAT, 18, 30));
+		final BankSnapshot sat = PriceServiceTest.bank(f.clock.get());
+		sat.placeholderSlots = 5;
+		final int satBefore = writes();
+		bankVisit(sat);
+
+		assertEquals("judged once, and unchanged cells write nothing", satBefore, writes());
+		final BankHistorySeries after = onDisk(MAIN);
+		assertEquals(Arrays.asList(THU, FRI, SAT), days(after));
+		assertEquals(FRI, after.placeholdersChecked());
+		assertNull(after.freshFrom());
+		assertNotEquals(sat.capturedAtMillis, after.on(SAT).bankAtMillis());
+		assertEquals(0, panel.status().placeholderRestarts());
+	}
+
 	// ================================================================================================ scenario bodies
 
 	private void nightOwl(ZoneId owlZone) throws Exception
@@ -1547,10 +1814,10 @@ public class HistoryWalkthroughTest
 		final String[] out = new String[1];
 		onEdt(() ->
 		{
-			// The strip: the toggle and, under it, its one caption line.
-			for (Component c : LookRenderer.find(panel, Widgets.Toggle.class).getParent().getComponents())
+			// The strip: the toggle and, under it, its caption row (1.1.1 part G2) - the one caption line, and in History the icon.
+			for (Component c : panel.viewCaptionRow().getComponents())
 			{
-				if (c instanceof JLabel)
+				if (c instanceof JLabel && ((JLabel) c).getIcon() == null)
 				{
 					out[0] = ((JLabel) c).getText();
 				}
@@ -1828,7 +2095,8 @@ public class HistoryWalkthroughTest
 		final long[] cells = new long[BankHistoryPoint.CELLS];
 		cells[BankHistoryPoint.BANK_TRADEABLE] = total;
 		final long noon = at(day, 12, 0);
-		assertTrue(store().recordBankHistory(account, PROFILE, new BankHistoryPoint(day, noon, noon, cells, null), SEEDING));
+		assertTrue(store().recordBankHistory(account, PROFILE, new BankHistoryPoint(day, noon, noon, cells, null), SEEDING,
+			null));
 	}
 
 	/**

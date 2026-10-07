@@ -118,7 +118,7 @@ public class LegacyDialogTest
 		{
 			return;
 		}
-		assertFalse(LegacyDialog.ask(null, BankPriceMovementPanel.LEGACY_ASK));
+		assertFalse(LegacyDialog.ask(null, BankPriceMovementPanel.LEGACY_TEXT, BankPriceMovementPanel.LEGACY_ASK));
 	}
 
 	// ---- the window itself, where there is a display
@@ -131,7 +131,8 @@ public class LegacyDialogTest
 			return;
 		}
 		final LegacyDialog[] made = new LegacyDialog[1];
-		SwingUtilities.invokeAndWait(() -> made[0] = LegacyDialog.window((Window) null, BankPriceMovementPanel.LEGACY_ASK));
+		SwingUtilities.invokeAndWait(() -> made[0] = LegacyDialog.window((Window) null, BankPriceMovementPanel.LEGACY_TEXT,
+			BankPriceMovementPanel.LEGACY_ASK));
 		final LegacyDialog window = made[0];
 		assertNotNull(window);
 
@@ -150,6 +151,28 @@ public class LegacyDialogTest
 		});
 	}
 
+	/** 1.1.1 part B: the window takes the words the panel picked for the record's reason - title and question both. */
+	@Test
+	public void theWindowCarriesTheWordsItIsGiven() throws Exception
+	{
+		final LegacyDialog model = new LegacyDialog(BankPriceMovementPanel.LEGACY_PLACEHOLDERS_ASK);
+		assertEquals("the question is the one given", BankPriceMovementPanel.LEGACY_PLACEHOLDERS_ASK,
+			model.textArea.getText());
+		if (GraphicsEnvironment.isHeadless())
+		{
+			return;
+		}
+		final LegacyDialog[] made = new LegacyDialog[1];
+		SwingUtilities.invokeAndWait(() -> made[0] = LegacyDialog.window((Window) null,
+			BankPriceMovementPanel.LEGACY_PLACEHOLDERS_TEXT, BankPriceMovementPanel.LEGACY_PLACEHOLDERS_ASK));
+		SwingUtilities.invokeAndWait(() ->
+		{
+			final JDialog dialog = (JDialog) SwingUtilities.getWindowAncestor(made[0].content);
+			assertEquals(BankPriceMovementPanel.LEGACY_PLACEHOLDERS_TEXT, dialog.getTitle());
+			dialog.dispose();
+		});
+	}
+
 	@Test
 	public void includeClosesTheWindowWithYesAndCancelAndEscapeCloseItWithNo() throws Exception
 	{
@@ -160,7 +183,7 @@ public class LegacyDialogTest
 		for (final String how : new String[]{"include", "cancel", "escape"})
 		{
 			final LegacyDialog[] made = new LegacyDialog[1];
-			SwingUtilities.invokeAndWait(() -> made[0] = LegacyDialog.window((Window) null, "?"));
+			SwingUtilities.invokeAndWait(() -> made[0] = LegacyDialog.window((Window) null, "?", "?"));
 			final LegacyDialog window = made[0];
 			SwingUtilities.invokeAndWait(() ->
 			{

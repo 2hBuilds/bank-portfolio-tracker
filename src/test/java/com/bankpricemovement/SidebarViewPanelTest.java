@@ -1,7 +1,10 @@
 package com.bankpricemovement;
 
+import java.awt.Color;
 import java.awt.Component;
 import java.awt.Container;
+import java.awt.Point;
+import java.awt.Rectangle;
 import java.awt.event.InputEvent;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseListener;
@@ -16,6 +19,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 import javax.annotation.Nullable;
 import javax.swing.JLabel;
+import javax.swing.JToolTip;
 import javax.swing.SwingUtilities;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.ui.ColorScheme;
@@ -104,6 +108,15 @@ public class SidebarViewPanelTest
 		public void saveIncludeLegacy(boolean include)
 		{
 			legacySaves.add(include);
+		}
+
+		/** 1.1.1 part G2: every write of "Single chart colour", in order. */
+		final List<Boolean> singleSaves = new ArrayList<>();
+
+		@Override
+		public void saveSingleChartColour(boolean single)
+		{
+			singleSaves.add(single);
 		}
 	}
 
@@ -563,14 +576,16 @@ public class SidebarViewPanelTest
 
 	/**
 	 * The settings menu's "Include days before v1.0.9" item, or null while it is not in the menu (1.1.0 part A moved
-	 * it there from the History tab's header).
+	 * it there from the History tab's header) - in either of its wordings ("... v1.1.1" for a placeholder restart, 1.1.1
+	 * part B).
 	 */
 	private javax.swing.JCheckBoxMenuItem legacyItem()
 	{
 		for (Component c : panel.heroMenu().getComponents())
 		{
 			if (c instanceof javax.swing.JCheckBoxMenuItem
-				&& BankPriceMovementPanel.LEGACY_TEXT.equals(((javax.swing.JCheckBoxMenuItem) c).getText()))
+				&& (BankPriceMovementPanel.LEGACY_TEXT.equals(((javax.swing.JCheckBoxMenuItem) c).getText())
+				|| BankPriceMovementPanel.LEGACY_PLACEHOLDERS_TEXT.equals(((javax.swing.JCheckBoxMenuItem) c).getText())))
 			{
 				return (javax.swing.JCheckBoxMenuItem) c;
 			}
@@ -927,6 +942,941 @@ public class SidebarViewPanelTest
 		onEdt(() -> assertTrue(legacyItemShows()));
 	}
 
+	// ---------------------------------------------------------------- 1.1.1 part B: days before v1.1.1
+
+	/**
+	 * Six readings like {@link #withLegacyDays()}, the fresh start standing on yesterday's because a fresh bank read found
+	 * placeholders with a quantity there: the days before it counted them as items.
+	 */
+	private static BankHistorySeries withPlaceholderDays()
+	{
+		return series(TODAY.minusDays(7), TODAY.minusDays(6), TODAY.minusDays(4), TODAY.minusDays(3),
+			TODAY.minusDays(1), TODAY).judged(new BankHistorySeries.PlaceholderCheck(TODAY.minusDays(1), true));
+	}
+
+	/** {@link #status} counting {@code restarts} placeholder restarts, as the service's status does. */
+	private static PriceService.Status restarted(BankHistorySeries series, int restarts)
+	{
+		final PriceService.Status s = status(series, VALUE_NOW, NOW - 60_000L);
+		when(s.placeholderRestarts()).thenReturn(restarts);
+		return s;
+	}
+
+	/** The words, the hover and the question for the placeholder reason are the user's; one place pins them. */
+	@Test
+	public void thePlaceholderWordsAreVerbatim()
+	{
+		assertEquals("Include days before v1.1.1", BankPriceMovementPanel.LEGACY_PLACEHOLDERS_TEXT);
+		assertEquals("Days before v1.1.1 counted bank placeholders as items.",
+			BankPriceMovementPanel.LEGACY_PLACEHOLDERS_TIP);
+		assertEquals("Days before v1.1.1 counted bank placeholders as items, so their net worth totals may read high."
+			+ " Include them anyway?", BankPriceMovementPanel.LEGACY_PLACEHOLDERS_ASK);
+		assertEquals("placeholders", BankHistorySeries.WHY_PLACEHOLDERS);
+	}
+
+	/**
+	 * The item, its hover and its question follow the record's {@code freshWhy}: a placeholder restart reads "... v1.1.1"
+	 * in all three, a record whose days are hidden for the 1.0.9 reason reads exactly as before, and a later status
+	 * changes the words both ways. The cut is the same cut whatever the reason.
+	 */
+	@Test
+	public void theItemItsHoverAndItsQuestionFollowTheRecordsReason() throws Exception
+	{
+		final Asked no = new Asked(false);
+		build(no);
+		publish(rows(3), status(withPlaceholderDays(), VALUE_NOW, NOW - 60_000L));
+		onEdt(() ->
+		{
+			panel.pressView(SidebarView.HISTORY);
+			final javax.swing.JCheckBoxMenuItem item = legacyItem();
+			assertNotNull("the menu carries it", item);
+			assertEquals(BankPriceMovementPanel.LEGACY_PLACEHOLDERS_TEXT, item.getText());
+			assertNull("no hover with the switch off", item.getToolTipText());
+			panel.applyOptions(ViewOptions.DEFAULT.withShowHoverText(true));
+			assertEquals(BankPriceMovementPanel.LEGACY_PLACEHOLDERS_TIP, item.getToolTipText());
+			assertEquals("the same cut: yesterday and today", 2, readings());
+			assertEquals("placeholders", panel.bankHistoryState().get("freshWhy"));
+			assertEquals(TODAY.minusDays(1).toString(), panel.bankHistoryState().get("placeholdersChecked"));
+			assertEquals(TODAY.minusDays(1).toString(), panel.bankHistoryState().get("freshFrom"));
+			panel.pressLegacy();
+			assertEquals(Arrays.asList(BankPriceMovementPanel.LEGACY_PLACEHOLDERS_ASK), no.questions);
+			assertFalse(legacyItem().isSelected());
+		});
+		publish(rows(3), status(withLegacyDays(), VALUE_NOW, NOW - 60_000L));
+		onEdt(() ->
+		{
+			final javax.swing.JCheckBoxMenuItem item = legacyItem();
+			assertEquals("the 1.0.9 words for a G.E.-only record", BankPriceMovementPanel.LEGACY_TEXT, item.getText());
+			assertEquals(BankPriceMovementPanel.LEGACY_TIP, item.getToolTipText());
+			assertNull(panel.bankHistoryState().get("freshWhy"));
+			assertNull(panel.bankHistoryState().get("placeholdersChecked"));
+			panel.pressLegacy();
+			assertEquals(Arrays.asList(BankPriceMovementPanel.LEGACY_PLACEHOLDERS_ASK, BankPriceMovementPanel.LEGACY_ASK),
+				no.questions);
+			panel.applyOptions(ViewOptions.DEFAULT);
+			assertNull(item.getToolTipText());
+		});
+		publish(rows(3), status(withPlaceholderDays(), VALUE_NOW, NOW - 60_000L));
+		onEdt(() -> assertEquals(BankPriceMovementPanel.LEGACY_PLACEHOLDERS_TEXT, legacyItem().getText()));
+		assertTrue("nothing written: every question was answered no", prefs.legacySaves.isEmpty());
+	}
+
+	/**
+	 * A status counting a placeholder restart the panel has not answered turns a ticked box OFF once and writes that; the
+	 * same count again leaves the answer alone - ticked again, it stays ticked - and only a further restart turns it off
+	 * again. A restart with the box already off writes nothing. Answered while the sidebar is hidden too.
+	 */
+	@Test
+	public void aPlaceholderRestartTurnsATickedBoxOffOnce() throws Exception
+	{
+		prefs.storedLegacy = Boolean.TRUE;
+		final Asked yes = new Asked(true);
+		build(yes);
+		publish(rows(3), restarted(withLegacyDays(), 0));
+		onEdt(() ->
+		{
+			panel.pressView(SidebarView.HISTORY);
+			assertTrue("ticked for the 1.0.9 reason", legacyItem().isSelected());
+			assertEquals(6, readings());
+		});
+		assertTrue(prefs.legacySaves.isEmpty());
+
+		publish(rows(3), restarted(withPlaceholderDays(), 1));
+		onEdt(() ->
+		{
+			assertFalse("turned off by the restart", legacyItem().isSelected());
+			assertTrue(panel.describe(), panel.describe().contains("\"includeLegacy\":false"));
+			assertEquals("the inflated days are hidden", 2, readings());
+		});
+		assertEquals("and the stored setting follows", Arrays.asList(false), prefs.legacySaves);
+
+		publish(rows(3), restarted(withPlaceholderDays(), 1));
+		onEdt(() ->
+		{
+			assertFalse(legacyItem().isSelected());
+			panel.pressLegacy();
+			assertEquals(Arrays.asList(BankPriceMovementPanel.LEGACY_PLACEHOLDERS_ASK), yes.questions);
+			assertTrue("the reader ticks it again", legacyItem().isSelected());
+		});
+		publish(rows(3), restarted(withPlaceholderDays(), 1));
+		onEdt(() -> assertTrue("the same restart again leaves the answer alone", legacyItem().isSelected()));
+		assertEquals(Arrays.asList(false, true), prefs.legacySaves);
+
+		onEdt(panel::onDeactivate);
+		publish(rows(3), restarted(withPlaceholderDays(), 2));
+		onEdt(() -> assertTrue(panel.describe(), panel.describe().contains("\"includeLegacy\":false")));
+		assertEquals("a further restart, answered while hidden", Arrays.asList(false, true, false), prefs.legacySaves);
+
+		publish(rows(3), restarted(withPlaceholderDays(), 3));
+		assertEquals("with the box off there is nothing to turn off", Arrays.asList(false, true, false), prefs.legacySaves);
+	}
+
+	// ---------------------------------------------------------------- 1.1.1 part G2: two gears and a notice on the History tab
+
+	/** The History options menu's twin of the settings menu's include item, or null while it is not in the menu. */
+	private javax.swing.JCheckBoxMenuItem historyLegacyItem()
+	{
+		for (Component c : panel.historyMenu().getComponents())
+		{
+			if (c instanceof javax.swing.JCheckBoxMenuItem && !(c instanceof SwatchRow)
+				&& (BankPriceMovementPanel.LEGACY_TEXT.equals(((javax.swing.JCheckBoxMenuItem) c).getText())
+				|| BankPriceMovementPanel.LEGACY_PLACEHOLDERS_TEXT.equals(((javax.swing.JCheckBoxMenuItem) c).getText())))
+			{
+				return (javax.swing.JCheckBoxMenuItem) c;
+			}
+		}
+		return null;
+	}
+
+	/** The History options menu's "Single chart colour" row. */
+	private SwatchRow historyChartRow()
+	{
+		for (Component c : panel.historyMenu().getComponents())
+		{
+			if (c instanceof SwatchRow)
+			{
+				return (SwatchRow) c;
+			}
+		}
+		fail("no Single chart colour row in the History options menu");
+		return null;
+	}
+
+	/** The settings menu's "Single chart colour" row. */
+	private SwatchRow settingsChartRow()
+	{
+		for (Component c : panel.heroMenu().getComponents())
+		{
+			if (c instanceof SwatchRow && BankPriceMovementPanel.SINGLE_CHART_COLOUR_TEXT.equals(((SwatchRow) c).getText()))
+			{
+				return (SwatchRow) c;
+			}
+		}
+		fail("no Single chart colour row in the settings menu");
+		return null;
+	}
+
+	/** The "i" icon in the caption's row (1.1.1 part I2), or null while the row holds none: found by its hover, as a user would. */
+	@Nullable
+	private JLabel infoIcon()
+	{
+		for (Component c : panel.viewCaptionRow().getComponents())
+		{
+			if (c instanceof JLabel && BankPriceMovementPanel.LEGACY_INFO_TIP.equals(((JLabel) c).getToolTipText()))
+			{
+				return (JLabel) c;
+			}
+		}
+		return null;
+	}
+
+	/** Whether the caption's row holds the "i" icon just now. */
+	private boolean infoShowing()
+	{
+		return infoIcon() != null;
+	}
+
+	/**
+	 * Where {@code icon}'s 12 x 12 picture is painted, in the panel's coordinates, on a panel already laid out: at the label's left
+	 * inset and centred in what its top inset leaves of the row ({@link LookRenderer#historyOptionsIcon}'s rule, for any label).
+	 */
+	private Rectangle pictureBox(JLabel icon)
+	{
+		final java.awt.Insets in = icon.getInsets();
+		final int h = icon.getIcon().getIconHeight();
+		return SwingUtilities.convertRectangle(icon.getParent(), new Rectangle(icon.getX() + in.left,
+			icon.getY() + in.top + (icon.getHeight() - in.top - in.bottom - h) / 2, icon.getIcon().getIconWidth(), h), panel);
+	}
+
+	/** The pointer entering or leaving {@code c}, delivered to its listeners. */
+	private static void mouse(Component c, int id)
+	{
+		final MouseEvent e = new MouseEvent(c, id, 0L, 0, 1, 1, 0, false);
+		for (MouseListener l : c.getMouseListeners())
+		{
+			if (id == MouseEvent.MOUSE_ENTERED)
+			{
+				l.mouseEntered(e);
+			}
+			else
+			{
+				l.mouseExited(e);
+			}
+		}
+	}
+
+	/** The picture an icon label holds (the icons here are all images drawn pixel by pixel). */
+	private static java.awt.image.BufferedImage picture(JLabel icon)
+	{
+		return (java.awt.image.BufferedImage) ((javax.swing.ImageIcon) icon.getIcon()).getImage();
+	}
+
+	/** The words of the hover and of the menu are the user's, and none of them says "gear". */
+	@Test
+	public void g2_theWordsAreVerbatimAndNeverSayGear()
+	{
+		assertEquals("Days before v1.1.1 counted bank placeholders as items, so they may read high. Restore them in settings.",
+			BankPriceMovementPanel.LEGACY_INFO_TIP_TEXT);
+		assertEquals("History options", BankPriceMovementPanel.HISTORY_OPTIONS_TIP);
+		for (String said : new String[]{BankPriceMovementPanel.LEGACY_INFO_TIP, BankPriceMovementPanel.LEGACY_INFO_TIP_TEXT,
+			BankPriceMovementPanel.HISTORY_OPTIONS_TIP, BankPriceMovementPanel.LEGACY_TEXT,
+			BankPriceMovementPanel.LEGACY_PLACEHOLDERS_TEXT})
+		{
+			assertFalse(said, said.toLowerCase().contains("gear"));
+		}
+	}
+
+	/**
+	 * G1: the gears are on the History caption's row - at its east end, the caption's text in the middle - and in no row at all
+	 * in Items, which keeps the strip exactly as it was (the toggle and the caption's row, the row exactly as tall as the caption
+	 * label was). Their one-phrase hover is on with "Show hover text" off and on.
+	 */
+	@Test
+	public void g2_theGearsStandOnTheHistoryCaptionAndNotInItems() throws Exception
+	{
+		build();
+		publish(rows(3), status(BankHistorySeries.EMPTY, VALUE_NOW, NOW - 60_000L));
+		onEdt(() ->
+		{
+			assertNull("Items: the icon is in no row", panel.historyOptionsLabel().getParent());
+			assertEquals("Items: the row holds the caption alone", Arrays.asList(caption()),
+				Arrays.asList(panel.viewCaptionRow().getComponents()));
+			assertEquals("the strip is the toggle and the caption's row", Arrays.asList(toggle(), panel.viewCaptionRow()),
+				Arrays.asList(strip().getComponents()));
+			assertEquals("the row is as tall as the caption was", caption().getPreferredSize().height,
+				panel.viewCaptionRow().getPreferredSize().height);
+
+			panel.pressView(SidebarView.HISTORY);
+			final JLabel gears = panel.historyOptionsLabel();
+			assertSame("History: the icon is in the caption's row", panel.viewCaptionRow(), gears.getParent());
+			assertSame("at its east end: the row's last child", gears,
+				panel.viewCaptionRow().getComponent(panel.viewCaptionRow().getComponentCount() - 1));
+			assertEquals("the caption is unchanged", BankPriceMovementPanel.HISTORY_CAPTION, caption().getText());
+			assertEquals(Arrays.asList(toggle(), panel.viewCaptionRow()), Arrays.asList(strip().getComponents()));
+			assertEquals("the row is no taller with the icon in it", caption().getPreferredSize().height,
+				panel.viewCaptionRow().getPreferredSize().height);
+			assertEquals("History options", gears.getToolTipText());
+			panel.applyOptions(ViewOptions.DEFAULT.withShowHoverText(true));
+			assertEquals("the same word with the switch on", BankPriceMovementPanel.HISTORY_OPTIONS_TIP,
+				gears.getToolTipText());
+			panel.applyOptions(ViewOptions.DEFAULT);
+			assertEquals("and off: always on", BankPriceMovementPanel.HISTORY_OPTIONS_TIP, gears.getToolTipText());
+			assertEquals("the List options gears, drawn again", GearsIcon.SIZE, gears.getIcon().getIconWidth());
+
+			panel.pressView(SidebarView.ITEMS);
+			assertNull("back in Items the icon is gone again", gears.getParent());
+			assertEquals(Arrays.asList(caption()), Arrays.asList(panel.viewCaptionRow().getComponents()));
+		});
+	}
+
+	/**
+	 * G1: a LEFT press on the gears opens the History options menu under them, a right press does nothing, a second press takes
+	 * the menu down and is remembered as the close (the reopen guard, per its own stamp), and leaving History takes an open
+	 * menu down with the icon.
+	 */
+	@Test
+	public void g2_pressingTheGearsOpensTheMenuAndASecondPressTakesItDown() throws Exception
+	{
+		build();
+		publish(rows(3), status(BankHistorySeries.EMPTY, VALUE_NOW, NOW - 60_000L));
+		final javax.swing.JFrame[] host = new javax.swing.JFrame[1];
+		try
+		{
+			onEdt(() ->
+			{
+				panel.pressView(SidebarView.HISTORY);
+				host[0] = new javax.swing.JFrame();
+				host[0].setFocusableWindowState(false);
+				host[0].add(panel);
+				host[0].setSize(400, 900);
+				host[0].setLocation(-2000, -2000);
+				host[0].setVisible(true);
+			});
+			onEdt(() ->
+			{
+				final JLabel gears = panel.historyOptionsLabel();
+				press(gears, MouseEvent.BUTTON3);
+				assertFalse("a right press is a menu gesture, never a press", panel.historyMenu().isVisible());
+
+				press(gears, MouseEvent.BUTTON1);
+				assertTrue("the first press opens it", panel.historyMenu().isVisible());
+				assertSame("under the icon", gears, panel.historyMenu().getInvoker());
+				assertFalse("not the List options menu", panel.listMenu().isVisible());
+
+				press(gears, MouseEvent.BUTTON1);
+				assertFalse("the second press closes it", panel.historyMenu().isVisible());
+				assertFalse("and is the close the reopen guard remembers", panel.historyPressOpens());
+
+				// Leaving History takes the icon away, and an open menu with it.
+				panel.setClock(() -> NOW + 10_000L);
+				press(gears, MouseEvent.BUTTON1);
+				assertTrue(panel.historyMenu().isVisible());
+				panel.pressView(SidebarView.ITEMS);
+				assertFalse("the menu goes with the icon", panel.historyMenu().isVisible());
+			});
+		}
+		finally
+		{
+			onEdt(() ->
+			{
+				if (host[0] != null)
+				{
+					host[0].dispose();
+				}
+			});
+		}
+	}
+
+	/** The reopen guard, driven through the panel's own clock: 300 ms, about the LAST close, and its own stamp. */
+	@Test
+	public void g2_aPressWithinTheGuardOfACloseOpensNothingAndOneAfterItOpens() throws Exception
+	{
+		build();
+		final java.util.concurrent.atomic.AtomicLong now = new java.util.concurrent.atomic.AtomicLong(NOW);
+		onEdt(() ->
+		{
+			panel.setClock(now::get);
+			assertTrue("nothing has closed yet", panel.historyPressOpens());
+			final javax.swing.event.PopupMenuEvent e = new javax.swing.event.PopupMenuEvent(panel.historyMenu());
+			for (javax.swing.event.PopupMenuListener l : panel.historyMenu().getPopupMenuListeners())
+			{
+				l.popupMenuWillBecomeInvisible(e);
+			}
+			now.set(NOW + BankPriceMovementPanel.GEAR_REOPEN_GUARD_MILLIS - 1);
+			assertFalse(panel.historyPressOpens());
+			now.set(NOW + BankPriceMovementPanel.GEAR_REOPEN_GUARD_MILLIS);
+			assertTrue("over at exactly 300 ms", panel.historyPressOpens());
+			assertTrue("the settings icon's guard is not this one", panel.gearPressOpens());
+			assertTrue("nor the List options icon's", panel.listPressOpens());
+		});
+	}
+
+	/**
+	 * G1: the menu holds the include item and a rule ONLY while hidden days exist, in either wording (v1.1.1 for the placeholder
+	 * restart, v1.0.9 otherwise), then "Single chart colour"; with none, "Single chart colour" alone. The item's hover is behind
+	 * "Show hover text" like the settings menu's, in the words for the record's reason.
+	 */
+	@Test
+	public void g2_theMenuHoldsTheIncludeItemOnlyWhileHiddenDaysExist() throws Exception
+	{
+		build(new Asked(true));
+		publish(rows(3), status(BankHistorySeries.EMPTY, VALUE_NOW, NOW - 60_000L));
+		onEdt(() ->
+		{
+			panel.pressView(SidebarView.HISTORY);
+			final Component[] none = panel.historyMenu().getComponents();
+			assertEquals("no hidden days: one row", 1, none.length);
+			assertTrue(none[0] instanceof SwatchRow);
+			assertEquals(BankPriceMovementPanel.SINGLE_CHART_COLOUR_TEXT, ((SwatchRow) none[0]).getText());
+			assertNull(historyLegacyItem());
+		});
+		publish(rows(3), status(withPlaceholderDays(), VALUE_NOW, NOW - 60_000L));
+		onEdt(() ->
+		{
+			final Component[] c = panel.historyMenu().getComponents();
+			assertEquals("the item, a rule, the chart row", 3, c.length);
+			assertEquals(BankPriceMovementPanel.LEGACY_PLACEHOLDERS_TEXT, ((javax.swing.JCheckBoxMenuItem) c[0]).getText());
+			assertTrue("a rule under it", c[1] instanceof javax.swing.JSeparator);
+			assertTrue(c[2] instanceof SwatchRow);
+			final javax.swing.JCheckBoxMenuItem item = historyLegacyItem();
+			assertSame(c[0], item);
+			assertEquals("the menu's face", Widgets.sans(12), item.getFont());
+			assertFalse("unticked", item.isSelected());
+			assertNull("no hover with the switch off", item.getToolTipText());
+			panel.applyOptions(ViewOptions.DEFAULT.withShowHoverText(true));
+			assertEquals(BankPriceMovementPanel.LEGACY_PLACEHOLDERS_TIP, item.getToolTipText());
+			panel.applyOptions(ViewOptions.DEFAULT);
+		});
+		publish(rows(3), status(withLegacyDays(), VALUE_NOW, NOW - 60_000L));
+		onEdt(() ->
+		{
+			assertEquals("the 1.0.9 words for a G.E.-only record", BankPriceMovementPanel.LEGACY_TEXT,
+				historyLegacyItem().getText());
+			assertEquals(3, panel.historyMenu().getComponentCount());
+			panel.applyOptions(ViewOptions.DEFAULT.withShowHoverText(true));
+			assertEquals(BankPriceMovementPanel.LEGACY_TIP, historyLegacyItem().getToolTipText());
+			panel.applyOptions(ViewOptions.DEFAULT);
+		});
+		publish(rows(3), status(series(TODAY.minusDays(2), TODAY.minusDays(1), TODAY), VALUE_NOW, NOW - 60_000L));
+		onEdt(() ->
+		{
+			assertNull("the days are gone: so is the item", historyLegacyItem());
+			assertEquals("and its rule", 1, panel.historyMenu().getComponentCount());
+		});
+	}
+
+	/**
+	 * G3: ticking the include item from the History options menu is the settings menu's road - the dialog's question in the
+	 * record's words, the config key written once, the cut changed, BOTH menus' items ticked - and unticking asks nothing; an
+	 * answer of no changes and writes nothing; a placeholder restart turns the box off through it still.
+	 */
+	@Test
+	public void g2_tickingTheIncludeItemFromTheMenuRunsTheSameRoadAsTheSettingsMenu() throws Exception
+	{
+		final Asked yes = new Asked(true);
+		build(yes);
+		publish(rows(3), status(withPlaceholderDays(), VALUE_NOW, NOW - 60_000L));
+		onEdt(() ->
+		{
+			panel.pressView(SidebarView.HISTORY);
+			assertEquals("the hidden days stay hidden", 2, readings());
+			historyLegacyItem().doClick(0);
+			assertEquals("the settings item's question, in the record's words",
+				Arrays.asList(BankPriceMovementPanel.LEGACY_PLACEHOLDERS_ASK), yes.questions);
+			assertEquals("every reading", 6, readings());
+			assertTrue(historyLegacyItem().isSelected());
+			assertTrue("the settings menu's item follows", legacyItem().isSelected());
+			assertTrue(panel.describe(), panel.describe().contains("\"includeLegacy\":true"));
+
+			historyLegacyItem().doClick(0);
+			assertEquals("unticking asks nothing", 1, yes.questions.size());
+			assertEquals(2, readings());
+			assertFalse(historyLegacyItem().isSelected());
+			assertFalse(legacyItem().isSelected());
+		});
+		assertEquals("written once each way", Arrays.asList(true, false), prefs.legacySaves);
+		verify(service, never()).setOptions(any());
+
+		// ...and the settings menu's tick moves the History menu's the same way.
+		onEdt(() ->
+		{
+			legacyItem().doClick(0);
+			assertTrue(historyLegacyItem().isSelected());
+			legacyItem().doClick(0);
+			assertFalse(historyLegacyItem().isSelected());
+		});
+		assertEquals(Arrays.asList(true, false, true, false), prefs.legacySaves);
+	}
+
+	/** Cancel leaves the box off and unticked in both menus and writes nothing. */
+	@Test
+	public void g2_anAnswerOfNoLeavesTheItemUntickedAndWritesNothing() throws Exception
+	{
+		final Asked no = new Asked(false);
+		build(no);
+		publish(rows(3), status(withPlaceholderDays(), VALUE_NOW, NOW - 60_000L));
+		onEdt(() ->
+		{
+			panel.pressView(SidebarView.HISTORY);
+			historyLegacyItem().doClick(0);
+			assertEquals(Arrays.asList(BankPriceMovementPanel.LEGACY_PLACEHOLDERS_ASK), no.questions);
+			assertFalse("put back to what the panel believes", historyLegacyItem().isSelected());
+			assertFalse(legacyItem().isSelected());
+			assertEquals(2, readings());
+		});
+		assertTrue(prefs.legacySaves.isEmpty());
+	}
+
+	/** A placeholder restart with the box ticked turns it off through the History menu's item as well. */
+	@Test
+	public void g2_aPlaceholderRestartStillTurnsTheBoxOffAndTheMenusFollow() throws Exception
+	{
+		prefs.storedLegacy = Boolean.TRUE;
+		build(new Asked(true));
+		publish(rows(3), restarted(withLegacyDays(), 0));
+		onEdt(() ->
+		{
+			panel.pressView(SidebarView.HISTORY);
+			assertTrue("ticked for the 1.0.9 reason", historyLegacyItem().isSelected());
+			assertFalse("a ticked box shows no icon", infoShowing());
+		});
+		publish(rows(3), restarted(withPlaceholderDays(), 1));
+		onEdt(() ->
+		{
+			assertFalse("turned off by the restart", historyLegacyItem().isSelected());
+			assertFalse(legacyItem().isSelected());
+			assertTrue("and the icon says so", infoShowing());
+		});
+		assertEquals(Arrays.asList(false), prefs.legacySaves);
+	}
+
+	/**
+	 * G1: "Single chart colour" in the History options menu is the settings menu's row again: its tick stores the switch ONCE
+	 * and ticks both rows, a press on its swatch opens the picker titled "Chart colour" on the chart colour in force and takes
+	 * the menu down.
+	 */
+	@Test
+	public void g2_theChartRowIsTheSettingsMenusRowAgain() throws Exception
+	{
+		build();
+		final List<String> titles = new ArrayList<>();
+		final List<java.awt.Color> starts = new ArrayList<>();
+		onEdt(() -> panel.setColourPicker((anchor, start, title, live, done) ->
+		{
+			starts.add(start);
+			titles.add(title);
+		}));
+		publish(rows(3), status(BankHistorySeries.EMPTY, VALUE_NOW, NOW - 60_000L));
+		onEdt(() ->
+		{
+			panel.pressView(SidebarView.HISTORY);
+			final SwatchRow row = historyChartRow();
+			assertTrue("ticked: on by default", row.isSelected());
+			assertTrue(settingsChartRow().isSelected());
+			assertEquals(BankPriceMovementPanel.SINGLE_CHART_COLOUR_TEXT, row.getText());
+			assertEquals(Widgets.sans(12), row.getFont());
+
+			row.doClick(0);
+			assertFalse(row.isSelected());
+			assertFalse("the settings menu's row follows", settingsChartRow().isSelected());
+			settingsChartRow().doClick(0);
+			assertTrue("and the other way", row.isSelected());
+			row.doClick(0);
+			assertFalse(row.isSelected());
+			row.doClick(0);
+			assertTrue(row.isSelected());
+
+			row.setSize(row.getPreferredSize());
+			row.dispatchEvent(new MouseEvent(row, MouseEvent.MOUSE_RELEASED, 0L, 0,
+				row.getWidth() - BankPriceMovementPanel.ROW_GAP - BankPriceMovementPanel.SWATCH_WIDTH / 2, row.getHeight() / 2, 1,
+				false, MouseEvent.BUTTON1));
+			assertEquals("the swatch opens the picker", Arrays.asList(BankPriceMovementPanel.CHART_COLOUR_TEXT), titles);
+			assertEquals("on the chart colour in force", Widgets.CHART_COLOUR_DEFAULT, starts.get(0));
+			assertTrue("and ticks nothing", row.isSelected());
+		});
+		assertEquals("the tick stored each way, the swatch nothing", Arrays.asList(false, true, false, true),
+			prefs.singleSaves);
+	}
+
+	// ---------------------------------------------------------------- 1.1.1 part I2: the "i" icon
+
+	/**
+	 * I1: the "i" icon stands in the caption's row directly LEFT of the gears with the gap the gears keep (6 px), 12 x 12 like them,
+	 * centred on the caption's text line as they are and right of the caption's text; and it takes nothing from what is under it
+	 * (I2: the notice's block shift is gone) - the row, the strip, the chart block and the gears stand exactly where they stand
+	 * with the box ticked and the icon away.
+	 */
+	@Test
+	public void i2_theIconStandsLeftOfTheGearsWithTheirGapCentredOnTheCaptionLineAndMovesNothing() throws Exception
+	{
+		build(new Asked(true));
+		publish(rows(3), status(withPlaceholderDays(), VALUE_NOW, NOW - 60_000L));
+		onEdt(() ->
+		{
+			panel.pressView(SidebarView.HISTORY);
+			assertTrue(infoShowing());
+			final JLabel info = infoIcon();
+			final JLabel gears = panel.historyOptionsLabel();
+			assertEquals("the row's children stand as they are drawn: the caption, the icon, the gears",
+				Arrays.asList(caption(), info, gears), Arrays.asList(panel.viewCaptionRow().getComponents()));
+			assertEquals("the row's own background is the cut-out's colour", InfoIcon.CUT, panel.viewCaptionRow().getBackground());
+			panel.setSize(LookRenderer.WIDTH, 1500);
+			LookRenderer.layoutTree(panel);
+
+			final Rectangle infoBox = pictureBox(info);
+			final Rectangle gearsBox = pictureBox(gears);
+			final Rectangle row = SwingUtilities.convertRectangle(panel.viewCaptionRow().getParent(),
+				panel.viewCaptionRow().getBounds(), panel);
+			final Rectangle captionAt = SwingUtilities.convertRectangle(caption().getParent(), caption().getBounds(), panel);
+			assertEquals("12 x 12, the gears' size", GearsIcon.SIZE, infoBox.width);
+			assertEquals(GearsIcon.SIZE, infoBox.height);
+			assertEquals(InfoIcon.SIZE, info.getIcon().getIconWidth());
+			assertEquals("directly left of the gears, with the gap they keep", gearsBox.x,
+				infoBox.x + infoBox.width + BankPriceMovementPanel.LIST_OPTIONS_GAP);
+			assertEquals("on the gears' own line", gearsBox.y, infoBox.y);
+			assertEquals("the gears still end the row", row.x + row.width, gearsBox.x + gearsBox.width);
+			// The caption's text line is the row less the 3 px of air above it; the icon's centre is on it, as the gears' is.
+			assertEquals("centred on the text line", row.y + 3 + (row.height - 3) / 2.0, infoBox.y + infoBox.height / 2.0, 1.0);
+			final int textEnd = captionAt.x + caption().getInsets().left
+				+ caption().getFontMetrics(caption().getFont()).stringWidth(caption().getText());
+			assertTrue("right of the caption's text", infoBox.x > textEnd);
+			assertTrue("inside the caption row", row.contains(infoBox));
+			assertEquals("the row is no taller with the icon in it", caption().getPreferredSize().height,
+				panel.viewCaptionRow().getPreferredSize().height);
+
+			final Component view = find(panel, BankHistoryView.class);
+			final Rectangle stripOn = SwingUtilities.convertRectangle(strip().getParent(), strip().getBounds(), panel);
+			final Rectangle viewOn = SwingUtilities.convertRectangle(view.getParent(), view.getBounds(), panel);
+			final Rectangle cardOn = SwingUtilities.convertRectangle(panel.hero().getParent(), panel.hero().getBounds(), panel);
+
+			panel.pressLegacy(true);
+			assertFalse(infoShowing());
+			panel.setSize(LookRenderer.WIDTH, 1500);
+			LookRenderer.layoutTree(panel);
+			assertEquals("the row is where it was", row, SwingUtilities.convertRectangle(panel.viewCaptionRow().getParent(),
+				panel.viewCaptionRow().getBounds(), panel));
+			assertEquals("the strip is as tall", stripOn,
+				SwingUtilities.convertRectangle(strip().getParent(), strip().getBounds(), panel));
+			// (Its height is not compared: the included days add day rows under the chart.)
+			final Rectangle viewOff = SwingUtilities.convertRectangle(view.getParent(), view.getBounds(), panel);
+			assertEquals("the chart block does not move across", viewOn.x, viewOff.x);
+			assertEquals("nor down", viewOn.y, viewOff.y);
+			assertEquals("nor the card", cardOn,
+				SwingUtilities.convertRectangle(panel.hero().getParent(), panel.hero().getBounds(), panel));
+			assertEquals("nor the gears", gearsBox, pictureBox(gears));
+		});
+	}
+
+	/**
+	 * I1: the icon shows ONLY while all of these hold - the tab is History, the reason is placeholders, hidden days exist and the
+	 * box is off. Ticking the box (the include question, the config road, either menu's item) takes it away and unticking brings
+	 * it back; the 1.0.9 reason, no hidden days, an empty record and no record never show it, and Items never does.
+	 */
+	@Test
+	public void i2_theIconShowsOnlyForPlaceholderDaysWithTheBoxOffInHistory() throws Exception
+	{
+		final Asked yes = new Asked(true);
+		build(yes);
+		publish(rows(3), status(withPlaceholderDays(), VALUE_NOW, NOW - 60_000L));
+		onEdt(() ->
+		{
+			assertEquals(SidebarView.ITEMS, panel.view());
+			assertFalse("Items never shows it", infoShowing());
+			panel.pressView(SidebarView.HISTORY);
+			assertTrue("History, placeholders, hidden days, box off", infoShowing());
+
+			panel.pressLegacy(true);
+			assertFalse("ticked: gone", infoShowing());
+			panel.pressLegacy(false);
+			assertTrue("unticked: back", infoShowing());
+			panel.setIncludeLegacy(true);
+			assertFalse("the config's road takes it away too", infoShowing());
+			panel.setIncludeLegacy(false);
+			assertTrue(infoShowing());
+			historyLegacyItem().doClick(0);
+			assertFalse("from the History menu", infoShowing());
+			legacyItem().doClick(0);
+			assertTrue("from the settings menu", infoShowing());
+
+			panel.pressView(SidebarView.ITEMS);
+			assertFalse(infoShowing());
+			panel.pressView(SidebarView.HISTORY);
+			assertTrue(infoShowing());
+		});
+		publish(rows(3), status(withLegacyDays(), VALUE_NOW, NOW - 60_000L));
+		onEdt(() -> assertFalse("never for 1.0.9's reason", infoShowing()));
+		publish(rows(3), status(series(TODAY.minusDays(2), TODAY.minusDays(1), TODAY), VALUE_NOW, NOW - 60_000L));
+		onEdt(() -> assertFalse("no hidden days", infoShowing()));
+		publish(rows(3), status(withPlaceholderDays(), VALUE_NOW, NOW - 60_000L));
+		onEdt(() -> assertTrue(infoShowing()));
+		publish(rows(3), status(BankHistorySeries.EMPTY, VALUE_NOW, NOW - 60_000L));
+		onEdt(() -> assertFalse("an empty record", infoShowing()));
+		publish(rows(3), status(withPlaceholderDays(), VALUE_NOW, NOW - 60_000L));
+		publish(rows(3), status(null, VALUE_NOW, NOW - 60_000L));
+		onEdt(() -> assertFalse("no record at all", infoShowing()));
+	}
+
+	/**
+	 * I1: the hover is the user's sentence (set as three short rows, see {@link #i3_theHoverIsThreeShortRowsOfTheSameWords}),
+	 * ALWAYS on - set on the label with "Show hover text" off, on and off again - and the icon wears the hand cursor like the gears.
+	 */
+	@Test
+	public void i2_theHoverIsTheUsersSentenceAndIsOnWithShowHoverTextOff() throws Exception
+	{
+		build(new Asked(true));
+		publish(rows(3), status(withPlaceholderDays(), VALUE_NOW, NOW - 60_000L));
+		onEdt(() ->
+		{
+			panel.pressView(SidebarView.HISTORY);
+			assertFalse("the quieter sidebar is what ships", panel.options().showHoverText());
+			assertEquals("the caption, the icon, the gears", 3, panel.viewCaptionRow().getComponentCount());
+			final JLabel info = (JLabel) panel.viewCaptionRow().getComponent(1);
+			final String sentence = "Days before v1.1.1 counted bank placeholders as items, so they may read high."
+				+ " Restore them in settings.";
+			final String tip = "<html>Days before v1.1.1 counted bank placeholders<br>as items, so they may read high.<br>"
+				+ "Restore them in settings.</html>";
+			assertEquals("the words, on one line of plain text", sentence, BankPriceMovementPanel.LEGACY_INFO_TIP_TEXT);
+			assertFalse(sentence.contains("<") || sentence.contains("\n"));
+			assertEquals("with the switch off", tip, info.getToolTipText());
+			assertEquals(BankPriceMovementPanel.LEGACY_INFO_TIP, info.getToolTipText());
+			panel.applyOptions(ViewOptions.DEFAULT.withShowHoverText(true));
+			assertEquals("the same with it on", tip, info.getToolTipText());
+			panel.applyOptions(ViewOptions.DEFAULT);
+			assertEquals("and off again: always on", tip, info.getToolTipText());
+			assertEquals("the hand, like the gears", java.awt.Cursor.HAND_CURSOR, info.getCursor().getType());
+			assertEquals(java.awt.Cursor.HAND_CURSOR, panel.historyOptionsLabel().getCursor().getType());
+		});
+	}
+
+	/**
+	 * I3: the hover is THREE short rows - Swing HTML with exactly two line breaks, after "placeholders" and after "high." - and
+	 * says the very words of the one-line sentence; it is taller and narrower than the same words on one line, and the dialog's
+	 * own sentence is untouched.
+	 */
+	@Test
+	public void i3_theHoverIsThreeShortRowsOfTheSameWords() throws Exception
+	{
+		build(new Asked(true));
+		publish(rows(3), status(withPlaceholderDays(), VALUE_NOW, NOW - 60_000L));
+		onEdt(() ->
+		{
+			panel.pressView(SidebarView.HISTORY);
+			final JLabel info = infoIcon();
+			assertEquals("<html>Days before v1.1.1 counted bank placeholders<br>as items, so they may read high.<br>"
+				+ "Restore them in settings.</html>", info.getToolTipText());
+			final String inner = info.getToolTipText().substring("<html>".length(),
+				info.getToolTipText().length() - "</html>".length());
+			final String[] lines = inner.split("<br>");
+			assertEquals("three rows", 3, lines.length);
+			assertEquals("Days before v1.1.1 counted bank placeholders", lines[0]);
+			assertEquals("as items, so they may read high.", lines[1]);
+			assertEquals("Restore them in settings.", lines[2]);
+			assertEquals("the same words as the plain sentence", BankPriceMovementPanel.LEGACY_INFO_TIP_TEXT,
+				String.join(" ", lines));
+			final JToolTip threeRows = info.createToolTip();
+			threeRows.setTipText(info.getToolTipText());
+			final JToolTip oneRow = info.createToolTip();
+			oneRow.setTipText(BankPriceMovementPanel.LEGACY_INFO_TIP_TEXT);
+			assertTrue("three rows are taller and narrower than one",
+				threeRows.getPreferredSize().height > oneRow.getPreferredSize().height
+					&& threeRows.getPreferredSize().width < oneRow.getPreferredSize().width);
+			assertEquals("the dialog's own sentence is unchanged",
+				"Days before v1.1.1 counted bank placeholders as items, so their net worth totals may read high."
+					+ " Include them anyway?", BankPriceMovementPanel.LEGACY_PLACEHOLDERS_ASK);
+		});
+	}
+
+	/**
+	 * I3: the hover opens LEFTWARD under the icon - the tip's right edge on the icon's right edge, its top 2 px under the icon -
+	 * where there is room for it; at the real sidebar's width it never starts left of the panel's left edge; and a tip wider than
+	 * the panel is aligned to that edge.
+	 */
+	@Test
+	public void i3_theHoverOpensLeftwardUnderTheIconAndNeverLeftOfThePanel() throws Exception
+	{
+		build(new Asked(true));
+		publish(rows(3), status(withPlaceholderDays(), VALUE_NOW, NOW - 60_000L));
+		onEdt(() ->
+		{
+			panel.pressView(SidebarView.HISTORY);
+			final JLabel info = infoIcon();
+
+			// Room to spare: the label stands at the row's right end of a wide panel.
+			panel.setSize(900, 1500);
+			LookRenderer.layoutTree(panel);
+			final JToolTip tip = info.createToolTip();
+			tip.setTipText(info.getToolTipText());
+			final int tipWidth = tip.getPreferredSize().width;
+			assertTrue("the icon has a size", info.getWidth() > 0 && info.getHeight() > 0);
+			assertTrue("the premise: it fits left of the icon",
+				SwingUtilities.convertPoint(info, info.getWidth(), 0, panel).x > tipWidth);
+			final Point at = info.getToolTipLocation(null);
+			assertEquals("the tip's right edge on the icon's right edge", info.getWidth(), at.x + tipWidth, 1.0);
+			assertEquals("2 px under the icon", info.getHeight() + 2, at.y);
+
+			// The real sidebar: the tip may be too wide for what is left of the icon, and then it starts at the panel's edge.
+			panel.setSize(LookRenderer.WIDTH, 1500);
+			LookRenderer.layoutTree(panel);
+			final Point narrow = info.getToolTipLocation(null);
+			assertTrue("never left of the panel's edge: " + narrow,
+				SwingUtilities.convertPoint(info, narrow, panel).x >= 0);
+			assertEquals(info.getHeight() + 2, narrow.y);
+			assertTrue("never right of the right-aligned place", narrow.x >= info.getWidth() - tipWidth);
+
+			// A tip wider than the panel is aligned to the panel's left edge.
+			info.setToolTipText("<html>Days before v1.1.1 counted bank placeholders as items, so they may read high. "
+				+ "Restore them in settings, Restore them in settings.</html>");
+			final JToolTip wide = info.createToolTip();
+			wide.setTipText(info.getToolTipText());
+			assertTrue("the premise: wider than the panel", wide.getPreferredSize().width > LookRenderer.WIDTH);
+			final Point wideAt = info.getToolTipLocation(null);
+			assertEquals("starts at the panel's left edge", 0, SwingUtilities.convertPoint(info, wideAt, panel).x);
+			assertEquals(info.getHeight() + 2, wideAt.y);
+		});
+	}
+
+	/**
+	 * I3: the left press asks a modal question, so the hover is taken away while it is up - the label holds no tip text inside
+	 * the prompt, which is what keeps Swing's manager from showing it over the question - and is back, the same HTML, once the
+	 * press returns, whichever way the question was answered.
+	 */
+	@Test
+	public void i3_theHoverIsGoneWhileTheQuestionIsUpAndBackAfterIncluding() throws Exception
+	{
+		hoverAroundTheQuestion(true);
+	}
+
+	@Test
+	public void i3_theHoverIsGoneWhileTheQuestionIsUpAndBackAfterCancelling() throws Exception
+	{
+		hoverAroundTheQuestion(false);
+	}
+
+	private void hoverAroundTheQuestion(final boolean answer) throws Exception
+	{
+		final List<String> inside = new ArrayList<>();
+		final AtomicReference<JLabel> icon = new AtomicReference<>();
+		build(question ->
+		{
+			inside.add(String.valueOf(icon.get().getToolTipText()));
+			return answer;
+		});
+		publish(rows(3), status(withPlaceholderDays(), VALUE_NOW, NOW - 60_000L));
+		onEdt(() ->
+		{
+			panel.pressView(SidebarView.HISTORY);
+			icon.set(infoIcon());
+			assertEquals("before the press", BankPriceMovementPanel.LEGACY_INFO_TIP, icon.get().getToolTipText());
+			press(icon.get(), MouseEvent.BUTTON1);
+			assertEquals("the question was asked once, with no hover on the label", Arrays.asList("null"), inside);
+			assertEquals("after the press the hover is back", BankPriceMovementPanel.LEGACY_INFO_TIP,
+				icon.get().getToolTipText());
+		});
+	}
+
+	/**
+	 * I1: a LEFT press asks the include question through the panel's own prompt seam - the box's road, in the record's words - and
+	 * "Include" ticks the box in both menus, writes {@code includeLegacyHistory} true once, brings the days back and takes the icon
+	 * away; a right press does nothing; unticking from a menu brings the icon back.
+	 */
+	@Test
+	public void i2_aLeftPressAsksTheIncludeQuestionAndIncludeTicksTheBoxAndTheIconGoes() throws Exception
+	{
+		final Asked yes = new Asked(true);
+		build(yes);
+		publish(rows(3), status(withPlaceholderDays(), VALUE_NOW, NOW - 60_000L));
+		onEdt(() ->
+		{
+			panel.pressView(SidebarView.HISTORY);
+			final JLabel info = infoIcon();
+			assertEquals("the hidden days stay hidden", 2, readings());
+
+			press(info, MouseEvent.BUTTON3);
+			assertTrue("a right press asks nothing", yes.questions.isEmpty());
+			assertTrue("and the icon stays", infoShowing());
+			assertEquals(2, readings());
+
+			press(info, MouseEvent.BUTTON1);
+			assertEquals("the box's question, in the record's words",
+				Arrays.asList(BankPriceMovementPanel.LEGACY_PLACEHOLDERS_ASK), yes.questions);
+			assertFalse("the icon goes", infoShowing());
+			assertEquals("every reading is back", 6, readings());
+			assertTrue("the settings menu's item is ticked", legacyItem().isSelected());
+			assertTrue("and the History menu's", historyLegacyItem().isSelected());
+			assertTrue(panel.describe(), panel.describe().contains("\"includeLegacy\":true"));
+		});
+		assertEquals("written once", Arrays.asList(true), prefs.legacySaves);
+		verify(service, never()).setOptions(any());
+		onEdt(() ->
+		{
+			legacyItem().doClick(0);
+			assertTrue("unticking brings the icon back", infoShowing());
+			assertEquals(2, readings());
+		});
+		assertEquals(Arrays.asList(true, false), prefs.legacySaves);
+		assertEquals("unticking asked nothing", 1, yes.questions.size());
+	}
+
+	/**
+	 * I1: "Cancel" changes nothing - the box stays off and unticked in both menus, nothing is written, the icon stays - and the
+	 * question may be asked again.
+	 */
+	@Test
+	public void i2_cancelChangesNothingAndTheIconStays() throws Exception
+	{
+		final Asked no = new Asked(false);
+		build(no);
+		publish(rows(3), status(withPlaceholderDays(), VALUE_NOW, NOW - 60_000L));
+		onEdt(() ->
+		{
+			panel.pressView(SidebarView.HISTORY);
+			final JLabel info = infoIcon();
+			press(info, MouseEvent.BUTTON1);
+			assertEquals(Arrays.asList(BankPriceMovementPanel.LEGACY_PLACEHOLDERS_ASK), no.questions);
+			assertTrue("the icon stays", infoShowing());
+			assertSame("the same icon", info, infoIcon());
+			assertEquals("the days stay hidden", 2, readings());
+			assertFalse(legacyItem().isSelected());
+			assertFalse(historyLegacyItem().isSelected());
+			press(info, MouseEvent.BUTTON1);
+			assertEquals("it asks again", 2, no.questions.size());
+			no.answer = true;
+			press(info, MouseEvent.BUTTON1);
+			assertFalse(infoShowing());
+		});
+		assertEquals("only the answer that included was written", Arrays.asList(true), prefs.legacySaves);
+	}
+
+	/**
+	 * I1: the disc is the gears' grey at rest and white under the mouse (its "i" always the row's colour), and an icon that leaves
+	 * under the pointer - the press that ticked the box - is not white when it comes back.
+	 */
+	@Test
+	public void i2_theIconIsGreyAtRestWhiteUnderTheMouseAndNotWhiteWhenItReturns() throws Exception
+	{
+		build(new Asked(true));
+		publish(rows(3), status(withPlaceholderDays(), VALUE_NOW, NOW - 60_000L));
+		onEdt(() ->
+		{
+			panel.pressView(SidebarView.HISTORY);
+			final JLabel info = infoIcon();
+			assertEquals("a disc pixel at rest: the gears' grey", Widgets.PLACEHOLDER_COLOR.getRGB(), picture(info).getRGB(2, 5));
+			assertEquals("the cut is the row's colour", InfoIcon.CUT.getRGB(), picture(info).getRGB(6, 5));
+			mouse(info, MouseEvent.MOUSE_ENTERED);
+			assertEquals("white under the mouse", Color.WHITE.getRGB(), picture(info).getRGB(2, 5));
+			assertEquals("the cut is still the row's", InfoIcon.CUT.getRGB(), picture(info).getRGB(6, 5));
+			mouse(info, MouseEvent.MOUSE_EXITED);
+			assertEquals("grey again after", Widgets.PLACEHOLDER_COLOR.getRGB(), picture(info).getRGB(2, 5));
+
+			mouse(info, MouseEvent.MOUSE_ENTERED);
+			panel.pressLegacy(true);
+			assertFalse(infoShowing());
+			panel.pressLegacy(false);
+			assertSame(info, infoIcon());
+			assertEquals("back at rest: grey, not white", Widgets.PLACEHOLDER_COLOR.getRGB(), picture(info).getRGB(2, 5));
+		});
+	}
+
 	// ---------------------------------------------------------------- fixtures and helpers
 
 	static long noon(LocalDate day)
@@ -1046,12 +1996,15 @@ public class SidebarViewPanelTest
 		return (JLabel) toggle().getComponent(i);
 	}
 
-	/** The caption: the strip's label that is not inside the toggle. */
+	/**
+	 * The caption: the label in the strip's caption row - the row after the toggle (1.1.1 part G2 put the caption in a row of
+	 * its own, which holds the History options icon beside it in History) - that carries words and no icon.
+	 */
 	private JLabel caption()
 	{
-		for (Component c : strip().getComponents())
+		for (Component c : panel.viewCaptionRow().getComponents())
 		{
-			if (c instanceof JLabel)
+			if (c instanceof JLabel && ((JLabel) c).getIcon() == null)
 			{
 				return (JLabel) c;
 			}

@@ -464,6 +464,12 @@ public class PriceStore
 	 * which is what an OLDER build does with the schema 2 this build writes: "written by a newer build - leaving it
 	 * alone". Schema 2 is 1.0.9 part 3's: every entry's {@code card} and {@code guide} hold ten cells, the two new
 	 * ones being the Grand Exchange offers' ({@link BankHistoryPoint#GE_TRADEABLE}, {@link BankHistoryPoint#GE_CASH}).
+	 *
+	 * <p><b>Not bumped for 1.1.1 part B</b>, on purpose, although it adds two OPTIONAL root keys
+	 * ({@value #PLACEHOLDERS_CHECKED_KEY}, {@value #FRESH_WHY_KEY}): a bump would make a 1.1.0 build refuse every file
+	 * 1.1.1 has written to, for good, and the keys are only a judgement and its reason. A 1.1.0 build reading such a file
+	 * finds keys it does not know, loads it LOSSY, copies it aside and drops the two keys at its next write - which costs
+	 * nothing but a second judgement, and only for someone who runs both builds on one account.
 	 */
 	static final int HISTORY_SCHEMA = 2;
 
@@ -477,6 +483,18 @@ public class PriceStore
 	 * recorded into yet, which is read from its old schema and never written under this key.
 	 */
 	private static final String FRESH_FROM_KEY = "freshFrom";
+	/**
+	 * 1.1.1 part B: the root key holding {@link BankHistorySeries#placeholdersChecked()} as an ISO date - the day the file
+	 * was judged for bank placeholders counted as items. Absent until a reading from a fresh bank read is recorded into
+	 * it; written from then on, so the file is judged once.
+	 */
+	private static final String PLACEHOLDERS_CHECKED_KEY = "placeholdersChecked";
+	/**
+	 * 1.1.1 part B: the root key holding {@link BankHistorySeries#freshWhy()} - why the days before {@code freshFrom} are
+	 * hidden. Absent for 1.0.9 part 5's reason (they did not count the Grand Exchange offers);
+	 * {@value BankHistorySeries#WHY_PLACEHOLDERS} when they counted bank placeholders as items.
+	 */
+	private static final String FRESH_WHY_KEY = "freshWhy";
 	private static final String DAY_KEY = "day";
 	private static final String READ_AT_KEY = "readAtMillis";
 	private static final String BANK_AT_KEY = "bankAtMillis";
@@ -484,7 +502,7 @@ public class PriceStore
 	private static final String GUIDE_KEY = "guide";
 	/** Every key a history document holds at its top level, and every key an entry holds, in this build. */
 	private static final Set<String> HISTORY_ROOT_KEYS = new HashSet<>(Arrays.asList(SCHEMA_KEY, POINTS_KEY,
-		FRESH_FROM_KEY));
+		FRESH_FROM_KEY, PLACEHOLDERS_CHECKED_KEY, FRESH_WHY_KEY));
 	private static final Set<String> HISTORY_ENTRY_KEYS = new HashSet<>(Arrays.asList(DAY_KEY, READ_AT_KEY, BANK_AT_KEY,
 		CARD_KEY, GUIDE_KEY));
 
@@ -544,6 +562,13 @@ public class PriceStore
 	 * its {@code freshFrom}, so the days before it stay on disk and are hidden from the tab until the reader asks for
 	 * them. Later recordings keep the stored date.
 	 *
+	 * <p>The placeholder judgement (1.1.1 part B): {@code check} is the decision the service holds in memory for this
+	 * owner's series - made once, by the first reading taken from a fresh bank read - or null while it has made none.
+	 * It is applied to the file read here ONLY while that file has no judgement of its own
+	 * ({@link BankHistorySeries#judged}, the same rule the service applied), so a file is judged once whatever is sent
+	 * after; a restart moves its {@code freshFrom} up to the judging day and names the reason. A file judged
+	 * unaffected gains only its {@code placeholdersChecked}, at the write the judging reading forces.
+	 *
 	 * <p>A file that holds something the series does not ({@link BankHistoryLoad#lossy()}: an entry that did not
 	 * parse, two entries for one day, a key this build does not know) is COPIED aside as
 	 * {@code <name>.corrupt-<millis>} before its first rewrite of the session (review finding H7), and nothing is
@@ -553,10 +578,12 @@ public class PriceStore
 	 *
 	 * @param point a reading, filed under its own {@link BankHistoryPoint#day()}
 	 * @param today the caller's LOCAL today
+	 * @param check the placeholder judgement of the series in the caller's memory (1.1.1 part B); null for none
 	 * @return true when the file holds the point once this returns
 	 */
 	public boolean recordBankHistory(final long accountHash, @Nullable final String profileType,
-		@Nullable final BankHistoryPoint point, @Nullable final LocalDate today)
+		@Nullable final BankHistoryPoint point, @Nullable final LocalDate today,
+		@Nullable final BankHistorySeries.PlaceholderCheck check)
 	{
 		if (point == null || today == null)
 		{
@@ -603,6 +630,9 @@ public class PriceStore
 			{
 				added = added.withFreshFrom(point.day());
 			}
+			// 1.1.1 part B: the judgement the service made, applied to the file as re-read - a no-op when the file was
+			// judged already (by this session's earlier write, or another client's), so it is made once per file.
+			added = added.judged(check);
 			final BankHistorySeries merged = added.upTo(today);
 			final int ahead = added.size() - merged.size();
 			if (ahead > 0 && ahead >= merged.size())
@@ -740,6 +770,23 @@ public class PriceStore
 				unknownKeys |= freshFrom == null;
 			}
 		}
+		// 1.1.1 part B: the placeholder judgement and its reason, read whatever the schema so nothing a file holds is
+		// dropped unseen. A value that does not read is not understood - nothing is judged or named by it - and the file is
+		// copied aside before its first rewrite, which drops it.
+		LocalDate placeholdersChecked = null;
+		final JsonElement checked = root.get(PLACEHOLDERS_CHECKED_KEY);
+		if (checked != null && !checked.isJsonNull())
+		{
+			placeholdersChecked = checked.isJsonPrimitive() ? parseDay(checked.getAsString()) : null;
+			unknownKeys |= placeholdersChecked == null;
+		}
+		String freshWhy = null;
+		final JsonElement why = root.get(FRESH_WHY_KEY);
+		if (why != null && !why.isJsonNull())
+		{
+			freshWhy = why.isJsonPrimitive() ? why.getAsString() : null;
+			unknownKeys |= freshWhy == null;
+		}
 		final JsonElement points = root.get(POINTS_KEY);
 		if (points == null || points.isJsonNull())
 		{
@@ -769,6 +816,7 @@ public class PriceStore
 		// 1.0.9 part 5: a migrated file's days were all recorded before 1.0.9 - until a recording stamps a fresh start,
 		// every load of it answers the same. A file with no days has nothing to hide.
 		series = series.withFreshFrom(migrated ? LocalDate.MAX : freshFrom);
+		series = series.withPlaceholdersChecked(placeholdersChecked).withFreshWhy(freshWhy);
 		// Anything the series does not hold - a skipped entry, a second entry for one day, a key this build does not
 		// know - would be gone after a rewrite; recordBankHistory copies such a file aside first (H7).
 		return skipped > 0 || unknownKeys || series.size() != read.size() ? BankHistoryLoad.loadedLossy(series)
@@ -860,7 +908,8 @@ public class PriceStore
 
 	/**
 	 * The file's text (contract section 4): {@code schema} first, then {@code freshFrom} when the series has one
-	 * (1.0.9 part 5), then {@code points}, each entry
+	 * (1.0.9 part 5), then {@code freshWhy} and {@code placeholdersChecked} when it has them (1.1.1 part B), then
+	 * {@code points}, each entry
 	 * {@code day, readAtMillis, bankAtMillis, card, guide} in that order, {@code guide} left out when it equals
 	 * {@code card}. Built as a tree so the shape does not depend on how the injected Gson treats nulls.
 	 */
@@ -872,6 +921,14 @@ public class PriceStore
 		if (freshFrom != null && !LocalDate.MAX.equals(freshFrom))
 		{
 			root.addProperty(FRESH_FROM_KEY, freshFrom.toString());
+		}
+		if (series.freshWhy() != null)
+		{
+			root.addProperty(FRESH_WHY_KEY, series.freshWhy());
+		}
+		if (series.placeholdersChecked() != null)
+		{
+			root.addProperty(PLACEHOLDERS_CHECKED_KEY, series.placeholdersChecked().toString());
 		}
 		final JsonArray points = new JsonArray();
 		for (final BankHistoryPoint point : series.points())

@@ -272,6 +272,120 @@ public class BankHistorySeriesTest
 		assertFalse(plain.toString().contains("freshFrom"));
 	}
 
+	// ---- 1.1.1 part B: the placeholder judgement
+
+	/** A restart judged on the 4th: the fresh start, the day and the reason. */
+	private static BankHistorySeries restartedOn4th()
+	{
+		return fiveDays().judged(new BankHistorySeries.PlaceholderCheck(sep(4), true));
+	}
+
+	@Test
+	public void theJudgementAndTheReasonArePartOfTheValue()
+	{
+		final BankHistorySeries plain = fiveDays();
+		final BankHistorySeries restarted = restartedOn4th();
+		assertEquals(sep(4), restarted.freshFrom());
+		assertEquals(sep(4), restarted.placeholdersChecked());
+		assertEquals(BankHistorySeries.WHY_PLACEHOLDERS, restarted.freshWhy());
+		assertEquals("placeholders", BankHistorySeries.WHY_PLACEHOLDERS);
+
+		assertNotEquals("the reason counts", fiveDays().withFreshFrom(sep(4)).withPlaceholdersChecked(sep(4)), restarted);
+		assertNotEquals("the day judged counts", fiveDays().withFreshFrom(sep(4)).withFreshWhy("placeholders"), restarted);
+		assertNotEquals(plain, plain.withPlaceholdersChecked(sep(4)));
+		assertNotEquals(plain, plain.withFreshWhy(BankHistorySeries.WHY_PLACEHOLDERS));
+		assertNotEquals(plain.withPlaceholdersChecked(sep(4)), plain.withPlaceholdersChecked(sep(5)));
+		final BankHistorySeries same = fiveDays().withFreshFrom(sep(4)).withPlaceholdersChecked(sep(4))
+			.withFreshWhy(BankHistorySeries.WHY_PLACEHOLDERS);
+		assertEquals(same, restarted);
+		assertEquals(same.hashCode(), restarted.hashCode());
+		assertTrue(restarted.toString(), restarted.toString().contains("freshWhy=placeholders"));
+		assertTrue(restarted.toString(), restarted.toString().contains("placeholdersChecked=2026-09-04"));
+		assertFalse(plain.toString().contains("placeholdersChecked"));
+		assertNull(plain.placeholdersChecked());
+		assertNull(plain.freshWhy());
+		assertNull(BankHistorySeries.EMPTY.placeholdersChecked());
+	}
+
+	@Test
+	public void everyCopyKeepsTheJudgementAndTheReason()
+	{
+		final BankHistorySeries s = restartedOn4th();
+		for (final BankHistorySeries copy : Arrays.asList(s.with(p(sep(6), 6, 6)), s.with(p(sep(2), 22, 22)),
+			s.with(null), s.upTo(sep(4)), s.upTo(sep(9)), s.withFreshFrom(sep(5)), s.fromFresh()))
+		{
+			assertEquals(copy.toString(), sep(4), copy.placeholdersChecked());
+			assertEquals(copy.toString(), BankHistorySeries.WHY_PLACEHOLDERS, copy.freshWhy());
+		}
+		assertNull("the cut keeps the marks, not the fresh start", s.fromFresh().freshFrom());
+		assertEquals(Arrays.asList(sep(4), sep(5)), days(s.fromFresh()));
+		// A copy rebuilt from the readings has them put back by hand, as the service's withoutBehind does.
+		assertEquals(s, BankHistorySeries.of(s.points()).withFreshFrom(s.freshFrom())
+			.withPlaceholdersChecked(s.placeholdersChecked()).withFreshWhy(s.freshWhy()));
+		// An EMPTY series carries none of them.
+		assertSame(BankHistorySeries.EMPTY, BankHistorySeries.EMPTY.withPlaceholdersChecked(sep(1)));
+		assertSame(BankHistorySeries.EMPTY, BankHistorySeries.EMPTY.withFreshWhy("placeholders"));
+		assertSame(BankHistorySeries.EMPTY, BankHistorySeries.EMPTY.judged(new BankHistorySeries.PlaceholderCheck(sep(1),
+			true)));
+		assertSame(s, s.withPlaceholdersChecked(sep(4)));
+		assertSame(s, s.withFreshWhy(BankHistorySeries.WHY_PLACEHOLDERS));
+		assertNull(s.withPlaceholdersChecked(null).placeholdersChecked());
+		assertNull(s.withFreshWhy(null).freshWhy());
+	}
+
+	@Test
+	public void aJudgementIsMadeOnceAndARestartNeverMovesTheFreshStartBack()
+	{
+		final BankHistorySeries plain = fiveDays();
+		assertSame("no check, no judgement", plain, plain.judged(null));
+
+		final BankHistorySeries unaffected = plain.judged(new BankHistorySeries.PlaceholderCheck(sep(4), false));
+		assertEquals("an unaffected series is marked", sep(4), unaffected.placeholdersChecked());
+		assertNull("and nothing is hidden", unaffected.freshFrom());
+		assertNull(unaffected.freshWhy());
+		assertSame("once per series: a later restart moves nothing", unaffected,
+			unaffected.judged(new BankHistorySeries.PlaceholderCheck(sep(5), true)));
+
+		final BankHistorySeries restarted = restartedOn4th();
+		assertSame("nor a second restart", restarted,
+			restarted.judged(new BankHistorySeries.PlaceholderCheck(sep(5), true)));
+		assertTrue(restarted.hasLegacyDays());
+
+		// A fresh start already standing later than the judging day stays where it is; an earlier one moves up.
+		final BankHistorySeries later = plain.withFreshFrom(sep(5)).judged(new BankHistorySeries.PlaceholderCheck(sep(3),
+			true));
+		assertEquals(sep(5), later.freshFrom());
+		assertEquals(sep(3), later.placeholdersChecked());
+		assertEquals(BankHistorySeries.WHY_PLACEHOLDERS, later.freshWhy());
+		assertEquals(sep(4), plain.withFreshFrom(sep(2)).judged(new BankHistorySeries.PlaceholderCheck(sep(4), true))
+			.freshFrom());
+	}
+
+	@Test
+	public void theJudgementASeriesCarriesIsTheOneItWasGiven()
+	{
+		assertNull(fiveDays().placeholderCheck());
+		assertEquals(new BankHistorySeries.PlaceholderCheck(sep(4), true), restartedOn4th().placeholderCheck());
+		assertEquals(new BankHistorySeries.PlaceholderCheck(sep(4), false),
+			fiveDays().judged(new BankHistorySeries.PlaceholderCheck(sep(4), false)).placeholderCheck());
+		// A G.E. fresh start judged unaffected is not a restart.
+		assertEquals(new BankHistorySeries.PlaceholderCheck(sep(4), false), fiveDays().withFreshFrom(sep(2))
+			.judged(new BankHistorySeries.PlaceholderCheck(sep(4), false)).placeholderCheck());
+		assertNotEquals(new BankHistorySeries.PlaceholderCheck(sep(4), true),
+			new BankHistorySeries.PlaceholderCheck(sep(4), false));
+		assertNotEquals(new BankHistorySeries.PlaceholderCheck(sep(4), true),
+			new BankHistorySeries.PlaceholderCheck(sep(5), true));
+		try
+		{
+			new BankHistorySeries.PlaceholderCheck(null, true);
+			fail("a judgement has a day");
+		}
+		catch (NullPointerException expected)
+		{
+			// the point of the test
+		}
+	}
+
 	static List<LocalDate> days(final BankHistorySeries s)
 	{
 		final List<LocalDate> days = new ArrayList<>();

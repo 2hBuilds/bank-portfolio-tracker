@@ -69,9 +69,10 @@ public class BankHistoryRecordingReviewTest
 		disk = new PriceStore(new Gson(), TestFilepaths.rooted(tmp.getRoot()));
 		when(f.store.loadBankHistory(anyLong(), any())).thenAnswer(invocation ->
 			disk.loadBankHistory(invocation.<Long>getArgument(0), invocation.<String>getArgument(1)));
-		when(f.store.recordBankHistory(anyLong(), any(), any(), any())).thenAnswer(invocation ->
+		when(f.store.recordBankHistory(anyLong(), any(), any(), any(), any())).thenAnswer(invocation ->
 			disk.recordBankHistory(invocation.<Long>getArgument(0), invocation.<String>getArgument(1),
-				invocation.<BankHistoryPoint>getArgument(2), invocation.<LocalDate>getArgument(3)));
+				invocation.<BankHistoryPoint>getArgument(2), invocation.<LocalDate>getArgument(3),
+				invocation.<BankHistorySeries.PlaceholderCheck>getArgument(4)));
 		f.zonedService(ZoneOffset.UTC, false);
 	}
 
@@ -194,9 +195,11 @@ public class BankHistoryRecordingReviewTest
 	@Test
 	public void aWriteThatFailedIsSentAgainWithTheNextComputation()
 	{
-		when(f.store.recordBankHistory(anyLong(), any(), any(), any())).thenReturn(false).thenAnswer(invocation ->
-			disk.recordBankHistory(invocation.<Long>getArgument(0), invocation.<String>getArgument(1),
-				invocation.<BankHistoryPoint>getArgument(2), invocation.<LocalDate>getArgument(3)));
+		when(f.store.recordBankHistory(anyLong(), any(), any(), any(), any())).thenReturn(false)
+			.thenAnswer(invocation ->
+				disk.recordBankHistory(invocation.<Long>getArgument(0), invocation.<String>getArgument(1),
+					invocation.<BankHistoryPoint>getArgument(2), invocation.<LocalDate>getArgument(3),
+					invocation.<BankHistorySeries.PlaceholderCheck>getArgument(4)));
 		loginWith(PriceServiceTest.bank(PriceServiceTest.T0));
 		assertEquals(1, writes());
 		assertTrue("the first write was refused", onDisk(ACCOUNT).isEmpty());
@@ -221,7 +224,7 @@ public class BankHistoryRecordingReviewTest
 		final long first = PriceServiceTest.T0;
 		final long second = first + MINUTE;
 		final AtomicBoolean interleaved = new AtomicBoolean();
-		when(f.store.recordBankHistory(anyLong(), any(), any(), any())).thenAnswer(invocation ->
+		when(f.store.recordBankHistory(anyLong(), any(), any(), any(), any())).thenAnswer(invocation ->
 		{
 			final BankHistoryPoint point = invocation.getArgument(2);
 			if (point.bankAtMillis() == first && interleaved.compareAndSet(false, true))
@@ -232,7 +235,7 @@ public class BankHistoryRecordingReviewTest
 				return false;
 			}
 			return disk.recordBankHistory(invocation.<Long>getArgument(0), invocation.<String>getArgument(1), point,
-				invocation.<LocalDate>getArgument(3));
+				invocation.<LocalDate>getArgument(3), invocation.<BankHistorySeries.PlaceholderCheck>getArgument(4));
 		});
 		loginWith(PriceServiceTest.bank(first));
 		assertTrue(interleaved.get());
@@ -268,7 +271,7 @@ public class BankHistoryRecordingReviewTest
 
 		assertTrue(f.lastStatus().portfolio().valueNow() > 0L);
 		verify(f.store, never()).saveBank(any(BankSnapshot.class));
-		verify(f.store, never()).recordBankHistory(anyLong(), any(), any(), any());
+		verify(f.store, never()).recordBankHistory(anyLong(), any(), any(), any(), any());
 		assertTrue(series().isEmpty());
 
 		f.service.setBank(PriceServiceTest.bank(PriceServiceTest.T0 + 2L * MINUTE));

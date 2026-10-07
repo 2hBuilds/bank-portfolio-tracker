@@ -906,6 +906,6 @@ public class ChartColourTest
 	@Test
 	public void c7_theVersionIs110()
 	{
-		assertEquals("1.1.0", Version.CURRENT);
+		assertEquals("1.1.1", Version.CURRENT);
 	}
 }

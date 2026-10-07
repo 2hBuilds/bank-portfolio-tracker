@@ -37,6 +37,8 @@ import javax.swing.border.CompoundBorder;
 import javax.swing.border.EmptyBorder;
 import javax.swing.border.LineBorder;
 import javax.swing.border.MatteBorder;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.DynamicGridLayout;
 import net.runelite.client.ui.FontManager;
@@ -1238,10 +1240,15 @@ final class Widgets
 	 * rows beside Min and Max and a box that looked different would read as a different kind of control. Both go
 	 * through the one builder below, so the two can never drift apart. Nothing about it is numeric: it takes any
 	 * text, and it has no invalid state to turn red.
+	 *
+	 * <p>Since 1.1.1 part X it is also the one box that carries a {@link ClearX}, a small "x" at its right end while it
+	 * holds any text; the gp boxes ({@link #gpField}) never do.
 	 */
 	static PlaceholderField searchField(String placeholder)
 	{
-		return field(placeholder);
+		final PlaceholderField f = field(placeholder);
+		f.addClearX();
+		return f;
 	}
 
 	/** The one builder behind {@link #gpField} and {@link #searchField}. */
@@ -1292,6 +1299,9 @@ final class Widgets
 	{
 		private final String placeholder;
 
+		@Nullable
+		private ClearX clear;
+
 		PlaceholderField(String placeholder)
 		{
 			this.placeholder = placeholder == null ? "" : placeholder;
@@ -1306,6 +1316,47 @@ final class Widgets
 		boolean placeholderShowing()
 		{
 			return getText().isEmpty() && !getTextField().isFocusOwner();
+		}
+
+		/** The clear "x" this box carries (1.1.1 part X), or null: only the search box has one, never a gp bound. */
+		@Nullable
+		ClearX clearX()
+		{
+			return clear;
+		}
+
+		/**
+		 * Puts a {@link ClearX} on the box's east side (the box lays out as a BorderLayout, the text field in the middle, so
+		 * the text field is shortened by the x's width while it stands there and by nothing while it does not) and has the
+		 * text's own document say when it stands: any text, and it shows; none, and it goes. Called once, by
+		 * {@link Widgets#searchField}.
+		 */
+		void addClearX()
+		{
+			final ClearX x = new ClearX(this);
+			clear = x;
+			add(x, BorderLayout.EAST);
+			getDocument().addDocumentListener(new DocumentListener()
+			{
+				@Override
+				public void insertUpdate(DocumentEvent e)
+				{
+					x.sync();
+				}
+
+				@Override
+				public void removeUpdate(DocumentEvent e)
+				{
+					x.sync();
+				}
+
+				@Override
+				public void changedUpdate(DocumentEvent e)
+				{
+					x.sync();
+				}
+			});
+			x.sync();
 		}
 
 		@Override
@@ -1327,6 +1378,132 @@ final class Widgets
 				final int x = tf.getX() + in.left + 1;
 				final int y = tf.getY() + (tf.getHeight() - fm.getHeight()) / 2 + fm.getAscent();
 				g2.drawString(placeholder, x, y);
+			}
+			finally
+			{
+				g2.dispose();
+			}
+		}
+	}
+
+	/**
+	 * The search box's clear "x" (1.1.1 part X, the user's ask): a plain x of two 1 px diagonals corner to corner of a
+	 * {@value #GLYPH} x {@value #GLYPH} px box, in the grey the placeholder is painted in ({@link #PLACEHOLDER_COLOR}) at rest
+	 * and white under the mouse, standing at the box's right end while the box holds any text and absent - taking no room - while
+	 * it does not. Pressing it empties the box through the text's own document, so the list, the "n of m items" count and the
+	 * bridge's echo follow as they do for a keystroke, and then gives the box the focus so the caret is in it and the next
+	 * character typed is the first. It is drawn pixel by pixel and never typed, because the bitmap RuneScape faces box a
+	 * character they lack (playbook 7.5).
+	 *
+	 * <p>The component is {@value #WIDTH} px wide - {@value #AIR_LEFT} px of air so the text never runs under the x, the glyph,
+	 * and {@value #AIR_RIGHT} px of air - and as tall as the box's inside; with the box's 1 px line and 3 px of padding the
+	 * glyph's right edge stands 5 px in from the box's right border, and it is centred between the box's top and bottom. The
+	 * cursor stays the default (no hand).
+	 */
+	static final class ClearX extends JComponent
+	{
+		/** The glyph's side in px: the user's pick from 3, 4 and 5 px. */
+		static final int GLYPH = 5;
+		/** Air between the text field's right end and the glyph, so typed text never runs under it. */
+		static final int AIR_LEFT = 3;
+		/** Air between the glyph and the box's inner right edge (past the box's line and padding it is 5 px from the border). */
+		static final int AIR_RIGHT = 1;
+		/** The component's width: the glyph and its air. */
+		static final int WIDTH = AIR_LEFT + GLYPH + AIR_RIGHT;
+
+		private final PlaceholderField owner;
+		private boolean hot;
+		/** How many presses have asked the text field for the focus: what a headless JVM, with no focus owner, can read instead. */
+		int focusRequests;
+
+		ClearX(PlaceholderField owner)
+		{
+			this.owner = owner;
+			setOpaque(false);
+			setFocusable(false);
+			setVisible(false);
+			setPreferredSize(new Dimension(WIDTH, GLYPH));
+			addMouseListener(new MouseAdapter()
+			{
+				@Override
+				public void mousePressed(MouseEvent e)
+				{
+					if (isPress(e))
+					{
+						press();
+					}
+				}
+
+				@Override
+				public void mouseEntered(MouseEvent e)
+				{
+					setHot(true);
+				}
+
+				@Override
+				public void mouseExited(MouseEvent e)
+				{
+					setHot(false);
+				}
+			});
+		}
+
+		/** The x is drawn white while the mouse is on it. */
+		private void setHot(boolean on)
+		{
+			if (hot != on)
+			{
+				hot = on;
+				repaint();
+			}
+		}
+
+		/**
+		 * The press: empties the box - through the text's own document, the road a keystroke and Escape take - and then asks the
+		 * text field for the focus. The x goes with the text, from {@link #sync}.
+		 */
+		void press()
+		{
+			owner.setText("");
+			focusRequests++;
+			owner.getTextField().requestFocusInWindow();
+		}
+
+		/**
+		 * Shows the x while the box holds any text and hides it while it is empty; a layout follows either way, because the
+		 * text field's room is the box's width less the x's while it stands. An x that goes is no longer under the mouse as far
+		 * as it knows.
+		 */
+		void sync()
+		{
+			final boolean show = !owner.getText().isEmpty();
+			if (show == isVisible())
+			{
+				return;
+			}
+			if (!show)
+			{
+				hot = false;
+			}
+			setVisible(show);
+			owner.revalidate();
+			owner.repaint();
+		}
+
+		@Override
+		protected void paintComponent(Graphics g)
+		{
+			final Graphics2D g2 = (Graphics2D) g.create();
+			try
+			{
+				g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
+				g2.setColor(hot ? Color.WHITE : PLACEHOLDER_COLOR);
+				final int top = (getHeight() - GLYPH) / 2;
+				for (int i = 0; i < GLYPH; i++)
+				{
+					g2.fillRect(AIR_LEFT + i, top + i, 1, 1);
+					g2.fillRect(AIR_LEFT + GLYPH - 1 - i, top + i, 1, 1);
+				}
 			}
 			finally
 			{

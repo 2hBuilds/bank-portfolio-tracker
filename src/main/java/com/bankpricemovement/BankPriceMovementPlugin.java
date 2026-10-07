@@ -456,6 +456,13 @@ public class BankPriceMovementPlugin extends Plugin
 	private volatile int bankReads;
 
 	/**
+	 * 1.1.1: whether the one INFO line about bank placeholders that held a quantity has been written since startUp, so a
+	 * client that sends them says so once and not on every bank read. Reset in {@link #startUp()}, because RuneLite
+	 * reuses this instance across a disable and an enable.
+	 */
+	private volatile boolean placeholdersLogged;
+
+	/**
 	 * AS: {@link #fingerprint(Item[], Item[], Item[])} of the three containers the last read was made from - the
 	 * bank, and the inventory and the worn gear it folded in - and the account and profile that read was stamped
 	 * with. Null means there is nothing to compare with - no read since startUp - and the next bank event is then
@@ -507,6 +514,7 @@ public class BankPriceMovementPlugin extends Plugin
 		log.info("bank-portfolio-tracker: 2h Bank Portfolio Tracker {} starting on RuneLite {}", Version.CURRENT,
 			RuneLiteProperties.getVersion());
 		warnedKinds.clear();
+		placeholdersLogged = false;
 		// RuneLite reuses the plugin instance across a disable/enable, so last run's memo would swallow this
 		// run's first login (the service below is a new one and has been told nothing).
 		sentLoggedIn = false;
@@ -1161,9 +1169,19 @@ public class BankPriceMovementPlugin extends Plugin
 			return;
 		}
 		bankReads++;
+		// 1.1.1: bank placeholders the reader dropped although they held a quantity (GitHub issue #1). RuneLite's own
+		// bank code assumes the game sends 0, so this is how a real client tells us it does not: the count rides the
+		// first read's line, and the first LATER read that finds one says so once - never one line per event.
+		final int placeholders = reader.placeholdersSkipped();
 		if (bankReads == 1)
 		{
-			log.info("bank-portfolio-tracker: first bank read of the session: {} stacks", stacks(snapshot));
+			log.info("bank-portfolio-tracker: first bank read of the session: {} stacks, {} placeholders with a"
+				+ " quantity skipped", stacks(snapshot), placeholders);
+		}
+		else if (placeholders > 0 && !placeholdersLogged)
+		{
+			placeholdersLogged = true;
+			log.info("bank-portfolio-tracker: {} bank placeholders with a quantity skipped", placeholders);
 		}
 		lastBank = snapshot;
 		s.setBank(snapshot);

@@ -66,9 +66,10 @@ public class BankHistoryRecordingTest
 		disk = new PriceStore(new Gson(), TestFilepaths.rooted(tmp.getRoot()));
 		when(f.store.loadBankHistory(anyLong(), any())).thenAnswer(invocation ->
 			disk.loadBankHistory(invocation.<Long>getArgument(0), invocation.<String>getArgument(1)));
-		when(f.store.recordBankHistory(anyLong(), any(), any(), any())).thenAnswer(invocation ->
+		when(f.store.recordBankHistory(anyLong(), any(), any(), any(), any())).thenAnswer(invocation ->
 			disk.recordBankHistory(invocation.<Long>getArgument(0), invocation.<String>getArgument(1),
-				invocation.<BankHistoryPoint>getArgument(2), invocation.<LocalDate>getArgument(3)));
+				invocation.<BankHistoryPoint>getArgument(2), invocation.<LocalDate>getArgument(3),
+				invocation.<BankHistorySeries.PlaceholderCheck>getArgument(4)));
 		// UTC unless a test says otherwise, so "today" is the fixture's own 08 Sep whatever machine runs this.
 		useZone(ZoneOffset.UTC);
 	}
@@ -233,7 +234,7 @@ public class BankHistoryRecordingTest
 
 		assertTrue(f.lastStatus().portfolio().valueNow() > 0L);
 		assertTrue(series().isEmpty());
-		verify(f.store, never()).recordBankHistory(anyLong(), any(), any(), any());
+		verify(f.store, never()).recordBankHistory(anyLong(), any(), any(), any(), any());
 
 		f.service.setBank(PriceServiceTest.bank(PriceServiceTest.T0 + MINUTE));
 		assertEquals("a real bank after it records", 1, series().size());
@@ -255,7 +256,7 @@ public class BankHistoryRecordingTest
 		assertTrue(f.lastStatus().portfolio().valueNow() > 0L);
 		assertTrue(series().isEmpty());
 		verify(f.store, never()).loadBankHistory(anyLong(), any());
-		verify(f.store, never()).recordBankHistory(anyLong(), any(), any(), any());
+		verify(f.store, never()).recordBankHistory(anyLong(), any(), any(), any(), any());
 	}
 
 	/**
@@ -273,7 +274,7 @@ public class BankHistoryRecordingTest
 		loginWith(bones);
 
 		assertTrue(series().isEmpty());
-		verify(f.store, never()).recordBankHistory(anyLong(), any(), any(), any());
+		verify(f.store, never()).recordBankHistory(anyLong(), any(), any(), any(), any());
 
 		final BankSnapshot coins = PriceServiceTest.bank(PriceServiceTest.T0 + MINUTE);
 		coins.items.clear();
@@ -418,7 +419,7 @@ public class BankHistoryRecordingTest
 		assertEquals(Collections.singletonList(last), disk.loadBankHistory(ACCOUNT, PROFILE).series().points());
 
 		final ArgumentCaptor<BankHistoryPoint> points = ArgumentCaptor.forClass(BankHistoryPoint.class);
-		verify(f.store, times(3)).recordBankHistory(eq(ACCOUNT), eq(PROFILE), points.capture(), eq(SEP_8));
+		verify(f.store, times(3)).recordBankHistory(eq(ACCOUNT), eq(PROFILE), points.capture(), eq(SEP_8), any());
 		assertEquals(last, points.getValue());
 	}
 
@@ -433,7 +434,7 @@ public class BankHistoryRecordingTest
 	public void anOwnerSwitchLoadsTheOtherSeriesAndNeverCrossesTheFiles()
 	{
 		assertTrue(disk.recordBankHistory(OTHER, PROFILE, BankHistorySeriesTest.p(LocalDate.of(2026, 9, 1), 1L, 123L),
-			SEP_8));
+			SEP_8, null));
 		when(f.store.loadBank(OTHER, PROFILE)).thenReturn(PriceServiceTest.bank(PriceServiceTest.T0 - 2L * HOUR, OTHER));
 		when(f.store.loadBank(ACCOUNT, PROFILE)).thenReturn(PriceServiceTest.bank(PriceServiceTest.T0, ACCOUNT));
 
@@ -508,7 +509,7 @@ public class BankHistoryRecordingTest
 		f.service.setBank(withMoreBoxes(PriceServiceTest.T0 + MINUTE, 70));
 
 		assertEquals(PriceServiceTest.T0 + MINUTE, series().last().bankAtMillis());
-		verify(f.store, never()).recordBankHistory(anyLong(), any(), any(), any());
+		verify(f.store, never()).recordBankHistory(anyLong(), any(), any(), any(), any());
 		verify(f.store, atLeastOnce()).loadBankHistory(ACCOUNT, PROFILE);
 		assertEquals("no file", PriceStore.BankHistoryLoad.State.MISSING, disk.loadBankHistory(ACCOUNT, PROFILE).state());
 	}

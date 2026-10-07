@@ -6465,6 +6465,279 @@ public class BankPriceMovementPanelTest
 		});
 	}
 
+	// ---- 1.1.1 part S: the search box never moves while you type
+
+	/** {@link #rows} with the first {@code runes} of them named "Rune i" and the rest "Item i", so one word finds a few. */
+	private static List<MovementRow> rowsWithRunes(int n, int runes)
+	{
+		final List<MovementRow> out = new ArrayList<>(n);
+		for (int i = 1; i <= n; i++)
+		{
+			final long unit = i * 1_000L;
+			out.add(new MovementRow(i, (i <= runes ? "Rune " : "Item ") + i, i, i > 1, unit, unit - 100L, 100L,
+				100.0 * 100 / (unit - 100), unit * i, null));
+		}
+		return Collections.unmodifiableList(out);
+	}
+
+	/** Where {@code c} stands in the panel, whatever it is nested in. */
+	private Rectangle bounds(Component c)
+	{
+		return SwingUtilities.convertRectangle(c.getParent(), c.getBounds(), panel);
+	}
+
+	/**
+	 * What the reader's eye is fixed on while typing: the search box, its row, the card above it and the gutter the
+	 * header reserves. The clear x is recorded only while it shows (it stands only while the box holds text).
+	 */
+	private static final class Fixed
+	{
+		final Rectangle box;
+		final Rectangle row;
+		final Rectangle hero;
+		final Rectangle clearX;
+		final int gutter;
+		final int firstRowWidth;
+
+		Fixed(int gutter, Rectangle box, Rectangle row, Rectangle hero, Rectangle clearX, int firstRowWidth)
+		{
+			this.box = box;
+			this.row = row;
+			this.hero = hero;
+			this.clearX = clearX;
+			this.gutter = gutter;
+			this.firstRowWidth = firstRowWidth;
+		}
+	}
+
+	private Fixed fixed() throws Exception
+	{
+		final AtomicReference<Fixed> out = new AtomicReference<>();
+		onEdt(() ->
+		{
+			final Widgets.PlaceholderField box = panel.searchField();
+			final Widgets.ClearX x = box.clearX();
+			out.set(new Fixed(panel.gutter(), bounds(box), bounds(searchRow()), bounds(panel.hero()),
+				x.isVisible() ? bounds(x) : null, panel.rowPanels().isEmpty() ? -1 : panel.rowPanels().get(0).getWidth()));
+		});
+		return out.get();
+	}
+
+	private static void assertSameSpot(String why, Fixed before, Fixed after, boolean clearXToo)
+	{
+		assertEquals(why + ": the search box", before.box, after.box);
+		assertEquals(why + ": the search row", before.row, after.row);
+		assertEquals(why + ": the card above it", before.hero, after.hero);
+		assertEquals(why + ": the gutter", before.gutter, after.gutter);
+		if (clearXToo)
+		{
+			assertNotNull(why + ": the clear x was showing before", before.clearX);
+			assertNotNull(why + ": the clear x is showing after", after.clearX);
+			assertEquals(why + ": the clear x", before.clearX, after.clearX);
+		}
+	}
+
+	/** Lays the panel out until nothing more moves: each pass is its own EDT block so the events a layout posts are heard. */
+	private void settle(int width, int height) throws Exception
+	{
+		for (int i = 0; i < 3; i++)
+		{
+			onEdt(() -> layout(width, height));
+		}
+	}
+
+	private void search(String text) throws Exception
+	{
+		onEdt(() -> panel.searchField().setText(text));
+	}
+
+	private static final int SEARCH_OUTER = net.runelite.client.ui.PluginPanel.PANEL_WIDTH
+		+ net.runelite.client.ui.PluginPanel.SCROLLBAR_WIDTH;
+
+	private static final int ALWAYS = javax.swing.ScrollPaneConstants.VERTICAL_SCROLLBAR_ALWAYS;
+	private static final int AS_NEEDED = javax.swing.ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED;
+
+	/**
+	 * The user's find: a long list (a bar showing), a search that still leaves more than a screenful, and then one that
+	 * matches nothing - the search box, its clear x, its row, the card above and the gutter stay exactly where they were
+	 * (the empty card used to drop the gutter 7 -> 0 off a pane that was not even showing).
+	 */
+	@Test
+	public void theSearchBoxStaysPutWhenASearchMatchesNothingOverALongList() throws Exception
+	{
+		build();
+		publish(rowsWithRunes(40, 3), listedWith(summary()));
+		settle(SEARCH_OUTER, 900);
+		assertTrue("the fixture has to actually scroll", panel.scrollPane().getVerticalScrollBar().isVisible());
+		final Fixed start = fixed();
+		assertTrue("the gutter is the bar's", start.gutter > 0);
+
+		search("i");
+		settle(SEARCH_OUTER, 900);
+		final int rowsLeft = panel.rowPanels().size();
+		assertTrue("37 of 40 is still more than a screenful: " + rowsLeft, rowsLeft > 30);
+		assertEquals(BankPriceMovementPanel.CARD_LIST, panel.card());
+		final Fixed typed = fixed();
+		assertSameSpot("one letter typed", start, typed, false);
+
+		search("zzz");
+		settle(SEARCH_OUTER, 900);
+		assertEquals("the premise: nothing matches", BankPriceMovementPanel.CARD_EMPTY, panel.card());
+		final Fixed none = fixed();
+		assertSameSpot("a search that matches nothing", typed, none, true);
+		assertSameSpot("...and the box where it was before the first letter", start, none, false);
+	}
+
+	/**
+	 * A search that leaves a few rows over a long list keeps the bar's track (the policy is ALWAYS, the bar shows, empty)
+	 * and so nothing in the header or the rows moves: the bar belongs to the bank, not to the search result.
+	 */
+	@Test
+	public void aSearchThatLeavesFewRowsKeepsTheBarOfTheLongListItNarrowed() throws Exception
+	{
+		build();
+		publish(rowsWithRunes(40, 3), listedWith(summary()));
+		settle(SEARCH_OUTER, 900);
+		final Fixed start = fixed();
+		assertEquals("no search: the bar is the list's own", AS_NEEDED, panel.scrollPane().getVerticalScrollBarPolicy());
+
+		search("rune");
+		settle(SEARCH_OUTER, 900);
+		assertEquals(3, panel.rowPanels().size());
+		assertEquals(BankPriceMovementPanel.CARD_LIST, panel.card());
+		assertEquals(ALWAYS, panel.scrollPane().getVerticalScrollBarPolicy());
+		assertTrue("three rows do not need a bar, and it is there", panel.scrollPane().getVerticalScrollBar().isVisible());
+		final Fixed few = fixed();
+		assertSameSpot("a search that leaves three rows", start, few, false);
+		assertEquals("the rows are as wide as they were", start.firstRowWidth, few.firstRowWidth);
+		assertTrue(few.firstRowWidth > 0);
+	}
+
+	/** A short list that never needed a bar never gets one, searched or not. */
+	@Test
+	public void aShortListNeverGetsABarFromASearch() throws Exception
+	{
+		build();
+		publish(rowsWithRunes(2, 1), listedWith(summary()));
+		settle(SEARCH_OUTER, 900);
+		assertFalse(panel.scrollPane().getVerticalScrollBar().isVisible());
+		final Fixed start = fixed();
+		assertEquals(0, start.gutter);
+
+		search("rune");
+		settle(SEARCH_OUTER, 900);
+		assertEquals(1, panel.rowPanels().size());
+		assertEquals(AS_NEEDED, panel.scrollPane().getVerticalScrollBarPolicy());
+		assertSameSpot("a search that leaves one row", start, fixed(), false);
+
+		search("zzz");
+		settle(SEARCH_OUTER, 900);
+		assertEquals(BankPriceMovementPanel.CARD_EMPTY, panel.card());
+		final Fixed none = fixed();
+		assertSameSpot("a search that matches nothing", start, none, false);
+		assertEquals(0, none.gutter);
+		assertEquals(AS_NEEDED, panel.scrollPane().getVerticalScrollBarPolicy());
+		assertFalse(panel.scrollPane().getVerticalScrollBar().isVisible());
+	}
+
+	/** Emptying the box puts everything back: the policy is the list's own again and the box is where it began. */
+	@Test
+	public void clearingTheSearchHandsTheBarBackToTheList() throws Exception
+	{
+		build();
+		publish(rowsWithRunes(40, 3), listedWith(summary()));
+		settle(SEARCH_OUTER, 900);
+		final Fixed start = fixed();
+
+		search("zzz");
+		settle(SEARCH_OUTER, 900);
+		assertEquals(ALWAYS, panel.scrollPane().getVerticalScrollBarPolicy());
+
+		search("");
+		settle(SEARCH_OUTER, 900);
+		assertEquals(BankPriceMovementPanel.CARD_LIST, panel.card());
+		assertEquals(AS_NEEDED, panel.scrollPane().getVerticalScrollBarPolicy());
+		assertTrue("the long list scrolls again by its own need", panel.scrollPane().getVerticalScrollBar().isVisible());
+		final Fixed back = fixed();
+		assertSameSpot("back from a search that matched nothing", start, back, false);
+		assertEquals(start.firstRowWidth, back.firstRowWidth);
+	}
+
+	/**
+	 * Away to History and back to an Items card that a search emptied: the header takes the Items list's gutter, not the
+	 * one History left it with.
+	 */
+	@Test
+	public void backFromHistoryToAnEmptiedItemsCardTheHeaderHasTheItemsGutter() throws Exception
+	{
+		build();
+		publish(rowsWithRunes(40, 3), listedWith(summary()));
+		settle(SEARCH_OUTER, 900);
+		search("zzz");
+		settle(SEARCH_OUTER, 900);
+		assertEquals(BankPriceMovementPanel.CARD_EMPTY, panel.card());
+		final int itemsGutter = panel.gutter();
+		assertTrue("the premise: the long list's gutter is held", itemsGutter > 0);
+
+		onEdt(() -> panel.pressView(SidebarView.HISTORY));
+		settle(SEARCH_OUTER, 900);
+		assertEquals(BankPriceMovementPanel.CARD_HISTORY, panel.card());
+		assertEquals("the premise: History is short, so its gutter is not the Items one", 0, panel.gutter());
+
+		onEdt(() -> panel.pressView(SidebarView.ITEMS));
+		settle(SEARCH_OUTER, 900);
+		assertEquals(BankPriceMovementPanel.CARD_EMPTY, panel.card());
+		assertEquals("the Items gutter, not History's", itemsGutter, panel.gutter());
+	}
+
+	/**
+	 * S1 alone, with no search in it: a band that empties a long list shows the empty card, and the header keeps the
+	 * gutter the list had - the hidden pane's own layout, which hides its bar, is not the header's business.
+	 */
+	@Test
+	public void aBandThatEmptiesALongListLeavesTheHeaderWhereItWas() throws Exception
+	{
+		build();
+		publish(rowsWithRunes(40, 3), listedWith(summary()));
+		settle(SEARCH_OUTER, 900);
+		final Fixed start = fixed();
+		assertTrue(start.gutter > 0);
+
+		onEdt(() -> panel.applyBand(1_000_000_000L, 0L));
+		publish(Collections.emptyList(), listed(40, 0));
+		settle(SEARCH_OUTER, 900);
+		assertEquals(BankPriceMovementPanel.CARD_EMPTY, panel.card());
+		assertSameSpot("a band that leaves no row", start, fixed(), false);
+	}
+
+	/**
+	 * The bar's need depends on the window's height, so a resize while a search is typed asks again: tall enough for the
+	 * whole list there is no bar to keep, shrunk below it there is.
+	 */
+	@Test
+	public void theBarFollowsTheWholeListWhenTheWindowIsResizedMidSearch() throws Exception
+	{
+		build();
+		publish(rowsWithRunes(12, 3), listedWith(summary()));
+		settle(SEARCH_OUTER, 1500);
+		assertFalse("twelve rows fit a tall window", panel.scrollPane().getVerticalScrollBar().isVisible());
+		search("rune");
+		settle(SEARCH_OUTER, 1500);
+		assertEquals(3, panel.rowPanels().size());
+		assertEquals(AS_NEEDED, panel.scrollPane().getVerticalScrollBarPolicy());
+		final Fixed tall = fixed();
+
+		settle(SEARCH_OUTER, 700);
+		assertEquals("the window shrank under the whole list: its bar is kept for the three rows", ALWAYS,
+			panel.scrollPane().getVerticalScrollBarPolicy());
+		assertTrue(panel.scrollPane().getVerticalScrollBar().isVisible());
+
+		settle(SEARCH_OUTER, 1500);
+		assertEquals("...and given back when it grew again", AS_NEEDED, panel.scrollPane().getVerticalScrollBarPolicy());
+		assertFalse(panel.scrollPane().getVerticalScrollBar().isVisible());
+		assertSameSpot("back at the tall window", tall, fixed(), false);
+	}
+
 	/**
 	 * B039: a publish that adds or drops the problem row must not take the OPEN price fold out of the header.
 	 * It used to: the header was rebuilt wholesale, which tore the focused gp field out of the hierarchy, and
@@ -6962,7 +7235,7 @@ public class BankPriceMovementPanelTest
 
 	/**
 	 * The box is the Min / Max boxes' own look - the one builder - and reads "Search items" in grey until it is typed in;
-	 * no config key, no clear button and no magnifier come with it.
+	 * no config key and no magnifier come with it (and, since 1.1.1 part X, a clear x that stands only while it holds text).
 	 */
 	@Test
 	public void theSearchBoxReadsItsPlaceholderInTheMinMaxBoxesLook() throws Exception
@@ -6980,7 +7253,11 @@ public class BankPriceMovementPanelTest
 			assertEquals(panel.minField().getTextField().getFont(), box.getTextField().getFont());
 			assertEquals(panel.minField().getTextField().getForeground(), box.getTextField().getForeground());
 			assertEquals(panel.minField().getPreferredSize().height, box.getPreferredSize().height);
-			assertEquals("the box holds only the text field", 1, box.getComponentCount());
+			assertEquals("the box holds its text field and, since 1.1.1 part X, the clear x - hidden while it is empty", 2,
+				box.getComponentCount());
+			assertSame(box.clearX(), box.getComponent(1));
+			assertFalse(box.clearX().isVisible());
+			assertEquals("the Min box holds only its text field: no x", 1, panel.minField().getComponentCount());
 			box.setText("r");
 			assertFalse("typed in: the placeholder goes", box.getText().isEmpty());
 			assertEquals("the settings menu is 27 components (24 before 1.1.0 part J's rule and Slot 1 rows, 20 before part H's"
@@ -7100,6 +7377,140 @@ public class BankPriceMovementPanelTest
 		assertEquals("Escape empties the box", "", panel.searchField().getText());
 		assertEquals("...which clears the search", 6, panel.rowPanels().size());
 		assertTrue(panel.describe(), panel.describe().contains("\"search\":\"\",\"matching\":6"));
+	}
+
+	/**
+	 * 1.1.1 part X: the clear x stands at the search box's right end only while the box holds text - and takes no room while
+	 * it does not. In a laid-out sidebar: empty, the text field runs to the box's inside; with one character typed the x is
+	 * {@code ClearX.WIDTH} px wide, ends at the box's inside, and the text field ends exactly where the x begins (so typed
+	 * text never runs under it); the glyph's right edge is 5 px in from the box's right border and it is centred between the
+	 * box's top and bottom; emptied again, the x and its inset are gone.
+	 */
+	@Test
+	public void theClearXStandsOnlyWhileTheSearchBoxHoldsTextAndTheTextNeverRunsUnderIt() throws Exception
+	{
+		build();
+		publish(searchBank(), listed(13, 6));
+		onEdt(() ->
+		{
+			layout(SIDEBAR_WIDTH, 900);
+			final Widgets.PlaceholderField box = panel.searchField();
+			final Widgets.ClearX x = box.clearX();
+			assertNotNull("the search box carries the x", x);
+			final JTextField tf = box.getTextField();
+			final int inside = box.getWidth() - box.getInsets().right;
+
+			assertFalse("an empty box has no x", x.isVisible());
+			assertEquals("...and no inset: the text field runs to the box's inside", inside, tf.getX() + tf.getWidth());
+			final int roomEmpty = tf.getWidth();
+
+			box.setText("r");
+			box.doLayout();
+			assertTrue("one character and it stands", x.isVisible());
+			assertEquals(Widgets.ClearX.WIDTH, x.getWidth());
+			assertEquals("the x ends at the box's inside", inside, x.getX() + x.getWidth());
+			assertEquals("the text field's east inset is the x's width", roomEmpty - Widgets.ClearX.WIDTH, tf.getWidth());
+			assertEquals("...so typed text never runs under it", x.getX(), tf.getX() + tf.getWidth());
+			assertEquals("the glyph's right edge is 5 px in from the box's right border", 5,
+				box.getWidth() - (x.getX() + Widgets.ClearX.AIR_LEFT + Widgets.ClearX.GLYPH));
+			final double glyphMiddle = x.getY() + (x.getHeight() - Widgets.ClearX.GLYPH) / 2 + Widgets.ClearX.GLYPH / 2.0;
+			assertEquals("centred between the box's top and bottom", box.getHeight() / 2.0, glyphMiddle, 1.0);
+
+			box.setText("");
+			box.doLayout();
+			assertFalse("emptied: the x goes", x.isVisible());
+			assertEquals("...with its inset", roomEmpty, tf.getWidth());
+		});
+	}
+
+	/**
+	 * 1.1.1 part X: the x is the search box's alone. The Min, Max and three preset boxes are the same builder's gp boxes and
+	 * hold their text field and nothing else, whatever is typed in them.
+	 */
+	@Test
+	public void theGpBoxesHaveNoClearX() throws Exception
+	{
+		build();
+		publish(searchBank(), listed(13, 6));
+		onEdt(() ->
+		{
+			assertNull(panel.minField().clearX());
+			assertNull(panel.maxField().clearX());
+			for (int i = 0; i < 3; i++)
+			{
+				assertNull(panel.presetField(i).clearX());
+				assertEquals(1, panel.presetField(i).getComponentCount());
+			}
+			panel.minField().setText("100k");
+			panel.maxField().setText("1m");
+			assertEquals("typed in, still only the text field", 1, panel.minField().getComponentCount());
+			assertEquals(1, panel.maxField().getComponentCount());
+			assertNotNull(panel.searchField().clearX());
+		});
+	}
+
+	/**
+	 * 1.1.1 part X, the press: the box is emptied through its document - so every row shows again, the count sentence reads
+	 * the whole list and the bridge's echo is "" - and the text field is asked for the focus, once (a headless JVM has no
+	 * focus owner, so the x counts its asks). A RIGHT press is not a press and does neither, and a press on the x is inside
+	 * the box as far as the sidebar's hand-over of the focus to the game goes, so that hand-over leaves it alone. No filter
+	 * change and nothing saved: a search is neither.
+	 */
+	@Test
+	public void pressingTheClearXEmptiesTheBoxShowsEveryRowAndAsksForTheFocus() throws Exception
+	{
+		buildWithHovers();
+		publish(searchBank(), listed(13, 6));
+		type("rune");
+		assertEquals(Arrays.asList("Rune platebody"), shownNames());
+		assertTrue(panel.bandTarget().getToolTipText(), panel.bandTarget().getToolTipText().endsWith("1 of 13 items"));
+		onEdt(() ->
+		{
+			final Widgets.ClearX x = panel.searchField().clearX();
+			assertTrue("typed in: the x stands", x.isVisible());
+			assertEquals(0, x.focusRequests);
+			assertFalse("a press on the x is a press inside the box: the focus is not handed to the game",
+				panel.pressLeavesField(panel.searchField().getTextField(), x));
+
+			rightPress(x);
+			assertEquals("a right press is not a press", "rune", panel.searchField().getText());
+			assertEquals(0, x.focusRequests);
+
+			press(x);
+			assertEquals("the press empties the box", "", panel.searchField().getText());
+			assertEquals("...and asks the text field for the focus, once", 1, x.focusRequests);
+			assertFalse("the x goes with the text", x.isVisible());
+		});
+		assertEquals("every fixture row shows again", 6, panel.rowPanels().size());
+		assertEquals(6, panel.shownRows());
+		assertTrue(panel.describe(), panel.describe().contains("\"search\":\"\",\"matching\":6"));
+		assertTrue(panel.bandTarget().getToolTipText(), panel.bandTarget().getToolTipText().endsWith("6 of 13 items"));
+		verify(service, never()).setFilter(any());
+		assertTrue("a search is not a filter: nothing is saved", prefs.saves.isEmpty());
+	}
+
+	/** 1.1.1 part X: the x's hover is behind "Show hover text" like the box's: absent with the switch off. */
+	@Test
+	public void theClearXHoverIsSilentWithTheSwitchOff() throws Exception
+	{
+		build();
+		publish(searchBank(), listed(13, 6));
+		onEdt(() -> assertNull(panel.searchField().clearX().getToolTipText()));
+	}
+
+	/** ...and with it ON it is one sentence, "Clear the search", the box's own hover untouched. */
+	@Test
+	public void theClearXHoverIsOneSentenceWithTheSwitchOn() throws Exception
+	{
+		buildWithHovers();
+		publish(searchBank(), listed(13, 6));
+		onEdt(() ->
+		{
+			assertEquals("Clear the search", BankPriceMovementPanel.CLEAR_SEARCH_TIP);
+			assertEquals(BankPriceMovementPanel.CLEAR_SEARCH_TIP, panel.searchField().clearX().getToolTipText());
+			assertEquals("the box's own hover is untouched", BankPriceMovementPanel.SEARCH_TIP,
+				panel.searchField().getToolTipText());
+		});
 	}
 
 	/**

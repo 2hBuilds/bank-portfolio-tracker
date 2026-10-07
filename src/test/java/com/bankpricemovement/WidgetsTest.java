@@ -10,6 +10,7 @@ import static org.junit.Assert.assertTrue;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Font;
+import java.awt.Graphics2D;
 import java.awt.Insets;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseListener;
@@ -21,6 +22,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import javax.annotation.Nullable;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
+import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.SwingConstants;
@@ -1250,6 +1252,107 @@ public class WidgetsTest
 			}
 		}
 		return count;
+	}
+
+	// ---------------------------------------------------------------- 1.1.1 part X: the search box's clear x
+
+	/**
+	 * The x is two 1 px diagonals corner to corner of a 5 x 5 box - nine pixels, the centre shared - in the placeholder
+	 * grey at rest and white under the mouse, with {@code AIR_LEFT} px of air to its left and {@code AIR_RIGHT} to its
+	 * right, centred in the height it is given, on a transparent ground. Painted into an image, as the glyphs above are.
+	 */
+	@Test
+	public void theClearXIsTwoOnePixelDiagonalsInTheGreyAndWhiteUnderTheMouse() throws Exception
+	{
+		onEdt(() ->
+		{
+			assertEquals("a 5 px x", 5, Widgets.ClearX.GLYPH);
+			assertEquals("3 px of air, the x, 1 px of air", 9, Widgets.ClearX.WIDTH);
+			final Widgets.PlaceholderField box = Widgets.searchField("Search items");
+			final Widgets.ClearX x = box.clearX();
+			box.setText("a");
+			x.setSize(Widgets.ClearX.WIDTH, 18);
+			final int top = (18 - Widgets.ClearX.GLYPH) / 2;
+
+			assertClearX(paintOf(x), top, Widgets.PLACEHOLDER_COLOR);
+			assertEquals("the ink is nine pixels", 9, ink(paintOf(x)));
+			assertFalse("the cursor stays the default: no hand", x.isCursorSet());
+
+			enter(x);
+			assertClearX(paintOf(x), top, Color.WHITE);
+			exit(x);
+			assertClearX(paintOf(x), top, Widgets.PLACEHOLDER_COLOR);
+		});
+	}
+
+	/** Every pixel of the x's 9 x {@code height} image is the ink where it should be and clear where it should not. */
+	private static void assertClearX(BufferedImage img, int top, Color ink)
+	{
+		final int left = Widgets.ClearX.AIR_LEFT;
+		final int side = Widgets.ClearX.GLYPH;
+		for (int px = 0; px < img.getWidth(); px++)
+		{
+			for (int py = 0; py < img.getHeight(); py++)
+			{
+				final int i = px - left;
+				final int j = py - top;
+				final boolean on = i >= 0 && i < side && j >= 0 && j < side && (i == j || i == side - 1 - j);
+				if (on)
+				{
+					assertEquals("ink at " + px + "," + py, ink.getRGB(), img.getRGB(px, py));
+				}
+				else
+				{
+					assertEquals("clear at " + px + "," + py, 0, alpha(img, px, py));
+				}
+			}
+		}
+	}
+
+	/** {@code c} painted at its size into a transparent image, without being shown. */
+	private static BufferedImage paintOf(JComponent c)
+	{
+		final BufferedImage img = new BufferedImage(c.getWidth(), c.getHeight(), BufferedImage.TYPE_INT_ARGB);
+		final Graphics2D g = img.createGraphics();
+		try
+		{
+			c.paint(g);
+		}
+		finally
+		{
+			g.dispose();
+		}
+		return img;
+	}
+
+	/**
+	 * Only the search box has the x, an empty box has it hidden and a typed-in one shows it - through the text's own
+	 * document, so a character typed, a text set and an emptying all keep it right; a press on it asks for the focus once.
+	 */
+	@Test
+	public void onlyTheSearchFieldCarriesAClearXAndItFollowsTheText() throws Exception
+	{
+		onEdt(() ->
+		{
+			assertNull("a gp bound has no x", Widgets.gpField("min gp").clearX());
+			final Widgets.PlaceholderField box = Widgets.searchField("Search items");
+			final Widgets.ClearX x = box.clearX();
+			assertNotNull(x);
+			assertFalse("empty: hidden", x.isVisible());
+			assertFalse("it never takes the focus by itself: Tab does not land on it", x.isFocusable());
+
+			box.setText("rune");
+			assertTrue(x.isVisible());
+			box.setText("");
+			assertFalse(x.isVisible());
+
+			box.getTextField().setText("a");
+			assertTrue("through the text field as well", x.isVisible());
+			press(x);
+			assertEquals("", box.getText());
+			assertFalse(x.isVisible());
+			assertEquals(1, x.focusRequests);
+		});
 	}
 
 	/** The LEFT button going down on {@code target} - what a click starts with. */

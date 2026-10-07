@@ -137,9 +137,9 @@ sidebar. If a band matches nothing, the panel says so and offers *Clear price ra
 
 **Search** (1.0.9). Directly above the first item sits a box reading *Search items*. Type part of a name and the
 list keeps only the matching rows as you type - "rune" finds Rune platebody and Runite ore - on top of whatever
-band and sort are set; the count under the card says how many matched. Empty the box (or press Escape in it) and
-the whole list is back. It is not remembered between sessions, and it works on the list the panel already has, so
-typing never touches the game.
+band and sort are set; the count under the card says how many matched. Empty the box (press the small x at its
+right end, which appears while it holds text, or press Escape in it) and the whole list is back. It is not
+remembered between sessions, and it works on the list the panel already has, so typing never touches the game.
 
 **List options** (1.1.0). At the right end of the search box sit two small gears. Press them for a menu with *Show
 alch-only items* and the *Up colour* and *Down colour* swatches (the same two as in the settings menu). Alch-only
@@ -199,9 +199,15 @@ Worth History always counts exactly what your settings count. Readings saved bef
 so the tracker hides them by default and your first bank read on 1.0.9 is day one. *Include days before v1.0.9*,
 in the settings menu's *Net worth chart* section, shows them again after a short confirmation (those days did not count open G.E.
 orders, so their totals may read low); it appears only if you have such days, and it is remembered. Nothing is
-deleted. Turn off
+deleted. The same happens once more in 1.1.1 for players whose bank placeholders were counted as items (see
+*What is left out of the list* below): if your first bank read on 1.1.1 finds any, the days before it read high
+and are hidden behind *Include days before v1.1.1*; if it finds none, nothing is hidden. Turn off
 *Include coins and platinum tokens* and the whole line redraws without coins, past days included; it never shows
-up as a one-day loss. A reading is priced the way the card priced it that day, and the guide-price figure is
+up as a one-day loss. The two small cogs at the right end of the *Bank net worth history* line open *History
+options* - *Include days before ...* (only while such days exist) and *Single chart colour*, the same two items as in the
+settings menu - and while the days before v1.1.1 are hidden, a small *i* disc beside the cogs says on hover that they
+might read high because of the bank placeholder bug and that you can restore them in settings; pressing it asks the same
+*Include* question as the menu item, and it goes away once you include them. A reading is priced the way the card priced it that day, and the guide-price figure is
 saved beside it, so turning *Use live prices* off redraws the line on guide prices alone. A day saved with live
 prices off has only its guide figure, so turning them on later can show a small step at the first live day.
 
@@ -411,7 +417,7 @@ Most of them are also controls in the panel's own **Options** menu, behind the s
 top-right corner: the three that decide what the card draws, a line, and the *Up colour* and *Down colour* swatches,
 then *Colour presets* (see below), then *Use live prices* and the four that decide what the card counts and which stacks
 get a row, then *Preset price ranges* as three boxes and *Show hover text*, then a *Net worth chart* section with
-*Single chart colour* and, if you have days recorded before 1.0.9, *Include days before v1.0.9*. A swatch opens
+*Single chart colour* and, if you have hidden days, *Include days before v1.0.9* (or *v1.1.1*, whichever applies to you). A swatch opens
 RuneLite's colour picker beside the sidebar, and the panel changes as you drag. *Reset to default* puts the preset
 ranges and the colours back (not Slot 1), and *OK* closes the menu. *Show preset price ranges* has no entry of its own: the band button in the sidebar is
 the switch, and this row is where it reads back. The sidebar opens on the tab you used last.

@@ -45,9 +45,9 @@ public class HistoryFinalReviewTest
 		{
 			for (int attempt = 0; attempt < 4; attempt++)
 			{
-				assertFalse("the write fails", store.recordBankHistory(ACCOUNT, PROFILE, point(attempt), TODAY));
+				assertFalse("the write fails", store.recordBankHistory(ACCOUNT, PROFILE, point(attempt), TODAY, null));
 			}
-			assertFalse(store.recordBankHistory(ACCOUNT, "DEADMAN", point(9), TODAY));
+			assertFalse(store.recordBankHistory(ACCOUNT, "DEADMAN", point(9), TODAY, null));
 		});
 
 		final List<String> warnings = new ArrayList<>();
