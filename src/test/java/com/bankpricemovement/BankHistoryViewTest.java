@@ -50,8 +50,8 @@ public class BankHistoryViewTest
 			final List<Component> before = tree(view);
 			final List<BankHistoryMath.Day> days = chart(view).days();
 
-			// An equal series (a new instance), and options that differ ONLY in the hover switch, the same today.
-			view.show(fixture(), ViewOptions.DEFAULT.withShowHoverText(true));
+			// An equal series (a new instance), and equal options, the same today.
+			view.show(fixture(), ViewOptions.DEFAULT);
 
 			final List<Component> after = tree(view);
 			assertEquals(before.size(), after.size());
@@ -163,8 +163,8 @@ public class BankHistoryViewTest
 			// Guide and card differ, so the last step really printed the guide sums.
 			assertTrue(s.last().valueFor(steps.get(4)) != s.last().valueFor(steps.get(4).withLivePrices(true)));
 
-			// The fifth switch, the hover text, changes no total: a no-op.
-			view.show(s, steps.get(4).withShowHoverText(true));
+			// Equal options are a no-op.
+			view.show(s, steps.get(4));
 			assertSame(todayRow, rows(view).get(0));
 		});
 	}

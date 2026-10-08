@@ -643,8 +643,9 @@ public class HistoryWalkthroughTest
 	/**
 	 * 6. A volatile day with live prices on. The half-hourly re-check with the sidebar open brings a new {@code /latest}
 	 * snapshot: the whip's live price moved, today's reading moves with it and is written; the day stays ONE row. The
-	 * next re-check at the same live price changes no cell, so the file is not rewritten and the reading keeps its
-	 * stamp. A guide price moving under a thin row is a changed cell again, and is written.
+	 * next re-check that sees the same trades - nothing new printed since (contract 1.2.0: a new print at the same price
+	 * is a new observation and moves the median) - changes no cell, so the file is not rewritten and the reading keeps
+	 * its stamp. A guide price moving under a thin row is a changed cell again, and is written.
 	 */
 	@Test
 	public void s06_aVolatileDayRewritesTheFileOnlyWhenACellChanged() throws Exception
@@ -659,7 +660,8 @@ public class HistoryWalkthroughTest
 		// 16:50: the re-check, the whip's live price up to 880,000.
 		f.clock.addAndGet(PriceService.TICK_MS);
 		f.fireTick();
-		f.answerLatest(whipQuote(890_000L, 870_000L));
+		final Map<Integer, TradedPriceClient.Quote> recheck = whipQuote(890_000L, 870_000L);
+		f.answerLatest(recheck);
 		settle();
 		final BankHistoryPoint moved = panel.status().bankHistory().on(SEP_8);
 		assertTrue(PriceServiceTest.rowFor(f.lastRows(), WHIP).isLive());
@@ -674,10 +676,10 @@ public class HistoryWalkthroughTest
 		assertHistoryIsTheCard();
 		final byte[] bytes = fileBytes(MAIN);
 
-		// 17:20: the same live price again.
+		// 17:20: the same trades again - nothing new printed.
 		f.clock.addAndGet(PriceService.TICK_MS);
 		f.fireTick();
-		f.answerLatest(whipQuote(890_000L, 870_000L));
+		f.answerLatest(recheck);
 		settle();
 		assertEquals("no cell changed: the reading and its stamp stand", moved, panel.status().bankHistory().on(SEP_8));
 		assertEquals("no write", writes + 1, writes());
@@ -688,7 +690,7 @@ public class HistoryWalkthroughTest
 		f.runelitePrice(PriceServiceTest.item(5), 5_257);
 		f.clock.addAndGet(PriceService.TICK_MS);
 		f.fireTick();
-		f.answerLatest(whipQuote(890_000L, 870_000L));
+		f.answerLatest(recheck);
 		settle();
 		assertEquals("a guide cell changed: written", writes + 2, writes());
 		assertEquals(1, onDisk(MAIN).size());

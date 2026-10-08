@@ -234,15 +234,14 @@ public class SidebarViewPanelTest
 		verify(service, never()).setOptions(any());
 	}
 
-	/** No hover on the strip at any setting (ruling 9.7): the two words say what they do. */
+	/** No hover on the strip (ruling 9.7): the two words say what they do. */
 	@Test
-	public void theStripCarriesNoHoverEvenWithHoverTextOn() throws Exception
+	public void theStripCarriesNoHover() throws Exception
 	{
 		build();
 		publish(rows(3), status(BankHistorySeries.EMPTY, VALUE_NOW, NOW - 60_000L));
 		onEdt(() ->
 		{
-			panel.applyOptions(ViewOptions.DEFAULT.withShowHoverText(true));
 			for (Component c : walk(strip()))
 			{
 				if (c instanceof javax.swing.JComponent)
@@ -649,7 +648,7 @@ public class SidebarViewPanelTest
 
 	/**
 	 * Present: in the menu directly under the "Net worth chart" caption and above the OK row, the label verbatim, 12 px
-	 * like every item, unticked, its hover behind "Show hover text".
+	 * like every item, unticked, its hover.
 	 */
 	@Test
 	public void theLegacyItemStandsUnderTheNetWorthChartCaptionWithItsWordsItsTickAndItsHover() throws Exception
@@ -676,12 +675,8 @@ public class SidebarViewPanelTest
 			assertFalse("unticked", item.isSelected());
 			assertFalse("not a second line: one label", item.getText().contains("\n") || item.getText().contains("<"));
 
-			// Its hover is behind "Show hover text" like every sentence hover here.
-			assertNull("no hover with the switch off", item.getToolTipText());
-			panel.applyOptions(ViewOptions.DEFAULT.withShowHoverText(true));
+			// Its hover is one line, on like every sentence hover here.
 			assertEquals(BankPriceMovementPanel.LEGACY_TIP, item.getToolTipText());
-			panel.applyOptions(ViewOptions.DEFAULT);
-			assertNull(item.getToolTipText());
 		});
 	}
 
@@ -905,7 +900,7 @@ public class SidebarViewPanelTest
 	}
 
 	/**
-	 * The menu is 27 components while the record holds no days before 1.0.9 (24 before 1.1.0 part J added a rule above the
+	 * The menu is 26 components while the record holds no days before 1.0.9 (27 before release 1.2.0 took the hover item out, 24 before 1.1.0 part J added a rule above the
 	 * colour rows and the Slot 1 and save rows, 20 before part H added the colour presets'
 	 * caption and its three rows, 21 before part A took Refresh and
 	 * the start-tab group out, 17 after it until part B added the two colour rows, and 19 until part C added the Single
@@ -915,13 +910,13 @@ public class SidebarViewPanelTest
 	public void theSettingsMenuIsTwentyComponentsAndOneMoreWhileTheItemIsThere() throws Exception
 	{
 		build(new Asked(true));
-		onEdt(() -> assertEquals(27, panel.heroMenu().getComponentCount()));
+		onEdt(() -> assertEquals(26, panel.heroMenu().getComponentCount()));
 		publish(rows(3), status(withLegacyDays(), VALUE_NOW, NOW - 60_000L));
 		onEdt(() ->
 		{
 			panel.pressView(SidebarView.HISTORY);
 			assertTrue(legacyItemShows());
-			assertEquals(28, panel.heroMenu().getComponentCount());
+			assertEquals(27, panel.heroMenu().getComponentCount());
 		});
 	}
 
@@ -991,8 +986,6 @@ public class SidebarViewPanelTest
 			final javax.swing.JCheckBoxMenuItem item = legacyItem();
 			assertNotNull("the menu carries it", item);
 			assertEquals(BankPriceMovementPanel.LEGACY_PLACEHOLDERS_TEXT, item.getText());
-			assertNull("no hover with the switch off", item.getToolTipText());
-			panel.applyOptions(ViewOptions.DEFAULT.withShowHoverText(true));
 			assertEquals(BankPriceMovementPanel.LEGACY_PLACEHOLDERS_TIP, item.getToolTipText());
 			assertEquals("the same cut: yesterday and today", 2, readings());
 			assertEquals("placeholders", panel.bankHistoryState().get("freshWhy"));
@@ -1013,8 +1006,6 @@ public class SidebarViewPanelTest
 			panel.pressLegacy();
 			assertEquals(Arrays.asList(BankPriceMovementPanel.LEGACY_PLACEHOLDERS_ASK, BankPriceMovementPanel.LEGACY_ASK),
 				no.questions);
-			panel.applyOptions(ViewOptions.DEFAULT);
-			assertNull(item.getToolTipText());
 		});
 		publish(rows(3), status(withPlaceholderDays(), VALUE_NOW, NOW - 60_000L));
 		onEdt(() -> assertEquals(BankPriceMovementPanel.LEGACY_PLACEHOLDERS_TEXT, legacyItem().getText()));
@@ -1189,7 +1180,7 @@ public class SidebarViewPanelTest
 	/**
 	 * G1: the gears are on the History caption's row - at its east end, the caption's text in the middle - and in no row at all
 	 * in Items, which keeps the strip exactly as it was (the toggle and the caption's row, the row exactly as tall as the caption
-	 * label was). Their one-phrase hover is on with "Show hover text" off and on.
+	 * label was). Their one-phrase hover is on.
 	 */
 	@Test
 	public void g2_theGearsStandOnTheHistoryCaptionAndNotInItems() throws Exception
@@ -1216,11 +1207,7 @@ public class SidebarViewPanelTest
 			assertEquals("the row is no taller with the icon in it", caption().getPreferredSize().height,
 				panel.viewCaptionRow().getPreferredSize().height);
 			assertEquals("History options", gears.getToolTipText());
-			panel.applyOptions(ViewOptions.DEFAULT.withShowHoverText(true));
-			assertEquals("the same word with the switch on", BankPriceMovementPanel.HISTORY_OPTIONS_TIP,
-				gears.getToolTipText());
-			panel.applyOptions(ViewOptions.DEFAULT);
-			assertEquals("and off: always on", BankPriceMovementPanel.HISTORY_OPTIONS_TIP, gears.getToolTipText());
+			assertEquals("always on", BankPriceMovementPanel.HISTORY_OPTIONS_TIP, gears.getToolTipText());
 			assertEquals("the List options gears, drawn again", GearsIcon.SIZE, gears.getIcon().getIconWidth());
 
 			panel.pressView(SidebarView.ITEMS);
@@ -1313,8 +1300,8 @@ public class SidebarViewPanelTest
 
 	/**
 	 * G1: the menu holds the include item and a rule ONLY while hidden days exist, in either wording (v1.1.1 for the placeholder
-	 * restart, v1.0.9 otherwise), then "Single chart colour"; with none, "Single chart colour" alone. The item's hover is behind
-	 * "Show hover text" like the settings menu's, in the words for the record's reason.
+	 * restart, v1.0.9 otherwise), then "Single chart colour"; with none, "Single chart colour" alone. The item's hover is on like the settings menu's, in the words for the
+	 * record's reason.
 	 */
 	@Test
 	public void g2_theMenuHoldsTheIncludeItemOnlyWhileHiddenDaysExist() throws Exception
@@ -1342,10 +1329,7 @@ public class SidebarViewPanelTest
 			assertSame(c[0], item);
 			assertEquals("the menu's face", Widgets.sans(12), item.getFont());
 			assertFalse("unticked", item.isSelected());
-			assertNull("no hover with the switch off", item.getToolTipText());
-			panel.applyOptions(ViewOptions.DEFAULT.withShowHoverText(true));
 			assertEquals(BankPriceMovementPanel.LEGACY_PLACEHOLDERS_TIP, item.getToolTipText());
-			panel.applyOptions(ViewOptions.DEFAULT);
 		});
 		publish(rows(3), status(withLegacyDays(), VALUE_NOW, NOW - 60_000L));
 		onEdt(() ->
@@ -1353,9 +1337,7 @@ public class SidebarViewPanelTest
 			assertEquals("the 1.0.9 words for a G.E.-only record", BankPriceMovementPanel.LEGACY_TEXT,
 				historyLegacyItem().getText());
 			assertEquals(3, panel.historyMenu().getComponentCount());
-			panel.applyOptions(ViewOptions.DEFAULT.withShowHoverText(true));
 			assertEquals(BankPriceMovementPanel.LEGACY_TIP, historyLegacyItem().getToolTipText());
-			panel.applyOptions(ViewOptions.DEFAULT);
 		});
 		publish(rows(3), status(series(TODAY.minusDays(2), TODAY.minusDays(1), TODAY), VALUE_NOW, NOW - 60_000L));
 		onEdt(() ->
@@ -1618,17 +1600,16 @@ public class SidebarViewPanelTest
 
 	/**
 	 * I1: the hover is the user's sentence (set as three short rows, see {@link #i3_theHoverIsThreeShortRowsOfTheSameWords}),
-	 * ALWAYS on - set on the label with "Show hover text" off, on and off again - and the icon wears the hand cursor like the gears.
+	 * ALWAYS on - set on the label directly - and the icon wears the hand cursor like the gears.
 	 */
 	@Test
-	public void i2_theHoverIsTheUsersSentenceAndIsOnWithShowHoverTextOff() throws Exception
+	public void i2_theHoverIsTheUsersSentenceAndIsAlwaysOn() throws Exception
 	{
 		build(new Asked(true));
 		publish(rows(3), status(withPlaceholderDays(), VALUE_NOW, NOW - 60_000L));
 		onEdt(() ->
 		{
 			panel.pressView(SidebarView.HISTORY);
-			assertFalse("the quieter sidebar is what ships", panel.options().showHoverText());
 			assertEquals("the caption, the icon, the gears", 3, panel.viewCaptionRow().getComponentCount());
 			final JLabel info = (JLabel) panel.viewCaptionRow().getComponent(1);
 			final String sentence = "Days before v1.1.1 counted bank placeholders as items, so they may read high."
@@ -1637,12 +1618,8 @@ public class SidebarViewPanelTest
 				+ "Restore them in settings.</html>";
 			assertEquals("the words, on one line of plain text", sentence, BankPriceMovementPanel.LEGACY_INFO_TIP_TEXT);
 			assertFalse(sentence.contains("<") || sentence.contains("\n"));
-			assertEquals("with the switch off", tip, info.getToolTipText());
+			assertEquals("the sentence, as three short rows", tip, info.getToolTipText());
 			assertEquals(BankPriceMovementPanel.LEGACY_INFO_TIP, info.getToolTipText());
-			panel.applyOptions(ViewOptions.DEFAULT.withShowHoverText(true));
-			assertEquals("the same with it on", tip, info.getToolTipText());
-			panel.applyOptions(ViewOptions.DEFAULT);
-			assertEquals("and off again: always on", tip, info.getToolTipText());
 			assertEquals("the hand, like the gears", java.awt.Cursor.HAND_CURSOR, info.getCursor().getType());
 			assertEquals(java.awt.Cursor.HAND_CURSOR, panel.historyOptionsLabel().getCursor().getType());
 		});

@@ -15,6 +15,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import com.google.gson.Gson;
 import java.io.IOException;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -107,6 +108,9 @@ public class GuidePriceClientTest
 		"rvslots=main",
 		"format=json",
 		"formatversion=2");
+
+	/** 2026-09-03T23:59:59Z: the last second of the date both revisions of 2026-09-03 were saved on. */
+	private static final long END_OF_SEP_3_SECONDS = 1_788_479_999L;
 
 	/** 15329323 - Riblet15's edit, saved 2026-09-03T06:46:00Z with 2026-09-02T07:21:23Z prices in it. */
 	private static final long REV_HUMAN = 15_329_323L;
@@ -247,8 +251,8 @@ public class GuidePriceClientTest
 				+ "(RuneLite.java:425-429) - starting with \"RuneLite\" would hide the client version",
 			GuidePriceClient.USER_AGENT.startsWith("RuneLite"));
 
-		assertEquals("250 is the anonymous rvlimit ceiling and reaches about 232 days back (L4)",
-			250, GuidePriceClient.INDEX_LIMIT);
+		assertEquals("250 is the anonymous rvlimit ceiling (L4)", 250, GuidePriceClient.INDEX_LIMIT);
+		assertEquals("one index fetch makes at most eight calls (contract 1.1.2, T2)", 8, GuidePriceClient.MAX_INDEX_PAGES);
 		assertEquals("MediaWiki's own revids ceiling (L6)", 50, GuidePriceClient.MAX_REVIDS);
 		assertEquals("%LAST_UPDATE%", GuidePriceClient.LAST_UPDATE_KEY);
 	}
@@ -293,6 +297,7 @@ public class GuidePriceClientTest
 	public void theRequestUrlsCarryNothingDerivedFromThePlayer()
 	{
 		assertCarriesNoPlayerData(GuidePriceClient.revisionIndexUrl());
+		assertCarriesNoPlayerData(GuidePriceClient.revisionIndexUrl("20261002155512|15360320"));
 		assertCarriesNoPlayerData(GuidePriceClient.tablesUrl(Arrays.asList(REV_0907, REV_0906, REV_HUMAN)));
 
 		assertEquals("the mapping table is a bare GET - a query on it could only be player data",
@@ -314,6 +319,12 @@ public class GuidePriceClientTest
 					parameter.substring("revids=".length()).matches("[0-9|]+"));
 				continue;
 			}
+			if (parameter.startsWith("rvcontinue="))
+			{
+				assertTrue("rvcontinue may carry the wiki's own timestamp|revid token and nothing else: " + parameter,
+					parameter.substring("rvcontinue=".length()).matches("[0-9]+\\|[0-9]+"));
+				continue;
+			}
 
 			assertTrue(url + " carries a parameter no contract names - if it came from the player's bank it "
 					+ "must not be sent at all, and if it did not, add it here: " + parameter,
@@ -328,9 +339,9 @@ public class GuidePriceClientTest
 	{
 		queue(INDEX_JSON);
 
-		final List<RevisionRef> index = client.fetchRevisionIndex(NOW_MILLIS).get(5, TimeUnit.SECONDS);
+		final List<RevisionRef> index = client.fetchRevisionIndex(NOW_MILLIS, Long.MAX_VALUE).get(5, TimeUnit.SECONDS);
 
-		assertEquals("about 232 days of history in one call - never a request per window", 1, requests.size());
+		assertEquals("one call when nothing older is asked for - never a request per window", 1, requests.size());
 		assertEquals(GuidePriceClient.revisionIndexUrl(), requests.get(0).url().toString());
 		assertEquals("GET", requests.get(0).method());
 		assertEquals("without a descriptive UA the wiki hosts answer 403 (research C3)",
@@ -343,7 +354,7 @@ public class GuidePriceClientTest
 	{
 		queue(INDEX_JSON);
 
-		final List<RevisionRef> index = client.fetchRevisionIndex(NOW_MILLIS).get(5, TimeUnit.SECONDS);
+		final List<RevisionRef> index = client.fetchRevisionIndex(NOW_MILLIS, Long.MAX_VALUE).get(5, TimeUnit.SECONDS);
 
 		assertEquals(15_334_656L, index.get(0).revId());
 		assertEquals(REV_0907, index.get(1).revId());
@@ -365,7 +376,7 @@ public class GuidePriceClientTest
 	{
 		queue(INDEX_JSON);
 
-		final List<RevisionRef> index = client.fetchRevisionIndex(NOW_MILLIS).get(5, TimeUnit.SECONDS);
+		final List<RevisionRef> index = client.fetchRevisionIndex(NOW_MILLIS, Long.MAX_VALUE).get(5, TimeUnit.SECONDS);
 		final RevisionRef human = index.get(4);
 
 		assertEquals("Riblet15", human.user());
@@ -373,17 +384,156 @@ public class GuidePriceClientTest
 		assertFalse(human.isBot());
 		assertEquals("both revisions of 2026-09-03 are in the index", LocalDate.of(2026, 9, 3), human.editDay());
 		assertEquals("and the rule picks the bot's", 15_330_300L,
-			RevisionRef.pickThen(index, LocalDate.of(2026, 9, 3)).revId());
+			RevisionRef.pickThen(index, END_OF_SEP_3_SECONDS).revId());
+	}
+
+	// ---------------------------------------------------------------- contract 1.1.2, T2: paging the index
+
+	/**
+	 * A fresh install asks for 181 days back: the client follows the wiki's {@code rvcontinue} - the same query plus
+	 * the token, one call after the other - until a revision at or before the reach is in hand, and answers the whole
+	 * history newest first. Each later URL carries the token of the page before it and nothing else new.
+	 */
+	@Test
+	public void theIndexPagesBackUntilItReachesAsFarAsItWasAsked() throws Exception
+	{
+		final long day = 86_400L;
+		final long newest = 1_791_390_911L; // 2026-10-07T16:35:11Z
+		queue(indexPage("20261005221511|15366253", rev(15_367_875L, newest), rev(15_367_698L, newest - day)));
+		queue(indexPage("20260801000000|15300000", rev(15_366_253L, newest - 2 * day), rev(15_350_000L, newest - 60 * day)));
+		queue(indexPage("20260101000000|15100000", rev(15_300_000L, newest - 120 * day), rev(15_200_000L, newest - 182 * day)));
+		queue(indexPage("20250101000000|15000000", rev(15_100_000L, newest - 300 * day)));
+
+		final List<RevisionRef> index = client.fetchRevisionIndex(NOW_MILLIS, newest - 181 * day).get(5, TimeUnit.SECONDS);
+
+		assertEquals("the third page reached 182 days back: no fourth call", 3, requests.size());
+		assertEquals(GuidePriceClient.revisionIndexUrl(), requests.get(0).url().toString());
+		assertEquals(GuidePriceClient.revisionIndexUrl("20261005221511|15366253"), requests.get(1).url().toString());
+		assertEquals(GuidePriceClient.revisionIndexUrl("20260801000000|15300000"), requests.get(2).url().toString());
+		assertEquals(6, index.size());
+		assertEquals("newest first across the pages", 15_367_875L, index.get(0).revId());
+		assertEquals(15_200_000L, index.get(5).revId());
+		for (int i = 1; i < index.size(); i++)
+		{
+			assertTrue(index.get(i - 1).editSeconds() > index.get(i).editSeconds());
+		}
+	}
+
+	/** The wiki's history ends (no {@code continue} member): the paging stops there, short of the reach or not. */
+	@Test
+	public void theIndexStopsPagingWhereTheHistoryEnds() throws Exception
+	{
+		queue(INDEX_JSON);
+
+		final List<RevisionRef> index = client.fetchRevisionIndex(NOW_MILLIS, 0L).get(5, TimeUnit.SECONDS);
+
+		assertEquals("no rvcontinue, no second call", 1, requests.size());
+		assertEquals(5, index.size());
+	}
+
+	/** However far back it was asked to reach, one fetch makes at most {@link GuidePriceClient#MAX_INDEX_PAGES} calls. */
+	@Test
+	public void theIndexMakesAtMostEightCalls() throws Exception
+	{
+		final long top = 1_791_390_911L;
+		for (int page = 0; page < 10; page++)
+		{
+			queue(indexPage("20261001000000|" + (15_000_000L + page), rev(15_400_000L - page, top - page * 3_600L)));
+		}
+
+		final List<RevisionRef> index = client.fetchRevisionIndex(NOW_MILLIS, 0L).get(5, TimeUnit.SECONDS);
+
+		assertEquals(GuidePriceClient.MAX_INDEX_PAGES, requests.size());
+		assertEquals("what the eight pages held", 8, index.size());
+	}
+
+	/**
+	 * A refresh asks only as far back as the newest revision it already holds, so a first page that reaches it is the
+	 * whole fetch - one call, as before contract 1.1.2 - even though the wiki offers more.
+	 */
+	@Test
+	public void aRefreshIsOneCallWhenTheFirstPageReachesTheNewestRevisionHeld() throws Exception
+	{
+		queue(indexPage("20260903000000|15329000", rev(15_334_656L, 1_788_859_512L), rev(REV_0907, SAVED_0907_SECONDS)));
+
+		final List<RevisionRef> index = client.fetchRevisionIndex(NOW_MILLIS, SAVED_0907_SECONDS).get(5, TimeUnit.SECONDS);
+
+		assertEquals(1, requests.size());
+		assertEquals(2, index.size());
+	}
+
+	/** A FIRST page that fails fails the whole fetch: the caller keeps the index it has and tries again on its next tick. */
+	@Test
+	public void aFailedFirstPageFailsTheWholeIndexFetch()
+	{
+		queue(500, "upstream error");
+
+		final WikiPriceException failure = failureOf(client.fetchRevisionIndex(NOW_MILLIS, 0L));
+
+		assertEquals(1, requests.size());
+		assertEquals(500, failure.getHttpCode());
+	}
+
+	/**
+	 * A LATER page that fails ends the run with the pages already in hand (1.1.2 review): a fresh install is better off
+	 * with the days the first call reached than with no baseline at all until the next tick. The answer is a
+	 * {@link GuidePriceClient.CutShortIndex}, newest first, so the caller can tell it from a whole history.
+	 */
+	@Test
+	public void aFailedLaterPageEndsTheRunWithThePagesAlreadyInHand() throws Exception
+	{
+		final long day = 86_400L;
+		final long newest = 1_791_390_911L;
+		queue(indexPage("20260903000000|15329000", rev(15_367_875L, newest), rev(15_367_698L, newest - day)));
+		queue(500, "upstream error");
+
+		final List<RevisionRef> index = client.fetchRevisionIndex(NOW_MILLIS, 0L).get(5, TimeUnit.SECONDS);
+
+		assertEquals("the second call failed and there is no third", 2, requests.size());
+		assertTrue("flagged as cut short", index instanceof GuidePriceClient.CutShortIndex);
+		assertEquals("what the first page held", 2, index.size());
+		assertEquals(15_367_875L, index.get(0).revId());
+		assertEquals(15_367_698L, index.get(1).revId());
+	}
+
+	/** A run that ended where the history ends, or where it was asked to, is a whole answer and carries no flag. */
+	@Test
+	public void aCompleteRunIsNotFlaggedAsCutShort() throws Exception
+	{
+		queue(indexPage("20260903000000|15329000", rev(15_367_875L, 1_791_390_911L)));
+		queue(indexPage(null, rev(15_367_698L, 1_791_390_911L - 86_400L)));
+
+		final List<RevisionRef> index = client.fetchRevisionIndex(NOW_MILLIS, 0L).get(5, TimeUnit.SECONDS);
+
+		assertEquals(2, requests.size());
+		assertEquals(2, index.size());
+		assertFalse(index instanceof GuidePriceClient.CutShortIndex);
+	}
+
+	/** A token of a shape the wiki has never sent ends the paging rather than reaching a URL. */
+	@Test
+	public void aContinuationTokenOfAnUnknownShapeEndsThePaging() throws Exception
+	{
+		queue(indexPage("2026-09-03|15329000&x=1", rev(15_334_656L, 1_788_859_512L)));
+
+		final GuidePriceClient.IndexPage page = client.parseRevisionPage(indexPage("abc", rev(1L, 2L)));
+		final List<RevisionRef> index = client.fetchRevisionIndex(NOW_MILLIS, 0L).get(5, TimeUnit.SECONDS);
+
+		assertNull(page.next);
+		assertEquals(1, requests.size());
+		assertEquals(1, index.size());
+		assertEquals("20261002155512|15360320",
+			client.parseRevisionPage(indexPage("20261002155512|15360320", rev(1L, 2L))).next);
 	}
 
 	/** Sorted rather than trusted: a change of default ordering at the wiki must not reorder the echo. */
 	@Test
 	public void theIndexIsSortedEvenWhenTheWikiAnswersOutOfOrder() throws Exception
 	{
-		final List<RevisionRef> index = client.parseRevisionIndex("{\"query\":{\"pages\":[{\"revisions\":["
+		final List<RevisionRef> index = client.parseRevisionPage("{\"query\":{\"pages\":[{\"revisions\":["
 			+ "{\"revid\":15332677,\"timestamp\":\"2026-09-06T19:15:12Z\"},"
 			+ "{\"revid\":15334656,\"timestamp\":\"2026-09-08T09:25:12Z\"},"
-			+ "{\"revid\":15333448,\"timestamp\":\"2026-09-07T19:55:12Z\"}]}]}}");
+			+ "{\"revid\":15333448,\"timestamp\":\"2026-09-07T19:55:12Z\"}]}]}}").revisions;
 
 		assertEquals(15_334_656L, index.get(0).revId());
 		assertEquals(15_333_448L, index.get(1).revId());
@@ -392,12 +542,12 @@ public class GuidePriceClientTest
 
 	/** The wiki could switch its default output format; a silently empty index is worse than a loud failure. */
 	@Test
-	public void parseRevisionIndexAlsoReadsTheLegacyPagesObjectShape() throws Exception
+	public void parseRevisionPageAlsoReadsTheLegacyPagesObjectShape() throws Exception
 	{
-		final List<RevisionRef> index = client.parseRevisionIndex("{\"batchcomplete\":\"\",\"query\":{\"pages\":{"
+		final List<RevisionRef> index = client.parseRevisionPage("{\"batchcomplete\":\"\",\"query\":{\"pages\":{"
 			+ "\"180412\":{\"pageid\":180412,\"title\":\"Module:GEPrices/data.json\",\"revisions\":["
 			+ "{\"revid\":15333448,\"timestamp\":\"2026-09-07T19:55:12Z\",\"user\":\"Gaz GEBot\","
-			+ "\"comment\":\"GE update\"}]}}}}");
+			+ "\"comment\":\"GE update\"}]}}}}").revisions;
 
 		assertEquals(1, index.size());
 		assertEquals(REV_0907, index.get(0).revId());
@@ -407,21 +557,21 @@ public class GuidePriceClientTest
 	@Test
 	public void aRevisionThatCannotBePlacedInTimeIsSkippedRatherThanFatal() throws Exception
 	{
-		final List<RevisionRef> index = client.parseRevisionIndex("{\"query\":{\"pages\":[{\"revisions\":["
+		final List<RevisionRef> index = client.parseRevisionPage("{\"query\":{\"pages\":[{\"revisions\":["
 			+ "{\"timestamp\":\"2026-09-08T09:25:12Z\"},"
 			+ "{\"revid\":0,\"timestamp\":\"2026-09-08T09:25:12Z\"},"
 			+ "{\"revid\":15333449,\"timestamp\":\"yesterday\"},"
 			+ "{\"revid\":15333450},"
 			+ "\"not an object\",null,"
-			+ "{\"revid\":15333448,\"timestamp\":\"2026-09-07T19:55:12Z\"}]}]}}");
+			+ "{\"revid\":15333448,\"timestamp\":\"2026-09-07T19:55:12Z\"}]}]}}").revisions;
 
-		assertEquals("without an id or a timestamp there is no calendar day to select on", 1, index.size());
+		assertEquals("without an id or a timestamp there is no time to select on", 1, index.size());
 		assertEquals(REV_0907, index.get(0).revId());
 		assertEquals("a suppressed author is not a reason to drop a revision", "", index.get(0).user());
 	}
 
 	@Test
-	public void parseRevisionIndexRefusesEveryShapeThatNamesNoRevision()
+	public void parseRevisionPageRefusesEveryShapeThatNamesNoRevision()
 	{
 		assertIndexFails("{\"query\":{\"pages\":[{\"pageid\":180412,\"title\":\"Module:GEPrices/data.json\"}]}}",
 			"no usable revisions");
@@ -641,7 +791,7 @@ public class GuidePriceClientTest
 		queue(INDEX_JSON);
 		queue(tablesJson(revision(REV_0907, SAVED_0907, TABLE_0907)));
 
-		client.fetchRevisionIndex(NOW_MILLIS).get(5, TimeUnit.SECONDS);
+		client.fetchRevisionIndex(NOW_MILLIS, Long.MAX_VALUE).get(5, TimeUnit.SECONDS);
 		client.fetchTables(Collections.singletonList(REV_0907), NOW_MILLIS).get(5, TimeUnit.SECONDS);
 
 		verify(call, times(2)).enqueue(any(Callback.class));
@@ -654,7 +804,7 @@ public class GuidePriceClientTest
 	public void anHttpFailureCarriesItsStatusCode()
 	{
 		queue(403, ".");
-		assertEquals(403, failureOf(client.fetchRevisionIndex(NOW_MILLIS)).getHttpCode());
+		assertEquals(403, failureOf(client.fetchRevisionIndex(NOW_MILLIS, Long.MAX_VALUE)).getHttpCode());
 
 		queue(500, "upstream error");
 		assertEquals(500, failureOf(client.fetchTables(Collections.singletonList(REV_0907), NOW_MILLIS))
@@ -673,7 +823,7 @@ public class GuidePriceClientTest
 	{
 		queue(new IOException("Network call to https://oldschool.runescape.wiki/ blocked outside of LIVE environment"));
 
-		final WikiPriceException failure = failureOf(client.fetchRevisionIndex(NOW_MILLIS));
+		final WikiPriceException failure = failureOf(client.fetchRevisionIndex(NOW_MILLIS, Long.MAX_VALUE));
 
 		assertTrue(failure.getMessage(), failure.getMessage().contains("blocked outside of LIVE environment"));
 		assertFalse(failure.hasHttpCode());
@@ -684,11 +834,11 @@ public class GuidePriceClientTest
 	public void everyResponseBodyIsClosed() throws Exception
 	{
 		queue(INDEX_JSON);
-		client.fetchRevisionIndex(NOW_MILLIS).get(5, TimeUnit.SECONDS);
+		client.fetchRevisionIndex(NOW_MILLIS, Long.MAX_VALUE).get(5, TimeUnit.SECONDS);
 		assertEquals("a leaked body holds a connection open for the whole session", 1, bodyCloses.get());
 
 		queue(403, ".");
-		failureOf(client.fetchRevisionIndex(NOW_MILLIS));
+		failureOf(client.fetchRevisionIndex(NOW_MILLIS, Long.MAX_VALUE));
 		assertEquals("a failed body too", 2, bodyCloses.get());
 	}
 
@@ -809,7 +959,7 @@ public class GuidePriceClientTest
 	{
 		client.setEnabled(false);
 
-		assertNotNull(failureOf(client.fetchRevisionIndex(NOW_MILLIS)));
+		assertNotNull(failureOf(client.fetchRevisionIndex(NOW_MILLIS, Long.MAX_VALUE)));
 		assertNotNull(failureOf(client.fetchTables(Collections.singletonList(REV_0907), NOW_MILLIS)));
 		assertNotNull(failureOf(client.fetchMapping(NOW_MILLIS)));
 		verify(http, never()).newCall(any(Request.class));
@@ -945,8 +1095,8 @@ public class GuidePriceClientTest
 	{
 		try
 		{
-			client.parseRevisionIndex(body);
-			fail("expected parseRevisionIndex to fail on: " + body);
+			client.parseRevisionPage(body);
+			fail("expected parseRevisionPage to fail on: " + body);
 		}
 		catch (final WikiPriceException expected)
 		{
@@ -1000,6 +1150,21 @@ public class GuidePriceClientTest
 	private void queue(final String body)
 	{
 		replies.add(new Reply(200, body, null, Mode.NORMAL));
+	}
+
+	/** One bot revision of an index page, as {@code {"revid":..,"timestamp":..,"user":..,"comment":..}}. */
+	private static String rev(final long revId, final long editSeconds)
+	{
+		return "{\"revid\":" + revId + ",\"timestamp\":\"" + Instant.ofEpochSecond(editSeconds)
+			+ "\",\"user\":\"Gaz GEBot\",\"comment\":\"GE update\"}";
+	}
+
+	/** An index page in the {@code formatversion=2} shape, with the wiki's {@code continue} member when a token is given. */
+	private static String indexPage(final String token, final String... revisions)
+	{
+		return "{" + (token == null ? "" : "\"continue\":{\"rvcontinue\":\"" + token + "\",\"continue\":\"||\"},")
+			+ "\"query\":{\"pages\":[{\"pageid\":180412,\"ns\":828,\"title\":\"Module:GEPrices/data.json\","
+			+ "\"revisions\":[" + String.join(",", revisions) + "]}]}}";
 	}
 
 	private void queue(final int code, final String body)

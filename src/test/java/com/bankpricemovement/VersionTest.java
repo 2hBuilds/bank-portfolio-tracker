@@ -56,7 +56,7 @@ public class VersionTest
 		final PluginDescriptor d = BankPriceMovementPlugin.class.getAnnotation(PluginDescriptor.class);
 		assertNotNull(d);
 		assertTrue(d.description(), d.description().endsWith(" (v" + Version.CURRENT + ")"));
-		assertTrue("and this build is the one the contract names", d.description().endsWith("(v1.1.1)"));
+		assertTrue("and this build is the one the contract names", d.description().endsWith("(v1.2.0)"));
 	}
 
 	@Test
@@ -159,8 +159,9 @@ public class VersionTest
 	 * 1.0.9: the header's third child is a row of FOUR 16 px marks, 6 px apart from the left edge, in this order -
 	 * Discord, X, GitHub for the 2hBuilds profile and GitHub again for this plugin's page (the two GitHub marks are the
 	 * same picture on purpose, told apart by their hovers) - with the hovers "Discord", "X", "2hBuilds on GitHub" and
-	 * "This plugin on GitHub", ON with the hover switch off (which is what this panel is built with). The row lives
-	 * inside the header, so the menu's count is what the menu has: 27 since 1.1.0 part J's rule and Slot 1 rows (24 with
+	 * "This plugin on GitHub", always on. The row lives
+	 * inside the header, so the menu's count is what the menu has: 26 since release 1.2.0 took the hover item out (27
+	 * since 1.1.0 part J's rule and Slot 1 rows, 24 with
 	 * part H's colour presets, 20 with part C's
 	 * Single chart colour row, 19
 	 * with part B's two colour rows, 17 before them; 21 before part A took Refresh and the start-tab dots out, 22 before
@@ -172,8 +173,7 @@ public class VersionTest
 		final BankPriceMovementPanel panel = panelWith(url -> { });
 		SwingUtilities.invokeAndWait(() ->
 		{
-			assertFalse("the switch is off", panel.options().showHoverText());
-			assertEquals("the links row lives inside the header: the menu's count is what the menu has", 27,
+			assertEquals("the links row lives inside the header: the menu's count is what the menu has", 26,
 				panel.heroMenu().getComponentCount());
 			final Container links = linksRowOf(panel);
 			final List<JLabel> marks = linkMarks(links);

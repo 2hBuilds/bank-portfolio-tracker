@@ -56,9 +56,9 @@ import org.slf4j.LoggerFactory;
  * {@link BankPriceMovementPanel} through {@code SwingUtilities.invokeLater}. Nothing in this plugin blocks
  * the client thread or the EDT.
  *
- * <p>Addendum L costs one steady-state request pair a day (L10): {@code fetchRevisionIndex} for the guide
- * page's history, cached as {@code revindex.json} and refetched at six hours old, and one batched
- * {@code fetchTables} for every revision body still missing. Both are the service's calls; this class only
+ * <p>Addendum L costs a few small requests a day (L10): {@code fetchRevisionIndex} for the guide page's history,
+ * cached as {@code revindex.json} and refetched at six hours old or when RuneLite is ahead of it (contract 1.1.2), and
+ * one batched {@code fetchTables} for every revision body still missing. Both are the service's calls; this class only
  * hands it the client and the store they go through.
  *
  * <p>Addendum T adds a second feed behind a switch ({@code livePrices}, T1): {@link TradedPriceClient} over the
@@ -127,7 +127,7 @@ public class BankPriceMovementPlugin extends Plugin
 	 * only because it arrived a wave later: {@link #isOptionKey(String)} treats every passenger alike, and it must,
 	 * because this one changes the most of any of them - with it on, {@link PriceService} fetches the wiki's traded
 	 * feeds and an item that passes the five liquidity checks (T3's three and addendum V's two) is priced from them
-	 * instead of from the daily guide table.
+	 * instead of from the guide table.
 	 */
 	static final String LIVE_PRICES_KEY = "livePrices";
 	/**
@@ -146,16 +146,6 @@ public class BankPriceMovementPlugin extends Plugin
 	 * either way: the offers come from the client, not from the wiki.
 	 */
 	static final String COUNT_GRAND_EXCHANGE_KEY = "countGrandExchange";
-	/**
-	 * Addendum AH's switch, which landed as the sixth and is the fifth since addendum AO - and is the only one of
-	 * them whose default is OFF: whether the sidebar's hover text is
-	 * shown at all. {@link #isOptionKey(String)} treats them all alike. Addendum AI took the ROWS out of its
-	 * reach - a row's description is the block the cell opens, and a row carries no tooltip at any setting - so
-	 * since AJ it governs the bank value's hover and every control's. The service is told like the rest even
-	 * though it does nothing with it: the option road is one road, and a switch that took a private path would
-	 * be the one nobody remembered to write.
-	 */
-	static final String SHOW_HOVER_TEXT_KEY = "showHoverText";
 	/**
 	 * Addendum Z's three price presets (Z1), which landed as the fourteenth stored key and is the thirteenth since
 	 * addendum AO - and the only one of this plugin's that
@@ -234,6 +224,11 @@ public class BankPriceMovementPlugin extends Plugin
 	 * to SWEEP: see {@link #unstickHolding()}.
 	 */
 	static final String LEGACY_HOLDING_KEY = "holdingOnRows";
+	/**
+	 * Addendum AH's hover switch, which release 1.2.0 deleted at the user's word (2026-10-08): the sidebar's hovers
+	 * are always on. The key survives only as something to SWEEP: see {@link #unstickShowHoverText()}.
+	 */
+	static final String LEGACY_SHOW_HOVER_TEXT_KEY = "showHoverText";
 	private static final Logger log = LoggerFactory.getLogger(BankPriceMovementPlugin.class);
 
 	@Inject
@@ -525,11 +520,13 @@ public class BankPriceMovementPlugin extends Plugin
 		resetBankHold();
 		// First, before anything reads the config: a profile written by the pre-addendum-K build still says
 		// window=H24, which no longer names a constant (K9), one written by the addendum-N build still
-		// holds a look= this build has no item for (O1), and one written by any build up to addendum AN holds a
-		// holdingOnRows= whose item went the same way (AO1).
+		// holds a look= this build has no item for (O1), one written by any build up to addendum AN holds a
+		// holdingOnRows= whose item went the same way (AO1), and one written by any build from addendum AH to 1.1.2
+		// may hold a showHoverText= whose item went the same way in 1.2.0.
 		unstickWindow();
 		unstickLook();
 		unstickHolding();
+		unstickShowHoverText();
 		// getPluginDirectory() is RuneLite's own: it answers a Filepath rooted at
 		// ~/.runelite/plugin-data/bank-portfolio-tracker/, moves the legacy folder in on the first call, and
 		// throws if the disk refuses. Handed over as a method reference rather than called here, so this method
@@ -754,7 +751,8 @@ public class BankPriceMovementPlugin extends Plugin
 	 * parse} understands and {@code Enum.valueOf} does not is exactly the case this guard exists for.
 	 *
 	 * <p>Package-private so {@code BankPriceMovementWiringTest} can drive it with a mocked manager; the sweep
-	 * itself is {@link #dropStoredKey}, which {@link #unstickLook()} and {@link #unstickHolding()} share.
+	 * itself is {@link #dropStoredKey}, which {@link #unstickLook()}, {@link #unstickHolding()} and
+	 * {@link #unstickShowHoverText()} share.
 	 */
 	void unstickWindow()
 	{
@@ -779,7 +777,8 @@ public class BankPriceMovementPlugin extends Plugin
 	 * a no-op by the time it lands.
 	 *
 	 * <p>Package-private so {@code BankPriceMovementWiringTest} can drive it with a mocked manager; the sweep
-	 * itself is {@link #dropStoredKey}, which {@link #unstickWindow()} and {@link #unstickHolding()} share.
+	 * itself is {@link #dropStoredKey}, which {@link #unstickWindow()}, {@link #unstickHolding()} and
+	 * {@link #unstickShowHoverText()} share.
 	 * Nothing stored here is valid any more, so the test it passes refuses every value rather than naming one.
 	 */
 	void unstickLook()
@@ -808,7 +807,8 @@ public class BankPriceMovementPlugin extends Plugin
 	 * no-op by the time it lands.
 	 *
 	 * <p>Package-private so {@code BankPriceMovementWiringTest} can drive it with a mocked manager; the sweep
-	 * itself is {@link #dropStoredKey}, which {@link #unstickWindow()} and {@link #unstickLook()} share. Nothing
+	 * itself is {@link #dropStoredKey}, which {@link #unstickWindow()}, {@link #unstickLook()} and
+	 * {@link #unstickShowHoverText()} share. Nothing
 	 * stored here is valid any more, so the test it passes refuses every value rather than naming one.
 	 */
 	void unstickHolding()
@@ -818,9 +818,40 @@ public class BankPriceMovementPlugin extends Plugin
 	}
 
 	/**
-	 * The one sweep behind {@link #unstickWindow()}, {@link #unstickLook()} and {@link #unstickHolding()}: read
+	 * Release 1.2.0. Drops {@code bankpricemovement.showHoverText} if a profile still holds it. Addendum AH put the
+	 * choice of whether the sidebar's hovers are shown at all behind that item; the user (2026-10-08) retired it,
+	 * because every hover left is one short line and a switch to hide them was one setting more than the plugin
+	 * needs - so the hovers are always on, and whichever of true or false a profile stored is a value with no item,
+	 * no reader and no way for a user to clear it by hand (RuneLite's config panel only lists the items the
+	 * interface declares). A profile that had turned the switch ON loses nothing by it: the hovers it asked for are
+	 * on for everyone now.
+	 *
+	 * <p>Like {@link #unstickLook()} and {@link #unstickHolding()}, and unlike {@link #unstickWindow()}, this is
+	 * housekeeping and not a repair: an orphaned key breaks nothing while it sits there, because nothing reads it
+	 * any more. It goes anyway, with ONE line at INFO, so a profile that has been through the whole wave ends up
+	 * holding exactly the keys this build declares - and so a future item that happened to reuse the name could
+	 * never inherit a value from the deleted switch. It is the ACTIVE profile's key that goes, as it is for the
+	 * other sweeps - {@code ConfigManager} reaches no other - so a profile the player switches to later is swept the
+	 * first time the plugin starts under it. {@code ConfigManager.unsetConfiguration} drops the value, invalidates
+	 * the proxy cache and posts a {@code ConfigChanged} (ConfigManager.java:972-993); that event's key is no longer
+	 * one of ours (the key left {@link #isOptionKey(String)} with the item), so {@link #onConfigChanged} treats it as
+	 * a filter change and re-applies the filter it already has, which is a no-op.
+	 *
+	 * <p>Package-private so {@code BankPriceMovementWiringTest} can drive it with a mocked manager; the sweep
+	 * itself is {@link #dropStoredKey}. Nothing stored here is valid any more, so the test it passes refuses every
+	 * value rather than naming one.
+	 */
+	void unstickShowHoverText()
+	{
+		dropStoredKey(LEGACY_SHOW_HOVER_TEXT_KEY, stored -> false,
+			"release 1.2.0 made the sidebar's hovers always on, so the key has no item behind it any more");
+	}
+
+	/**
+	 * The one sweep behind {@link #unstickWindow()}, {@link #unstickLook()}, {@link #unstickHolding()} and
+	 * {@link #unstickShowHoverText()}: read
 	 * one stored key of this plugin's group, and unset it unless it is empty or {@code stillValid} accepts it.
-	 * All three callers wanted the same five steps - read, ignore nothing-stored, test, say so once at INFO,
+	 * All four callers wanted the same five steps - read, ignore nothing-stored, test, say so once at INFO,
 	 * unset - and every step of each
 	 * has to survive a {@link ConfigManager} that is missing (a field never injected, as the unit tests leave it)
 	 * or that throws, because this runs first thing in {@link #startUp()} and a failed sweep may not take the
@@ -1992,12 +2023,12 @@ public class BankPriceMovementPlugin extends Plugin
 		}
 		if (isOptionKey(event.getKey()))
 		{
-			// Q3's third road, and since addendum T, addendum Y and addendum AH all five view switches take it.
+			// Q3's third road, and since addendum T, addendum Y and 1.0.9 part 3 all five view switches take it.
 			// Not the filter's: not one of them touches the gp band or the sort, so handing PriceService an
 			// identical RowFilter would be a lie about what changed. Not the hero's either: the cash, untradeable
 			// and carried switches change what the SUMS are and which stacks are rows at all, so the service is
 			// told first (it recomputes and publishes) and the panel is re-rendered for the half that is pure
-			// painting - the hover text - which must not wait for a publish that may be a fetch away.
+			// painting - the card and the menu's ticks - which must not wait for a publish that may be a fetch away.
 			final ViewOptions options = optionsFromConfig();
 			final PriceService withOptions = service;
 			if (withOptions != null)
@@ -2217,40 +2248,43 @@ public class BankPriceMovementPlugin extends Plugin
 	}
 
 	/**
-	 * The settings menu's six stored keys (Q3, T1, Y1, 1.0.9 part 3, AH) as one immutable value - the plugin's only
+	 * The settings menu's five stored keys (Q3, T1, Y1, 1.0.9 part 3) as one immutable value - the plugin's only
 	 * reader of {@code countCash} / {@code countUntradeables} / {@code livePrices} / {@code countInventory} /
-	 * {@code countGrandExchange} / {@code showHoverText}, and so the one place the config and {@link ViewOptions}
+	 * {@code countGrandExchange}, and so the one place the config and {@link ViewOptions}
 	 * are put in step. The panel's {@code Prefs.loadOptions}, the value {@link #startUp()} opens on, and what
-	 * {@link #onConfigChanged} rebuilds when one of the six is written anywhere. Addendum AO took a seventh,
-	 * {@code holdingOnRows}, off this list and out of the group altogether (AO1).
+	 * {@link #onConfigChanged} rebuilds when one of the five is written anywhere. Addendum AO took a sixth,
+	 * {@code holdingOnRows}, off this list and out of the group altogether (AO1), and release 1.2.0 a seventh,
+	 * {@code showHoverText} (swept by {@link #unstickShowHoverText()}).
 	 *
 	 * <p>It must name every field of {@link ViewOptions}, and the value has no shorter constructors to default one
 	 * (addendum AO): a constructor that defaulted {@code livePrices} or {@code countInventory} to on would be right
 	 * for a caller that predates addendum T or Y and wrong here - it would make the stored switch unreadable, so that
 	 * a user who turned live prices (or the carried items) off in RuneLite's settings got them back on the next
-	 * launch. {@code BankPriceMovementWiringTest} pins the six-way round trip.
+	 * launch. {@code BankPriceMovementWiringTest} pins the five-way round trip.
 	 */
 	ViewOptions optionsFromConfig()
 	{
 		return new ViewOptions(config.countCash(), config.countUntradeables(), config.livePrices(),
-			config.countInventory(), config.countGrandExchange(), config.showHoverText());
+			config.countInventory(), config.countGrandExchange());
 	}
 
 	/**
 	 * Whether a {@code ConfigChanged} key is one of the gear menu's view switches - addendum Q's two remaining
 	 * ones (Q3; the third, {@code holdingOnRows}, went with addendum AO and is swept by {@link #unstickHolding()}
-	 * rather than answered here), addendum T's live-price switch (T1), addendum Y's carried switch (Y1), 1.0.9 part
-	 * 3's Grand Exchange switch or addendum AH's hover switch, which ride the same road for the
+	 * rather than answered here), addendum T's live-price switch (T1), addendum Y's carried switch (Y1) or 1.0.9 part
+	 * 3's Grand Exchange switch, which ride the same road for the
 	 * same reason: they are neither a filter (no gp band changes, and no ordering) nor presentation (what a live
 	 * row's unit, "then" and move figures ARE changes, and so does the bank value built out of them, and so does
 	 * the quantity of a stack the player is half carrying), so the service is told and the panel is re-rendered,
-	 * exactly as for {@code countCash}.
+	 * exactly as for {@code countCash}. Addendum AH's hover switch rode here as a sixth until release 1.2.0 deleted
+	 * it ({@link #unstickShowHoverText()}): its key is no longer one of this road's, any more than {@code holdingOnRows}
+	 * is.
 	 */
 	static boolean isOptionKey(@Nullable String key)
 	{
 		return COUNT_CASH_KEY.equals(key) || COUNT_UNTRADEABLES_KEY.equals(key)
 			|| LIVE_PRICES_KEY.equals(key) || COUNT_INVENTORY_KEY.equals(key)
-			|| COUNT_GRAND_EXCHANGE_KEY.equals(key) || SHOW_HOVER_TEXT_KEY.equals(key);
+			|| COUNT_GRAND_EXCHANGE_KEY.equals(key);
 	}
 
 	/**
@@ -2506,11 +2540,11 @@ public class BankPriceMovementPlugin extends Plugin
 	 * {@code Boolean} the panel treats as "nothing stored = open"; this implementation never answers null, the
 	 * config having a default of its own.
 	 *
-	 * <p><b>And so do the settings menu's six switches</b> (Q3, T1, Y1, 1.0.9 part 3, AH): {@code loadOptions} /
+	 * <p><b>And so do the settings menu's five switches</b> (Q3, T1, Y1, 1.0.9 part 3): {@code loadOptions} /
 	 * {@code saveOptions} are the way
 	 * to {@code countCash} / {@code countUntradeables} / {@code livePrices} / {@code countInventory} /
-	 * {@code countGrandExchange} / {@code showHoverText} - a seventh, {@code holdingOnRows}, travelled here until
-	 * addendum AO deleted it (AO1).
+	 * {@code countGrandExchange} - a sixth, {@code holdingOnRows}, travelled here until addendum AO deleted it (AO1),
+	 * and a seventh, {@code showHoverText}, until release 1.2.0 did.
 	 * The save half does one thing more
 	 * than {@code saveHero} does, and the comment inside it says why: the switch it wrote is suppressed on the
 	 * {@code ConfigChanged} round trip as this thread's own write, and three of the five change figures the
@@ -2609,17 +2643,17 @@ public class BankPriceMovementPlugin extends Plugin
 				final ConfigManager cm = configManager;
 				if (cm != null)
 				{
-					// Six writes since 1.0.9 part 3, one change of mind, guarded exactly as saveHero's three
-					// are: ConfigManager posts a ConfigChanged on this very thread as each key lands, and the
-					// check item that was ticked has already applied the switch itself. Unguarded, ticking one
-					// item would recompute the whole bank value again for every other key, from a config in
-					// which only some of the five had been written - and each of those figures would be wrong
-					// on screen for as long as the recompute took.
+					// Five writes since release 1.2.0 (six from 1.0.9 part 3 to 1.1.2), one change of mind, guarded
+					// exactly as saveHero's three are: ConfigManager posts a ConfigChanged on this very thread as
+					// each key lands, and the check item that was ticked has already applied the switch itself.
+					// Unguarded, ticking one item would recompute the whole bank value again for every other key,
+					// from a config in which only some of the five had been written - and each of those figures
+					// would be wrong on screen for as long as the recompute took.
 					final Thread outer = prefsWriter;
 					prefsWriter = Thread.currentThread();
 					try
 					{
-						// All six every time, for saveHero's reason: an item that wrote only its own key would
+						// All five every time, for saveHero's reason: an item that wrote only its own key would
 						// leave the others unstored the first time a fresh profile touched the menu.
 						cm.setConfiguration(BankPriceMovementConfig.GROUP, COUNT_CASH_KEY, options.countCash());
 						cm.setConfiguration(BankPriceMovementConfig.GROUP, COUNT_UNTRADEABLES_KEY,
@@ -2637,11 +2671,6 @@ public class BankPriceMovementPlugin extends Plugin
 						// with the rest before the service is told below.
 						cm.setConfiguration(BankPriceMovementConfig.GROUP, COUNT_GRAND_EXCHANGE_KEY,
 							options.countGrandExchange());
-						// AH. Nothing is fetched or recomputed for this one - it decides whether the sidebar's
-						// tooltips are handed to Swing at all - but it is stored with the rest so a reader who
-						// turned the hovers on does not meet a silent sidebar again next launch.
-						cm.setConfiguration(BankPriceMovementConfig.GROUP, SHOW_HOVER_TEXT_KEY,
-							options.showHoverText());
 					}
 					finally
 					{

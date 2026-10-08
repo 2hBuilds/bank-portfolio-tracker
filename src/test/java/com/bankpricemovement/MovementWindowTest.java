@@ -4,21 +4,19 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
-import java.time.LocalDate;
 import java.util.HashSet;
 import java.util.Set;
 import org.junit.Test;
 
 /**
- * {@link MovementWindow} after addendum L (contract line L9): the five Grand Exchange windows, the CALENDAR
- * arithmetic that names the date a baseline is chosen for, and the legacy spellings a first-build profile still
- * holds.
+ * {@link MovementWindow} after contract 1.1.2 (T1): the five Grand Exchange windows, the TIME arithmetic that names
+ * the latest moment a baseline table may carry, and the legacy spellings a first-build profile still holds.
  *
- * <p><b>Why the seconds are gone.</b> Addendum K's {@code targetFor(nowSeconds) = nowSeconds - seconds} was
- * measured against live data by six analysts and lands on the intended Jagex day only 50-56 % of clock hours,
- * because the wiki's price bot publishes day D's table at a random hour of day D (L-C). The GE site's own
- * arithmetic is over calendar days - {@code (daily[D] - daily[D-N]) / daily[D-N]} (L-B) - so a window is now a
- * count of DAYS taken off an anchor DATE that {@code PriceService} derives from the data (L3).
+ * <p><b>Why seconds again.</b> Addendum L (L9) made a window a count of calendar DAYS off an anchor date, because the
+ * wiki's price bot saved one table a day at a random hour (L-C). Since 30 Sep 2026 it saves about eight a day, and
+ * "the table of the day before the anchor" became a table a couple of hours old. The "now" end is now the TIME of the
+ * table RuneLite's prices match (or the clock while RuneLite is ahead of the index), and the "then" end the newest
+ * table at least {@code days() x 24 h} older - {@code PriceService} picks it, this class only does the subtraction.
  *
  * <p>The legacy parse tests are the other load-bearing ones. A user who ran the first build has
  * {@code window=H24} written into their RuneLite config; {@code ConfigManager} reads an enum back with
@@ -28,9 +26,6 @@ import org.junit.Test;
  */
 public class MovementWindowTest
 {
-	/** 2026-09-07, the anchor day the calibration run's newest table belonged to. */
-	private static final LocalDate ANCHOR = LocalDate.of(2026, 9, 7);
-
 	@Test
 	public void theFiveWindowsCarryTheirLabelAndSpan()
 	{
@@ -100,55 +95,49 @@ public class MovementWindowTest
 		assertSame(MovementWindow.D1, MovementWindow.DEFAULT);
 	}
 
-	// ---- targetDate (L9)
+	// ---- targetSeconds (contract 1.1.2, T1)
+
+	/** The now time of the 1.1.2 finding: 2026-10-07T16:25:00Z, the table RuneLite's prices matched. */
+	private static final long NOW = 1_791_390_300L;
+	private static final long DAY = 86_400L;
 
 	@Test
-	public void theTargetIsThatManyCalendarDaysBeforeTheAnchor()
+	public void theTargetIsThatManyTimesTwentyFourHoursBeforeTheNowTime()
 	{
-		assertEquals(LocalDate.of(2026, 9, 6), MovementWindow.D1.targetDate(ANCHOR));
-		assertEquals(LocalDate.of(2026, 8, 31), MovementWindow.D7.targetDate(ANCHOR));
-		assertEquals(LocalDate.of(2026, 8, 8), MovementWindow.D30.targetDate(ANCHOR));
-		assertEquals(LocalDate.of(2026, 6, 9), MovementWindow.D90.targetDate(ANCHOR));
-		assertEquals(LocalDate.of(2026, 3, 11), MovementWindow.D180.targetDate(ANCHOR));
-	}
-
-	/**
-	 * Calendar arithmetic, not a multiple of 86,400 seconds: a window that spans a month end or a leap day has
-	 * to land on the date a reader would count to, which is what the GE site's own figures are computed over.
-	 */
-	@Test
-	public void theTargetCrossesMonthEndsAndLeapDaysTheWayACalendarDoes()
-	{
-		assertEquals(LocalDate.of(2026, 2, 28), MovementWindow.D1.targetDate(LocalDate.of(2026, 3, 1)));
-		assertEquals("2024 was a leap year", LocalDate.of(2024, 2, 29),
-			MovementWindow.D1.targetDate(LocalDate.of(2024, 3, 1)));
-		assertEquals(LocalDate.of(2025, 12, 31), MovementWindow.D1.targetDate(LocalDate.of(2026, 1, 1)));
-		assertEquals(LocalDate.of(2025, 9, 8), MovementWindow.D180.targetDate(LocalDate.of(2026, 3, 7)));
+		assertEquals("06 Oct 16:25", NOW - DAY, MovementWindow.D1.targetSeconds(NOW));
+		assertEquals(NOW - 7 * DAY, MovementWindow.D7.targetSeconds(NOW));
+		assertEquals(NOW - 30 * DAY, MovementWindow.D30.targetSeconds(NOW));
+		assertEquals(NOW - 90 * DAY, MovementWindow.D90.targetSeconds(NOW));
+		assertEquals(NOW - 180 * DAY, MovementWindow.D180.targetSeconds(NOW));
+		assertEquals("the same hour of the day, a day back: the table in force then, not the last of its date",
+			RevisionRef.dayOf(NOW).minusDays(1), RevisionRef.dayOf(MovementWindow.D1.targetSeconds(NOW)));
 	}
 
 	@Test
 	public void everyWindowLooksBackwardsAndTheLongerOneLooksFurther()
 	{
-		LocalDate previous = ANCHOR;
+		long previous = NOW;
 		for (final MovementWindow window : MovementWindow.values())
 		{
-			final LocalDate target = window.targetDate(ANCHOR);
-			assertTrue(window + " must look BACKWARDS", target.isBefore(ANCHOR));
-			assertTrue(window + " must look further back than the window before it", target.isBefore(previous));
+			final long target = window.targetSeconds(NOW);
+			assertTrue(window + " must look BACKWARDS", target < NOW);
+			assertTrue(window + " must look further back than the window before it", target < previous);
+			assertEquals(window + " looks back exactly its span", window.days() * DAY, NOW - target);
 			previous = target;
 		}
 	}
 
 	/**
-	 * No anchor day yet means no target date, which means no baseline and a "-" in the change column. Guessing a
-	 * date from the wall clock here is exactly the coin flip addendum L removed (L3).
+	 * No now time yet means no target, which means no baseline and a "-" in the change column. Guessing one from the
+	 * wall clock here is exactly what the service decides against unless RuneLite is ahead of the index (T1).
 	 */
 	@Test
-	public void noAnchorDayMeansNoTargetDate()
+	public void noNowTimeMeansNoTarget()
 	{
 		for (final MovementWindow window : MovementWindow.values())
 		{
-			assertNull(window + " must not invent an anchor", window.targetDate(null));
+			assertEquals(window + " must not invent a now", 0L, window.targetSeconds(0L));
+			assertEquals(0L, window.targetSeconds(-5L));
 		}
 	}
 

@@ -275,7 +275,7 @@ public class ListOptionsTest
 	/**
 	 * G2: the icon is at the search row's right end - its right edge where the box's right edge was, the box shortened by the
 	 * icon's 12 px and a 6 px gap, the icon centred on the box - grey at rest (the colour the box paints its placeholder in),
-	 * white while the pointer is over it, and its one-phrase hover "List options" is there with "Show hover text" OFF.
+	 * white while the pointer is over it, and its one-phrase hover "List options" is there.
 	 */
 	@Test
 	public void g2_theGearsStandAtTheSearchRowsRightEndGreyAtRestAndWhiteOnHoverAndNameThemselves() throws Exception
@@ -285,7 +285,6 @@ public class ListOptionsTest
 		onEdt(() ->
 		{
 			layout(panel);
-			assertFalse("the quieter sidebar is what ships", panel.options().showHoverText());
 			final JLabel gears = LookRenderer.listOptionsLabel(panel);
 			final Container row = panel.searchField().getParent();
 			assertSame("the gears are in the search row", row, gears.getParent());
@@ -308,9 +307,10 @@ public class ListOptionsTest
 				cell.width - 12 - 6, boxInPanel.width);
 			assertEquals("the icon is centred on the box", boxInPanel.y + boxInPanel.height / 2.0, icon.y + icon.height / 2.0,
 				1.0);
-			assertEquals("the hover, with \"Show hover text\" off", "List options", gears.getToolTipText());
+			assertEquals("the hover", "List options", gears.getToolTipText());
 			assertEquals(BankPriceMovementPanel.LIST_OPTIONS_TIP, gears.getToolTipText());
-			assertNull("the box itself says nothing then", panel.searchField().getToolTipText());
+			assertEquals("the box has a hover of its own", BankPriceMovementPanel.SEARCH_TIP,
+				panel.searchField().getToolTipText());
 
 			// Grey at rest: every opaque pixel is the placeholder's grey; white under the pointer; grey again after.
 			assertEquals("the placeholder's grey", Color.GRAY, Widgets.PLACEHOLDER_COLOR);
@@ -788,7 +788,6 @@ public class ListOptionsTest
 	{
 		f.warmUpWith(bankWithAlchStacks());
 		build(new Memory(), null);
-		onEdt(() -> panel.applyOptions(ViewOptions.DEFAULT.withShowHoverText(true)));
 
 		// The switch off (the default), the tick off: the bank's 31 stacks, 30 of them with a row.
 		final int nonAlch = PriceServiceTest.defaultList(f.lastRows()).size();
@@ -840,7 +839,6 @@ public class ListOptionsTest
 		bank.items.add(new BankItem(99_001, 1, "Pet rock", false, true, 0));
 		f.warmUpWith(bank);
 		build(new Memory(), null);
-		onEdt(() -> panel.applyOptions(ViewOptions.DEFAULT.withShowHoverText(true)));
 		assertEquals("the zero-alch stack is no alch stack", 2, f.lastStatus().alchStacks());
 
 		// The switch off, the tick on: the two alch rows are listed, and the zero-alch stack is in neither number.

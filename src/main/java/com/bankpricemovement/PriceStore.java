@@ -49,18 +49,23 @@ import org.slf4j.LoggerFactory;
  * changes only when Jagex adds items, and it is the name source that keeps a bank item off ANOTHER item's price
  * - the composition-name fallback returns the wrong item's row for 287 of 4,662 ids, one of them in the user's
  * own bank (id 3159, "Karambwan vessel (baited)" - L-F).</li>
- * <li>{@value #REVINDEX_FILE} - the guide page's revision history (L4): about 232 days of
+ * <li>{@value #REVINDEX_FILE} - the guide page's revision history (L4) as
  * {@code {revId, editSeconds, user, comment}}, from which every window's baseline revision is chosen LOCALLY by
- * calendar day. Refetched when older than six hours. Persisting it is what lets a relaunch pick a baseline (and
- * notice that the stored one is still the right day) before any request comes back.</li>
+ * time (contract 1.1.2): every revision of the last eight days and one a day before that, back 400 days, pruned by
+ * the service before every write ({@code RevisionRef.pruned}) - the format is the one every earlier build wrote, so
+ * either build reads the other's file. Refetched when older than six hours, or sooner when RuneLite is ahead of it.
+ * Persisting it is what lets a relaunch pick a baseline (and notice that the stored one is still the right one)
+ * before any request comes back.</li>
  * <li>{@code baseline-<window>.json} - one guide-price map per {@link MovementWindow} (D1 / D7 / D30 / D90 /
  * D180), the "then" side of every movement, stamped with the wiki revision it was read from and with that
  * table's own day marker.</li>
  * <li>{@value #TRADED_LATEST_FILE} and {@code traded-<window>.json} - the TRADED feeds of addendum T line T2:
  * the newest {@code /latest} snapshot, and one whole-day {@code /24h} bucket per window (the calendar day that
  * window counts back to from the live snapshot's own UTC date, addendum U line U1 - which is not the guide
- * baseline's day and need not be). Both carry their own {@code schema}, both are swept by the rules below, and
- * neither is written or read while the {@code livePrices} switch is off.</li>
+ * baseline's day and need not be) - and since contract 1.2.0 (L1) {@value #TRADED_HOUR_FILE}, the last closed hour's
+ * {@code /1h} bucket, and {@value #TRADED_D2_FILE}, yesterday's D1 bucket kept at the UTC rollover. All carry their
+ * own {@code schema}, all are swept by the rules below, and none is fetched while the {@code livePrices} switch is
+ * off.</li>
  * <li>{@code history-<accountHash>-<profileType>.json} - the player's own net worth, one reading per LOCAL day
  * (addendum AU), paired with the bank file of the same account and profile. The one file here that is not a cache:
  * nothing can fetch it again, so it has its own load with three outcomes ({@link #loadBankHistory}), every write
@@ -136,6 +141,18 @@ public class PriceStore
 	 * {@link #deleteStaleFiles()}.
 	 */
 	public static final String TRADED_PREFIX = "traded-";
+	/**
+	 * The newest {@code /1h} bucket (contract 1.2.0, line L1) - the same shape as a daily bucket, stamped with the hour's
+	 * start instead of a day. Shares the {@code traded-} prefix without being a window; {@link #deleteStaleFiles()}
+	 * knows it by name.
+	 */
+	public static final String TRADED_HOUR_FILE = "traded-H1.json";
+	/**
+	 * The day before yesterday's daily bucket (contract 1.2.0, line L1): yesterday's {@code traded-D1.json} kept at the
+	 * UTC rollover rather than fetched, for the plausibility anchor and the 1d fallback. Absent until the first
+	 * rollover; shares the prefix without being a window, like {@value #TRADED_HOUR_FILE}.
+	 */
+	public static final String TRADED_D2_FILE = "traded-D2.json";
 	/**
 	 * Prefix of a net-worth history file; the account hash and profile type follow, exactly as for a bank file
 	 * (addendum AU, plan 7.1 item 1), so a bank and its history always pair up.
@@ -404,6 +421,20 @@ public class PriceStore
 	{
 		Objects.requireNonNull(window, "window");
 		return file(TRADED_PREFIX + window.name() + JSON_SUFFIX);
+	}
+
+	/** {@value #TRADED_HOUR_FILE} (contract 1.2.0, L1). */
+	@Nullable
+	public Filepath tradedHourFile()
+	{
+		return file(TRADED_HOUR_FILE);
+	}
+
+	/** {@value #TRADED_D2_FILE} (contract 1.2.0, L1). */
+	@Nullable
+	public Filepath tradedD2File()
+	{
+		return file(TRADED_D2_FILE);
 	}
 
 	// ---- banks
@@ -1052,7 +1083,7 @@ public class PriceStore
 	 * there is none, it is corrupt (quarantined first) or it cannot be read. Never null; the returned list is
 	 * unmodifiable. One parse answers both halves - see {@link #loadMapping()}.
 	 *
-	 * <p>Sorted here rather than trusted, for the same reason {@code GuidePriceClient.parseRevisionIndex} sorts:
+	 * <p>Sorted here rather than trusted, for the same reason {@code GuidePriceClient.parseRevisionPage} sorts:
 	 * a hand-edited file must not be able to reorder a dev-bridge echo. Baseline SELECTION does not depend on the
 	 * order at all ({@link RevisionRef#pickThen} scans the list), so a damaged file costs at worst the entries it
 	 * damaged. An entry with no usable revision id or no edit time is skipped rather than thrown, for the same
@@ -1090,7 +1121,7 @@ public class PriceStore
 	 *
 	 * <p>A null OR EMPTY history is ignored, which is not the usual "null is ignored" politeness: writing an
 	 * empty index would stamp it as freshly fetched, and the six-hourly cadence (L4) would then leave every
-	 * window without a baseline for six hours. {@code GuidePriceClient.parseRevisionIndex} already refuses to
+	 * window without a baseline for six hours. {@code GuidePriceClient.parseRevisionPage} already refuses to
 	 * produce an empty index, so this is the second lock on the same door.
 	 *
 	 * @param index           the revision history, newest first; null entries are dropped
@@ -1217,7 +1248,23 @@ public class PriceStore
 	 */
 	public TradedDay loadTradedDay(final MovementWindow window)
 	{
-		final TradedDayDto dto = readJson(tradedFile(window), TradedDayDto.class);
+		return readDay(tradedFile(window));
+	}
+
+	/**
+	 * The stored day-before-yesterday bucket ({@value #TRADED_D2_FILE}, contract 1.2.0 line L1), read by the same rules
+	 * as a window's: {@link TradedDay#EMPTY} when there is none, it is corrupt, it names no day or an older build wrote
+	 * it. Never null.
+	 */
+	public TradedDay loadTradedD2()
+	{
+		return readDay(tradedD2File());
+	}
+
+	/** One traded day file as a {@link TradedDay}, by the rules {@link #loadTradedDay} names. */
+	private TradedDay readDay(@Nullable final Filepath file)
+	{
+		final TradedDayDto dto = readJson(file, TradedDayDto.class);
 		if (dto == null || dto.schema < TradedDayDto.SCHEMA)
 		{
 			return TradedDay.EMPTY;
@@ -1227,11 +1274,16 @@ public class PriceStore
 		{
 			return TradedDay.EMPTY;
 		}
+		return new TradedDay(day, bucketsOf(dto.buckets), dto.fetchedAtMillis);
+	}
 
+	/** The four-slot encoding of a traded file's buckets, read back; a bad entry is skipped, never thrown. */
+	private static Map<Integer, TradedPriceClient.Bucket> bucketsOf(@Nullable final Map<String, long[]> stored)
+	{
 		final Map<Integer, TradedPriceClient.Bucket> buckets = new LinkedHashMap<>();
-		if (dto.buckets != null)
+		if (stored != null)
 		{
-			for (final Map.Entry<String, long[]> entry : dto.buckets.entrySet())
+			for (final Map.Entry<String, long[]> entry : stored.entrySet())
 			{
 				final long[] sides = entry.getValue();
 				final Integer id = parseId(entry.getKey());
@@ -1243,7 +1295,25 @@ public class PriceStore
 					PriceMapDto.decode(sides[2]), Math.max(0L, sides[3])));
 			}
 		}
-		return new TradedDay(day, buckets, dto.fetchedAtMillis);
+		return buckets;
+	}
+
+	/** The four-slot encoding of a set of buckets, as a traded file stores them; null keys and values dropped. */
+	private static Map<String, long[]> encoded(final Map<Integer, TradedPriceClient.Bucket> buckets)
+	{
+		final Map<String, long[]> out = new HashMap<>(buckets.size());
+		for (final Map.Entry<Integer, TradedPriceClient.Bucket> entry : buckets.entrySet())
+		{
+			final TradedPriceClient.Bucket bucket = entry.getValue();
+			if (entry.getKey() == null || bucket == null)
+			{
+				continue;
+			}
+			out.put(Integer.toString(entry.getKey()), new long[]{
+				PriceMapDto.encode(bucket.avgHigh()), bucket.highVolume(),
+				PriceMapDto.encode(bucket.avgLow()), bucket.lowVolume()});
+		}
+		return out;
 	}
 
 	/**
@@ -1260,6 +1330,25 @@ public class PriceStore
 	public void saveTradedDay(final MovementWindow window, @Nullable final LocalDate day,
 		@Nullable final Map<Integer, TradedPriceClient.Bucket> buckets, final long fetchedAtMillis)
 	{
+		writeDay(tradedFile(window), day, buckets, fetchedAtMillis);
+	}
+
+	/**
+	 * Replaces {@value #TRADED_D2_FILE} with yesterday's D1 bucket at the UTC rollover (contract 1.2.0, L1) - no request
+	 * behind it, the bucket the D1 window held until today's arrived. The same refusals as {@link #saveTradedDay}.
+	 */
+	public void saveTradedD2(@Nullable final TradedDay d2)
+	{
+		if (d2 != null)
+		{
+			writeDay(tradedD2File(), d2.day(), d2.buckets(), d2.fetchedAtMillis());
+		}
+	}
+
+	/** One traded day file, written whole; nothing for a null day or an empty bucket set. */
+	private void writeDay(@Nullable final Filepath file, @Nullable final LocalDate day,
+		@Nullable final Map<Integer, TradedPriceClient.Bucket> buckets, final long fetchedAtMillis)
+	{
 		if (day == null || buckets == null || buckets.isEmpty())
 		{
 			return;
@@ -1269,19 +1358,41 @@ public class PriceStore
 		dto.schema = TradedDayDto.SCHEMA;
 		dto.fetchedAtMillis = fetchedAtMillis;
 		dto.day = day.toString();
-		dto.buckets = new HashMap<>(buckets.size());
-		for (final Map.Entry<Integer, TradedPriceClient.Bucket> entry : buckets.entrySet())
+		dto.buckets = encoded(buckets);
+		write(file, dto);
+	}
+
+	/**
+	 * The stored {@code /1h} bucket ({@value #TRADED_HOUR_FILE}, contract 1.2.0 line L1), or {@link TradedHour#EMPTY}
+	 * when there is none, it is corrupt (quarantined first), it cannot be read, it names no hour, or an older build
+	 * wrote it. Never null.
+	 */
+	public TradedHour loadTradedHour()
+	{
+		final TradedHourDto dto = readJson(tradedHourFile(), TradedHourDto.class);
+		if (dto == null || dto.schema < TradedHourDto.SCHEMA || dto.startSeconds <= 0L)
 		{
-			final TradedPriceClient.Bucket bucket = entry.getValue();
-			if (entry.getKey() == null || bucket == null)
-			{
-				continue;
-			}
-			dto.buckets.put(Integer.toString(entry.getKey()), new long[]{
-				PriceMapDto.encode(bucket.avgHigh()), bucket.highVolume(),
-				PriceMapDto.encode(bucket.avgLow()), bucket.lowVolume()});
+			return TradedHour.EMPTY;
 		}
-		write(tradedFile(window), dto);
+		return new TradedHour(dto.startSeconds, bucketsOf(dto.buckets), dto.fetchedAtMillis);
+	}
+
+	/**
+	 * Replaces {@value #TRADED_HOUR_FILE} with this hour's bucket. A null or empty hour is ignored, for
+	 * {@link #saveTradedLatest}'s reason.
+	 */
+	public void saveTradedHour(@Nullable final TradedHour hour)
+	{
+		if (hour == null || hour.isEmpty())
+		{
+			return;
+		}
+		final TradedHourDto dto = new TradedHourDto();
+		dto.schema = TradedHourDto.SCHEMA;
+		dto.fetchedAtMillis = hour.fetchedAtMillis();
+		dto.startSeconds = hour.startSeconds();
+		dto.buckets = encoded(hour.buckets());
+		write(tradedHourFile(), dto);
 	}
 
 	/** An ISO date as a {@link LocalDate}, or null when the text names none (a hand-edited or older file). */
@@ -1418,10 +1529,18 @@ public class PriceStore
 			return schema != null && schema < TradedLatestDto.SCHEMA;
 		}
 
+		if (TRADED_HOUR_FILE.equals(name))
+		{
+			// Rule 6 only, like the snapshot: the hour is not a window (contract 1.2.0, L1).
+			final Integer schema = readSchemaHeader(file);
+			return schema != null && schema < TradedHourDto.SCHEMA;
+		}
+
 		if (name.startsWith(TRADED_PREFIX) && name.endsWith(JSON_SUFFIX))
 		{
 			final String windowName = name.substring(TRADED_PREFIX.length(), name.length() - JSON_SUFFIX.length());
-			if (!isCurrentWindowName(windowName))
+			// The D2 day is a traded day file without being a window (contract 1.2.0, L1): rule 6 judges it as one.
+			if (!isCurrentWindowName(windowName) && !TRADED_D2_FILE.equals(name))
 			{
 				return true;
 			}
@@ -2200,6 +2319,111 @@ public class PriceStore
 
 		public TradedDayDto()
 		{
+		}
+	}
+
+	/**
+	 * The on-disk form of the {@code /1h} bucket (contract 1.2.0, L1): {@code {"schema":1,"fetchedAtMillis":n,
+	 * "startSeconds":s,"buckets":{"<id>":[avgHigh, highVolume, avgLow, lowVolume]}}} - a daily bucket's shape, stamped
+	 * with the hour's start (unix seconds) where a day's file names its date.
+	 */
+	static class TradedHourDto
+	{
+		/** The version of THIS document's shape that the current build writes - see {@link TradedLatestDto#SCHEMA}. */
+		static final int SCHEMA = 1;
+
+		/** Which build's shape this document is; gated on for {@link TradedLatestDto#schema}'s reason. */
+		public int schema;
+
+		/** When the bucket was fetched, epoch millis (0 when unknown). */
+		public long fetchedAtMillis;
+
+		/** The hour's start, unix seconds (the wiki's own {@code timestamp}). */
+		public long startSeconds;
+
+		/** Item id (as text) to {@code [avgHigh, highVolume, avgLow, lowVolume]}; a price of -1 means absent. */
+		public Map<String, long[]> buckets;
+
+		public TradedHourDto()
+		{
+		}
+	}
+
+	/**
+	 * The newest closed hour's traded bucket as the service holds it (contract 1.2.0, L1): the hour's start, the
+	 * per-item averages and volumes, and when it was fetched. Immutable and shared, like {@link TradedDay};
+	 * {@link #EMPTY} is what a missing, refused or unreadable file reads as.
+	 */
+	public static final class TradedHour
+	{
+		/** No hour: no start, no items, no stamp. */
+		public static final TradedHour EMPTY =
+			new TradedHour(0L, Collections.<Integer, TradedPriceClient.Bucket>emptyMap(), 0L);
+
+		private final long startSeconds;
+		private final Map<Integer, TradedPriceClient.Bucket> buckets;
+		private final long fetchedAtMillis;
+
+		/**
+		 * @param startSeconds    the hour's start, unix seconds; 0 or less for none
+		 * @param buckets         item id to that hour's averages and volumes; copied, null keys or values dropped
+		 * @param fetchedAtMillis when it was fetched, epoch millis
+		 */
+		public TradedHour(final long startSeconds, @Nullable final Map<Integer, TradedPriceClient.Bucket> buckets,
+			final long fetchedAtMillis)
+		{
+			this.startSeconds = Math.max(0L, startSeconds);
+			final Map<Integer, TradedPriceClient.Bucket> copy = new HashMap<>();
+			if (buckets != null)
+			{
+				for (final Map.Entry<Integer, TradedPriceClient.Bucket> entry : buckets.entrySet())
+				{
+					if (entry.getKey() != null && entry.getValue() != null)
+					{
+						copy.put(entry.getKey(), entry.getValue());
+					}
+				}
+			}
+			this.buckets = Collections.unmodifiableMap(copy);
+			this.fetchedAtMillis = fetchedAtMillis;
+		}
+
+		/** The hour's start, unix seconds; 0 only for {@link #EMPTY}. */
+		public long startSeconds()
+		{
+			return startSeconds;
+		}
+
+		/** One item's bucket for that hour, or null when nothing traded it. */
+		@Nullable
+		public TradedPriceClient.Bucket get(final int id)
+		{
+			return buckets.get(id);
+		}
+
+		/** Every bucket, unmodifiable. */
+		public Map<Integer, TradedPriceClient.Bucket> buckets()
+		{
+			return buckets;
+		}
+
+		/** When the bucket was fetched, epoch millis; 0 when it came from nowhere. */
+		public long fetchedAtMillis()
+		{
+			return fetchedAtMillis;
+		}
+
+		/** True when there is no hour or nothing traded in it. */
+		public boolean isEmpty()
+		{
+			return startSeconds <= 0L || buckets.isEmpty();
+		}
+
+		@Override
+		public String toString()
+		{
+			return "TradedHour{start=" + startSeconds + ", items=" + buckets.size() + ", fetchedAtMillis="
+				+ fetchedAtMillis + '}';
 		}
 	}
 

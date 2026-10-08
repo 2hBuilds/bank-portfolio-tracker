@@ -41,7 +41,7 @@ import static org.mockito.Mockito.when;
  * at the foot of the list wearing their "alch" tag, one valued at its tradeable PARTS beside them and moving
  * like any other row (addendum R, line R5), and every row printing what the whole STACK is worth and what it
  * moved - and {@code build/look-ticker-live.png} with the live switch of addendum T on (T8): the card's last
- * line reading "Live prices on - thin items daily" over three rows priced off the wiki's traded series and one
+ * line reading "Live prices on - others from the guide" over three rows priced off the wiki's traded series and one
  * the liquidity checks left on the guide price, on the live calendar of addendum U ({@link #LIVE_DAY}).
  *
  * <p><b>The first three are drawn with the live switch OFF</b> ({@link #GUIDE_ONLY}), whatever
@@ -82,14 +82,35 @@ import static org.mockito.Mockito.when;
  * {@code ticker-hidden-2026-09-20-AK.png} to the byte; without it, neither matches while the picture is the
  * same), so a comparison against them has to be taken the same way.
  *
+ * <p><b>The current Items pins are {@code docs/handoff/lab/ticker-{,hidden-,options-,amounts-hidden-}2026-10-07-L.png} and
+ * {@code docs/handoff/lab/ticker-live-2026-10-08-V.png} with {@code ticker-live-amounts-hidden-2026-10-08-V.png}.</b> The L
+ * pictures are 1.2.0 part P2 (the grade word under the percentage): the guide-only ones - the ticker, the hidden card, the
+ * options picture and the one with the amounts hidden - are byte for byte the T pictures below, nothing being graded with live
+ * prices off, so a row has no word and every figure is where it was, and they stay the pins of the final 1.2.0 words too. The
+ * live picture is the T one with TWO rows added after its Crystal body: a SOFT row ("Eye of Ayak", +14.1%, the word "low vol 3"
+ * under the percentage, every pixel but the word's a solid row's) and a NONE row ("Pegasian boots", the grey dash and
+ * "no trades", no gp figures) - and the picture is two row pitches taller ({@link #LIVE_HEIGHT}) for them. The sixth picture is
+ * that live sidebar with the eye shut: the words stay, the figures are masks. The two live pictures are pinned again as W
+ * (the user's final words of 2026-10-07: the soft row's word was "3 traded" in the L pair and read "volume 3" in the W pair) and
+ * again as V (the user's last wordings of 2026-10-08: it reads "low vol 3" now), and the kept L pair is checked to be the W pair
+ * with only that word's box changed, the kept W pair the V pair with only that word's box changed. {@code ViewStripPicturesTest} measures all six.
+ *
+ * <p><b>The T pins are {@code docs/handoff/lab/ticker-{,hidden-,options-,live-,amounts-hidden-}2026-10-07-T.png}</b>
+ * (1.1.2 part T4, the card's update line in the user's words of 2026-10-07; kept, and what this class drew until 1.2.0 part P2): the I pictures below with the grey line under
+ * the footnote reading "Guide prices update every few hours" ("Live prices on - others from the guide" in the live
+ * picture) instead of "Item prices update every 24hrs" ("...thin items daily") - that line's box ({@code updateLabel()})
+ * and nothing else changed, which {@code ViewStripPicturesTest} measures against the I files themselves. The History pins
+ * are untouched by it.
+ *
  * <p><b>The current History pins are {@code docs/handoff/lab/history{,-one,-empty,-hidden,-amounts-hidden}-2026-10-07-G2.png}</b>
  * (1.1.1 part G2, the two gears on the Net Worth History tab): the I pictures below with the History options icon added at
  * the right end of the "Bank net worth history" caption's row - {@link #historyOptionsIcon}'s 12 x 12 box - and nothing else
  * changed (the fixture holds no hidden days, so none shows the notice), which {@code HistorySidebarPicturesTest} measures
- * against the I files themselves. The Items pins are still the I ones below.
+ * against the I files themselves. The Items pins are the T ones above.
  *
  * <p><b>The I pins are {@code docs/handoff/lab/ticker-{,hidden-,options-,live-,amounts-hidden-}2026-10-04-I.png} and
- * {@code history{,-one,-empty,-hidden,-amounts-hidden}-2026-10-04-I.png}</b> (1.1.0 part I, the eye beside Discord): the G
+ * {@code history{,-one,-empty,-hidden,-amounts-hidden}-2026-10-04-I.png}</b> (1.1.0 part I, the eye beside Discord; the Items
+ * ones are kept, and were what this class drew until 1.1.2 part T4): the G
  * pictures for Items and the E pictures for History with the "Hide amounts" eye moved out of the total's row - where it stood
  * left of the Refresh link - into the card's top-right icons, first of three (eye, Discord, settings), and drawn in grey 52
  * while the amounts show and grey 165 while hidden. Each differs from the pin it follows only inside the eye's old box
@@ -185,6 +206,13 @@ public final class LookRenderer
 	 */
 	public static final int HEIGHT = 1080 + MovementRowPanel.ROW_HEIGHT + 3 + LookRenderer.STRIP_HEIGHT
 		+ LookRenderer.SEARCH_ROW_HEIGHT;
+	/**
+	 * The live picture's height since 1.2.0 part P2: {@link #HEIGHT} and two row pitches more, because its fixture gained a
+	 * soft row and a no-figure row ({@link #liveRows}) and, as with the options picture's two alch rows (R5), a list
+	 * that no longer fits grows the scroll bar that narrows every row card. Two pitches, a pitch being the card plus the
+	 * 3 px gutter between cards, so the ground under its last row is what it was.
+	 */
+	public static final int LIVE_HEIGHT = HEIGHT + 2 * (MovementRowPanel.ROW_HEIGHT + 3);
 	/**
 	 * The Items | Net Worth History strip's own height at this width, MEASURED in Swing (addendum AU; the contract's
 	 * section 10): the {@link BankPriceMovementPanel#ROW_GAP} of air under the card, the {@link Widgets#TOGGLE_HEIGHT}
@@ -322,8 +350,8 @@ public final class LookRenderer
 	static final long WHIP_GUIDE_THEN = 1_500_000L;
 	static final long BOW_LIVE_NOW = 1_628_500_000L;
 	static final long BOW_TRADED_THEN = 1_692_000_000L;
-	/** Why the fourth picture's Green hat stayed on the guide price: the first of T3's checks to refuse it. */
-	static final String THIN_REASON = "12 traded yesterday";
+	/** Why the fourth picture's Green hat stayed on the guide price: its 1d grade's word (contract 1.2.0). */
+	static final String THIN_REASON = GradeWords.NO_TRADES;
 	/** How many stacks the live picture's whole-bank sums counted at a traded mid ({@code PortfolioSummary.liveRows}). */
 	static final int LIVE_STACKS = 3;
 	/**
@@ -465,6 +493,10 @@ public final class LookRenderer
 	 */
 	public static int height(ViewOptions options, boolean foldOpen)
 	{
+		if (options != null && options.livePrices())
+		{
+			return LIVE_HEIGHT;
+		}
 		if (options == null || !options.countUntradeables())
 		{
 			return HEIGHT;
@@ -942,8 +974,60 @@ public final class LookRenderer
 		out.set(9, live(row(20997, "Twisted bow", 1, false, BOW_LIVE_NOW, BOW_TRADED_THEN), null,
 			MovementRow.PriceSource.LIVE, facts(1_631_000_000L, 1_626_000_000L, 137L, null)));
 		out.set(5, out.get(5).withLiveRefusal(facts(1_200L, 900L, 12L, THIN_REASON)));
+		// 1.2.0 part P2 (L5): the two rows a graded sidebar can show that a solid one cannot, where the three-tier sort puts
+		// them - every solid row first, then the soft ones, then the rows with no figure, which sort with the dashes (by
+		// name, so "Pegasian boots" after the Bandos chestplate that has no baseline at all).
+		out.add(out.size() - 1, softRow());
+		out.add(noneRow());
 		return Collections.unmodifiableList(out);
 	}
+
+	/**
+	 * Made-up ids for the two graded fixture rows (1.2.0 part P2): no real item number, and the pictures never draw one - but the
+	 * stand-in sprite's colour is {@code (id * 47) % 360} degrees of hue, so these two are chosen with the same remainder mod 360
+	 * (153 and 277) as the ids they replaced, which keeps the pinned pictures byte for byte what they were.
+	 */
+	static final int SOFT_ROW_ID = 90_153;
+	static final int NONE_ROW_ID = 90_277;
+
+	/** The soft row's word in the live picture: the compared day's thinner side traded 3 units. */
+	static final String SOFT_WORD = GradeWords.volume(3L);
+
+	/**
+	 * A SOFT graded row (contract 1.2.0, L5): an Eye of Ayak up 14.1 % on a figure the grade does not trust - the thinner
+	 * side's day count is 3 - which the sidebar draws as a solid row's figure, bold and in the full green with the same gp
+	 * figures and rail, and the word {@link #SOFT_WORD} under the percentage. {@code price = thenMark + gp}, as the service
+	 * builds a graded row (L4).
+	 */
+	static MovementRow softRow()
+	{
+		// A made-up id (the picture draws a name and a stand-in sprite, never an id): no real item number in a shipped test.
+		final long then = 35_300_000L;
+		final long delta = 5_000_000L;
+		final double move = delta / (double) then;
+		final GradedMove graded = new GradedMove(Grade.SOFT, SOFT_WORD, move, then, delta, false,
+			new GradedMove.Side(40_500_000L, 35_400_000L, 40_500_000d / 35_400_000d - 1d, 4, 40_500_000L, LIVE_PRINT_SECONDS),
+			new GradedMove.Side(40_100_000L, 35_200_000L, 40_100_000d / 35_200_000d - 1d, 3, 40_100_000L,
+				LIVE_PRINT_SECONDS + 600L),
+			LIVE_DAY, THEN_DAY, 38_000_000L);
+		return new MovementRow(SOFT_ROW_ID, "Eye of Ayak", 1, false, then + delta, then, delta, move * 100.0, then + delta,
+			MovementRow.PriceSource.LIVE, null, null, null, null, 0, 0, 0, 0, graded);
+	}
+
+	/**
+	 * A NONE graded row (contract 1.2.0, L5): nothing traded today or yesterday, so no figure - the price is the guide's,
+	 * and the sidebar draws the grey dash with no gp figures on either line, and the word "no trades" under it.
+	 */
+	static MovementRow noneRow()
+	{
+		final GradedMove graded = new GradedMove(Grade.NONE, GradeWords.NO_TRADES, null, null, null, false, null, null,
+			null, null, 38_900_000L);
+		return new MovementRow(NONE_ROW_ID, "Pegasian boots", 1, false, 38_900_000L, null, null, null, 38_900_000L,
+			MovementRow.PriceSource.GUIDE, null, null, null, null, 0, 0, 0, 0, graded);
+	}
+
+	/** A print of the live day, 2026-09-09 11:00:00 UTC - what the graded fixture rows' last prints carry. */
+	static final long LIVE_PRINT_SECONDS = 1_788_951_600L;
 
 	/**
 	 * A row re-sourced as LIVE, with the series its 1 d window used, the DAY that window compared against (U3) and

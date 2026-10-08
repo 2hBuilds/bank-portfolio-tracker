@@ -78,7 +78,7 @@ public class PriceMapDto
 	 * guide switch or is a "now" reading.
 	 *
 	 * <p>A real revision id is in the fifteen millions (measured 2026-09-08), and
-	 * {@code GuidePriceClient.parseRevisionIndex} drops anything that is not positive, so 0 is an unambiguous
+	 * {@code GuidePriceClient.parseRevisionPage} drops anything that is not positive, so 0 is an unambiguous
 	 * "not from the guide table". Absent from a file written by the first build, where Gson leaves it at 0 - the
 	 * back-compat case {@code PriceMapTest} pins.
 	 */

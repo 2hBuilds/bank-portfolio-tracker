@@ -41,7 +41,7 @@ public class BankHistoryPointTest
 	private static ViewOptions options(final boolean cash, final boolean untradeables, final boolean inventory,
 		final boolean ge, final boolean live)
 	{
-		return new ViewOptions(cash, untradeables, live, inventory, ge, false);
+		return new ViewOptions(cash, untradeables, live, inventory, ge);
 	}
 
 	@Test
@@ -229,13 +229,6 @@ public class BankHistoryPointTest
 		final BankHistoryPoint p = point(CARD, null);
 		assertEquals(11_111_111L, p.valueFor(options(true, true, true, false)));
 		assertEquals(1_111_111_111L, p.valueFor(options(true, true, true, true, false)));
-	}
-
-	@Test
-	public void theHoverSwitchChangesNothing()
-	{
-		final BankHistoryPoint p = point(CARD, GUIDE);
-		assertEquals(p.valueFor(ViewOptions.DEFAULT), p.valueFor(ViewOptions.DEFAULT.withShowHoverText(true)));
 	}
 
 	@Test

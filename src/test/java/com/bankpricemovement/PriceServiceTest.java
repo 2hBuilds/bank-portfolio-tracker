@@ -151,8 +151,15 @@ public class PriceServiceTest
 
 	// ---------------------------------------------------------------- the recorded index (newest first)
 
-	/** 15334656 @ 2026-09-08T09:25:12Z (real). */
-	private static final RevisionRef BOT_0908 = bot(15_334_656L, SEP_8, 9, 25, 12);
+	/**
+	 * 15334656 - really saved 2026-09-08T09:25:12Z, moved here to 20:10:12Z (contract 1.1.2). Since "then" is chosen
+	 * by TIME - the newest revision at least the window's span before the now table's time - a once-a-day history only
+	 * keeps every window on the previous run's date when each earlier run came at an earlier hour than the newest;
+	 * the real 09:25 put the 1d target before 07 Sep's 19:55 run. At 20:10 the time rule picks exactly the revisions
+	 * the calendar rule of addendum L picked, so every test below keeps its meaning; the eight-a-day history of October
+	 * has its own tests.
+	 */
+	private static final RevisionRef BOT_0908 = bot(15_334_656L, SEP_8, 20, 10, 12);
 	/** 15333448 @ 2026-09-07T19:55:12Z (real) - the revision addendum K's own example resolved to. */
 	private static final RevisionRef BOT_0907 = bot(15_333_448L, SEP_7, 19, 55, 12);
 	/** 15332677 @ 2026-09-06T19:15:12Z (real). */
@@ -218,6 +225,11 @@ public class PriceServiceTest
 	/** The day of every {@code fetchDay} call, in call order, with its future beside it. */
 	private final List<LocalDate> dayRequests = new ArrayList<>();
 	private final List<CompletableFuture<Map<Integer, TradedPriceClient.Bucket>>> dayFutures = new ArrayList<>();
+	/** Every {@code /1h} request, in call order, and the clock each was made at (contract 1.2.0, L1). */
+	private final List<CompletableFuture<PriceStore.TradedHour>> hourFutures = new ArrayList<>();
+	private final List<Long> hourRequestTimes = new ArrayList<>();
+	/** The hour (unix seconds) each {@code /1h} request named, in call order - the URL's {@code timestamp}. */
+	private final List<Long> hourRequestedStarts = new ArrayList<>();
 
 	private final List<List<MovementRow>> publishedRows = new ArrayList<>();
 	private final List<PriceService.Status> publishedStatus = new ArrayList<>();
@@ -231,7 +243,7 @@ public class PriceServiceTest
 		when(store.loadRevisionIndex()).thenReturn(storedIndex(Collections.<RevisionRef>emptyList(), 0L));
 		when(store.loadBucket(any(MovementWindow.class))).thenReturn(PriceMap.EMPTY);
 		when(store.loadBank(anyLong(), anyString())).thenReturn(BankSnapshot.EMPTY);
-		when(wiki.fetchRevisionIndex(anyLong())).thenAnswer(invocation ->
+		when(wiki.fetchRevisionIndex(anyLong(), anyLong())).thenAnswer(invocation ->
 		{
 			final CompletableFuture<List<RevisionRef>> future = new CompletableFuture<>();
 			indexFutures.add(future);
@@ -255,6 +267,17 @@ public class PriceServiceTest
 		when(store.loadTradedLatest())
 			.thenReturn(new PriceStore.Stamped<>(Collections.<Integer, TradedPriceClient.Quote>emptyMap(), 0L));
 		when(store.loadTradedDay(any(MovementWindow.class))).thenReturn(PriceStore.TradedDay.EMPTY);
+		// 1.2.0, L1: the hour and the day before yesterday - nothing on disk unless a test says so.
+		when(store.loadTradedHour()).thenReturn(PriceStore.TradedHour.EMPTY);
+		when(store.loadTradedD2()).thenReturn(PriceStore.TradedDay.EMPTY);
+		when(traded.fetchHour(anyLong(), anyLong())).thenAnswer(invocation ->
+		{
+			hourRequestedStarts.add(invocation.<Long>getArgument(0));
+			hourRequestTimes.add(invocation.<Long>getArgument(1));
+			final CompletableFuture<PriceStore.TradedHour> future = new CompletableFuture<>();
+			hourFutures.add(future);
+			return future;
+		});
 		when(traded.fetchLatest(anyLong())).thenAnswer(invocation ->
 		{
 			final CompletableFuture<Map<Integer, TradedPriceClient.Quote>> future = new CompletableFuture<>();
@@ -292,42 +315,82 @@ public class PriceServiceTest
 		publishedStatus.clear();
 	}
 
-	// ---------------------------------------------------------------- L3: the derived anchor day, at the thresholds
+	// ---------------------------------------------------------------- contract 1.1.2, T1: the now time, at the thresholds
+
+	/** R0's table time in the unit tests below: 2026-10-07T16:25:02Z, the table of the 1.1.2 finding. */
+	private static final long R0_S = 1_791_391_502L;
+	private static final long R0_ID = 15_367_875L;
+	/** An older indexed table RuneLite may still hold: 2026-10-07T13:56:00Z. */
+	private static final long OLDER_S = 1_791_382_560L;
+	private static final long OLDER_ID = 15_367_698L;
+	/** The clock: 2026-10-07T17:03:00Z, when the 368 rows read 0.0 %. */
+	private static final long CLOCK_S = 1_791_393_780L;
 
 	@Test
-	public void theAnchorDayIsR0sDayWhenEnoughItemsAgree()
+	public void theNowTimeIsR0sTimeWhenEnoughItemsAgree()
 	{
-		assertEquals(SEP_8, PriceService.deriveAnchorDay(20, 20, SEP_8));
-		assertEquals("18 of 20 is exactly 0.90 - on the threshold counts as agreement",
-			SEP_8, PriceService.deriveAnchorDay(18, 20, SEP_8));
-		assertEquals(SEP_8, PriceService.deriveAnchorDay(524, 524, SEP_8));
+		assertNow(R0_S, R0_ID, false, false, PriceService.deriveNowTime(20, 20, R0_S, R0_ID, 0L, 0L, CLOCK_S));
+		assertNow(R0_S, R0_ID, false, false, PriceService.deriveNowTime(18, 20, R0_S, R0_ID, 0L, 0L, CLOCK_S));
+		assertNow(R0_S, R0_ID, false, false, PriceService.deriveNowTime(524, 524, R0_S, R0_ID, OLDER_S, OLDER_ID, CLOCK_S));
+		assertEquals("its date is what the status still calls the anchor day", LocalDate.of(2026, 10, 7),
+			PriceService.deriveNowTime(20, 20, R0_S, R0_ID, 0L, 0L, CLOCK_S).day());
+	}
+
+	/**
+	 * The rule that replaced addendum L's "+1 day": a disagreement with no older table to match means RuneLite holds a
+	 * table the index has not seen, so the now time is the CLOCK and the caller marks the index stale - never R0's day
+	 * plus one, which put the 1d target on R0's own date and R0 itself in as the "then".
+	 */
+	@Test
+	public void theNowTimeIsTheClockWhenEnoughItemsDisagreeAndNothingOlderMatches()
+	{
+		final PriceService.NowTime ahead = PriceService.deriveNowTime(17, 20, R0_S, R0_ID, 0L, 0L, CLOCK_S);
+		assertNow(CLOCK_S, 0L, false, true, ahead);
+		assertNotEquals("no +1 day", R0_S + 86_400L, ahead.seconds);
+		assertNow(CLOCK_S, 0L, false, true, PriceService.deriveNowTime(0, 20, R0_S, R0_ID, 0L, 0L, CLOCK_S));
+		assertNow("74 % agreement, the ahead case of the 1.1.2 contract", CLOCK_S, 0L, false, true,
+			PriceService.deriveNowTime(370, 500, R0_S, R0_ID, 0L, 0L, CLOCK_S));
+	}
+
+	/** RuneLite BEHIND the wiki (B002): the older table it matches is "now", never the clock and never R0. */
+	@Test
+	public void aMatchOnAnOlderRevisionMakesThatRevisionsTimeTheNowTime()
+	{
+		assertNow(OLDER_S, OLDER_ID, true, false,
+			PriceService.deriveNowTime(17, 20, R0_S, R0_ID, OLDER_S, OLDER_ID, CLOCK_S));
 	}
 
 	@Test
-	public void theAnchorDayIsTheNextDayWhenEnoughItemsDisagree()
+	public void tooFewComparableItemsFallBackToR0sTime()
 	{
-		assertEquals("17 of 20 is 0.85: RuneLite already holds the next Jagex day (L-D)",
-			SEP_9, PriceService.deriveAnchorDay(17, 20, SEP_8));
-		assertEquals(SEP_9, PriceService.deriveAnchorDay(0, 20, SEP_8));
-		assertEquals("41 % agreement is the measured one-day-apart figure", SEP_9,
-			PriceService.deriveAnchorDay(215, 524, SEP_8));
+		assertNow("19 samples is below the n >= 20 gate whatever they say", R0_S, R0_ID, false, false,
+			PriceService.deriveNowTime(0, 19, R0_S, R0_ID, OLDER_S, OLDER_ID, CLOCK_S));
+		assertNow(R0_S, R0_ID, false, false, PriceService.deriveNowTime(19, 19, R0_S, R0_ID, 0L, 0L, CLOCK_S));
+		assertNow(R0_S, R0_ID, false, false, PriceService.deriveNowTime(0, 0, R0_S, R0_ID, 0L, 0L, CLOCK_S));
+		assertNow(R0_S, R0_ID, false, false, PriceService.deriveNowTime(0, -1, R0_S, R0_ID, 0L, 0L, CLOCK_S));
 	}
 
 	@Test
-	public void tooFewComparableItemsFallBackToR0sDay()
+	public void noR0MeansNoNowTime()
 	{
-		assertEquals("19 samples is below the n >= 20 gate whatever they say", SEP_8,
-			PriceService.deriveAnchorDay(0, 19, SEP_8));
-		assertEquals(SEP_8, PriceService.deriveAnchorDay(19, 19, SEP_8));
-		assertEquals(SEP_8, PriceService.deriveAnchorDay(0, 0, SEP_8));
-		assertEquals(SEP_8, PriceService.deriveAnchorDay(0, -1, SEP_8));
+		assertSame(PriceService.NowTime.NONE, PriceService.deriveNowTime(20, 20, 0L, R0_ID, 0L, 0L, CLOCK_S));
+		assertSame(PriceService.NowTime.NONE, PriceService.deriveNowTime(0, 0, 0L, 0L, OLDER_S, OLDER_ID, CLOCK_S));
+		assertNull(PriceService.NowTime.NONE.day());
 	}
 
-	@Test
-	public void noR0MeansNoAnchorDay()
+	private static void assertNow(final long seconds, final long revId, final boolean behind, final boolean ahead,
+		final PriceService.NowTime now)
 	{
-		assertNull(PriceService.deriveAnchorDay(20, 20, null));
-		assertNull(PriceService.deriveAnchorDay(0, 0, null));
+		assertNow("", seconds, revId, behind, ahead, now);
+	}
+
+	private static void assertNow(final String why, final long seconds, final long revId, final boolean behind,
+		final boolean ahead, final PriceService.NowTime now)
+	{
+		assertEquals(why + " seconds", seconds, now.seconds);
+		assertEquals(why + " revId", revId, now.revId);
+		assertEquals(why + " behind", behind, now.behind);
+		assertEquals(why + " ahead", ahead, now.ahead);
 	}
 
 	@Test
@@ -336,42 +399,49 @@ public class PriceServiceTest
 		assertEquals(20, PriceService.AGREE_MIN_SAMPLES);
 		assertEquals(0.90d, PriceService.AGREE_THRESHOLD, 0.0d);
 		assertEquals("rows every 30 minutes while visible (L1)", 30L * MINUTE, PriceService.TICK_MS);
-		assertEquals("the index every 6 hours (L4, L10)", 6L * HOUR, PriceService.HISTORY_MAX_AGE_MS);
+		assertEquals("the index every 6 hours (L4, L10), or at the next tick once marked stale", 6L * HOUR,
+			PriceService.HISTORY_MAX_AGE_MS);
 		assertEquals(7L * DAY, PriceService.MAPPING_MAX_AGE_MS);
 		assertEquals(30L * SECOND, PriceService.MANUAL_COOLDOWN_MS);
 		assertEquals("Guide prices", PriceService.HEADER_PREFIX);
+		assertEquals("a paging run reaches the 180d window and a day (contract 1.1.2, T2)", 181,
+			PriceService.INDEX_REACH_DAYS);
+		assertEquals("R0 and the three revisions before it are looked at for the now time", 4, PriceService.MATCH_DEPTH);
 	}
 
-	// ---------------------------------------------------------------- L5: pickBaseline, the pure half
+	// ---------------------------------------------------------------- T1: pickBaseline, the pure half
 
 	@Test
-	public void pickBaselineIsPickThenOnTheWindowsTargetDate()
+	public void pickBaselineIsPickThenOnTheWindowsTargetTime()
 	{
-		assertEquals(BOT_0907, PriceService.pickBaseline(HISTORY, SEP_8, MovementWindow.D1));
-		assertEquals(BOT_0901, PriceService.pickBaseline(HISTORY, SEP_8, MovementWindow.D7));
-		assertEquals(BOT_0809, PriceService.pickBaseline(HISTORY, SEP_8, MovementWindow.D30));
-		assertEquals("10 Jun has no revision: the walk-back lands on 09 Jun", BOT_0609,
-			PriceService.pickBaseline(HISTORY, SEP_8, MovementWindow.D90));
-		assertEquals(BOT_0312, PriceService.pickBaseline(HISTORY, SEP_8, MovementWindow.D180));
-		assertEquals("with RuneLite a day ahead the 1d baseline is the newest table itself", BOT_0908,
-			PriceService.pickBaseline(HISTORY, SEP_9, MovementWindow.D1));
+		final long now = dataSecondsFor(BOT_0908);
+		assertEquals(BOT_0907, PriceService.pickBaseline(HISTORY, now, MovementWindow.D1));
+		assertEquals(BOT_0901, PriceService.pickBaseline(HISTORY, now, MovementWindow.D7));
+		assertEquals(BOT_0809, PriceService.pickBaseline(HISTORY, now, MovementWindow.D30));
+		assertEquals("no revision on 10 Jun: the newest older one, 09 Jun", BOT_0609,
+			PriceService.pickBaseline(HISTORY, now, MovementWindow.D90));
+		assertEquals(BOT_0312, PriceService.pickBaseline(HISTORY, now, MovementWindow.D180));
+		assertEquals("with RuneLite ahead the clock is now, and a day before it is still 07 Sep - never R0", BOT_0907,
+			PriceService.pickBaseline(HISTORY, T0 / 1000L, MovementWindow.D1));
+		assertEquals("R0 is a 1d baseline only once it is a whole day older than now", BOT_0908,
+			PriceService.pickBaseline(HISTORY, BOT_0908.editSeconds() + 86_400L, MovementWindow.D1));
 	}
 
 	@Test
 	public void pickBaselinePrefersTheBotOverAHumanEditOnTheSameDate()
 	{
 		assertEquals("03 Sep has Riblet15's 06:46 edit and the bot's 21:45 run: the bot's", BOT_0903,
-			PriceService.pickBaseline(HISTORY, SEP_4, MovementWindow.D1));
+			PriceService.pickBaseline(HISTORY, utcSeconds(SEP_4, 23, 0, 0), MovementWindow.D1));
 	}
 
 	@Test
-	public void pickBaselineAnswersNullWithoutAnAnchorOrBeyondTheIndex()
+	public void pickBaselineAnswersNullWithoutANowTimeOrBeyondTheIndex()
 	{
-		assertNull("no anchor day: no target, no baseline, no guess", PriceService.pickBaseline(HISTORY, null, MovementWindow.D1));
-		assertNull(PriceService.pickBaseline(HISTORY, SEP_8, null));
-		assertNull(PriceService.pickBaseline(Collections.emptyList(), SEP_8, MovementWindow.D1));
+		assertNull("no now time: no target, no baseline, no guess", PriceService.pickBaseline(HISTORY, 0L, MovementWindow.D1));
+		assertNull(PriceService.pickBaseline(HISTORY, T0 / 1000L, null));
+		assertNull(PriceService.pickBaseline(Collections.emptyList(), T0 / 1000L, MovementWindow.D1));
 		assertNull("the index starts on 12 Mar: a 180d window from 01 Sep predates it (L11)",
-			PriceService.pickBaseline(HISTORY, SEP_1, MovementWindow.D180));
+			PriceService.pickBaseline(HISTORY, utcSeconds(SEP_1, 12, 0, 0), MovementWindow.D180));
 	}
 
 	// ---------------------------------------------------------------- L8: project, owners, the refused fallback
@@ -583,7 +653,7 @@ public class PriceServiceTest
 		assertEquals(MovementRow.PriceSource.NONE, status.source());
 		assertTrue(lastRows().isEmpty());
 		assertEquals("Guide prices - 1d vs 07 Sep - No bank yet", status.text());
-		verify(wiki, never()).fetchRevisionIndex(anyLong());
+		verify(wiki, never()).fetchRevisionIndex(anyLong(), anyLong());
 		verify(wiki, never()).fetchTables(anyCollection(), anyLong());
 		verify(wiki, never()).fetchMapping(anyLong());
 	}
@@ -629,8 +699,8 @@ public class PriceServiceTest
 	 * above cannot see it - and yet its fields need not mean what this build reads them as: addendum K stored
 	 * the revision's SAVE time in {@code bucketSeconds} where addendum L stores the table's own
 	 * {@code %LAST_UPDATE%}, a day apart often enough to flip the sign on a row. Adopting one teaches
-	 * {@code rememberDayLocked} a wrong calendar day for a real revision, and {@code resolveLocked} then accepts
-	 * that day without ever refetching the body. The same map at the current schema IS adopted -
+	 * {@code rememberTimeLocked} a wrong table time for a real revision, and {@code resolveLocked} then accepts
+	 * that time without ever refetching the body. The same map at the current schema IS adopted -
 	 * {@link #startLoadsTheMappingTheIndexAndTheBaselinesAndFetchesNothing} is that half of the rule.
 	 */
 	@Test
@@ -1129,8 +1199,14 @@ public class PriceServiceTest
 		verify(wiki, never()).fetchMapping(anyLong());
 	}
 
+	/**
+	 * Contract 1.1.2, T1: RuneLite holds a table the index has not seen (it follows Jagex within half an hour, the
+	 * wiki's bot later). Addendum L read that as "the next day" and made R0 the 1d baseline; now the CLOCK is "now", every
+	 * window counts back from it - so 1d is still a whole day before - and the index is MARKED STALE, so the next tick
+	 * asks for it however fresh it is.
+	 */
 	@Test
-	public void withRuneLiteADayAheadTheAnchorMovesAndThe1dBaselineIsR0Itself()
+	public void withRuneLiteAheadOfTheIndexTheClockIsNowAndTheIndexIsMarkedStale()
 	{
 		runeliteOn(SEP_9);
 		service.start();
@@ -1144,69 +1220,156 @@ public class PriceServiceTest
 		PriceService.Status status = lastStatus();
 		assertEquals(SEP_8, status.r0Day());
 		assertEquals("only the flat shark still agrees: 1 of 28", 1.0d / 28.0d, status.agree(), 1e-9);
-		assertEquals("RuneLite holds the next Jagex day: D = day(R0) + 1 (L3)", SEP_9, status.anchorDay());
-		assertEquals("the 1d target IS R0's day: no fetch for it, four windows in the batch", 2, tableRequests.size());
-		assertEquals(Arrays.asList(BOT_0902.revId(), BOT_0809.revId(), BOT_0609.revId(), BOT_0312.revId()), tableRequests.get(1));
-		assertEquals("1d is already served from memory while the others are out", SEP_8, status.thenDay());
-		assertEquals(BOT_0908.revId(), status.baselineRevId());
-		assertEquals("Guide prices - 1d vs 08 Sep - Bank as of " + MovementMath.formatTime(T0), status.text());
+		assertEquals("the clock is now - never R0's day + 1", T0 / 1000L, status.nowSeconds());
+		assertEquals("its date", SEP_8, status.anchorDay());
+		assertFalse("ahead is not degraded: the windows are whole days back from the clock", status.degraded());
+		assertEquals("every window's body in one call, 1d among them: R0 is not a day old", 2, tableRequests.size());
+		assertEquals(Arrays.asList(BOT_0907.revId(), BOT_0901.revId(), BOT_0809.revId(), BOT_0609.revId(), BOT_0312.revId()),
+			tableRequests.get(1));
 
 		answerTables();
 
+		status = lastStatus();
+		assertEquals(BOT_0907.revId(), status.baselineRevId());
+		assertEquals("Guide prices - 1d vs 07 Sep - Bank as of " + MovementMath.formatTime(T0), status.text());
 		final List<MovementRow> rows = lastRows();
-		assertEquals("RuneLite's 09 Sep price against the 08 Sep table", Long.valueOf(1_100L), rowFor(rows, GREEN_HAT).unitPrice());
-		assertEquals(Long.valueOf(1_086L), rowFor(rows, GREEN_HAT).thenPrice());
-		assertEquals(Long.valueOf(14L), rowFor(rows, GREEN_HAT).deltaGp());
-		assertEquals(SEP_2, service.baseline(MovementWindow.D7).dataDay());
-		assertEquals("30 days back from 09 Sep is 10 Aug, which walks back to 09 Aug", AUG_9, service.baseline(MovementWindow.D30).dataDay());
+		assertEquals("RuneLite's 09 Sep price against the 07 Sep table", Long.valueOf(1_100L), rowFor(rows, GREEN_HAT).unitPrice());
+		assertEquals(Long.valueOf(1_124L), rowFor(rows, GREEN_HAT).thenPrice());
+		assertEquals(Long.valueOf(-24L), rowFor(rows, GREEN_HAT).deltaGp());
+
+		fireTick();
+		assertEquals("the index is minutes old, but marked stale: the tick asks for it", 2, indexFutures.size());
 	}
 
-	/** The rollover of L3: RuneLite's table steps to the next day; the next tick re-derives D with no request for 1d. */
+	/**
+	 * A new Jagex step: RuneLite's table moves on before the index has it. The next tick finds RuneLite ahead - the
+	 * clock is "now", nothing new is fetched for any window, the index is marked stale - and the tick after asks for the
+	 * index although it is fresh; once the wiki lists the new table, R0 is that table and RuneLite matches it again.
+	 */
 	@Test
-	public void theAnchorFollowsTheJagexRolloverWithinOneTickWithoutRefetchingWhatIsInMemory()
+	public void aNewJagexStepMarksTheIndexStaleUntilTheWikiListsIt()
 	{
 		warmUp();
-		assertEquals(SEP_8, lastStatus().anchorDay());
+		assertEquals(dataSecondsFor(BOT_0908), lastStatus().nowSeconds());
 		final int requestsBefore = tableRequests.size();
 
 		runeliteOn(SEP_9);
 		fireTick();
 
-		final PriceService.Status status = lastStatus();
+		PriceService.Status status = lastStatus();
+		assertEquals("ahead: the clock", T0 / 1000L, status.nowSeconds());
+		assertEquals("a day before the clock is still 07 Sep's table", BOT_0907.revId(), status.baselineRevId());
+		assertEquals("nothing new to fetch for any window", requestsBefore, tableRequests.size());
+		assertEquals("the index is fresh and the mark was only just made: not refetched by this tick", 1,
+			indexFutures.size());
+		assertEquals(Long.valueOf(-24L), rowFor(lastRows(), GREEN_HAT).deltaGp());
+
+		// The wiki lists 09 Sep's first table (00:15 save, 00:05 table) four hours on: the index is still under six
+		// hours old, so only the mark can make the tick ask for it.
+		final RevisionRef bot0909 = bot(15_335_900L, SEP_9, 0, 15, 0);
+		final List<RevisionRef> grown = new ArrayList<>(HISTORY);
+		grown.add(0, bot0909);
+		history = grown;
+		clock.addAndGet(4L * HOUR);
+		assertTrue("the premise: the index on hand is far younger than the staleness rule's six hours",
+			clock.get() - T0 < PriceService.HISTORY_MAX_AGE_MS);
+		fireTick();
+		assertEquals("marked stale: the tick asks for the index", 2, indexFutures.size());
+		answerIndex();
+		answerEveryTable(); // the new R0, and the windows that moved with the clock
+
+		status = lastStatus();
+		assertEquals(bot0909.revId(), status.r0RevId());
+		assertEquals("RuneLite matches the new R0: its table time is now", dataSecondsFor(bot0909), status.nowSeconds());
 		assertEquals(SEP_9, status.anchorDay());
-		assertEquals("1d now reads R0, adopted from memory", BOT_0908.revId(), status.baselineRevId());
-		assertEquals(SEP_8, status.thenDay());
-		assertEquals("only the 7d body is new (02 Sep); 30d/90d/180d walk back onto the revisions already held",
-			requestsBefore + 1, tableRequests.size());
-		assertEquals(Collections.singletonList(BOT_0902.revId()), tableRequests.get(requestsBefore));
-		assertEquals("the index is fresh: not refetched by the tick", 1, indexFutures.size());
-		assertEquals(Long.valueOf(14L), rowFor(lastRows(), GREEN_HAT).deltaGp());
-		verify(store, times(2)).saveBucket(eq(MovementWindow.D1), any(PriceMap.class));
+	}
 
-		answerTables();
+	/**
+	 * While RuneLite is AHEAD of the index the now time is the clock, which differs on every computation. A
+	 * computation must not reconcile for that alone: a reconcile starts the body requests again and ignores the
+	 * failure backoff, so a slowly failing body fetch would loop at its own timeout cadence (request, fail, recompute,
+	 * reconcile, request). Here the windows' batch times out and ten more computations land two seconds apart: not one
+	 * body request goes out until the backoff's own timer fires, and then exactly one.
+	 */
+	@Test
+	public void aClockThatOnlyDriftsWhileRuneLiteIsAheadNeverRestartsAFailingBodyFetch()
+	{
+		runeliteOn(SEP_9);
+		service.start();
+		service.setBank(bank(T0));
+		service.setLoggedIn(true, ACCOUNT, PROFILE);
+		service.setVisible(true);
+		fireTick();
+		answerIndex();
+		answerTables(); // R0
+		assertEquals("ahead: the clock is now", clock.get() / 1000L, lastStatus().nowSeconds());
+		assertEquals("R0, then the windows' batch", 2, tableRequests.size());
 
-		assertEquals(SEP_2, service.baseline(MovementWindow.D7).dataDay());
-		assertEquals(BOT_0809.revId(), service.baseline(MovementWindow.D30).revId());
+		clock.addAndGet(2L * SECOND);
+		tableFutures.get(tableFutures.size() - 1).completeExceptionally(new WikiPriceException("wiki request failed: timeout"));
+		assertEquals("the failure arms the backoff and asks for nothing", 2, tableRequests.size());
+		for (int i = 0; i < 10; i++)
+		{
+			clock.addAndGet(2L * SECOND);
+			service.setOptions(service.options().withCountCash(i % 2 == 1)); // a computation, with the clock moved on
+			assertEquals("computation " + i + ": the clock is now, and nothing is asked for", clock.get() / 1000L,
+				lastStatus().nowSeconds());
+		}
+		assertEquals("ten computations on a drifting clock: still no new body request", 2, tableRequests.size());
+		assertTrue(lastStatus().degraded());
+
+		oneShotWithDelay(PriceService.RETRY_MS).fire();
+
+		assertEquals("only the backoff's own timer asks again", 3, tableRequests.size());
+		assertEquals(Arrays.asList(BOT_0907.revId(), BOT_0901.revId(), BOT_0809.revId(), BOT_0609.revId(), BOT_0312.revId()),
+			tableRequests.get(2));
+	}
+
+	/**
+	 * The other half of that rule: while RuneLite is ahead, a window's pick that REALLY moves with the clock is
+	 * picked up by the computation that sees it, without waiting for the tick. A day on, 1d's target passes 08 Sep's
+	 * 20:10 table - R0, in memory - which is adopted at once.
+	 */
+	@Test
+	public void aPickThatMovesWithTheClockWhileRuneLiteIsAheadIsAdoptedByTheNextComputation()
+	{
+		runeliteOn(SEP_9);
+		service.start();
+		service.setBank(bank(T0));
+		service.setLoggedIn(true, ACCOUNT, PROFILE);
+		service.setVisible(true);
+		fireTick();
+		answerIndex();
+		answerTables(); // R0
+		answerTables(); // the windows
+		assertEquals(BOT_0907.revId(), service.baseline(MovementWindow.D1).revId());
+
+		clock.addAndGet(DAY);
+		service.setOptions(service.options().withCountCash(false));
+
+		assertEquals("1d's target now passes R0's table, which is in memory", BOT_0908.revId(),
+			service.baseline(MovementWindow.D1).revId());
 	}
 
 	@Test
 	public void agreementIsJudgedInIntegersAtTheThreshold()
 	{
-		// 28 comparable items; nudge three: 25 of 28 = 0.893 < 0.90 - the next day.
+		// 28 comparable items; nudge three: 25 of 28 = 0.893 < 0.90 - RuneLite holds another table: the clock.
 		runelite.put(item(1), runelite.get(item(1)) + 1);
 		runelite.put(item(2), runelite.get(item(2)) + 1);
 		runelite.put(item(3), runelite.get(item(3)) + 1);
 		warmUp();
 		assertEquals(25, Math.round(lastStatus().agree() * 28));
-		assertEquals(SEP_9, lastStatus().anchorDay());
+		assertEquals(T0 / 1000L, lastStatus().nowSeconds());
 
-		// Back to two nudged: 26 of 28 = 0.929 - R0's own day.
+		// Back to two nudged: 26 of 28 = 0.929 - R0's own table.
 		runelite.put(item(3), runelite.get(item(3)) - 1);
 		fireTick();
-		assertEquals(SEP_8, lastStatus().anchorDay());
+		assertEquals(dataSecondsFor(BOT_0908), lastStatus().nowSeconds());
+		assertEquals("the mark the 25 of 28 left asked for the index on this tick", 2, indexFutures.size());
 	}
 
-	/** L3's n < 20 branch: R0 stands in as "now", the anchor is R0's day, and the status says so. */
+	/** L3's n < 20 branch: R0 stands in as "now" - its own time - and the status says so. */
 	@Test
 	public void withoutARuneLiteTableTheNewestGuideTableStandsInAsNow()
 	{
@@ -1217,7 +1380,8 @@ public class PriceServiceTest
 		final PriceService.Status status = lastStatus();
 		assertEquals(0, status.agreeSamples());
 		assertEquals(-1.0d, status.agree(), 0.0d);
-		assertEquals("no comparison possible: D = day(R0)", SEP_8, status.anchorDay());
+		assertEquals("no comparison possible: now is R0's own table time", dataSecondsFor(BOT_0908), status.nowSeconds());
+		assertEquals("and its date is the anchor day", SEP_8, status.anchorDay());
 		assertTrue(status.degraded());
 		assertTrue(status.degradedReason(), status.degradedReason().contains("20"));
 		assertEquals(SEP_7, status.thenDay());
@@ -1269,6 +1433,38 @@ public class PriceServiceTest
 		verify(store, never()).saveBucket(eq(MovementWindow.D1), any(PriceMap.class));
 		verify(store, never()).saveBucket(eq(MovementWindow.D30), any(PriceMap.class));
 		assertEquals(BOT_0907.revId(), lastStatus().baselineRevId());
+	}
+
+	/**
+	 * {@code start()} reads each stored baseline file's {@code bucketSeconds} - the time of the table it holds - into
+	 * the service's table times ({@code rememberTimeLocked}), which is what lets the time rule ACCEPT a stored baseline
+	 * of the revision it would pick without asking the wiki for its body. Two stored baselines of the right revisions
+	 * (1d and 7d) and nothing else known: once R0 is in, only the other three windows' bodies are requested - neither
+	 * 07 Sep's nor 01 Sep's - and no baseline is saved over its own file.
+	 */
+	@Test
+	public void startReadsTheStoredBaselinesTableTimesSoTheirRevisionsAreNeverFetched()
+	{
+		when(store.loadRevisionIndex()).thenReturn(storedIndex(HISTORY, T0 - HOUR));
+		when(store.loadBucket(MovementWindow.D1)).thenReturn(diskBaseline(BOT_0907, T0 - HOUR));
+		when(store.loadBucket(MovementWindow.D7)).thenReturn(diskBaseline(BOT_0901, T0 - HOUR));
+		service.start();
+		service.setBank(bank(T0));
+		service.setVisible(true);
+		fireTick();
+		answerTables(); // R0
+
+		final List<Long> windows = tableRequests.get(1);
+		assertFalse("07 Sep's body is not asked for again: its time came off the stored file",
+			windows.contains(BOT_0907.revId()));
+		assertFalse("nor 01 Sep's", windows.contains(BOT_0901.revId()));
+		assertEquals("the three windows with nothing stored are", Arrays.asList(BOT_0809.revId(), BOT_0609.revId(),
+			BOT_0312.revId()), windows);
+		answerTables();
+		assertEquals(BOT_0907.revId(), lastStatus().baselineRevId());
+		assertEquals(BOT_0901.revId(), service.baseline(MovementWindow.D7).revId());
+		verify(store, never()).saveBucket(eq(MovementWindow.D1), any(PriceMap.class));
+		verify(store, never()).saveBucket(eq(MovementWindow.D7), any(PriceMap.class));
 	}
 
 	@Test
@@ -1328,11 +1524,11 @@ public class PriceServiceTest
 
 		assertEquals("a revision is immutable: the same R0 is not fetched again", before, tableRequests.size());
 
-		final RevisionRef bot0909 = bot(15_335_900L, SEP_9, 10, 0, 0);
+		final RevisionRef bot0909 = bot(15_335_900L, SEP_9, 20, 15, 0);
 		final List<RevisionRef> grown = new ArrayList<>(HISTORY);
 		grown.add(0, bot0909);
 		history = grown;
-		clock.addAndGet(PriceService.HISTORY_MAX_AGE_MS);
+		clock.addAndGet(DAY);
 		fireTick();
 		answerIndex();
 
@@ -1345,8 +1541,8 @@ public class PriceServiceTest
 		assertEquals(SEP_9, status.r0Day());
 		assertEquals(bot0909.revId(), status.r0RevId());
 		assertEquals(SEP_9, status.anchorDay());
-		assertEquals("the superseded R0 is the new 1d baseline, adopted from memory - not fetched again",
-			BOT_0908.revId(), status.baselineRevId());
+		assertEquals("the superseded R0 is the new 1d baseline - its table, 20:00 on the 8th, is a day older than the"
+			+ " new one's at 20:05 - adopted from memory, not fetched again", BOT_0908.revId(), status.baselineRevId());
 		assertEquals(SEP_8, status.thenDay());
 		assertEquals("only the 7d body (02 Sep) is new", before + 2, tableRequests.size());
 		assertEquals(Collections.singletonList(BOT_0902.revId()), tableRequests.get(before + 1));
@@ -1373,15 +1569,16 @@ public class PriceServiceTest
 		assertTrue(tableRequests.isEmpty());
 	}
 
-	// ---------------------------------------------------------------- L5: the day check and the single retry
+	// ---------------------------------------------------------------- T1: a body's own time, and the single retry
 
 	/**
-	 * The "once the bot itself" case of L-E, SYNTHETIC: 07 Sep's newest bot run republishes 06 Sep's table; an
-	 * earlier run the same date holds the right one. The stale body is adopted meanwhile (labelled 06 Sep), the
-	 * retry candidate is the previous revision of the date, and it replaces the stale one - once, never again.
+	 * The "once the bot itself" case of L-E, SYNTHETIC: 07 Sep's newest bot run republishes 06 Sep's table; an earlier
+	 * run the same date holds 07 Sep's. Addendum L retried the date's previous revision on the stale DAY; since contract
+	 * 1.1.2 the body's own time simply places it: once its table is known to be 06 Sep's, the newest table old enough is
+	 * the earlier run's, which is fetched and adopted - and nothing is fetched a third time.
 	 */
 	@Test
-	public void aStaleBodyIsRetriedOnceWithThePreviousRevisionOfTheDate()
+	public void aBodyCarryingAnOlderTableIsPlacedAtThatTablesTime()
 	{
 		final RevisionRef early0907 = bot(15_333_400L, SEP_7, 5, 0, 0);
 		final List<RevisionRef> withTwoRuns = new ArrayList<>(HISTORY);
@@ -1395,21 +1592,18 @@ public class PriceServiceTest
 		fireTick();
 		answerIndex();
 		answerTables(); // R0
-		assertEquals("the newest bot run of 07 Sep is picked first", Long.valueOf(BOT_0907.revId()), tableRequests.get(1).get(0));
+		assertEquals("the newest run old enough is picked first", Long.valueOf(BOT_0907.revId()), tableRequests.get(1).get(0));
 
 		answerTables(); // 15333448 comes back with 06 Sep's table
 
-		PriceService.Status status = lastStatus();
-		assertEquals("adopted meanwhile, labelled with its real day", SEP_6, status.thenDay());
-		assertEquals(BOT_0907.revId(), status.baselineRevId());
-		assertEquals("Guide prices - 1d vs 06 Sep - Bank as of " + MovementMath.formatTime(T0), status.text());
-		assertEquals("the retry: the previous revision of the date, on its own", 3, tableRequests.size());
+		assertEquals("its table is 06 Sep 19:45 - the earlier run of the 7th is newer and old enough: fetched alone", 3,
+			tableRequests.size());
 		assertEquals(Collections.singletonList(early0907.revId()), tableRequests.get(2));
 
 		answerTables();
 
-		status = lastStatus();
-		assertEquals("the retry's body is 07 Sep's: adopted", SEP_7, status.thenDay());
+		final PriceService.Status status = lastStatus();
+		assertEquals("07 Sep's table: adopted", SEP_7, status.thenDay());
 		assertEquals(early0907.revId(), status.baselineRevId());
 		assertEquals(Long.valueOf(-38L), rowFor(lastRows(), GREEN_HAT).deltaGp());
 
@@ -1421,12 +1615,12 @@ public class PriceServiceTest
 	}
 
 	/**
-	 * L5's other retry: the target date has only a human edit (stale). The candidate is the newest bot revision of
-	 * the NEXT date - here R0 itself, already in memory - and "if still not T, accept the table": both are one day
-	 * off, so the older one is kept and labelled with its real day.
+	 * The target date has only a human edit, and its body is 06 Sep's table (L-E). Placed at that table's time, the
+	 * newest table old enough is the bot's run of 06 Sep at 19:15 - newer than the edit's 07:21 table - so that run is
+	 * fetched and the row is labelled with the day it really compares against.
 	 */
 	@Test
-	public void aDateWithOnlyAHumanEditRetriesWithTheNextDatesBotAndKeepsTheCloserDay()
+	public void aHumanEditCarryingAnOlderTableGivesWayToTheNewerTableOldEnough()
 	{
 		final RevisionRef human0907 = new RevisionRef(15_333_300L, utcSeconds(SEP_7, 6, 46, 0), "Riblet15", "new items");
 		final List<RevisionRef> humanOnly = new ArrayList<>(HISTORY);
@@ -1438,14 +1632,18 @@ public class PriceServiceTest
 		fireTick();
 		answerIndex();
 		answerTables(); // R0
-		assertEquals(Long.valueOf(human0907.revId()), tableRequests.get(1).get(0));
+		assertEquals("07 Sep has no bot run: the edit is the newest revision old enough",
+			Long.valueOf(human0907.revId()), tableRequests.get(1).get(0));
 
-		answerTables(); // the human edit's body: 06 Sep's table
+		answerTables(); // the human edit's body: 06 Sep's 07:21 table
+
+		assertEquals(3, tableRequests.size());
+		assertEquals(Collections.singletonList(BOT_0906.revId()), tableRequests.get(2));
+		answerTables();
 
 		final PriceService.Status status = lastStatus();
-		assertEquals("no previous revision on 07 Sep and 08 Sep's bot is R0, already known: nothing to fetch", 2, tableRequests.size());
-		assertEquals("06 Sep and 08 Sep are both a day off 07 Sep: the older wins the tie", SEP_6, status.thenDay());
-		assertEquals(human0907.revId(), status.baselineRevId());
+		assertEquals(SEP_6, status.thenDay());
+		assertEquals(BOT_0906.revId(), status.baselineRevId());
 		assertEquals("1d vs 06 Sep", status.baselineText());
 	}
 
@@ -1500,6 +1698,516 @@ public class PriceServiceTest
 		assertFalse("not an error: not degraded", status.degraded());
 		fireTick();
 		assertEquals(2, tableRequests.size());
+	}
+
+	// ---------------------------------------------------------------- contract 1.1.2: eight tables a day
+
+	/** 2026-10-07T17:03:00Z, when the 1.1.2 finding was measured: 368 of 499 rows at 0.0 %. */
+	private static final long OCT_7_1703 = 1_791_393_780_000L;
+
+	/**
+	 * The REAL revisions of {@code Module:GEPrices/data.json} from 29 Sep to 07 Oct 2026 - the wiki's own list, eight
+	 * a day since 30 Sep - and the one revision each of 06 Sep, 07 Sep, 09 Jul and 10 Apr the longer windows land on.
+	 * Each is {@code {revid, saved, the table's own %LAST_UPDATE%}}; the table time is the real one where a body was
+	 * read during the investigation, else ten minutes before the save.
+	 */
+	private static final long[][] OCTOBER = {
+		{15_367_875L, 1_791_390_911L, 1_791_390_315L}, // 07 Oct 16:35, table 16:25
+		{15_367_698L, 1_791_381_913L, 1_791_381_360L}, // 07 Oct 14:05, table 13:56
+		{15_367_510L, 1_791_368_711L, 1_791_368_673L}, // 07 Oct 10:25, table 10:24
+		{15_367_443L, 1_791_362_111L, 1_791_361_564L}, // 07 Oct 08:35, table 08:26
+		{15_367_348L, 1_791_344_112L, 1_791_344_003L}, // 07 Oct 03:35, table 03:33
+		{15_367_324L, 1_791_336_311L, 1_791_336_302L}, // 07 Oct 01:25, table 01:25
+		{15_367_181L, 1_791_322_512L, 1_791_322_376L}, // 06 Oct 21:35, table 21:32
+		{15_367_025L, 1_791_314_112L, 1_791_313_864L}, // 06 Oct 19:15, table 19:11
+		{15_366_933L, 1_791_305_111L, 1_791_305_030L}, // 06 Oct 16:45, table 16:43
+		{15_366_865L, 1_791_296_111L, 1_791_295_901L}, // 06 Oct 14:15, table 14:11
+		{15_366_672L, 1_791_279_911L, 1_791_279_393L}, // 06 Oct 09:45, table 09:36
+		{15_366_597L, 1_791_273_912L, 1_791_273_691L}, // 06 Oct 08:05
+		{15_366_562L, 1_791_263_112L, 1_791_262_679L}, // 06 Oct 05:05
+		{15_366_483L, 1_791_251_111L, 1_791_251_093L}, // 06 Oct 01:45
+		{15_366_253L, 1_791_238_511L, 1_791_238_201L}, // 05 Oct 22:15
+		{15_365_840L, 1_791_225_311L, 0L},
+		{15_365_389L, 1_791_215_112L, 0L},
+		{15_365_235L, 1_791_206_711L, 0L},
+		{15_365_175L, 1_791_193_512L, 0L},
+		{15_365_150L, 1_791_185_119L, 0L},
+		{15_365_128L, 1_791_177_312L, 0L},
+		{15_365_054L, 1_791_161_713L, 0L}, // 05 Oct 00:55
+		{15_364_903L, 1_791_155_112L, 0L},
+		{15_364_672L, 1_791_143_711L, 0L},
+		{15_364_536L, 1_791_129_312L, 0L},
+		{15_364_457L, 1_791_119_112L, 0L},
+		{15_364_162L, 1_791_111_312L, 0L},
+		{15_363_538L, 1_791_097_512L, 0L},
+		{15_363_479L, 1_791_084_311L, 0L},
+		{15_363_444L, 1_791_075_913L, 0L}, // 04 Oct 01:05
+		{15_363_369L, 1_791_063_912L, 0L},
+		{15_363_244L, 1_791_053_111L, 0L},
+		{15_363_049L, 1_791_048_312L, 0L},
+		{15_362_068L, 1_791_031_512L, 0L},
+		{15_360_972L, 1_791_021_312L, 0L},
+		{15_360_926L, 1_791_014_713L, 0L},
+		{15_360_897L, 1_791_001_511L, 0L},
+		{15_360_862L, 1_790_991_912L, 0L}, // 03 Oct 01:45
+		{15_360_819L, 1_790_976_912L, 0L},
+		{15_360_648L, 1_790_967_312L, 0L},
+		{15_360_320L, 1_790_956_512L, 0L},
+		{15_360_296L, 1_790_952_312L, 0L},
+		{15_360_212L, 1_790_933_112L, 0L},
+		{15_360_198L, 1_790_930_111L, 0L},
+		{15_360_049L, 1_790_915_111L, 0L},
+		{15_360_014L, 1_790_908_511L, 0L}, // 02 Oct 02:35
+		{15_359_959L, 1_790_894_711L, 0L},
+		{15_359_863L, 1_790_885_112L, 0L},
+		{15_359_805L, 1_790_871_912L, 0L},
+		{15_359_572L, 1_790_858_112L, 0L},
+		{15_359_499L, 1_790_853_912L, 0L},
+		{15_359_368L, 1_790_842_511L, 0L},
+		{15_359_342L, 1_790_832_911L, 0L},
+		{15_359_296L, 1_790_819_112L, 0L}, // 01 Oct 01:45
+		{15_359_196L, 1_790_810_112L, 1_790_810_081L}, // 30 Sep 23:15
+		{15_359_060L, 1_790_795_713L, 0L},
+		{15_358_969L, 1_790_784_912L, 0L}, // 30 Sep 16:15
+		{15_358_890L, 1_790_775_312L, 0L},
+		{15_358_648L, 1_790_738_111L, 0L}, // 30 Sep 03:15
+		{15_358_460L, 1_790_705_112L, 0L}, // 29 Sep 18:05, the last of the once-a-day era
+		{15_333_448L, 1_788_810_912L, 1_788_810_322L}, // 07 Sep 19:55
+		{15_332_677L, 1_788_722_112L, 0L}, // 06 Sep 19:15
+		{15_259_121L, 1_783_606_511L, 1_783_606_206L}, // 09 Jul 14:15
+		{15_171_863L, 1_775_791_414L, 1_775_790_978L}, // 10 Apr 03:23
+	};
+
+	/** {@link #OCTOBER} as an index, newest first, every one the bot's. */
+	private static List<RevisionRef> octoberIndex()
+	{
+		final List<RevisionRef> index = new ArrayList<>();
+		for (final long[] row : OCTOBER)
+		{
+			index.add(new RevisionRef(row[0], row[1], RevisionRef.BOT_USER, RevisionRef.BOT_COMMENT));
+		}
+		return index;
+	}
+
+	/** One {@link #OCTOBER} revision by id. */
+	private static long[] october(final long revId)
+	{
+		for (final long[] row : OCTOBER)
+		{
+			if (row[0] == revId)
+			{
+				return row;
+			}
+		}
+		throw new AssertionError("no October revision " + revId);
+	}
+
+	/** The table time of one {@link #OCTOBER} revision: the real one, or ten minutes before its save. */
+	private static long octoberTableSeconds(final long revId)
+	{
+		final long[] row = october(revId);
+		return row[2] > 0L ? row[2] : row[1] - 600L;
+	}
+
+	/**
+	 * The table of one {@link #OCTOBER} revision. Every one differs from every other on every item but the flat shark
+	 * - each eight-a-day step moved part of the bank, and a wrong table must show up as a wrong number - so RuneLite on
+	 * one of them agrees with that one alone.
+	 */
+	private static Map<String, Long> octoberPrices(final long revId)
+	{
+		final long step = revId % 100_000L;
+		final Map<String, Long> table = new LinkedHashMap<>();
+		for (int n = 1; n <= ITEMS; n++)
+		{
+			table.put("Item " + n, 1_000_000L * n + step);
+		}
+		table.put("Green hat", 2_000_000L + step);
+		table.put("Abyssal whip", 800_000_000L + step);
+		table.put("Shark", 1_000L);
+		table.put("Varrock teleport (tablet)", 3_000_000L + step);
+		table.put("Karambwan vessel", 3_235L);
+		return table;
+	}
+
+	/** Loads the October history: the wiki's index and every body, as the wiki would serve them. */
+	private void useOctober()
+	{
+		history = octoberIndex();
+		for (final long[] row : OCTOBER)
+		{
+			bodyOverrides.put(row[0], new GuideSnapshot(row[0], row[1], octoberTableSeconds(row[0]), OCT_7_1703,
+				octoberPrices(row[0])));
+		}
+		clock.set(OCT_7_1703);
+	}
+
+	/** RuneLite's price table as one guide table, for every mapped item; the box and the baited vessel as always. */
+	private void runeliteOnTable(final Map<String, Long> prices)
+	{
+		runelite.clear();
+		for (final Map.Entry<Integer, String> entry : mappingTable().entrySet())
+		{
+			final Long gp = prices.get(entry.getValue());
+			if (gp != null)
+			{
+				runelite.put(entry.getKey(), gp.intValue());
+			}
+		}
+		runelite.put(BOX, 100);
+		runelite.put(VESSEL_BAITED, 3_388);
+	}
+
+	/** Answers every body request, including the ones each answer leads to, until none is out. */
+	private void answerEveryTable()
+	{
+		while (!tableFutures.isEmpty() && !tableFutures.get(tableFutures.size() - 1).isDone())
+		{
+			answerTables();
+		}
+	}
+
+	/** Activation against whatever history is set: the index, R0, and every body that follows. */
+	private void warmUpEveryTable()
+	{
+		service.start();
+		service.setBank(bank(T0));
+		service.setLoggedIn(true, ACCOUNT, PROFILE);
+		service.setVisible(true);
+		fireTick();
+		answerIndex();
+		answerEveryTable();
+	}
+
+	/**
+	 * Every window's baseline at least its span older than {@code nowSeconds} and never the revision RuneLite matches
+	 * nor a newer one - the guard of T2 - and, where the index has one old enough, the NEWEST such revision.
+	 */
+	private void assertEveryWindowCountsBackFrom(final long nowSeconds, final long matchedRevId)
+	{
+		final List<RevisionRef> index = service.revisionIndex();
+		for (final MovementWindow window : MovementWindow.values())
+		{
+			final PriceMap baseline = service.baseline(window);
+			final long target = nowSeconds - window.days() * 86_400L;
+			// By save time: the bodies the service has read here are the ones it picked, each saved before its target.
+			final RevisionRef expected = RevisionRef.pickThen(index, target);
+			assertNotNull(window + " has a baseline", expected);
+			assertTrue(window + ": its table is at least " + window.days() + " x 24 h older than now: "
+				+ baseline.bucketSeconds() + " vs " + target, baseline.bucketSeconds() <= target);
+			assertNotEquals(window + " is never the revision RuneLite matches", matchedRevId, baseline.revId());
+			assertEquals(window + ": the NEWEST revision old enough", expected.revId(), baseline.revId());
+		}
+	}
+
+	/**
+	 * THE case of the 1.1.2 finding: RuneLite holds the 16:25 table of 07 Oct. Addendum L's rule took the 1d baseline
+	 * from the newest revision of 07 Oct's date minus one - or, with RuneLite ahead, from R0 itself - and 368 of 499 rows
+	 * read 0.0 %. Now 1d is the newest table at or before 06 Oct 16:25: 06 Oct's 14:15 run, NOT 06 Oct 21:35 (the last
+	 * of the date) and NOT 07 Oct 13:56 (the table before R0). Every other window counts back from the same time.
+	 */
+	@Test
+	public void eightTablesADayRuneLiteOnTheNewestTableCountsEveryWindowBackFromItsTime()
+	{
+		useOctober();
+		runeliteOnTable(octoberPrices(15_367_875L));
+
+		warmUpEveryTable();
+
+		final PriceService.Status status = lastStatus();
+		assertEquals(15_367_875L, status.r0RevId());
+		assertEquals("the matched table's time is now", octoberTableSeconds(15_367_875L), status.nowSeconds());
+		assertEquals(LocalDate.of(2026, 10, 7), status.anchorDay());
+		assertEquals("06 Oct 14:15 (table 14:11): the newest at or before 06 Oct 16:25", 15_366_865L,
+			service.baseline(MovementWindow.D1).revId());
+		assertNotEquals("not the last of 06 Oct's date", 15_367_181L, service.baseline(MovementWindow.D1).revId());
+		assertNotEquals("not the table before R0", 15_367_698L, service.baseline(MovementWindow.D1).revId());
+		assertEquals(15_358_969L, service.baseline(MovementWindow.D7).revId());
+		assertEquals("07 Sep's run came at 19:55, after 16:25: 06 Sep's", 15_332_677L,
+			service.baseline(MovementWindow.D30).revId());
+		assertEquals(15_259_121L, service.baseline(MovementWindow.D90).revId());
+		assertEquals(15_171_863L, service.baseline(MovementWindow.D180).revId());
+		assertEveryWindowCountsBackFrom(status.nowSeconds(), 15_367_875L);
+		assertEquals("1d vs 06 Oct", status.baselineText());
+		assertEquals("a whole day of movement on every item", Long.valueOf(15_367_875L % 100_000L - 15_366_865L % 100_000L),
+			rowFor(lastRows(), item(1)).deltaGp());
+		assertFalse(status.degraded());
+		fireTick();
+		assertEquals("matched: the index is not marked stale", 1, indexFutures.size());
+	}
+
+	/**
+	 * RuneLite AHEAD of the index at three in four items: it holds a table the wiki has not listed. The now time is the
+	 * clock (07 Oct 17:03), so 1d's baseline is still at least 24 h before it - 06 Oct's 16:45 run - and never R0, which
+	 * is only 38 minutes older than the clock; and the index is marked stale. Restoring addendum L's "+1 day" (the now
+	 * time R0's plus a day) puts R0 in as the 1d baseline and fails here.
+	 */
+	@Test
+	public void eightTablesADayRuneLiteAheadCountsBackFromTheClockAndMarksTheIndexStale()
+	{
+		useOctober();
+		final Map<String, Long> unlisted = new LinkedHashMap<>(octoberPrices(15_367_875L));
+		for (int n = 1; n <= 7; n++)
+		{
+			unlisted.put("Item " + n, unlisted.get("Item " + n) + 1L);
+		}
+		runeliteOnTable(unlisted);
+
+		warmUpEveryTable();
+
+		final PriceService.Status status = lastStatus();
+		assertEquals("21 of 28: three in four, below the 90 % a match needs", 21, Math.round(status.agree() * 28));
+		assertNotEquals("never R0", 15_367_875L, service.baseline(MovementWindow.D1).revId());
+		assertTrue("1d is at least 24 h before the clock",
+			service.baseline(MovementWindow.D1).bucketSeconds() <= OCT_7_1703 / 1000L - 86_400L);
+		assertEquals(15_366_933L, service.baseline(MovementWindow.D1).revId());
+		assertEquals("the clock is now", OCT_7_1703 / 1000L, status.nowSeconds());
+		assertEveryWindowCountsBackFrom(status.nowSeconds(), 0L);
+		assertFalse("ahead is not degraded", status.degraded());
+
+		fireTick();
+		assertEquals("marked stale: the next tick asks for the index, minutes old as it is", 2, indexFutures.size());
+	}
+
+	/**
+	 * RuneLite BEHIND the wiki: it still holds the 13:56 table when the index has moved on to 16:25 (its 30-minute
+	 * refresh has not run yet). The 13:56 table is in memory - it was R0 until the index moved - so it is matched and
+	 * its time is now: 1d is the newest table at or before 06 Oct 13:56 - the 09:45 run - and the status says behind.
+	 */
+	@Test
+	public void eightTablesADayRuneLiteBehindCountsBackFromTheTableItHolds()
+	{
+		useOctober();
+		final List<RevisionRef> before = new ArrayList<>(octoberIndex());
+		before.remove(0);
+		history = before;
+		runeliteOnTable(octoberPrices(15_367_698L));
+		warmUpEveryTable();
+		assertEquals(15_367_698L, lastStatus().r0RevId());
+		assertEquals(octoberTableSeconds(15_367_698L), lastStatus().nowSeconds());
+
+		history = octoberIndex();
+		clock.addAndGet(PriceService.HISTORY_MAX_AGE_MS);
+		fireTick();
+		answerIndex();
+		answerEveryTable();
+
+		final PriceService.Status status = lastStatus();
+		assertEquals("the wiki's newest is R0", 15_367_875L, status.r0RevId());
+		assertEquals("RuneLite's 13:56 table is now", octoberTableSeconds(15_367_698L), status.nowSeconds());
+		assertEquals(15_366_672L, service.baseline(MovementWindow.D1).revId());
+		assertTrue(service.baseline(MovementWindow.D1).bucketSeconds() <= octoberTableSeconds(15_367_698L) - 86_400L);
+		assertEveryWindowCountsBackFrom(status.nowSeconds(), 15_367_698L);
+		assertFalse("behind is routine at eight tables a day and its figures are right: not degraded", status.degraded());
+		assertNull("and no red sentence", status.degradedReason());
+	}
+
+	/** None old enough: a window whose span reaches past the whole index says "No Nd history", as it always has. */
+	@Test
+	public void eightTablesADayAWindowPastTheIndexHasNoHistory()
+	{
+		useOctober();
+		final List<RevisionRef> recent = new ArrayList<>(octoberIndex());
+		recent.removeIf(ref -> ref.editSeconds() < 1_790_000_000L);
+		history = recent;
+		runeliteOnTable(octoberPrices(15_367_875L));
+		warmUpEveryTable();
+
+		assertEquals(15_366_865L, service.baseline(MovementWindow.D1).revId());
+		assertEquals(15_358_969L, service.baseline(MovementWindow.D7).revId());
+		for (final MovementWindow window : Arrays.asList(MovementWindow.D30, MovementWindow.D90, MovementWindow.D180))
+		{
+			service.setFilter(RowFilter.DEFAULT.withWindow(window));
+			assertEquals(PriceService.problemNoHistory(window), lastStatus().text());
+			assertEquals(PriceService.ProblemKind.NO_HISTORY, lastStatus().problemKind());
+			assertFalse(lastStatus().baselineLoaded());
+		}
+	}
+
+	/**
+	 * The once-a-day regime of September under the CONTRACT's rule - "then" for 1d is the newest table at or before the
+	 * now time minus 24 hours - not under the calendar rule addendum L had. One bot run a day, RuneLite on the newest
+	 * table, and yesterday's run at least 24 hours before today's table (09:00 against 18:00 the day after: 33 hours):
+	 * 1d is yesterday's table. With the index stale and the clock past UTC midnight while RuneLite still holds that
+	 * table, "now" stays the TABLE's time, not the clock's date: 1d is still yesterday's table, never R0 itself.
+	 *
+	 * <p>The shared {@code BOT_0908} fixture of the other tests was moved from its real 09:25:12 to 20:10:12 for the same
+	 * rule (a run at 09:25 puts the 1d target before 07 Sep's 19:55 run, so every window would read a day further back
+	 * than the calendar rule it was written under); this test builds its own days, and the case below it builds the
+	 * other side of the rule.
+	 */
+	@Test
+	public void theOnceADayRegimeReadsYesterdaysTableWhenItIsAtLeast24HoursBeforeTodaysEvenPastUtcMidnight()
+	{
+		final RevisionRef sep8 = bot(15_334_700L, SEP_8, 18, 0, 0);
+		final RevisionRef sep7 = bot(15_333_500L, SEP_7, 9, 0, 0);
+		final RevisionRef sep6 = bot(15_332_700L, SEP_6, 14, 0, 0);
+		final RevisionRef sep1 = bot(15_328_300L, SEP_1, 7, 30, 0);
+		history = Arrays.asList(sep8, sep7, sep6, BOT_0905, BOT_0904, BOT_0903, sep1, BOT_0831, BOT_0809, BOT_0609,
+			BOT_0312);
+		warmUpEveryTable();
+
+		PriceService.Status status = lastStatus();
+		assertEquals(sep8.revId(), status.r0RevId());
+		assertEquals(dataSecondsFor(sep8), status.nowSeconds());
+		assertTrue("the premise: yesterday's table is at least 24 h before today's",
+			dataSecondsFor(sep8) - dataSecondsFor(sep7) >= 86_400L);
+		assertEquals("yesterday's table", sep7.revId(), status.baselineRevId());
+		assertEquals("1d vs 07 Sep", status.baselineText());
+		assertEquals(sep1.revId(), service.baseline(MovementWindow.D7).revId());
+
+		clock.set(utcMillis(SEP_9, 2, 30, 0)); // past UTC midnight, the index six hours old and more
+		fireTick();
+		answerIndex(); // the same index: the bot has not run on the 9th
+		answerEveryTable();
+
+		status = lastStatus();
+		assertEquals("still RuneLite's table's time, not 09 Sep", dataSecondsFor(sep8), status.nowSeconds());
+		assertEquals("yesterday's table, never today's", sep7.revId(), status.baselineRevId());
+		assertNotEquals(sep8.revId(), status.baselineRevId());
+	}
+
+	/**
+	 * The other side of the same rule: yesterday's run came LESS than 24 hours before today's table (19:00 against 18:00
+	 * the day after: 23 hours), so it is not "a day older" and is not 1d's table - the day before's is, labelled with
+	 * that day. This is what the calendar rule of addendum L got wrong the other way round, and what the eight-a-day
+	 * tables of October make routine.
+	 */
+	@Test
+	public void theOnceADayRegimeReadsTheDayBeforeWhenYesterdaysTableIsLessThan24HoursBeforeTodaysEvenPastUtcMidnight()
+	{
+		final RevisionRef sep8 = bot(15_334_700L, SEP_8, 18, 0, 0);
+		final RevisionRef sep7 = bot(15_333_500L, SEP_7, 19, 0, 0);
+		final RevisionRef sep6 = bot(15_332_700L, SEP_6, 14, 0, 0);
+		final RevisionRef sep1 = bot(15_328_300L, SEP_1, 7, 30, 0);
+		history = Arrays.asList(sep8, sep7, sep6, BOT_0905, BOT_0904, BOT_0903, sep1, BOT_0831, BOT_0809, BOT_0609,
+			BOT_0312);
+		warmUpEveryTable();
+
+		PriceService.Status status = lastStatus();
+		assertEquals(sep8.revId(), status.r0RevId());
+		assertEquals(dataSecondsFor(sep8), status.nowSeconds());
+		assertTrue("the premise: yesterday's table is less than 24 h before today's",
+			dataSecondsFor(sep8) - dataSecondsFor(sep7) < 86_400L);
+		assertEquals("the day before yesterday's table: yesterday's is not a full day older", sep6.revId(),
+			status.baselineRevId());
+		assertEquals("labelled with that day", "1d vs 06 Sep", status.baselineText());
+		assertEquals(sep1.revId(), service.baseline(MovementWindow.D7).revId());
+
+		clock.set(utcMillis(SEP_9, 2, 30, 0));
+		fireTick();
+		answerIndex();
+		answerEveryTable();
+
+		status = lastStatus();
+		assertEquals("still RuneLite's table's time, not 09 Sep", dataSecondsFor(sep8), status.nowSeconds());
+		assertEquals(sep6.revId(), status.baselineRevId());
+		assertNotEquals(sep7.revId(), status.baselineRevId());
+	}
+
+	/**
+	 * An index the 1.1.1 build stored - 400 lines, its cap, which at eight a day reach fifty days - loads and is pruned to
+	 * the rule (every revision of the last eight days, one a day before), and the next write stores it pruned.
+	 */
+	@Test
+	public void aFourHundredLineIndexLoadsPrunedAndIsWrittenPruned()
+	{
+		final List<RevisionRef> old = new ArrayList<>();
+		final long start = utcSeconds(SEP_8, 0, 10, 0) - 49L * 86_400L;
+		for (int i = 0; i < 400; i++)
+		{
+			old.add(new RevisionRef(15_000_000L + i, start + (i / 8) * 86_400L + (i % 8) * 3L * 3_600L,
+				RevisionRef.BOT_USER, RevisionRef.BOT_COMMENT));
+		}
+		when(store.loadRevisionIndex()).thenReturn(storedIndex(old, T0 - HOUR));
+
+		service.start();
+
+		final List<RevisionRef> loaded = service.revisionIndex();
+		assertEquals(RevisionRef.pruned(old), loaded);
+		assertTrue("pruned: " + loaded.size(), loaded.size() < 120);
+		assertEquals("the newest revision is kept", old.get(399), loaded.get(0));
+
+		service.setBank(bank(T0));
+		service.setVisible(true);
+		service.refreshNow();
+		indexFutures.get(indexFutures.size() - 1).complete(Collections.singletonList(BOT_0908));
+		final ArgumentCaptor<List<RevisionRef>> written = listCaptor();
+		verify(store).saveRevisionIndex(written.capture(), eq(T0));
+		assertEquals(RevisionRef.pruned(written.getValue()), written.getValue());
+		assertTrue(written.getValue().contains(BOT_0908));
+	}
+
+	/**
+	 * T2's paging decisions: an index that does not reach {@link PriceService#INDEX_REACH_DAYS} back - none at all on
+	 * a fresh install - is paged back that far, once a session; a refresh asks only for what is newer than the newest
+	 * revision held.
+	 */
+	@Test
+	public void aFreshInstallPagesBack181DaysOnceAndARefreshAsksOnlyForWhatIsNewer()
+	{
+		service.start();
+		service.setBank(bank(T0));
+		service.setVisible(true);
+		fireTick();
+
+		final long reach = T0 / 1000L - 181L * 86_400L;
+		verify(wiki).fetchRevisionIndex(T0, reach);
+		answerIndex();
+
+		clock.addAndGet(PriceService.HISTORY_MAX_AGE_MS);
+		fireTick();
+		verify(wiki).fetchRevisionIndex(T0 + PriceService.HISTORY_MAX_AGE_MS, BOT_0908.editSeconds());
+	}
+
+	@Test
+	public void anIndexShortOfTheLongestWindowIsPagedBackOnceASession()
+	{
+		final List<RevisionRef> short30 = Arrays.asList(BOT_0908, BOT_0907, BOT_0906, BOT_0809);
+		when(store.loadRevisionIndex()).thenReturn(storedIndex(short30, T0 - 7L * HOUR));
+		service.start();
+		service.setBank(bank(T0));
+		service.setVisible(true);
+		fireTick();
+
+		verify(wiki).fetchRevisionIndex(T0, T0 / 1000L - 181L * 86_400L);
+		indexFutures.get(0).complete(new ArrayList<>(short30));
+
+		clock.addAndGet(PriceService.HISTORY_MAX_AGE_MS);
+		fireTick();
+		verify(wiki).fetchRevisionIndex(T0 + PriceService.HISTORY_MAX_AGE_MS, BOT_0908.editSeconds());
+	}
+
+	/**
+	 * A paging run a failed later page cut short (1.1.2 review) is adopted - the days it reached give the windows their
+	 * baselines - but is NOT counted as the session's paging: the next refresh pages back again, to the full reach,
+	 * where a whole run's next refresh asks only for what is newer.
+	 */
+	@Test
+	public void aCutShortPagingRunIsAdoptedAndPagedAgainOnTheNextRefresh()
+	{
+		service.start();
+		service.setBank(bank(T0));
+		service.setVisible(true);
+		fireTick();
+		verify(wiki).fetchRevisionIndex(T0, T0 / 1000L - 181L * 86_400L);
+
+		indexFutures.get(0).complete(new GuidePriceClient.CutShortIndex(history));
+
+		assertEquals("the cut-short run is adopted as the index", T0, lastStatus().indexAtMillis());
+
+		clock.addAndGet(PriceService.HISTORY_MAX_AGE_MS);
+		fireTick();
+
+		verify(wiki).fetchRevisionIndex(T0 + PriceService.HISTORY_MAX_AGE_MS,
+			(T0 + PriceService.HISTORY_MAX_AGE_MS) / 1000L - 181L * 86_400L);
+		verify(wiki, never()).fetchRevisionIndex(T0 + PriceService.HISTORY_MAX_AGE_MS, BOT_0908.editSeconds());
+	}
+
+	@SuppressWarnings("unchecked")
+	private static ArgumentCaptor<List<RevisionRef>> listCaptor()
+	{
+		return ArgumentCaptor.forClass((Class<List<RevisionRef>>) (Class<?>) List.class);
 	}
 
 	// ---------------------------------------------------------------- L10: window changes and the manual refresh
@@ -1709,7 +2417,7 @@ public class PriceServiceTest
 	@Test
 	public void aDisabledClientFailsFastAndTheStatusSaysSo()
 	{
-		when(wiki.fetchRevisionIndex(anyLong())).thenAnswer(invocation ->
+		when(wiki.fetchRevisionIndex(anyLong(), anyLong())).thenAnswer(invocation ->
 		{
 			final CompletableFuture<List<RevisionRef>> future = new CompletableFuture<>();
 			future.completeExceptionally(new WikiPriceException("wiki fetches are switched off (developer mode)"));
@@ -2158,7 +2866,7 @@ public class PriceServiceTest
 			.withCountUntradeables(true)
 			.withLivePrices(false)
 			.withCountInventory(false)
-			.withShowHoverText(true);
+			.withCountGrandExchange(false);
 		service.setOptions(all);
 
 		assertEquals(all, lastStatus().options());
@@ -2488,7 +3196,7 @@ public class PriceServiceTest
 
 	/**
 	 * L3 measured one direction only - the wiki's bot publishes day D hours after Jagex steps to it, so RuneLite
-	 * LEADS for part of every day - and {@code deriveAnchorDay} therefore reads every disagreement as a lead. A
+	 * LEADS for part of every day - and addendum L's anchor rule therefore read every disagreement as a lead. A
 	 * client left open across an outage of RuneLite's price API holds an OLDER day than the wiki, and pushing the
 	 * anchor forward there puts every window two days from the prices in hand and inverts the sign of a 1d move.
 	 * When RuneLite matches the table for the day BEFORE R0 - the one it was serving until the index moved on, and
@@ -2512,8 +3220,9 @@ public class PriceServiceTest
 		final PriceService.Status status = lastStatus();
 		assertEquals(SEP_9, status.r0Day());
 		assertEquals("RuneLite is a day BEHIND, so D = day(R0) - 1", SEP_8, status.anchorDay());
-		assertTrue("and a reader is told to trust it less", status.degraded());
-		assertTrue(status.degradedReason(), status.degradedReason().contains("behind"));
+		assertFalse("behind is not a fallback: the figures are the older table's own, so the footnote stays grey",
+			status.degraded());
+		assertNull(status.degradedReason());
 		assertFalse("this is not the too-few-samples flavour", status.anchorDegraded());
 		assertEquals("so the 1d baseline is still 07 Sep, not 08 Sep", SEP_7, status.thenDay());
 		assertEquals("and the real one-day move survives", Long.valueOf(-38L), rowFor(lastRows(), GREEN_HAT).deltaGp());
@@ -2751,10 +3460,15 @@ public class PriceServiceTest
 	 * nowhere near it, which is what makes every "which series is this?" assertion unambiguous.
 	 */
 	private static final long WHIP_GUIDE_NOW = 800_000L + 250L;
-	/** buy 860,000 / sell 840,000: mid 850,000, a 20,000 gp gap (2.4 % of the mid) and 6 % from the guide. */
-	private static final long WHIP_LIVE_MID = 850_000L;
-	/** 07 Sep's bucket: (820,000 x 300 + 800,000 x 200) / 500. */
-	private static final long WHIP_TRADED_THEN = 812_000L;
+	/** 07 Sep's two-sided mark for the whip (contract 1.2.0, L2): (820,000 + 800,000) / 2. */
+	private static final long WHIP_MARK = 810_000L;
+	/**
+	 * The whip's price once 07 Sep's bucket is in (L4): the mark moved by today's same-side moves, +4.88 % on the buy
+	 * side (860,000 against 820,000) and +5.00 % on the sell side (840,000 against 800,000) - 810,000 + 40,006.
+	 */
+	private static final long WHIP_PRICE = 850_006L;
+	/** 07 Sep's two-sided mark for the hat, (1,100 + 1,080) / 2 - and its price, as both sides traded at it today. */
+	private static final long HAT_MARK = 1_090L;
 
 	private Map<Integer, TradedPriceClient.Quote> latestQuotes()
 	{
@@ -2775,254 +3489,390 @@ public class PriceServiceTest
 		return buckets;
 	}
 
-	// ---------------------------------------------------------------- T3: the three checks, at every edge
+	// ================================================================ contract 1.2.0: graded live moves (L1-L4)
 
+	/** T7's six hours stand; addendum T's and V's five checks are retired as price gates (contract 1.2.0, L4). */
 	@Test
-	public void theThreeLiquidityConstantsAreTheOnesAddendumTMeasured()
+	public void theSnapshotsSixHoursStand()
 	{
-		assertEquals("100 units a day is the line between a market and one person clearing their bank",
-			100L, PriceService.LIVE_MIN_VOLUME);
-		assertEquals("a gap wider than a tenth of the mid is not a price anybody paid",
-			10, PriceService.LIVE_MAX_SPREAD_PCT);
-		assertEquals("the user's own \"ignore live data changes that is >50 % of the 24 hour value\"",
-			50, PriceService.LIVE_MAX_GUIDE_DRIFT_PCT);
-		assertEquals(24L * 60L * 60L, PriceService.LIVE_QUOTE_MAX_AGE_SECONDS);
 		assertEquals(6L * 60L * 60L * 1000L, PriceService.LIVE_LATEST_MAX_AGE_MS);
 	}
 
-	/** Check 1, both sides of {@value PriceService#LIVE_MIN_VOLUME}. */
+	/** L1: the closed hour is the hour before the one the clock is in. */
 	@Test
-	public void theVolumeCheckRefusesBelowTheMinimumAndPassesAtIt()
+	public void theLatestClosedHourIsTheHourBeforeTheClocks()
 	{
-		final TradedPriceClient.Quote quote = fresh(1_050L, 950L);
-
-		assertNull("exactly 100 is enough",
-			PriceService.liveRefusal(quote, yesterdayFor(quote, 100L), 1_000L, NOW_SECONDS));
-		assertEquals("99 traded yesterday",
-			PriceService.liveRefusal(quote, yesterdayFor(quote, 99L), 1_000L, NOW_SECONDS));
-		assertEquals("a bucket that names the item and no trades really is zero", "0 traded yesterday",
-			PriceService.liveRefusal(quote, yesterdayFor(quote, 0L), 1_000L, NOW_SECONDS));
-		assertEquals("no bucket at all is not a measurement", PriceService.LIVE_NO_DATA,
-			PriceService.liveRefusal(quote, null, 1_000L, NOW_SECONDS));
+		assertEquals(utcSeconds(SEP_8, 19, 0, 0), PriceService.latestClosedHour(T0));
+		assertEquals(utcSeconds(SEP_8, 19, 0, 0), PriceService.latestClosedHour(utcMillis(SEP_8, 20, 0, 0)));
+		assertEquals(utcSeconds(SEP_8, 23, 0, 0), PriceService.latestClosedHour(utcMillis(SEP_9, 0, 59, 59)));
 	}
 
-	/** Check 2, both sides of {@value PriceService#LIVE_MAX_SPREAD_PCT} % of the mid. */
+	/** L1: the {@code /1h} bucket is asked for once per closed hour while the sidebar shows - never again inside it. */
 	@Test
-	public void theSpreadCheckRefusesAWiderGapThanATenthOfTheMid()
+	public void theHourIsAskedForOncePerClosedHourWhileShown()
 	{
-		assertNull("a gap of exactly 10 % of the mid passes",
-			PriceService.liveRefusal(fresh(1_050L, 950L), yesterdayFor(fresh(1_050L, 950L), 500L), 1_000L, NOW_SECONDS));
-		assertEquals("and one gp past it does not", "buy/sell gap 10 %",
-			PriceService.liveRefusal(fresh(1_051L, 949L), yesterdayFor(fresh(1_051L, 949L), 500L), 1_000L, NOW_SECONDS));
-		assertEquals("the phrase names the gap as a percentage of the mid", "buy/sell gap 18 %",
-			PriceService.liveRefusal(fresh(1_200L, 1_000L), yesterdayFor(fresh(1_200L, 1_000L), 500L), 1_100L, NOW_SECONDS));
-		assertEquals("a one-sided quote has no spread to measure", PriceService.LIVE_NO_DATA,
-			PriceService.liveRefusal(fresh(1_000L, null), yesterdayFor(fresh(1_000L, null), 500L), 1_000L, NOW_SECONDS));
-		assertEquals("and neither has no quote at all", PriceService.LIVE_NO_DATA,
-			PriceService.liveRefusal(null, yesterdayFor(null, 500L), 1_000L, NOW_SECONDS));
+		warmUpLive();
+		assertEquals("the activation's tick asked for the hour that closed at 20:00", 1, hourFutures.size());
+		answerHour(PriceService.latestClosedHour(clock.get()), whipHour());
+
+		fireTick();
+		assertEquals("the same hour: nothing more", 1, hourFutures.size());
+		clock.addAndGet(PriceService.TICK_MS);
+		fireTick();
+		assertEquals("20:50: the 19:00 hour is still the last one closed", 1, hourFutures.size());
+
+		clock.addAndGet(PriceService.TICK_MS);
+		fireTick();
+		assertEquals("21:20: the 20:00 hour has closed", 2, hourFutures.size());
+		verify(store).saveTradedHour(any(PriceStore.TradedHour.class));
 	}
 
-	/** Check 2's freshness half, both sides of {@value PriceService#LIVE_QUOTE_MAX_AGE_SECONDS} seconds. */
+	/** L1: never while the sidebar is hidden - not at start-up, not on a Refresh - and never with the switch off. */
 	@Test
-	public void theSpreadCheckRefusesASideThatHasNotTradedForADay()
+	public void theHourIsNeverAskedForWhileHidden()
 	{
-		final long day = PriceService.LIVE_QUOTE_MAX_AGE_SECONDS;
-		final TradedPriceClient.Quote onTime = new TradedPriceClient.Quote(1_050L, NOW_SECONDS - day, 950L, NOW_SECONDS);
-		final TradedPriceClient.Quote staleBuy =
-			new TradedPriceClient.Quote(1_050L, NOW_SECONDS - day - 1L, 950L, NOW_SECONDS);
-		final TradedPriceClient.Quote staleSell =
-			new TradedPriceClient.Quote(1_050L, NOW_SECONDS, 950L, NOW_SECONDS - day - 1L);
+		liveService();
+		service.start();
+		answerLatest(latestQuotes());
+		service.setBank(bank(T0));
+		service.setLoggedIn(true, ACCOUNT, PROFILE);
+		clock.addAndGet(PriceService.MANUAL_COOLDOWN_MS + SECOND);
+		service.refreshNow();
 
-		assertNull("exactly a day old still counts",
-			PriceService.liveRefusal(onTime, yesterdayFor(onTime, 500L), 1_000L, NOW_SECONDS));
-		assertEquals("one second older does not", PriceService.LIVE_NO_DATA,
-			PriceService.liveRefusal(staleBuy, yesterdayFor(staleBuy, 500L), 1_000L, NOW_SECONDS));
-		assertEquals("the SELL side counts the same", PriceService.LIVE_NO_DATA,
-			PriceService.liveRefusal(staleSell, yesterdayFor(staleSell, 500L), 1_000L, NOW_SECONDS));
-	}
+		verify(traded, never()).fetchHour(anyLong(), anyLong());
 
-	/** Check 3, both sides of {@value PriceService#LIVE_MAX_GUIDE_DRIFT_PCT} % of the guide price, either way. */
-	@Test
-	public void theSanityCheckRefusesAMidMoreThanHalfAwayFromTheGuide()
-	{
-		assertNull("exactly half again passes",
-			PriceService.liveRefusal(fresh(1_500L, 1_500L), yesterdayFor(fresh(1_500L, 1_500L), 500L), 1_000L, NOW_SECONDS));
-		assertNull("and exactly half passes",
-			PriceService.liveRefusal(fresh(500L, 500L), yesterdayFor(fresh(500L, 500L), 500L), 1_000L, NOW_SECONDS));
-		assertEquals("a gp past it does not", "live price 50 % from guide",
-			PriceService.liveRefusal(fresh(1_501L, 1_501L), yesterdayFor(fresh(1_501L, 1_501L), 500L), 1_000L, NOW_SECONDS));
-		assertEquals("and neither does a gp under", "live price 50 % from guide",
-			PriceService.liveRefusal(fresh(499L, 499L), yesterdayFor(fresh(499L, 499L), 500L), 1_000L, NOW_SECONDS));
-		assertEquals("the phrase names how far off it is - T6's own example", "live price 61 % from guide",
-			PriceService.liveRefusal(fresh(1_610L, 1_610L), yesterdayFor(fresh(1_610L, 1_610L), 500L), 1_000L, NOW_SECONDS));
-		assertEquals("an item RuneLite cannot price has no anchor to check against", PriceService.LIVE_NO_DATA,
-			PriceService.liveRefusal(fresh(1_000L, 1_000L), yesterdayFor(fresh(1_000L, 1_000L), 500L), null, NOW_SECONDS));
+		service.setVisible(true);
+		fireTick();
+		verify(traded, times(1)).fetchHour(anyLong(), anyLong());
+		service.setVisible(false);
+		clock.addAndGet(2L * HOUR);
+		service.refreshNow();
+		verify(traded, times(1)).fetchHour(anyLong(), anyLong());
 	}
 
 	/**
-	 * The checks multiply a price by up to 200, so a figure no exchange could produce is refused rather than
-	 * measured: a product that wrapped would come out NEGATIVE and pass every comparison silently, putting a
-	 * nonsense price on a row and into the bank total.
+	 * L1, the 2026-10-07 live check: the wiki's bare {@code /1h} is a CDN object regenerated at hh:00:10 that holds the
+	 * hour starting TWO hours back, so the service names the hour it wants - the latest CLOSED one, from its own clock -
+	 * in every request, and a new hour is asked for by its own timestamp.
 	 */
 	@Test
-	public void anAbsurdPriceIsRefusedRatherThanWrappedThroughTheChecks()
+	public void theHourIsAskedForByItsOwnTimestamp()
 	{
-		final long ceiling = PriceService.LIVE_SANE_PRICE_CEILING;
-		final TradedPriceClient.Quote atCeiling = fresh(ceiling, ceiling);
+		warmUpLive();
+		assertEquals(1, hourRequestedStarts.size());
+		assertEquals("the hour that closed at 20:00 is the 19:00 one", Long.valueOf(utcSeconds(SEP_8, 19, 0, 0)),
+			hourRequestedStarts.get(0));
+		answerHour(utcSeconds(SEP_8, 19, 0, 0), whipHour());
 
-		assertNull("a price at the ceiling is still measured",
-			PriceService.liveRefusal(atCeiling, yesterdayFor(atCeiling, 500L), ceiling, NOW_SECONDS));
-		assertEquals("a mid past it is not", PriceService.LIVE_NO_DATA, PriceService.liveRefusal(
-			fresh(ceiling + 2L, ceiling + 2L), yesterdayFor(atCeiling, 500L), ceiling, NOW_SECONDS));
-		assertEquals("and neither is a guide price past it", PriceService.LIVE_NO_DATA,
-			PriceService.liveRefusal(atCeiling, yesterdayFor(atCeiling, 500L), ceiling + 1L, NOW_SECONDS));
-		assertEquals("and neither is a day's average past it - check 5 multiplies that one by 50",
-			PriceService.LIVE_NO_DATA, PriceService.liveRefusal(atCeiling,
-				new TradedPriceClient.Bucket(ceiling + 1L, 500L, null, 0L), ceiling, NOW_SECONDS));
-		assertEquals("and a day whose MIDDLE is past it says nothing rather than a wrapped gap (checker)",
-			PriceService.LIVE_NO_DATA, PriceService.liveRefusal(fresh(1_000L, 1_000L),
-				new TradedPriceClient.Bucket(Long.MAX_VALUE / 2L, 300L, 1L, 300L), 1_000L, NOW_SECONDS));
-		assertEquals("Long.MAX_VALUE / 200 is four orders of magnitude past the game's dearest item",
-			Long.MAX_VALUE / 200L, ceiling);
-	}
+		clock.set(utcMillis(SEP_8, 21, 20, 0));
+		fireTick();
 
-	/** T3's order is part of the contract: a reader gets ONE line, and it must name the first failing check. */
-	@Test
-	public void theFirstFailingCheckIsTheOneReported()
-	{
-		// Fails all five at once: thin, wide, miles from the guide, and over a scattered day miles from the mid.
-		assertEquals("volume is asked first", "3 traded yesterday", PriceService.liveRefusal(fresh(3_000L, 1_000L),
-			new TradedPriceClient.Bucket(300L, 2L, 100L, 1L), 1_000L, NOW_SECONDS));
-		// Volume fine, the rest still fail: today's gap is asked before the guide sanity check.
-		assertEquals("buy/sell gap 100 %", PriceService.liveRefusal(fresh(3_000L, 1_000L),
-			new TradedPriceClient.Bucket(300L, 300L, 100L, 300L), 1_000L, NOW_SECONDS));
-		// Volume and today's gap fine; the GUIDE check is asked before yesterday's gap (V3) and the jump (V4).
-		assertEquals("live price 200 % from guide", PriceService.liveRefusal(fresh(3_000L, 3_000L),
-			new TradedPriceClient.Bucket(300L, 300L, 100L, 300L), 1_000L, NOW_SECONDS));
-		// The first three fine; yesterday's gap is asked before the jump, and both fail here.
-		assertEquals("buy/sell gap 100 % yesterday", PriceService.liveRefusal(fresh(1_000L, 1_000L),
-			new TradedPriceClient.Bucket(300L, 300L, 100L, 300L), 1_000L, NOW_SECONDS));
-		// Four fine, one left: a tight day 200 gp away from a live price of 1,000.
-		assertEquals("live price 400 % from yesterday's average", PriceService.liveRefusal(fresh(1_000L, 1_000L),
-			new TradedPriceClient.Bucket(200L, 600L, null, 0L), 1_000L, NOW_SECONDS));
-	}
-
-	// -------------------------------------------- addendum V: the daily bucket's own gap (V3) and the jump (V4)
-
-	/** V4's own constant, beside T3's three: the user's rule read against the 24-hour figure they named. */
-	@Test
-	public void theDayJumpConstantIsTheUsersFiftyPercentRule()
-	{
-		assertEquals("\"ignore live data changes that is >50 % of the 24 hour value\" - the user, 2026-09-12",
-			50, PriceService.LIVE_MAX_DAY_JUMP_PCT);
+		assertEquals(2, hourRequestedStarts.size());
+		assertEquals(Long.valueOf(utcSeconds(SEP_8, 20, 0, 0)), hourRequestedStarts.get(1));
 	}
 
 	/**
-	 * V3: the ONE predicate both readers ask - check 4 on yesterday's bucket, {@code Inputs.tradedThen} on every
-	 * window's. Three ways to fail and two ways to pass, so neither reader can be given a bucket the other would
-	 * have refused.
+	 * L1: an hour the wiki has not cut yet answers empty. It is NOT adopted, it is asked for again five minutes later
+	 * (a one-shot, not the half-hour tick), and the retry that finds it full adopts it, saves it and grades with it.
+	 * Nothing goes out in between, whatever fires.
 	 */
 	@Test
-	public void theBucketPredicateIsTheOneRuleBothReadersAsk()
+	public void anEmptyHourIsAskedForAgainFiveMinutesLaterAndAdoptedThen()
 	{
-		assertFalse("no bucket at all", PriceService.bucketUsable(null));
-		assertFalse("volumes but no price is not a price",
-			PriceService.bucketUsable(new TradedPriceClient.Bucket(null, 700L, null, 300L)));
-		assertFalse("99 units is under the same line check 1 draws",
-			PriceService.bucketUsable(new TradedPriceClient.Bucket(1_000L, 50L, 1_000L, 49L)));
-		assertFalse("and a day whose two sides are 100 % apart is not one price",
-			PriceService.bucketUsable(new TradedPriceClient.Bucket(37L, 5_063L, 12L, 484L)));
-		assertTrue("a tight, busy day is",
-			PriceService.bucketUsable(new TradedPriceClient.Bucket(1_050L, 300L, 1_000L, 200L)));
-		assertTrue("and so is a one-sided one: there is no gap to measure",
-			PriceService.bucketUsable(new TradedPriceClient.Bucket(1_000L, 300L, null, 0L)));
+		warmUpLive();
+		answerDay(SEP_7, tradedSep7());
+		final long wanted = PriceService.latestClosedHour(clock.get());
+		answerHour(wanted, Collections.<Integer, TradedPriceClient.Bucket>emptyMap());
+
+		assertEquals("empty: nothing adopted", 0L, lastStatus().live().hourAtSeconds());
+		verify(store, never()).saveTradedHour(any(PriceStore.TradedHour.class));
+		final Timer retry = oneShotWithDelay(GradeMath.HOUR_RETRY_MILLIS);
+		assertEquals("no figure of the hour yet", 1, rowFor(service.currentRows(), WHIP).graded().buy().observations());
+
+		clock.addAndGet(GradeMath.HOUR_RETRY_MILLIS - SECOND);
+		fireTick();
+		assertEquals("a tick inside the five minutes asks for nothing", 1, hourFutures.size());
+
+		clock.addAndGet(SECOND);
+		retry.fire();
+		assertEquals("the retry went out", 2, hourFutures.size());
+		assertEquals("for the same hour", Long.valueOf(wanted), hourRequestedStarts.get(1));
+		answerHour(wanted, whipHour());
+
+		verify(store, times(1)).saveTradedHour(any(PriceStore.TradedHour.class));
+		assertEquals(wanted, lastStatus().live().hourAtSeconds());
+		assertEquals("the hour is one of today's observations", 2, rowFor(service.currentRows(), WHIP).graded().buy().observations());
 	}
 
 	/**
-	 * V3 check 4, both sides of {@value PriceService#LIVE_MAX_SPREAD_PCT} % of the bucket's own middle. The
-	 * arithmetic, stated: a day averaging 1,163 bought and 1,053 sold has a middle of (1,163 + 1,053 + 1) / 2 =
-	 * 1,108 and a gap of 110, and 110 x 100 = 11,000 is inside 10 x 1,108 = 11,080. One gp more of a gap -
-	 * 1,163 against 1,052, the same 1,108 middle - makes it 11,100 against 11,080, and the day is refused.
+	 * L1: a tick in the first seconds of an hour (hh:00:00-hh:00:10, before the wiki has cut it) no longer loses the
+	 * hour: the answer is empty, the retry five minutes on finds it, and it is adopted.
 	 */
 	@Test
-	public void theYesterdayGapCheckRefusesAScatteredDayAndPassesATightOne()
+	public void aTickInTheFirstSecondsOfAnHourDoesNotLoseThatHour()
 	{
-		final TradedPriceClient.Quote quote = fresh(1_108L, 1_108L);
+		warmUpLive();
+		answerHour(PriceService.latestClosedHour(clock.get()), whipHour());
 
-		assertNull("a gap of exactly a tenth of the bucket's middle passes", PriceService.liveRefusal(quote,
-			new TradedPriceClient.Bucket(1_163L, 300L, 1_053L, 300L), 1_108L, NOW_SECONDS));
-		assertEquals("and one gp past it does not", "buy/sell gap 10 % yesterday", PriceService.liveRefusal(quote,
-			new TradedPriceClient.Bucket(1_163L, 300L, 1_052L, 300L), 1_108L, NOW_SECONDS));
-		assertEquals("the phrase names the gap as a percentage of that middle, and says WHICH day",
-			"buy/sell gap 40 % yesterday", PriceService.liveRefusal(fresh(723L, 723L),
-				new TradedPriceClient.Bucket(630L, 806L, 422L, 522L), 723L, NOW_SECONDS));
-	}
+		clock.set(utcMillis(SEP_8, 21, 0, 4));
+		fireTick();
+		final long wanted = utcSeconds(SEP_8, 20, 0, 0);
+		assertEquals("21:00:04 asks for the hour that closed at 21:00", 2, hourFutures.size());
+		assertEquals(Long.valueOf(wanted), hourRequestedStarts.get(1));
+		answerHour(wanted, Collections.<Integer, TradedPriceClient.Bucket>emptyMap());
 
-	/** V3: a day with one side only has no gap to measure, and its one side IS the day's price. */
-	@Test
-	public void aOneSidedDayHasNoGapToMeasureAndPassesCheckFour()
-	{
-		assertNull("nobody sold that day, so the buy side is the whole of it", PriceService.liveRefusal(
-			fresh(1_000L, 1_000L), new TradedPriceClient.Bucket(1_000L, 300L, null, 0L), 1_000L, NOW_SECONDS));
-		assertNull("and the other way round", PriceService.liveRefusal(
-			fresh(1_000L, 1_000L), new TradedPriceClient.Bucket(null, 0L, 1_000L, 300L), 1_000L, NOW_SECONDS));
+		clock.set(utcMillis(SEP_8, 21, 5, 4));
+		oneShotWithDelay(GradeMath.HOUR_RETRY_MILLIS).fire();
+		assertEquals(3, hourFutures.size());
+		answerHour(wanted, whipHour());
+
+		assertEquals("the 20:00 hour is held", wanted, lastStatus().live().hourAtSeconds());
+		verify(store, times(2)).saveTradedHour(any(PriceStore.TradedHour.class));
 	}
 
 	/**
-	 * V4 check 5, both sides of {@value PriceService#LIVE_MAX_DAY_JUMP_PCT} % of yesterday's average. A live mid
-	 * of 150 over a day that averaged 100 is 50 x 100 = 5,000 against 50 x 100 = 5,000 - equal, so it stands; 151
-	 * makes it 5,100 against 5,000, and the stack goes back to the guide.
+	 * L1: three requests in all for one hour (the first and two retries), then it is left; the next hour is a fresh
+	 * start. The stop of the service takes a pending retry down with it.
 	 */
 	@Test
-	public void theJumpCheckRefusesALivePriceMoreThanHalfFromYesterdaysAverage()
+	public void anHourStillEmptyIsAskedForThreeTimesAndNoMore()
 	{
-		final TradedPriceClient.Bucket day = new TradedPriceClient.Bucket(100L, 300L, 100L, 300L);
+		warmUpLive();
+		final long wanted = PriceService.latestClosedHour(clock.get());
+		answerHour(wanted, Collections.<Integer, TradedPriceClient.Bucket>emptyMap());
+		for (int retry = 2; retry <= GradeMath.HOUR_MAX_TRIES_PER_HOUR; retry++)
+		{
+			clock.addAndGet(GradeMath.HOUR_RETRY_MILLIS);
+			oneShotWithDelay(GradeMath.HOUR_RETRY_MILLIS).fire();
+			assertEquals(retry, hourFutures.size());
+			answerHour(wanted, Collections.<Integer, TradedPriceClient.Bucket>emptyMap());
+			scheduler.timers.removeIf(timer -> timer.periodMs == 0L && timer.initialDelayMs == GradeMath.HOUR_RETRY_MILLIS
+				&& timer.future.isCancelled());
+		}
+		assertEquals(GradeMath.HOUR_MAX_TRIES_PER_HOUR, hourFutures.size());
 
-		assertNull("exactly half again passes",
-			PriceService.liveRefusal(fresh(150L, 150L), day, 150L, NOW_SECONDS));
-		assertEquals("and one gp past it does not", "live price 51 % from yesterday's average",
-			PriceService.liveRefusal(fresh(151L, 151L), day, 151L, NOW_SECONDS));
-		assertNull("exactly half under passes too",
-			PriceService.liveRefusal(fresh(50L, 50L), day, 50L, NOW_SECONDS));
-		assertEquals("and a gp under that does not", "live price 51 % from yesterday's average",
-			PriceService.liveRefusal(fresh(49L, 49L), day, 49L, NOW_SECONDS));
+		clock.addAndGet(GradeMath.HOUR_RETRY_MILLIS);
+		fireTick();
+		assertEquals("the third empty answer is the last try for that hour", GradeMath.HOUR_MAX_TRIES_PER_HOUR,
+			hourFutures.size());
+		verify(store, never()).saveTradedHour(any(PriceStore.TradedHour.class));
+
+		clock.set(utcMillis(SEP_8, 21, 20, 0));
+		fireTick();
+		assertEquals("the next hour closed: a fresh start", GradeMath.HOUR_MAX_TRIES_PER_HOUR + 1, hourFutures.size());
+		assertEquals(Long.valueOf(utcSeconds(SEP_8, 20, 0, 0)), hourRequestedStarts.get(GradeMath.HOUR_MAX_TRIES_PER_HOUR));
+	}
+
+	/** L1: an answer that is not the hour asked for is never adopted - it is "not yet" and is tried again. */
+	@Test
+	public void anAnswerForAnotherHourIsNotAdoptedAndIsTriedAgain()
+	{
+		warmUpLive();
+		final long wanted = PriceService.latestClosedHour(clock.get());
+		answerHour(wanted - 3_600L, whipHour());
+
+		verify(store, never()).saveTradedHour(any(PriceStore.TradedHour.class));
+		clock.addAndGet(GradeMath.HOUR_RETRY_MILLIS);
+		oneShotWithDelay(GradeMath.HOUR_RETRY_MILLIS).fire();
+		assertEquals(2, hourFutures.size());
+		answerHour(wanted, whipHour());
+		verify(store, times(1)).saveTradedHour(any(PriceStore.TradedHour.class));
+	}
+
+	/** L1: a failure keeps the existing path - no retry, nothing armed, the hour waits for the next one. */
+	@Test
+	public void aFailedHourIsNotRetriedUntilTheNextHourCloses()
+	{
+		warmUpLive();
+		failHour();
+		clock.addAndGet(GradeMath.HOUR_RETRY_MILLIS);
+		fireTick();
+		assertEquals(1, hourFutures.size());
+		for (final Timer timer : scheduler.timers)
+		{
+			assertFalse("no retry timer is armed by a failure",
+				timer.periodMs == 0L && timer.initialDelayMs == GradeMath.HOUR_RETRY_MILLIS);
+		}
+	}
+
+	/** L1: a retry waiting when the service stops is cancelled with it. */
+	@Test
+	public void stoppingTheServiceCancelsAPendingHourRetry()
+	{
+		warmUpLive();
+		answerHour(PriceService.latestClosedHour(clock.get()), Collections.<Integer, TradedPriceClient.Bucket>emptyMap());
+		final Timer retry = oneShotWithDelay(GradeMath.HOUR_RETRY_MILLIS);
+
+		service.stop();
+
+		assertTrue(retry.future.isCancelled());
 	}
 
 	/**
-	 * The live look of 2026-09-12, 21:24 EDT: Tinderbox led "Biggest gainers" at +181 % on a quote of 100 / 96
-	 * over a day that bought 5,063 at 37 and sold 484 at 12. It passes T3's three checks - 5,547 units is a busy
-	 * day, a gap of 4 on a mid of 98 is tight, and the guide is right there - and V3's check 4 is what refuses it:
-	 * the middle of that day is (37 + 12 + 1) / 2 = 25 and its gap is 25, exactly 100 % of it.
+	 * L1: "at most 24 a day". A whole UTC day of thirty-minute ticks with every answer failing - the case that would ask
+	 * most - sends one request per closed hour and no more: twenty-four.
 	 */
 	@Test
-	public void theTinderboxCaseIsRefusedByItsOwnDaysGap()
+	public void atMostTwentyFourHourRequestsInAUtcDay()
 	{
-		assertEquals("buy/sell gap 100 % yesterday", PriceService.liveRefusal(fresh(100L, 96L),
-			new TradedPriceClient.Bucket(37L, 5_063L, 12L, 484L), 98L, NOW_SECONDS));
+		warmUpLive();
+		failHour();
+		clock.set(utcMillis(SEP_9, 0, 10, 0));
+		for (int tick = 0; tick < 48; tick++)
+		{
+			fireTick();
+			final CompletableFuture<PriceStore.TradedHour> newest = hourFutures.get(hourFutures.size() - 1);
+			if (!newest.isDone())
+			{
+				newest.completeExceptionally(new WikiPriceException("hour down"));
+			}
+			clock.addAndGet(PriceService.TICK_MS);
+		}
+
+		int onTheNinth = 0;
+		for (final long at : hourRequestTimes)
+		{
+			onTheNinth += SEP_9.equals(PriceService.utcDay(at)) ? 1 : 0;
+		}
+		assertEquals(24, onTheNinth);
 	}
 
 	/**
-	 * The same quote over a day that was TIGHT and averaged 35: check 4 has nothing to say about it, and check 5
-	 * is what refuses it - 98 against 35 is a jump of 63, which is 180 % of the day to the whole percent.
+	 * L1: the {@code /1h} bucket is one of the last 24 hours' observations (its money is no part of the grade since the user's
+	 * final decision of 2026-10-07) - with it the whip's two sides each have two observations and the median moves - and the
+	 * status echoes the hour it graded with.
 	 */
 	@Test
-	public void theTinderboxQuoteOverATightDayIsRefusedByTheJumpInstead()
+	public void theHourBucketIsAnObservationAndTheStatusEchoesIt()
 	{
-		assertEquals("live price 180 % from yesterday's average", PriceService.liveRefusal(fresh(100L, 96L),
-			new TradedPriceClient.Bucket(35L, 100L, 35L, 100L), 98L, NOW_SECONDS));
+		warmUpLive();
+		answerDay(SEP_7, tradedSep7());
+		final long hourStart = PriceService.latestClosedHour(clock.get());
+		answerHour(hourStart, whipHour());
+
+		final MovementRow whip = rowFor(service.currentRows(), WHIP);
+		assertSame(Grade.SOLID, whip.graded().grade());
+		assertEquals("", whip.graded().word());
+		assertEquals(2, whip.graded().buy().observations());
+		assertEquals("the median of the 860,000 print and the hour's 861,000", Long.valueOf(860_500L),
+			whip.graded().buy().now());
+		assertEquals(1, lastStatus().grades().solidRows());
+		assertEquals(hourStart, lastStatus().live().hourAtSeconds());
+		assertEquals(java.time.Instant.ofEpochSecond(hourStart).toString(), lastStatus().live().asMap().get("hourAt"));
+	}
+
+	/** L1/L2: every distinct print a poll sees today is an observation - two polls, two buy prints, their median. */
+	@Test
+	public void eachDistinctPrintOfTheDayIsAnObservation()
+	{
+		warmUpLive();
+		answerDay(SEP_7, tradedSep7());
+		clock.addAndGet(PriceService.TICK_MS);
+		fireTick();
+		final long now = clock.get() / 1000L;
+		final Map<Integer, TradedPriceClient.Quote> second = new LinkedHashMap<>(latestQuotes());
+		second.put(WHIP, new TradedPriceClient.Quote(880_000L, now - 600L, 840_000L, T0 / 1000L - 7_200L));
+
+		answerLatest(second);
+
+		final GradedMove whip = rowFor(service.currentRows(), WHIP).graded();
+		assertEquals(2, whip.buy().observations());
+		assertEquals("the median of 860,000 and 880,000", Long.valueOf(870_000L), whip.buy().now());
+		assertEquals("the sell side's print was the same trade both times", 1, whip.sell().observations());
 	}
 
 	/**
-	 * The other half of the same live look: Confliction gauntlets, the case the two new guards must leave alone.
-	 * Quote 63,732,159 / 62,217,259 (mid 62,974,709, a gap of 1,514,900 = 2 %); yesterday 63,774,688 over 271
-	 * bought and 62,893,382 over 336 sold - 607 units, a middle of 63,334,035 with a gap of 881,306 = 1 %, and a
-	 * weighted average of 63,286,848, which the live mid sits within half a percent of.
+	 * L1: at the UTC rollover yesterday's D1 bucket is kept as {@code traded-D2.json} - no request for it - and not
+	 * before. L2: with no trade in the last 24 hours the 1d figure is yesterday's move against it: the whip last traded 21
+	 * and 22 hours before the first poll ("today" is the last 24 hours and not the UTC day, so at the first poll it is
+	 * still measured) and four hours later - the rollover - those prints are 25 and 26 hours old and the poll memory has let
+	 * them go, so 902,000 / 820,000 and 880,000 / 800,000, both +10 %, price it at 810,000 x 1.1 = 891,000, SOFT - and its
+	 * word says how long since it last traded: the newest of its two prints (the buy) is 25 hours old, "last 1d ago".
 	 */
 	@Test
-	public void theConflictionGauntletsCasePassesAllFiveChecks()
+	public void yesterdaysBucketIsKeptAtTheRolloverAndTheFallbackComparesAgainstIt()
 	{
-		assertNull(PriceService.liveRefusal(fresh(63_732_159L, 62_217_259L),
-			new TradedPriceClient.Bucket(63_774_688L, 271L, 62_893_382L, 336L), 63_437_264L, NOW_SECONDS));
+		final Map<Integer, TradedPriceClient.Quote> silentWhip = Collections.singletonMap(WHIP,
+			new TradedPriceClient.Quote(860_000L, T0 / 1000L - 21L * 3_600L, 840_000L, T0 / 1000L - 22L * 3_600L));
+		warmUpLiveWith(bank(T0), silentWhip);
+		answerDay(SEP_7, tradedSep7());
+		verify(store, never()).saveTradedD2(any(PriceStore.TradedDay.class));
+		assertFalse("21 hours old is still the last 24 hours: measured, not the fallback",
+			rowFor(service.currentRows(), WHIP).graded().fallback());
+
+		clock.addAndGet(4L * HOUR);
+		fireTick();
+		final Map<Integer, TradedPriceClient.Quote> quotes = new LinkedHashMap<>(latestQuotes());
+		quotes.putAll(silentWhip);
+		answerLatest(quotes);
+		answerDay(SEP_8, Collections.singletonMap(WHIP, new TradedPriceClient.Bucket(902_000L, 300L, 880_000L, 200L)));
+
+		final ArgumentCaptor<PriceStore.TradedDay> kept = ArgumentCaptor.forClass(PriceStore.TradedDay.class);
+		verify(store).saveTradedD2(kept.capture());
+		assertEquals(SEP_7, kept.getValue().day());
+		assertFalse("nothing is fetched for it", dayRequests.contains(SEP_6));
+		final MovementRow whip = rowFor(service.currentRows(), WHIP);
+		assertTrue(whip.graded().fallback());
+		assertEquals("last 1d ago", whip.graded().word());
+		assertEquals(Long.valueOf(891_000L), whip.unitPrice());
+		assertEquals(Long.valueOf(WHIP_MARK), whip.thenPrice());
+		assertEquals(SEP_8, whip.graded().nowDay());
+		assertEquals(SEP_7, whip.graded().thenDay());
+	}
+
+	/** L4: the Net Worth History's reading counts each stack at its row's price - the graded one where it has one. */
+	@Test
+	public void theHistoryReadingFollowsTheGradedPrice()
+	{
+		warmUpLive();
+		answerDay(SEP_7, tradedSep7());
+
+		final BankHistoryPoint reading = lastStatus().bankHistory().last();
+		assertEquals("the card cell over the guide cell is what the two figures moved the whip and the hat by",
+			(WHIP_PRICE - WHIP_GUIDE_NOW) + (HAT_MARK - 1_086L),
+			reading.card(BankHistoryPoint.BANK_TRADEABLE) - reading.guide(BankHistoryPoint.BANK_TRADEABLE));
+	}
+
+	/** L3: the card's grade - the whip solid, the hat soft, every other priced stack NONE: the card is soft all the same. */
+	@Test
+	public void theStatusCarriesHowTheRowsGraded()
+	{
+		warmUpLive();
+		answerDay(SEP_7, tradedSep7());
+
+		final GradeSummary grades = lastStatus().grades();
+		assertTrue(grades.graded());
+		assertEquals(1, grades.solidRows());
+		assertEquals(1, grades.softRows());
+		int none = 0;
+		for (final MovementRow row : service.currentRows())
+		{
+			none += row.graded() != null && row.graded().grade() == Grade.NONE ? 1 : 0;
+		}
+		assertEquals("every other priced stack has no trades", none, grades.noneRows());
+		assertTrue("the solid rows hold under nine tenths of the counted value: the card is soft", grades.soft());
+	}
+
+	/** {@link #whipHour()}'s hour, delivered: the newest {@code /1h} request answered. */
+	private void answerHour(final long start, final Map<Integer, TradedPriceClient.Bucket> buckets)
+	{
+		final CompletableFuture<PriceStore.TradedHour> newest = hourFutures.get(hourFutures.size() - 1);
+		assertFalse("no /1h request is out", newest.isDone());
+		newest.complete(new PriceStore.TradedHour(start, buckets, clock.get()));
+	}
+
+	/** The newest {@code /1h} request, failed. */
+	private void failHour()
+	{
+		final CompletableFuture<PriceStore.TradedHour> newest = hourFutures.get(hourFutures.size() - 1);
+		assertFalse("no /1h request is out", newest.isDone());
+		newest.completeExceptionally(new WikiPriceException("hour down"));
+	}
+
+	/** The last closed hour of the whip: five bought at 861,000 and five sold at 839,000 - 4.3m and 4.2m gp. */
+	private static Map<Integer, TradedPriceClient.Bucket> whipHour()
+	{
+		return Collections.singletonMap(WHIP, new TradedPriceClient.Bucket(861_000L, 5L, 839_000L, 5L));
 	}
 
 	// ---------------------------------------------------------------- T2: the cadence
@@ -3104,6 +3954,7 @@ public class PriceServiceTest
 
 		verify(traded, never()).fetchLatest(anyLong());
 		verify(traded, never()).fetchDay(any(LocalDate.class), anyLong());
+		verify(traded, never()).fetchHour(anyLong(), anyLong());
 		assertTrue(dayRequests.isEmpty());
 	}
 
@@ -3678,11 +4529,18 @@ public class PriceServiceTest
 		}
 	}
 
-	// ---------------------------------------------------------------- T4: the figures, per row and per window
+	// ---------------------------------------------------------------- 1.2.0 L2-L4: the figures, per row and per window
 
-	/** T4: a liquid stack is priced at the live mid and compared against that day's traded average. */
+	/**
+	 * L2/L4: the whip traded on both sides today (bought at 860,000, sold at 840,000) and yesterday (300 bought at
+	 * 820,000, 200 sold at 800,000). Same side against same side: +4.88 % and +5.00 %, a figure of +4.94 %; the price is
+	 * yesterday's two-sided mark, 810,000, moved by it - 810,000 + 40,006 = 850,006 - so the price, the then and the move
+	 * add up. A day of real volume (200 on the thinner side) and a tight pair: SOLID, with no word, though it is one print a
+	 * side and no {@code /1h} (the user's final decision of 2026-10-07: the money, the hour and the observation count left
+	 * the test).
+	 */
 	@Test
-	public void aLiquidStackIsPricedLiveAndComparedAgainstTheTradedAverage()
+	public void aStackTradedTodayIsPricedAtYesterdaysMarkMovedByItsSameSideMoves()
 	{
 		warmUpLive();
 		answerDay(SEP_7, tradedSep7());
@@ -3690,160 +4548,157 @@ public class PriceServiceTest
 		final MovementRow whip = rowFor(service.currentRows(), WHIP);
 		assertSame(MovementRow.PriceSource.LIVE, whip.source());
 		assertTrue(whip.isLive());
-		assertEquals(Long.valueOf(WHIP_LIVE_MID), whip.unitPrice());
-		assertEquals(Long.valueOf(WHIP_TRADED_THEN), whip.thenPrice());
-		assertEquals(Long.valueOf(WHIP_LIVE_MID - WHIP_TRADED_THEN), whip.deltaGp());
-		assertSame(MovementRow.PriceSource.LIVE, whip.windowSource(MovementWindow.D1));
-		assertEquals("the two sides and the volume travel with it", Long.valueOf(860_000L), whip.liveFacts().buy());
+		assertEquals(Long.valueOf(WHIP_PRICE), whip.unitPrice());
+		assertEquals(Long.valueOf(WHIP_MARK), whip.thenPrice());
+		assertEquals(Long.valueOf(WHIP_PRICE - WHIP_MARK), whip.deltaGp());
+		assertEquals(((860_000d / 820_000d - 1d) + (840_000d / 800_000d - 1d)) / 2d * 100d, whip.deltaPct(), 1e-9);
+		final GradedMove graded = whip.graded();
+		assertSame(Grade.SOLID, graded.grade());
+		assertEquals("", graded.word());
+		assertEquals(Long.valueOf(860_000L), graded.buy().now());
+		assertEquals(Long.valueOf(820_000L), graded.buy().then());
+		assertEquals(Long.valueOf(840_000L), graded.sell().now());
+		assertEquals(Long.valueOf(800_000L), graded.sell().then());
+		assertEquals("the last print of each side, with its time", T0 / 1000L - 3_600L, graded.buy().lastSeconds());
 		assertEquals(Long.valueOf(840_000L), whip.liveFacts().sell());
-		assertEquals(500L, whip.liveFacts().volumeYesterday());
-		assertNull(whip.liveFacts().reason());
+		assertSame(MovementRow.PriceSource.LIVE, whip.windowSource(MovementWindow.D1));
+		assertEquals(SEP_7, whip.windowDay(MovementWindow.D1));
 	}
 
-	/** T6: a thin stack stays on the guide and says which check refused it. */
+	/**
+	 * L3: the hat traded too - three units on its thinner side yesterday and one print a side today, both at yesterday's
+	 * averages: a measured flat figure at yesterday's mark, graded SOFT with the word "low vol 3". The five checks that once
+	 * kept it on the guide decide nothing now.
+	 */
 	@Test
-	public void aThinStackStaysOnTheGuideAndNamesTheCheckThatRefusedIt()
+	public void aThinStackHasAFigureGradedSoft()
 	{
 		warmUpLive();
 		answerDay(SEP_7, tradedSep7());
 
 		final MovementRow hat = rowFor(service.currentRows(), GREEN_HAT);
-		assertSame(MovementRow.PriceSource.GUIDE, hat.source());
-		assertFalse(hat.isLive());
-		assertEquals("the guide price, exactly as before addendum T", Long.valueOf(1_086L), hat.unitPrice());
-		assertEquals(Long.valueOf(1_124L), hat.thenPrice());
-		assertEquals("8 traded yesterday", hat.liveFacts().reason());
-		assertSame(MovementRow.PriceSource.GUIDE, hat.windowSource(MovementWindow.D1));
+		assertSame(Grade.SOFT, hat.graded().grade());
+		assertEquals("low vol 3", hat.graded().word());
+		assertEquals(Long.valueOf(HAT_MARK), hat.unitPrice());
+		assertEquals(Long.valueOf(HAT_MARK), hat.thenPrice());
+		assertEquals(Long.valueOf(0L), hat.deltaGp());
+		assertEquals(0.0d, hat.deltaPct(), 0.0d);
+		assertTrue(hat.isLive());
 	}
 
-	/** An item the traded feed does not name at all is a refusal, never a guess. */
+	/** L2/L4: an item that traded neither today nor yesterday has no figure - the dash - and keeps its guide price. */
 	@Test
-	public void anItemTheFeedDoesNotNameStaysOnTheGuideWithNoLiveData()
+	public void anItemWithNoTradesHasNoFigureAndKeepsTheGuidePrice()
 	{
 		warmUpLive();
 		answerDay(SEP_7, tradedSep7());
 
 		final MovementRow shark = rowFor(service.currentRows(), SHARK);
+		assertSame(Grade.NONE, shark.graded().grade());
+		assertEquals("no trades", shark.graded().word());
 		assertSame(MovementRow.PriceSource.GUIDE, shark.source());
-		assertEquals(PriceService.LIVE_NO_DATA, shark.liveFacts().reason());
+		assertEquals(Long.valueOf(1_000L), shark.unitPrice());
+		assertNull("the dash", shark.deltaPct());
+		assertNull(shark.thenPrice());
+		assertFalse(shark.isLive());
+		assertEquals(GradeWords.NO_TRADES, shark.liveFacts().reason());
 	}
 
-	/**
-	 * T4's fallback: a live row whose bucket for a window is missing compares the GUIDE's two ends for it -
-	 * "never live-now against guide-then" - while still printing the live price. Here only 07 Sep's bucket
-	 * arrived, so 1d is live and 7d is not.
-	 */
+	/** L2: a window whose day's bucket is not in hand has no figure - the dash - while the row keeps its 1d price. */
 	@Test
-	public void aWindowWithNoBucketFallsBackToTheGuidesOwnTwoEnds()
+	public void aWindowWithNoBucketHasNoFigure()
 	{
 		warmUpLive();
 		answerDay(SEP_7, tradedSep7());
-		assertSame(MovementRow.PriceSource.LIVE, rowFor(service.currentRows(), WHIP).windowSource(MovementWindow.D1));
 
 		service.setFilter(service.filter().withWindow(MovementWindow.D7));
 
 		final MovementRow whip = rowFor(service.currentRows(), WHIP);
-		assertTrue("it is still a live row and still prints the live price", whip.isLive());
-		assertEquals(Long.valueOf(WHIP_LIVE_MID), whip.unitPrice());
-		assertSame("but 7d compares the guide's two ends", MovementRow.PriceSource.GUIDE,
-			whip.windowSource(MovementWindow.D7));
-		assertEquals("the guide's own baseline", Long.valueOf(800_000L + dayIndex(SEP_1)), whip.thenPrice());
-		assertEquals("and the guide's own move, not the live mid against a guide baseline",
-			Long.valueOf(WHIP_GUIDE_NOW - (800_000L + dayIndex(SEP_1))), whip.deltaGp());
-		assertEquals("the holding follows the price it prints", WHIP_LIVE_MID, whip.holdingValue());
-	}
-
-	/** T4: a bucket that names the item but too few trades of it is the same fallback, for the same reason. */
-	@Test
-	public void aWindowWhoseBucketIsTooThinFallsBackToo()
-	{
-		warmUpLive();
-		answerDay(SEP_7, Collections.singletonMap(WHIP,
-			new TradedPriceClient.Bucket(820_000L, 60L, 800_000L, 500L)));
-
-		final MovementRow whip = rowFor(service.currentRows(), WHIP);
-		assertTrue("560 units yesterday clears the eligibility check", whip.isLive());
-
-		// ...but a window whose own bucket is under the minimum cannot be the "then" of a live comparison.
-		answerNextDayRequestFor(SEP_1, Collections.singletonMap(WHIP,
-			new TradedPriceClient.Bucket(790_000L, 40L, 780_000L, 50L)));
-		service.setFilter(service.filter().withWindow(MovementWindow.D7));
-
-		final MovementRow over7d = rowFor(service.currentRows(), WHIP);
-		assertSame("90 units that day is not a traded average worth comparing", MovementRow.PriceSource.GUIDE,
-			over7d.windowSource(MovementWindow.D7));
+		assertEquals("the price is the 1d figure's on every window", Long.valueOf(WHIP_PRICE), whip.unitPrice());
+		assertSame(Grade.NONE, whip.graded().grade());
+		assertNull(whip.deltaGp());
+		assertNull(whip.thenPrice());
+		assertEquals("the holding follows the price it prints", WHIP_PRICE, whip.holdingValue());
 	}
 
 	/**
-	 * V3, the predicate's second reader: a stack can be perfectly liquid today and still have had a SCATTERED day
-	 * a week ago, and the average of a day whose two sides are 25 % apart is not a price to compare against. That
-	 * window falls back to the guide's own two ends while the stack stays live on a tight yesterday - the same
-	 * fallback a thin bucket gets, for the same reason.
+	 * L2: a thinly traded window day still compares same side with same side, against that day's own mark - and says so: four
+	 * units bought that day is a thin day, "low vol 4".
 	 */
 	@Test
-	public void aWindowWhoseBucketIsScatteredFallsBackWhileTheStackStaysLive()
+	public void aThinWindowDayStillHasAFigure()
 	{
 		warmUpLive();
 		answerDay(SEP_7, tradedSep7());
-		// 01 Sep: busy (600 units) but two prices, not one - 900k bought against 700k sold, 25 % of the middle.
-		answerDay(SEP_1, Collections.singletonMap(WHIP,
-			new TradedPriceClient.Bucket(900_000L, 300L, 700_000L, 300L)));
-
-		final MovementRow onD1 = rowFor(service.currentRows(), WHIP);
-		assertTrue("yesterday was tight, so the stack is live", onD1.isLive());
-		assertSame(MovementRow.PriceSource.LIVE, onD1.windowSource(MovementWindow.D1));
+		answerDay(SEP_1, Collections.singletonMap(WHIP, new TradedPriceClient.Bucket(790_000L, 4L, 780_000L, 50L)));
 
 		service.setFilter(service.filter().withWindow(MovementWindow.D7));
 
 		final MovementRow over7d = rowFor(service.currentRows(), WHIP);
-		assertTrue("it is still a live row and still prints the live price", over7d.isLive());
-		assertEquals(Long.valueOf(WHIP_LIVE_MID), over7d.unitPrice());
-		assertSame("but 7d compares the guide's two ends", MovementRow.PriceSource.GUIDE,
-			over7d.windowSource(MovementWindow.D7));
-		assertEquals("the guide's own baseline, never that day's scattered average",
-			Long.valueOf(800_000L + dayIndex(SEP_1)), over7d.thenPrice());
+		final double move = ((860_000d / 790_000d - 1d) + (840_000d / 780_000d - 1d)) / 2d;
+		assertSame(Grade.SOFT, over7d.graded().grade());
+		assertEquals("low vol 4", over7d.graded().word());
+		assertEquals(Long.valueOf(785_000L), over7d.thenPrice());
+		assertEquals(Long.valueOf(Math.round(785_000d * move)), over7d.deltaGp());
+		assertEquals(Long.valueOf(WHIP_PRICE), over7d.unitPrice());
+		assertEquals(SEP_1, over7d.windowDay(MovementWindow.D7));
 	}
 
-	// ---------------------------------------------------------------- T5: the card
-
-	/** T5: the total counts each stack at the price its own row prints, and says how many were live. */
+	/**
+	 * L2: a window day whose two sides sat far apart is no longer "one price" to refuse: each side is compared with its
+	 * own - buyers paid 4 % less than that day's 900,000 and sellers got 20 % more than its 700,000 - and the sides
+	 * disagree, which is told in the open block and no longer makes the figure soft (the user's final decision).
+	 */
 	@Test
-	public void theBankValueCountsEachStackOnItsOwnSeries()
+	public void aScatteredWindowDayIsComparedSideBySide()
 	{
 		warmUpLive();
-		final long guideOnly = service.currentStatus().portfolio().valueNow();
+		answerDay(SEP_7, tradedSep7());
+		answerDay(SEP_1, Collections.singletonMap(WHIP, new TradedPriceClient.Bucket(900_000L, 300L, 700_000L, 300L)));
+
+		service.setFilter(service.filter().withWindow(MovementWindow.D7));
+
+		final GradedMove over7d = rowFor(service.currentRows(), WHIP).graded();
+		assertTrue(over7d.buy().move() < 0.0d);
+		assertTrue(over7d.sell().move() > 0.0d);
+		assertFalse(over7d.sidesAgree());
+		assertSame("the sides disagreeing is no part of the grade", Grade.SOLID, over7d.grade());
+	}
+
+	// ---------------------------------------------------------------- 1.2.0 L4: the card
+
+	/** L4: the bank value counts each stack at the price its row prints - the graded price where it has one. */
+	@Test
+	public void theBankValueCountsEachStackAtItsRowsPrice()
+	{
+		warmUpLive();
+		final long before = service.currentStatus().portfolio().valueNow();
 
 		answerDay(SEP_7, tradedSep7());
 
 		final PortfolioSummary summary = service.currentStatus().portfolio();
-		assertEquals("only the whip went live", 1, summary.liveRows());
-		assertEquals("and the total gains exactly what it moved by", guideOnly + WHIP_LIVE_MID - WHIP_GUIDE_NOW,
-			summary.valueNow());
+		assertEquals("the whip and the hat are on their figures", 2, summary.liveRows());
+		assertEquals("before yesterday's bucket every row had no figure and its guide price",
+			before + (WHIP_PRICE - WHIP_GUIDE_NOW) + (HAT_MARK - 1_086L), summary.valueNow());
 	}
 
-	/** T5: every window's both-days basis uses each row's own series for that window. */
+	/** L4: a window's sums are its graded rows' own pairs; a row with no figure there is left out, as its dash is. */
 	@Test
-	public void everyWindowSumsTheSeriesItsOwnRowsCompared()
+	public void everyWindowSumsTheFiguresItsRowsShow()
 	{
 		warmUpLive();
-		final WindowMove guideOnly = service.currentStatus().portfolio().move(MovementWindow.D1);
-		final WindowMove guideOnly7d = service.currentStatus().portfolio().move(MovementWindow.D7);
-
 		answerDay(SEP_7, tradedSep7());
 
 		final PortfolioSummary summary = service.currentStatus().portfolio();
 		final WindowMove d1 = summary.move(MovementWindow.D1);
-		assertEquals("1d swaps the whip's guide pair for its traded one",
-			guideOnly.valueNowCovered() - WHIP_GUIDE_NOW + WHIP_LIVE_MID, d1.valueNowCovered());
-		assertEquals(guideOnly.valueThen() - (WHIP_GUIDE_NOW - 1L) + WHIP_TRADED_THEN, d1.valueThen());
-		assertEquals("the same stacks as before: a series is not a coverage change",
-			guideOnly.itemsCovered(), d1.itemsCovered());
-
-		assertEquals("7d has no bucket, so both its ends are the guide's - to the gp, as before the feed landed",
-			guideOnly7d, summary.move(MovementWindow.D7));
+		assertEquals("only the two stacks with a 1d figure", 2, d1.itemsCovered());
+		assertEquals(WHIP_MARK + HAT_MARK, d1.valueThen());
+		assertEquals(WHIP_PRICE + HAT_MARK, d1.valueNowCovered());
+		assertEquals(WHIP_PRICE - WHIP_MARK, d1.deltaGp());
+		assertEquals("7d has no bucket: no stack has a figure there", 0, summary.move(MovementWindow.D7).itemsCovered());
 	}
 
-	/** T8/U4: the bridge's {@code state.live}, and its seven keys in T8's and U4's own order. */
+	/** T8/U4 and 1.2.0's hourAt: the bridge's {@code state.live}, and its keys in their order. */
 	@Test
 	public void theStatusCarriesWhatTheTradedFeedsDelivered()
 	{
@@ -3853,12 +4708,13 @@ public class PriceServiceTest
 		final PriceService.Status.LiveStatus live = service.currentStatus().live();
 		assertEquals(clock.get(), live.fetchedAtMillis());
 		assertEquals(2, live.latestItems());
-		assertEquals(1, live.liveRows());
-		assertEquals("every other priced stack", service.currentStatus().portfolio().itemsPriced() - 1,
+		assertEquals("the whip and the hat are priced from their figures", 2, live.liveRows());
+		assertEquals("every other priced stack", service.currentStatus().portfolio().itemsPriced() - 2,
 			live.guideRows());
 		assertEquals(0, live.alchRows());
+		assertEquals("no /1h bucket landed", 0L, live.hourAtSeconds());
 		assertEquals(Arrays.asList("fetchedAt", "latestItems", "liveRows", "guideRows", "alchRows", "liveDay",
-			"windowDays"), new ArrayList<>(live.asMap().keySet()));
+			"windowDays", "hourAt"), new ArrayList<>(live.asMap().keySet()));
 	}
 
 	/**
@@ -4037,7 +4893,7 @@ public class PriceServiceTest
 
 		final MovementRow whip = rowFor(service.currentRows(), WHIP);
 		assertTrue("the row is live off the day that did close", whip.isLive());
-		assertEquals(Long.valueOf(WHIP_TRADED_THEN), whip.thenPrice());
+		assertEquals(Long.valueOf(WHIP_MARK), whip.thenPrice());
 		assertEquals("and says which day that was", SEP_6, whip.windowDay(MovementWindow.D1));
 		assertEquals(SEP_6, service.currentStatus().live().windowDays().get(MovementWindow.D1));
 		verify(store).saveTradedDay(eq(MovementWindow.D1), eq(SEP_6), anyMap(), anyLong());
@@ -4058,7 +4914,8 @@ public class PriceServiceTest
 		final MovementRow whip = rowFor(service.currentRows(), WHIP);
 		assertSame(MovementRow.PriceSource.GUIDE, whip.source());
 		assertEquals("the guide price, to the gp", Long.valueOf(WHIP_GUIDE_NOW), whip.unitPrice());
-		assertEquals(PriceService.LIVE_NO_DATA, whip.liveFacts().reason());
+		assertEquals("traded today, but nothing yesterday to compare with", GradeWords.NO_TRADES,
+			whip.liveFacts().reason());
 		assertNull(service.currentStatus().live().windowDays().get(MovementWindow.D1));
 	}
 
@@ -4094,7 +4951,7 @@ public class PriceServiceTest
 		assertTrue("the wanted day is asked for", dayRequests.contains(SEP_7));
 		final MovementRow whip = rowFor(service.currentRows(), WHIP);
 		assertFalse("and a bucket is never used for a day it does not name", whip.isLive());
-		assertEquals(PriceService.LIVE_NO_DATA, whip.liveFacts().reason());
+		assertEquals(GradeWords.NO_TRADES, whip.liveFacts().reason());
 		assertNull(service.currentStatus().live().windowDays().get(MovementWindow.D1));
 
 		answerDay(SEP_7, tradedSep7());
@@ -4143,8 +5000,8 @@ public class PriceServiceTest
 		final MovementRow whip = rowFor(service.currentRows(), WHIP);
 		assertEquals("1d is live off 07 Sep's bucket", SEP_7, whip.windowDay(MovementWindow.D1));
 		assertSame(MovementRow.PriceSource.GUIDE, whip.windowSource(MovementWindow.D7));
-		assertEquals("7d fell back, so it stamps the guide baseline's own day",
-			service.baseline(MovementWindow.D7).dataDay(), whip.windowDay(MovementWindow.D7));
+		assertNull("7d has no figure (1.2.0), so it records no day - the panel falls back to the status's",
+			whip.windowDay(MovementWindow.D7));
 	}
 
 	/** U3: a guide row records no day of its own and keeps the header's, exactly as before addendum T. */
@@ -4154,12 +5011,11 @@ public class PriceServiceTest
 		warmUpLive();
 		answerDay(SEP_7, tradedSep7());
 
-		final MovementRow hat = rowFor(service.currentRows(), GREEN_HAT);
-		assertSame(MovementRow.PriceSource.GUIDE, hat.source());
+		final MovementRow shark = rowFor(service.currentRows(), SHARK);
+		assertSame(MovementRow.PriceSource.GUIDE, shark.source());
 		assertNull("nothing to stamp - the panel keeps printing the status's baseline day",
-			hat.windowDay(MovementWindow.D1));
-		assertEquals("and its figures are the guide's, untouched by any of this", Long.valueOf(1_124L),
-			hat.thenPrice());
+			shark.windowDay(MovementWindow.D1));
+		assertNull("and no figure to stamp it on (1.2.0: no trades, the dash)", shark.thenPrice());
 	}
 
 	// ---------------------------------------------------------------- the switch OFF is byte-identical
@@ -4622,31 +5478,6 @@ public class PriceServiceTest
 
 	// ---------------------------------------------------------------- the T fixture's own helpers
 
-	/** {@link PriceService#liveRefusal}'s clock: T0 in unix seconds. */
-	private static final long NOW_SECONDS = T0 / 1000L;
-
-	/** A quote whose two sides both traded a moment ago - so only the side under test can refuse it. */
-	private static TradedPriceClient.Quote fresh(final Long buy, final Long sell)
-	{
-		return new TradedPriceClient.Quote(buy, NOW_SECONDS - 60L, sell, sell == null ? 0L : NOW_SECONDS - 60L);
-	}
-
-	/**
-	 * Yesterday's bucket for a quote that the two checks addendum V added must not interfere with: {@code volume}
-	 * units traded at the quote's own mid, on ONE side of the book - so there is no gap for check 4 to measure and
-	 * the day's average IS the live price, which check 5 measures as a jump of nothing. Every test of checks 1 to 3
-	 * hands one of these over, so each still measures only the check it names.
-	 *
-	 * <p>One-sided rather than two averages on the same price because {@code weightedAverage} multiplies a price by
-	 * a volume, and the ceiling test's price is {@code Long.MAX_VALUE / 200}: the one-sided rule answers that side
-	 * exactly, with no arithmetic to fall out of.
-	 */
-	private static TradedPriceClient.Bucket yesterdayFor(final TradedPriceClient.Quote quote, final long volume)
-	{
-		final Long mid = quote == null ? null : quote.mid();
-		return new TradedPriceClient.Bucket(mid == null || mid <= 0L ? Long.valueOf(1L) : mid, volume, null, 0L);
-	}
-
 	/** Rebuilds {@link #service} WITH the traded client and re-registers the listener. */
 	void liveService()
 	{
@@ -4723,6 +5554,9 @@ public class PriceServiceTest
 		latestFutures.clear();
 		dayFutures.clear();
 		dayRequests.clear();
+		hourFutures.clear();
+		hourRequestTimes.clear();
+		hourRequestedStarts.clear();
 		publishedRows.clear();
 		publishedStatus.clear();
 		scheduler.timers.clear();

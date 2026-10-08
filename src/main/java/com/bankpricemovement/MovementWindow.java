@@ -1,28 +1,27 @@
 package com.bankpricemovement;
 
-import java.time.LocalDate;
 import java.util.Locale;
 
 /**
  * How far back a bank row's movement is measured, in the five spans the Grand Exchange item pages themselves
  * show - "today", 1 month, 3 months, 6 months - rewritten to 1d / 7d / 30d / 90d / 180d (contract K4, restated
- * in CALENDAR DAYS by addendum L, line L9; {@code docs/bank-price-movement-addendum-L-2026-09-08.md}).
+ * in CALENDAR DAYS by addendum L, line L9, and as a span of TIME again by contract 1.1.2, T1;
+ * {@code docs/handoff/contract-1.1.2-guide-then-by-time-2026-10-07.md}).
  *
  * <p><b>Why these five and not the old 1h / 24h / 7d.</b> Movement is not the wiki's real-time TRADE series; it
  * is the Jagex GUIDE price, the number the in-game GE, the GE web site and RuneLite itself all show. That is a
- * step function that moves ONCE A DAY, at a variable UTC hour (L-A: the rollover was observed between 00:47 and
- * 02:06 UTC), so an hourly window would measure nothing at all: both ends would land on the same step and every
- * row would read 0 %. A day is the shortest window the series can express, and the longer four are the ones the
- * GE site itself offers.
+ * step function - stepped once a day until 29 Sep 2026 and about eight times a day since - so an hourly window
+ * would mostly land both ends on the same step and read 0 %. A day is the shortest window worth showing, and the
+ * longer four are the ones the GE site itself offers.
  *
- * <p><b>Why a window is DAYS and not seconds now</b> (L9, evidence L-C). Addendum K asked for "the revision at
- * or before now minus 86,400 seconds". Six analysts measured that against live data: the wiki's price bot writes
- * day D's table at a random hour of day D (02:11-22:20 UTC, median about 12:00), so subtracting a fixed span
- * from the wall clock lands on the intended Jagex day only 50-56 % of clock hours, changing the printed percent
- * on 40-60 % of the user's rows and flipping its sign on 3-5 %. The GE site's own arithmetic is
- * {@code (daily[D] - daily[D-N]) / daily[D-N]} over CALENDAR days (L-B), so a window is now a count of days
- * subtracted from an anchor DATE that is derived from the data (L3), and {@code seconds()} and
- * {@code targetFor(long)} are gone with the clock arithmetic that produced the coin flip.
+ * <p><b>Why a window is a span of TIME again</b> (contract 1.1.2, T1, superseding addendum L's L9). Addendum L made
+ * a window a count of calendar DAYS subtracted from an anchor date, because the wiki's bot saved one table a day at a
+ * random hour and "the revision at or before now minus 86,400 seconds" landed on the intended day only half the time
+ * (L-C). Since the bot saves eight tables a day the calendar day no longer names one table, and "the newest table of
+ * the day before the anchor" turned into a table a couple of hours old (1.1.2's finding: 368 of 499 rows at 0.0 %).
+ * The "now" end is now a TIME - the time of the guide table RuneLite's prices match, or the clock while RuneLite holds
+ * a table the index has not seen ({@code PriceService}) - and the "then" end is the newest table at least
+ * {@code days() x 24 h} older ({@link #targetSeconds}, {@code RevisionRef.pickThen}). Nothing here reads a clock.
  *
  * <p>{@link #toString()} is the LABEL, not the enum name, because RuneLite's config panel renders an enum combo
  * box with {@code toString()} while {@code ConfigManager} stores and reads the constant by {@code name()}
@@ -43,6 +42,9 @@ public enum MovementWindow
 	 */
 	public static final MovementWindow DEFAULT = D1;
 
+	/** Seconds in a day: a window of N days reaches back N x this. */
+	private static final long DAY_SECONDS = 24L * 60L * 60L;
+
 	private final String label;
 	private final int days;
 
@@ -61,8 +63,8 @@ public enum MovementWindow
 	}
 
 	/**
-	 * How many calendar days back the baseline sits (L9). The GE site's 30d / 90d / 180d figures are exactly
-	 * {@code daily[D] - daily[D-N]} for these N, so a "30d" here is 30 dates back, never 2,592,000 seconds back.
+	 * How many days back the baseline sits: the "then" table is at least {@code days() x 24 h} older than the "now"
+	 * table (contract 1.1.2, T1).
 	 */
 	public int days()
 	{
@@ -70,25 +72,20 @@ public enum MovementWindow
 	}
 
 	/**
-	 * The UTC calendar date whose guide table is this window's "then" side: {@code anchorDay.minusDays(days)}
-	 * (L5, L9).
+	 * The latest time, unix seconds, this window's "then" table may carry: {@code nowSeconds - days() x 24 h}
+	 * (contract 1.1.2, T1). {@code RevisionRef.pickThen} takes the newest revision at or before it.
 	 *
-	 * <p>The anchor is DERIVED from the data, never read off the wall clock (L3): RuneLite's price table can
-	 * already hold the next Jagex day while the wiki's newest revision still holds the previous one, for roughly
-	 * half of every day (L-D). {@code PriceService} settles which day D is by comparing RuneLite's prices against
-	 * the newest table and hands the answer here.
+	 * <p>Plain seconds and not calendar arithmetic, because the series no longer steps once a calendar day: a 1d move
+	 * is RuneLite's table against the one in force a day earlier, at whatever hour that was. All in UTC instants, so a
+	 * reader's zone plays no part (L9).
 	 *
-	 * <p>{@link LocalDate#minusDays} is calendar arithmetic, so a window that spans a leap day or the end of a
-	 * month lands on the date a reader would count to - which subtracting {@code days * 86400} seconds does not
-	 * guarantee once a caller starts from an instant rather than a date.
-	 *
-	 * @param anchorDay the derived anchor day D; null (no anchor settled yet) answers null, so a caller with no
-	 *                  anchor gets no target, picks no baseline and shows "-" rather than guessing a date
-	 * @return the target date, or null when {@code anchorDay} is null
+	 * @param nowSeconds the "now" table's time, unix seconds; 0 or less (no "now" settled yet) answers 0, so a caller
+	 *                   with no "now" gets no target, picks no baseline and shows "-" rather than guessing one
+	 * @return the target time, or 0 when {@code nowSeconds} is not positive
 	 */
-	public LocalDate targetDate(final LocalDate anchorDay)
+	public long targetSeconds(final long nowSeconds)
 	{
-		return anchorDay == null ? null : anchorDay.minusDays(days);
+		return nowSeconds <= 0L ? 0L : nowSeconds - days * DAY_SECONDS;
 	}
 
 	/**

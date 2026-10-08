@@ -266,7 +266,11 @@ public class BpmCommandsTest
 		final PriceService.Status st0 = status();
 		when(service.currentStatus()).thenReturn(st0);
 
+		when(st0.nowSeconds()).thenReturn(1_788_859_212L);
+
 		final JsonObject st = ok("state").getAsJsonObject("status");
+		assertEquals("the now time the windows count back from (contract 1.1.2)", "2026-09-08T09:20:12Z",
+			st.get("nowTime").getAsString());
 		assertEquals("2026-09-08", st.get("anchorDay").getAsString());
 		assertEquals(AGREE, st.get("agree").getAsDouble(), 1e-9);
 		assertEquals("2026-09-07", st.get("r0Day").getAsString());
@@ -325,6 +329,8 @@ public class BpmCommandsTest
 		assertEquals(1, windows.size());
 		final JsonObject oneDay = windows.getAsJsonObject("1d");
 		assertEquals("2026-09-07", oneDay.get("thenDay").getAsString());
+		assertEquals("the table's own time, ISO-8601 UTC, beside its day (contract 1.1.2)", "2026-09-07T19:45:22Z",
+			oneDay.get("thenTime").getAsString());
 		assertEquals(REV_ID, oneDay.get("thenRevId").getAsLong());
 		assertEquals("the shape the map was read from, so a refused baseline can be told from a missing one (B028)",
 			PriceMapDto.SCHEMA, oneDay.get("schema").getAsInt());
@@ -348,6 +354,7 @@ public class BpmCommandsTest
 		when(service.currentStatus()).thenReturn(empty);
 
 		final JsonObject st = ok("state").getAsJsonObject("status");
+		assertNull("no now time yet, and no 1970 either", st.get("nowTime"));
 		assertNull("no anchor day yet, and no 1970 either", st.get("anchorDay"));
 		assertNull(st.get("r0Day"));
 		assertNull(st.get("thenDay"));
@@ -616,6 +623,68 @@ public class BpmCommandsTest
 		// ...and with no status at all, which is what a bridge call before the first publish sees.
 		when(service.currentStatus()).thenReturn(null);
 		assertEquals(0, ok("state").getAsJsonObject("live").get("liveRows").getAsInt());
+	}
+
+	/**
+	 * Contract 1.2.0: a graded row carries {@code grade}, {@code word} and the numbers behind its figure under
+	 * {@code sides} - both sides' now and then, their moves, today's observations and the last print of each with its
+	 * time - while an ungraded row carries none of the three; {@code state.live.hourAt} is the {@code /1h} bucket it was
+	 * graded with, and {@code state.grades} how the counted rows graded. Synthetic ids.
+	 */
+	@Test
+	public void stateEchoesTheGradeOfEveryGradedRowAndTheHour()
+	{
+		final LocalDate today = LocalDate.of(2026, 9, 12);
+		final long noon = today.atTime(12, 0).toEpochSecond(ZoneOffset.UTC);
+		final TradedPriceClient.Bucket yesterday = new TradedPriceClient.Bucket(1_000L, 20_000L, 980L, 7L);
+		final GradedMove soft = GradeMath.figure(GradeMath.facts(noon + 7_200L, today, 1_000L,
+			new TradedPriceClient.Quote(1_030L, noon + 600L, 1_010L, noon + 300L), null, null, null, 0L, yesterday,
+			today.minusDays(1), null, null), MovementWindow.D1, yesterday, today.minusDays(1));
+		final MovementRow graded = new MovementRow(90_001, "Graded item", 1, false, soft.price(), soft.thenMark(),
+			soft.deltaGp(), soft.move() * 100.0d, soft.price(), MovementRow.PriceSource.LIVE, null, null, null, null, 0, 0,
+			0, 0, soft);
+		final MovementRow plain = new MovementRow(90_002, "Plain item", 1, false, 100L, 90L, 10L, 11.1, 100L,
+			MovementRow.PriceSource.GUIDE);
+		when(service.currentRows()).thenReturn(Arrays.asList(graded, plain));
+		final GradeSummary.Tally tally = new GradeSummary.Tally(true);
+		tally.add(graded);
+		final PriceService.Status st0 = status();
+		when(st0.live()).thenReturn(new PriceService.Status.LiveStatus(1_789_000_000_000L, 4231, 1, 0, 0, today,
+			liveWindowDays(), noon));
+		when(st0.grades()).thenReturn(tally.done());
+		when(service.currentStatus()).thenReturn(st0);
+
+		final JsonObject state = ok("state");
+		assertEquals("2026-09-12T12:00:00Z", state.getAsJsonObject("live").get("hourAt").getAsString());
+		final JsonObject row = state.getAsJsonArray("rows").get(0).getAsJsonObject();
+		assertEquals("soft", row.get("grade").getAsString());
+		assertEquals("low vol 7", row.get("word").getAsString());
+		final JsonObject sides = row.getAsJsonObject("sides");
+		assertEquals(990L, sides.get("thenMark").getAsLong());
+		assertEquals(soft.price().longValue(), sides.get("price").getAsLong());
+		assertEquals(1_030L, sides.getAsJsonObject("buy").get("now").getAsLong());
+		assertEquals(1_000L, sides.getAsJsonObject("buy").get("then").getAsLong());
+		assertEquals(1, sides.getAsJsonObject("buy").get("obs").getAsInt());
+		assertEquals(1_010L, sides.getAsJsonObject("sell").get("last").getAsLong());
+		assertEquals("2026-09-12T12:05:00Z", sides.getAsJsonObject("sell").get("lastAt").getAsString());
+		assertEquals("2026-09-11", sides.get("thenDay").getAsString());
+		final JsonObject unGraded = state.getAsJsonArray("rows").get(1).getAsJsonObject();
+		assertNull("an ungraded row says nothing of grades", unGraded.get("grade"));
+		assertNull(unGraded.get("sides"));
+		final JsonObject grades = state.getAsJsonObject("grades");
+		assertEquals(1, grades.get("soft").getAsInt());
+		assertEquals(0, grades.get("solid").getAsInt());
+		assertTrue("no solid row: the card is soft", grades.get("cardSoft").getAsBoolean());
+	}
+
+	/** With nothing graded there is no {@code grades} object at all - the echo with live prices off is unchanged. */
+	@Test
+	public void nothingGradedEchoesNoGrades()
+	{
+		final PriceService.Status st0 = status();
+		when(service.currentStatus()).thenReturn(st0);
+
+		assertNull(ok("state").get("grades"));
 	}
 
 	/** A bank of 800 must not come back down the HTTP pipe: {@code state} carries the first ten rows. */
@@ -931,8 +1000,8 @@ public class BpmCommandsTest
 	@Test
 	public void optTogglesTheViewSwitchesThroughTheGearsOwnItems()
 	{
-		// A panel that has not been asked reads as DEFAULT - cash counted, untradeables off, live prices and the
-		// carried items on, the data hovers off - which is also what a fresh profile stores.
+		// A panel that has not been asked reads as DEFAULT - cash counted, untradeables off, live prices, the
+		// carried items and the Grand Exchange offers on - which is also what a fresh profile stores.
 		ok("opt=cash");
 		verify(panel).setOptions(ViewOptions.DEFAULT.withCountCash(false));
 		ok("opt=live");
@@ -943,18 +1012,19 @@ public class BpmCommandsTest
 		verify(panel).setOptions(ViewOptions.DEFAULT.withCountGrandExchange(false));
 
 		ok("opt=all");
-		verify(panel).setOptions(new ViewOptions(true, true, true, true, true, false));
+		verify(panel).setOptions(new ViewOptions(true, true, true, true, true));
 		ok("opt=none");
-		verify(panel).setOptions(new ViewOptions(false, false, false, false, false, false));
+		verify(panel).setOptions(new ViewOptions(false, false, false, false, false));
 
 		// The toggle is against what the sidebar is USING, not against the default: from cash off, a field word
 		// turns that one switch back on. The spellings are the generous ones a URL query gets typed with.
 		//
-		// The base below carries the data hovers ON - no opt= word moves that switch - so every value expected
-		// here is one neither "all" nor "none" can produce. That matters since addendum AO: with the holding
-		// switch gone, turning untradeables on from the DEFAULT lands on exactly the five values "all" does, and
-		// Mockito would see one press where this test means two.
-		final ViewOptions base = new ViewOptions(false, true, false, false, false, true);
+		// The base below is chosen so that every value expected here is one neither "all" nor "none" - nor any press
+		// made from the defaults above - can produce: turning the untradeables off from a base with everything else
+		// off would land on exactly the value "none" does (it did, before release 1.2.0 took the hover switch out of
+		// the list, when the base carried the hovers ON to keep clear of it), and Mockito would see two presses where
+		// this test means one.
+		final ViewOptions base = new ViewOptions(false, true, false, true, false);
 		when(panel.options()).thenReturn(base);
 		ok("opt=coins");
 		verify(panel).setOptions(base.withCountCash(true));
@@ -963,7 +1033,7 @@ public class BpmCommandsTest
 		ok("opt=traded");
 		verify(panel).setOptions(base.withLivePrices(true));
 		ok("opt=worn");
-		verify(panel).setOptions(base.withCountInventory(true));
+		verify(panel).setOptions(base.withCountInventory(false));
 
 		// The untradeables alias, toggling the same switch the other way from a base of its own so the two
 		// presses are told apart by their values.
@@ -978,11 +1048,11 @@ public class BpmCommandsTest
 	}
 
 	/**
-	 * T8 and Y1: {@code none} turns off every switch the verb reaches and {@code all} turns on every one but the
-	 * data hovers. The word is the only one whose whole promise is that nothing is left standing, so its
-	 * expectations are spelled in full rather than built with withers - and the one asymmetry is pinned here:
-	 * {@code all} leaves {@code showHoverText} OFF, which is the arity addendum AH gave it and has never been a
-	 * way to turn the hovers on.
+	 * T8 and Y1: {@code none} turns off every switch the verb reaches and {@code all} turns every one of them on. The
+	 * word is the only one whose whole promise is that nothing is left standing, so its expectations are spelled in
+	 * full rather than built with withers. (Until release 1.2.0 there was one asymmetry to pin here: {@code all} left
+	 * addendum AH's hover switch OFF, the arity that switch gave it, and never turned the hovers on. The switch is
+	 * deleted - the hovers are always on - and the asymmetry went with it.)
 	 *
 	 * <p>Since addendum AO each word names FIVE switches rather than six - the holding switch is deleted - and since
 	 * 1.0.9 part 3 that five includes the Grand Exchange one by name, and a press that quietly left one of them
@@ -991,21 +1061,21 @@ public class BpmCommandsTest
 	@Test
 	public void allAndNoneReachTheLiveAndCarriedSwitchesToo()
 	{
-		when(panel.options()).thenReturn(new ViewOptions(true, true, true, true, true, true));
+		when(panel.options()).thenReturn(new ViewOptions(true, true, true, true, true));
 		ok("opt=none");
-		verify(panel).setOptions(new ViewOptions(false, false, false, false, false, false));
+		verify(panel).setOptions(new ViewOptions(false, false, false, false, false));
 
-		when(panel.options()).thenReturn(new ViewOptions(false, false, false, false, false, false));
+		when(panel.options()).thenReturn(new ViewOptions(false, false, false, false, false));
 		ok("opt=all");
-		verify(panel).setOptions(new ViewOptions(true, true, true, true, true, false));
+		verify(panel).setOptions(new ViewOptions(true, true, true, true, true));
 
 		// 1.0.9 part 3: the Grand Exchange switch is reached by both words, by name - not through the inventory's.
-		when(panel.options()).thenReturn(new ViewOptions(true, true, true, false, true, true));
+		when(panel.options()).thenReturn(new ViewOptions(true, true, true, false, true));
 		ok("opt=off");
-		verify(panel, times(2)).setOptions(new ViewOptions(false, false, false, false, false, false));
-		when(panel.options()).thenReturn(new ViewOptions(false, false, false, true, false, true));
+		verify(panel, times(2)).setOptions(new ViewOptions(false, false, false, false, false));
+		when(panel.options()).thenReturn(new ViewOptions(false, false, false, true, false));
 		ok("opt=on");
-		verify(panel, times(2)).setOptions(new ViewOptions(true, true, true, true, true, false));
+		verify(panel, times(2)).setOptions(new ViewOptions(true, true, true, true, true));
 	}
 
 	/**
@@ -1109,25 +1179,61 @@ public class BpmCommandsTest
 	}
 
 	/**
+	 * Release 1.2.0: {@code opt=hover} is REMOVED, on {@link #optHoldingIsGoneAndTheVerbSaysWhatTookItsPlace()}'s
+	 * model, because the switch it named - addendum AH's "Show hover text" - is deleted: the user (2026-10-08) made the
+	 * hovers always on. The word answers one sentence that names the release and says what to expect instead, not "opt=
+	 * wants cash, untradeables, ..." and not a no-op, for the reason {@code opt=holding} does: an operator's shell
+	 * history and the old live lists still carry it, so the one thing it has to do is tell its author where it went.
+	 * (Before this release the word was not in the verb's vocabulary either - {@code all} and {@code none} never
+	 * touched the hover switch and no word toggled it - so it was refused as unknown; the sentence is the courtesy.)
+	 */
+	@Test
+	public void optHoverIsGoneAndTheVerbSaysWhereItWent()
+	{
+		final JsonObject bad = send("opt=hover");
+		assertFalse(bad.get("ok").getAsBoolean());
+		assertEquals("opt=hover is gone since release 1.2.0 - hover text is always on, so there is no switch to set",
+			bad.get("error").getAsString());
+
+		// Every spelling an operator reaches for - the label's words, the stored key, the thing itself - gets the same
+		// sentence, and the text is case-folded the way a hand-typed URL query needs.
+		for (String verb : new String[]{"hovers", "hovertext", "showhovertext", "tooltip", "tooltips", "Hover",
+			"SHOWHOVERTEXT"})
+		{
+			assertEquals(verb, bad.get("error").getAsString(), send("opt=" + verb).get("error").getAsString());
+		}
+		// ...and none of them presses anything: the sidebar is left exactly as it was.
+		verify(panel, never()).setOptions(any());
+		verify(panel, never()).applyOptions(any());
+
+		// The sentence is the word's alone: a word that never named a switch still gets the generic refusal, and the
+		// refusal's list does not offer the deleted word.
+		final JsonObject generic = send("opt=sideways");
+		assertTrue(generic.get("error").getAsString(), generic.get("error").getAsString().contains("opt= wants"));
+		assertFalse(generic.get("error").getAsString(), generic.get("error").getAsString().contains("hover"));
+	}
+
+	/**
 	 * Every answer says which of the gear's switches the sidebar is using, so a shot needs no second call - and
 	 * unlike {@code hero}, these are also the reason the figures below say what they say.
 	 *
-	 * <p>There are SIX keys since 1.0.9 part 3 - five since addendum AO, which took {@code holding} away with the
-	 * switch behind it (AO1) - and the count is asserted so a key cannot be added or lost here without a test saying
-	 * so. {@code ge} sits directly after {@code inventory}.
+	 * <p>There are FIVE keys since release 1.2.0, which took {@code hover} away with the switch behind it (six since
+	 * 1.0.9 part 3 added {@code ge}, and five before that: addendum AO had taken {@code holding} away, AO1) - and the
+	 * count is asserted so a key cannot be added or lost here without a test saying so. {@code ge} sits directly after
+	 * {@code inventory} and is the last.
 	 */
 	@Test
 	public void everyAnswerEchoesTheViewSwitches()
 	{
 		final JsonObject fresh = ok("state").getAsJsonObject("options");
-		assertEquals("cash, untradeables, live, inventory, ge, hover", 6, fresh.entrySet().size());
-		assertEquals("[cash, untradeables, live, inventory, ge, hover]", new ArrayList<>(fresh.keySet()).toString());
+		assertEquals("cash, untradeables, live, inventory, ge", 5, fresh.entrySet().size());
+		assertEquals("[cash, untradeables, live, inventory, ge]", new ArrayList<>(fresh.keySet()).toString());
 		assertTrue("1.0.9 part 3: the Grand Exchange offers are counted by default", fresh.get("ge").getAsBoolean());
 		assertTrue("a panel that has not been asked reads as the default", fresh.get("cash").getAsBoolean());
 		assertFalse(fresh.get("untradeables").getAsBoolean());
 		assertTrue("live prices are on by default (T1)", fresh.get("live").getAsBoolean());
 		assertTrue("and so are the carried items (Y1)", fresh.get("inventory").getAsBoolean());
-		assertFalse("the data hovers are the one switch that defaults off (AH)", fresh.get("hover").getAsBoolean());
+		assertNull("hover went with the switch release 1.2.0 deleted", fresh.get("hover"));
 		assertNull("holding went with the switch addendum AO deleted", fresh.get("holding"));
 
 		when(panel.options()).thenReturn(ViewOptions.DEFAULT
@@ -1138,7 +1244,7 @@ public class BpmCommandsTest
 		assertFalse(some.get("live").getAsBoolean());
 		assertTrue(some.get("inventory").getAsBoolean());
 		assertTrue(some.get("ge").getAsBoolean());
-		assertFalse(some.get("hover").getAsBoolean());
+		assertNull(some.get("hover"));
 		assertNull(some.get("holding"));
 		when(panel.options()).thenReturn(ViewOptions.DEFAULT.withCountGrandExchange(false));
 		assertFalse(ok("state").getAsJsonObject("options").get("ge").getAsBoolean());

@@ -149,9 +149,9 @@ public final class PriceMap
 	 * The UTC calendar day these prices belong to, or null when the map carries no marker ({@link #EMPTY}, or a
 	 * baseline file from before addendum K).
 	 *
-	 * <p>This is the value the status line and the tooltip print - "1d vs 07 Sep" (L7) - and the one a caller
-	 * compares against {@code MovementWindow.targetDate(anchorDay)} to see whether a stored baseline is still
-	 * the right day. UTC always (L9): every date in the selection maths is a UTC date, so a local-zone date would
+	 * <p>This is the value the status line and the tooltip print - "1d vs 07 Sep" (L7). Which stored baseline is
+	 * still the right one is decided by the TIME, {@link #bucketSeconds()} (contract 1.1.2), not by this date. UTC
+	 * always (L9): every date in the selection maths is a UTC date, so a local-zone date would
 	 * put a user east of Greenwich a whole day out. What the marker itself rests on - the bot running after the
 	 * day's rollover rather than any midnight stamp - is spelled out on {@code GuideSnapshot.dataDay()}.
 	 */

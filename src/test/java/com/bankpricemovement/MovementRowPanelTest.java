@@ -91,13 +91,13 @@ import static org.junit.Assert.fail;
  * percentage keeps {@link MovementRowPanel#textChangeColor}, so the two stop competing. Nothing else about a row
  * moves, and the geometry above is untouched: a colour does not change a box.
  *
- * <p><b>Addendum AJ put the "Show hover text" switch back, and a row is outside its reach.</b> AI had deleted
- * addendum AH's switch along with the hover it was written for, which left the hero card's exact-gp hover and
- * every control tooltip permanently on; AJ restores it for those, and for those only. A ROW carries no tooltip
- * at EITHER setting - its description is the block the cell opens - so the switch has nothing to silence here
- * and nothing to give back, and the click that opens the cell answers whatever the switch says. Both halves of
- * that are pinned under "addendum AJ" at the end of this file: they are the facts a reader who found a sixth
- * switch in {@link ViewOptions} would otherwise get wrong.
+ * <p><b>Addendum AJ put the "Show hover text" switch back, and a row was outside its reach; release 1.2.0 deleted the
+ * switch.</b> AI had deleted addendum AH's switch along with the hover it was written for; AJ restored it for the hero
+ * card's exact-gp hover and every control tooltip, and for those only. A ROW carries no tooltip - its description is the
+ * block the cell opens - so the switch never had anything to silence here or to give back, and the click that opens the
+ * cell answered whatever the switch said. The switch is gone now (the user, 2026-10-08: the hovers are always on), and
+ * both facts stand without it: a row is silent beside hovers that are always on, and a click opens it. They are pinned
+ * under "addendum AJ" at the end of this file.
  *
  * <p><b>The Q4 row format (2026-09-20) is what the card now draws</b>, and it is the one change since addendum N
  * that moved the GEOMETRY the four pinned renders are pictures of. A row is three lines in a 62 px cell rather
@@ -692,7 +692,7 @@ public class MovementRowPanelTest
 			leftClick(p);
 			assertTrue(p.expanded());
 			assertEquals("the block is the one AK writes, not re-written by Q4",
-				MovementRowPanel.detail(whip(), MovementWindow.D1, THEN_DAY, ViewOptions.DEFAULT, false),
+				MovementRowPanel.detail(whip(), MovementWindow.D1, THEN_DAY, 0L, ViewOptions.DEFAULT, false),
 				detail(p).getText());
 			assertTrue("wrapped to the cell, which Q4 widened by the two px it took off the left padding",
 				detail(p).getText().startsWith("<html><div width=\"" + (MovementRowPanel.INNER_WIDTH - MovementRowPanel.DETAIL_LEFT) + "\">"));
@@ -1006,6 +1006,8 @@ public class MovementRowPanelTest
 
 	/** The 1 d baseline's day in the live fixtures - the day the traded bucket belongs to. */
 	private static final LocalDate TRADED_DAY = LocalDate.of(2026, 9, 10);
+	/** A print of the day after {@link #TRADED_DAY}: 2026-09-11 13:40:00 UTC, in unix seconds. */
+	private static final long LAST_PRINT_SECONDS = 1_789_134_000L;
 	/** The view switches with the live switch OFF: the guide-only row of addenda K to S (T8). */
 	private static final ViewOptions LIVE_OFF = ViewOptions.DEFAULT.withLivePrices(false);
 
@@ -1044,70 +1046,68 @@ public class MovementRowPanelTest
 	}
 
 	/**
-	 * T6: a live row's tooltip names the series and shows the three figures behind the price - the two sides it is
-	 * the middle of, and the volume that let it qualify - and its window line says the baseline is that day's
-	 * traded average and not a guide table's entry.
+	 * T6, as contract 1.2.0 words it: a live row's tooltip names the series and shows the three figures behind the
+	 * price - the last print of each side of the book, and how much traded yesterday - and its window line says the
+	 * baseline is that day's average of the trades and not a guide table's entry.
 	 */
 	@Test
-	public void aLiveRowsTooltipNamesTheTradedSeriesAndShowsBothSidesAndTheVolume()
+	public void aLiveRowsTooltipNamesTheTradesAndShowsTheLastPrintOfEachSideAndTheVolume()
 	{
 		final String tip = MovementRowPanel.tooltip(liveBow(MovementRow.PriceSource.LIVE), MovementWindow.D1, TRADED_DAY);
 		System.out.println("the live tooltip: " + tip);
 		assertTrue(tip, tip.startsWith("<html><b>Twisted bow</b>"));
-		assertTrue(tip, tip.contains("<br>Live traded price: 63,437,264 gp (buy 63.6m, sell 63.3m; 517 traded yesterday)"));
+		assertTrue(tip, tip.contains("<br>Price from today's trades: 63,437,264 gp (last bought 63.6m, last sold 63.3m;"
+			+ " 517 traded yesterday)"));
 		assertFalse("a live price is not a guide price, and the line says which it is", tip.contains("Guide price"));
-		assertTrue(tip, tip.contains("<br>1d ago (10 Sep): 62,100,000 gp (traded average)"));
+		assertTrue(tip, tip.contains("<br>1d ago (10 Sep): 62,100,000 gp (average of that day's trades)"));
 		assertTrue("the holding and the change are the ordinary ones", tip.contains("<br>Holding: 1 = 63,437,264 gp"));
 		assertTrue(tip, tip.contains("<br>Change per item: +1,337,264 gp (+2.1%)"));
 		assertTrue(tip, tip.endsWith("</html>"));
-		assertEquals("Live traded price: ", MovementRowPanel.LIVE_PRICE_PREFIX);
+		assertEquals("Price from today's trades: ", MovementRowPanel.LIVE_PRICE_PREFIX);
+		assertEquals(" (average of that day's trades)", MovementRowPanel.TRADED_AVERAGE_NOTE);
 	}
 
 	/**
-	 * T4 / T6: a row whose price is live but whose traded bucket for THAT day could not answer compares the
-	 * guide's own two ends for that window, and the window line says so. Never a live "now" over a guide "then" -
-	 * that is the hybrid the live study refuted - so the note is the only way a reader can see which comparison
-	 * was made.
-	 *
-	 * <p>V5 rewrote the note: a bucket is now refused for its own buy/sell gap as well as for its volume (V3), so
-	 * one note covers both - "too few or too scattered trades that day" - rather than telling a reader "too few"
-	 * about a day that had thousands of them.
+	 * T4 / T6, as contract 1.2.0 leaves them: a row whose price is live but whose window has no figure - nothing
+	 * traded that day, or nothing today to set against it - prints a dash for that window, and the window line says
+	 * why. Never a live "now" over a guide "then" - that is the hybrid the live study refuted - so the note is the only
+	 * way a reader can see that the window was not compared at all. (Before 1.2.0 such a window fell back to the guide's
+	 * own two ends and the note named the five liquidity checks that refused it.)
 	 */
 	@Test
-	public void aLiveRowWhoseWindowFellBackToTheGuideSaysSoOnThatLine()
+	public void aLiveRowWhoseWindowHasNoFigureSaysSoOnThatLine()
 	{
-		assertEquals("the wording addendum V asks for, pinned", " (guide - too few or too scattered trades that day)",
-			MovementRowPanel.WINDOW_FELL_BACK_NOTE);
+		assertEquals("the wording contract 1.2.0 asks for, pinned", " (no trades to compare with that day)",
+			MovementRowPanel.WINDOW_NO_FIGURE_NOTE);
 		final String tip = MovementRowPanel.tooltip(liveBow(MovementRow.PriceSource.GUIDE), MovementWindow.D1, TRADED_DAY);
-		assertTrue(tip, tip.contains("<br>Live traded price: 63,437,264 gp (buy 63.6m"));
-		assertTrue(tip, tip.contains("<br>1d ago (10 Sep): 62,100,000 gp (guide - too few or too scattered trades that day)"));
-		assertFalse(tip, tip.contains("(traded average)"));
-		// A window nothing was recorded for reads the same way rather than claiming a live comparison (T4).
+		assertTrue(tip, tip.contains("<br>Price from today's trades: 63,437,264 gp (last bought 63.6m"));
+		assertTrue(tip, tip.contains("<br>1d ago (10 Sep): 62,100,000 gp (no trades to compare with that day)"));
+		assertFalse(tip, tip.contains("(average of that day's trades)"));
+		// A window nothing was recorded for reads the same way rather than claiming a comparison (T4).
 		final MovementRow noRecord = guideBow().asLive(null, null, new MovementRow.LiveFacts(63_600_000L, 63_300_000L, 517L, null));
 		assertTrue(MovementRowPanel.tooltip(noRecord, MovementWindow.D30, TRADED_DAY).contains(
-			"<br>30d ago (10 Sep): 62,100,000 gp" + MovementRowPanel.WINDOW_FELL_BACK_NOTE));
+			"<br>30d ago (10 Sep): 62,100,000 gp" + MovementRowPanel.WINDOW_NO_FIGURE_NOTE));
 	}
 
 	/**
-	 * T6: a row the checks left on the guide price, while the switch is on, gains exactly one line - the FIRST
-	 * check that refused it, as the service recorded it - directly under the price it explains. Everything else on
-	 * the tooltip is untouched, and with the switch off the same row's tooltip is the pre-T one to the character
-	 * (T8).
+	 * T6, as contract 1.2.0 leaves it: a row priced at the guide price, while the switch is on, gains exactly one line -
+	 * the 1d grade's word, as the service recorded it - directly under the price it explains. Everything else on the
+	 * tooltip is untouched, and with the switch off the same row's tooltip is the pre-T one to the character (T8).
 	 */
 	@Test
-	public void aGuideRowSaysWhichCheckKeptItOffTheLiveSeries()
+	public void aGuideRowSaysWhyTheTradesDidNotPriceIt()
 	{
 		final MovementRow thin = whip().withLiveRefusal(
-			new MovementRow.LiveFacts(1_540_000L, 1_200_000L, 12L, "12 traded yesterday"));
+			new MovementRow.LiveFacts(1_540_000L, 1_200_000L, 12L, GradeWords.NO_TRADES));
 		final String tip = MovementRowPanel.tooltip(thin, MovementWindow.D1, THEN_DAY);
 		assertTrue(tip, tip.contains("<br>Guide price: 1,520,000 gp"
-			+ "<br>Guide price - live not used: 12 traded yesterday"
+			+ "<br>Valued at the guide price: no trades"
 			+ "<br>1d ago (07 Sep): 1,500,000 gp"));
-		assertFalse("both ends are the guide's, so the window line says nothing new", tip.contains("traded average"));
-		assertFalse(tip, tip.contains(MovementRowPanel.WINDOW_FELL_BACK_NOTE));
-		assertEquals("Guide price - live not used: ", MovementRowPanel.LIVE_NOT_USED_PREFIX);
-		assertEquals("the reason is the service's phrase, printed and not composed here",
-			"Guide price - live not used: 12 traded yesterday", MovementRowPanel.liveRefusalLine(thin));
+		assertFalse("both ends are the guide's, so the window line says nothing new", tip.contains("average of that day"));
+		assertFalse(tip, tip.contains(MovementRowPanel.WINDOW_NO_FIGURE_NOTE));
+		assertEquals("Valued at the guide price: ", MovementRowPanel.GUIDE_VALUED_PREFIX);
+		assertEquals("the reason is the service's word, printed and not composed here",
+			"Valued at the guide price: no trades", MovementRowPanel.liveRefusalLine(thin));
 		assertEquals("", MovementRowPanel.liveRefusalLine(whip()));
 		assertEquals("", MovementRowPanel.liveLine(thin));
 
@@ -1136,13 +1136,13 @@ public class MovementRowPanelTest
 		final MovementRow row = liveBow(MovementRow.PriceSource.LIVE, liveDay);
 		// TRADED_DAY here is the GUIDE's baseline day, a day behind the traded bucket this row really used.
 		final String tip = MovementRowPanel.tooltip(row, MovementWindow.D1, TRADED_DAY, ViewOptions.DEFAULT);
-		assertTrue(tip, tip.contains("<br>1d ago (11 Sep): 62,100,000 gp (traded average)"));
+		assertTrue(tip, tip.contains("<br>1d ago (11 Sep): 62,100,000 gp" + MovementRowPanel.TRADED_AVERAGE_NOTE));
 		assertFalse("the guide's day is not where this figure came from", tip.contains("10 Sep"));
 
 		final String back = MovementRowPanel.tooltip(liveBow(MovementRow.PriceSource.GUIDE, TRADED_DAY),
 			MovementWindow.D1, TRADED_DAY, ViewOptions.DEFAULT);
-		assertTrue("a window that fell back compared against the guide's day, and says so",
-			back.contains("<br>1d ago (10 Sep): 62,100,000 gp" + MovementRowPanel.WINDOW_FELL_BACK_NOTE));
+		assertTrue("a window with no figure stamps the guide's day, and says so",
+			back.contains("<br>1d ago (10 Sep): 62,100,000 gp" + MovementRowPanel.WINDOW_NO_FIGURE_NOTE));
 
 		// The rule itself: the row's day when it has one, the status's day in every other state.
 		assertEquals(liveDay, MovementRowPanel.stampedDay(row, MovementWindow.D1, TRADED_DAY, true));
@@ -1191,7 +1191,7 @@ public class MovementRowPanelTest
 			assertFalse("no tag where the move goes", a.changeText().contains(MovementRowPanel.ALCH_TAG));
 			assertFalse(MovementRowPanel.isAlch(live));
 			assertNotEquals("...and the tooltip is the one place the series is named", b.tooltipHtml(), a.tooltipHtml());
-			assertTrue(a.tooltipHtml(), a.tooltipHtml().contains("Live traded price: "));
+			assertTrue(a.tooltipHtml(), a.tooltipHtml().contains(MovementRowPanel.LIVE_PRICE_PREFIX));
 
 			// The row the panel builds under the switch OFF carries the pre-T tooltip (T8).
 			final MovementRowPanel off = new MovementRowPanel(live, null, MovementWindow.D1, TRADED_DAY, LIVE_OFF);
@@ -1690,8 +1690,9 @@ public class MovementRowPanelTest
 	 *
 	 * The first two have no subject left in any form: the key is gone (AO1) and the helpers went with it, so
 	 * there is neither a switch to set nor a method to ask. The equality the second one pinned - that a row's
-	 * face does not vary with a ViewOptions - is still pinned, by aRowIsSilentAtEitherSettingOfTheHoverSwitch,
-	 * which walks the same figures across the one switch that is left.
+	 * face does not vary with a ViewOptions - was carried on by aRowIsSilentAtEitherSettingOfTheHoverSwitch, which walked
+	 * the same figures across the one switch that was left; release 1.2.0 deleted that switch (the hovers are always on),
+	 * and with it the last pair of options that differed in nothing a row prints.
 	 *
 	 * The third's RULE is alive and is pinned on built rows, which is where it belongs now that no helper
 	 * stands between the fixture and the label: no baseline by aRowWithoutMovementHasNoGpFigure, a flat price
@@ -2047,7 +2048,7 @@ public class MovementRowPanelTest
 				// AS: opened first, because the opening is what writes the block.
 				leftClick(p);
 				assertEquals(r.name() + ": the block, as the pure builder writes it and not re-written",
-					MovementRowPanel.detail(r, MovementWindow.D1, THEN_DAY, ViewOptions.DEFAULT,
+					MovementRowPanel.detail(r, MovementWindow.D1, THEN_DAY, 0L, ViewOptions.DEFAULT,
 						!r.name().equals(p.nameText())),
 					detail(p).getText());
 				assertTrue(r.name() + ": wrapped to the cell", detail(p).getText()
@@ -2417,148 +2418,102 @@ public class MovementRowPanelTest
 		assertEquals(what + ": the fitter leaves the whole text on the label", text, twin.getToolTipText());
 	}
 
-	// ---- addendum AJ: the hover switch is back, and a row is outside its reach
+	// ---- addendum AJ: a row is outside the reach of the hovers (the switch itself went in release 1.2.0)
 
 	/**
-	 * The view switches with AJ's restored "Show hover text" ON. Nothing a row builds reads it - which is the
-	 * whole point of the two tests below - so the fixture exists to make the ON leg a real setting rather than an
-	 * absent one, and both tests say so out loud before they use it.
-	 */
-	private static final ViewOptions HOVERS_ON = ViewOptions.DEFAULT.withShowHoverText(true);
-
-	/**
-	 * AJ restored the switch addendum AI had deleted, and narrowed it: it governs the hero card's exact-gp hover
-	 * (AF) and every CONTROL tooltip - the sort button and its menu, the chips, the band button, Refresh, the
-	 * update line, the preset row and the gear's own items - and it does NOT reach an item row.
+	 * AJ restored a "Show hover text" switch that governed the hero card's exact-gp hover (AF) and every CONTROL tooltip
+	 * - the sort button and its menu, the chips, the band button, Refresh, the update line, the preset row and the gear's
+	 * own items - and did NOT reach an item row. Release 1.2.0 deleted the switch (the user, 2026-10-08): those hovers are
+	 * always on, and this test keeps the other half of the fact true.
 	 *
-	 * <p>That is the fact a reader of this file would otherwise get wrong, because {@link ViewOptions} carries a
-	 * switch named after hover text and a row is built from a {@link ViewOptions}. Since AI a row carries
-	 * no tooltip whatever the options say: its description is the block the cell opens on a click
-	 * ({@link #theDetailIsTheLabelColumnWrappedForTheCell}), so the switch has nothing here to silence and
-	 * nothing to hand back. Wiring it into a row would be a regression at BOTH settings - ON it would put back the
-	 * hover over every row the pointer crossed that the user asked to be rid of, and OFF it would remove a text
-	 * that is not there.
+	 * <p>Since AI a row carries no tooltip: its description is the block the cell opens on a click
+	 * ({@link #theDetailIsTheLabelColumnWrappedForTheCell}), so a hover that is on everywhere else in the sidebar still has
+	 * nothing here to say. Wiring one into a row would put back the hover over every row the pointer crossed that the user
+	 * asked to be rid of.
 	 *
-	 * <p>The fixture is a row built to be CUT, because a leftover is where a switch that had crept back in would
-	 * show first: {@code Widgets.setFittedName} and {@code Widgets.setFitted} hang the whole text on the name and
-	 * the price labels as their own tooltip, and a constructor that skipped its clearing under one setting would
-	 * leave the biggest thing on the card speaking. Both labels are read by name as well as by the sweep over the
-	 * children, and the sweep is repeated with the cell OPEN, where the description is a child too.
+	 * <p>The fixture is a row built to be CUT, because a leftover is where a hover that had crept back in would show first:
+	 * {@code Widgets.setFittedName} and {@code Widgets.setFitted} hang the whole text on the name and the price labels as
+	 * their own tooltip, and a constructor that skipped its clearing would leave the biggest thing on the card speaking.
+	 * Both labels are read by name as well as by the sweep over the children, and the sweep is repeated with the cell
+	 * OPEN, where the description is a child too.
 	 */
 	@Test
-	public void aRowIsSilentAtEitherSettingOfTheHoverSwitch() throws Exception
+	public void aRowIsSilentEvenThoughEveryOtherHoverIsAlwaysOn() throws Exception
 	{
 		onEdt(() ->
 		{
-			assertFalse("the switch's own default is OFF (AH, restored by AJ)", ViewOptions.DEFAULT.showHoverText());
-			assertTrue("...and the ON fixture really is on, or this test has one leg", HOVERS_ON.showHoverText());
-
 			final MovementRow long0 = row("Twisted ancestral robe bottom", 1_000L, 900L, 100L, 11.1);
-			for (ViewOptions view : new ViewOptions[]{HOVERS_ON, ViewOptions.DEFAULT})
+			final MovementRowPanel p = new MovementRowPanel(long0, null, MovementWindow.D1, THEN_DAY, ViewOptions.DEFAULT);
+			assertNotEquals("the face had to cut the name, so the fitter left the whole of it behind",
+				long0.name(), p.nameText());
+			assertNull("the row", p.getToolTipText());
+			assertNull("the name label", nameLabel(p).getToolTipText());
+			assertNull("the price label", label(p, p.priceText()).getToolTipText());
+
+			final List<JComponent> children = new ArrayList<>();
+			collect(p, children);
+			assertTrue("the face, the picture, the text block, three lines, two figure groups, six labels, the detail",
+				children.size() >= 9);
+			for (JComponent c : children)
 			{
-				final String state = view.showHoverText() ? "hovers on" : "hovers off";
-				final MovementRowPanel p = new MovementRowPanel(long0, null, MovementWindow.D1, THEN_DAY, view);
-				assertNotEquals(state + ": the face had to cut the name, so the fitter left the whole of it behind",
-					long0.name(), p.nameText());
-				assertNull(state + ": the row", p.getToolTipText());
-				assertNull(state + ": the name label", nameLabel(p).getToolTipText());
-				assertNull(state + ": the price label", label(p, p.priceText()).getToolTipText());
-
-				final List<JComponent> children = new ArrayList<>();
-				collect(p, children);
-				assertTrue(state + ": the face, the picture, the text block, three lines, two figure groups, six labels,"
-					+ " the detail", children.size() >= 9);
-				for (JComponent c : children)
-				{
-					assertNull(state + ": " + c.getClass().getSimpleName(), c.getToolTipText());
-				}
-
-				// ...and an OPEN row is silent too: its description is on the screen, not under the pointer.
-				leftClick(p);
-				assertTrue(state + ": the cell opened", p.expanded());
-				assertNull(state + ": the open row", p.getToolTipText());
-				final List<JComponent> afterwards = new ArrayList<>();
-				collect(p, afterwards);
-				for (JComponent c : afterwards)
-				{
-					assertNull(state + ": " + c.getClass().getSimpleName() + ", open", c.getToolTipText());
-				}
+				assertNull(c.getClass().getSimpleName(), c.getToolTipText());
 			}
 
-			// There WAS something to clear at both settings - measured on twins put through the same call, because
-			// the row has cleared its own by the time a test can look at it.
+			// ...and an OPEN row is silent too: its description is on the screen, not under the pointer.
+			leftClick(p);
+			assertTrue("the cell opened", p.expanded());
+			assertNull("the open row", p.getToolTipText());
+			final List<JComponent> afterwards = new ArrayList<>();
+			collect(p, afterwards);
+			for (JComponent c : afterwards)
+			{
+				assertNull(c.getClass().getSimpleName() + ", open", c.getToolTipText());
+			}
+
+			// There WAS something to clear - measured on twins put through the same call, because the row has cleared its
+			// own by the time a test can look at it.
 			assertLeftoverWasThere("the name", Widgets.sansBold(14), long0.name(), MovementRowPanel.TEXT_WIDTH);
 			assertLeftoverWasThere("the price", Widgets.sans(13),
 				MovementMath.formatGp(long0.holdingValue()), MovementRowPanel.TEXT_WIDTH);
-
-			// And the switch changes nothing ELSE about a row either: same face, same card, same description.
-			// Since addendum AO this is the WHOLE of "a row's face does not vary with a ViewOptions" - the
-			// deleted holding switch had its own equality test, and this walk inherited the job.
-			final MovementRowPanel on = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY, HOVERS_ON);
-			final MovementRowPanel off = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY,
-				ViewOptions.DEFAULT);
-			assertEquals(off.nameText(), on.nameText());
-			assertEquals(off.priceText(), on.priceText());
-			assertEquals(off.gpText(), on.gpText());
-			assertEquals(off.changeText(), on.changeText());
-			assertEquals("line 3's working", workingLabel(off).getText(), workingLabel(on).getText());
-			assertEquals("line 3's gp", itemGpLabel(off).getText(), itemGpLabel(on).getText());
-			assertEquals(off.railColor(), on.railColor());
-			assertEquals(off.getPreferredSize(), on.getPreferredSize());
-			assertEquals("the description is built either way", off.tooltipHtml(), on.tooltipHtml());
-			// Both opened first since addendum AS: the opening writes the block, and two unwritten blocks are the
-			// same empty string whatever the switch says - so the text compared is asserted to be a written one.
-			leftClick(off);
-			leftClick(on);
-			assertTrue("the block was written", detail(off).getText().startsWith("<html>"));
-			assertEquals("...and reaches the cell either way", detail(off).getText(), detail(on).getText());
-			assertEquals("and opens both cells to the same height", off.getPreferredSize(), on.getPreferredSize());
 		});
 	}
 
 	/**
-	 * The other half of AJ's reach, and the regression it is here to stop: a row OPENS at either setting of the
-	 * switch. AH - the switch as it first shipped - made a click do nothing while the hovers were off, because
-	 * back then the click's only job was to lengthen a hover, and that is exactly what sent the user to AI
-	 * ("when we click an item it does not expand because our hover text button is off"). AI moved the description
-	 * into the cell, so the click is no longer about hover text at all, and AJ must not carry the old coupling
-	 * back in with the switch.
+	 * The other half of AJ's reach, and the regression it is here to stop: a row OPENS on a click. AH - the switch as it
+	 * first shipped - made a click do nothing while the hovers were off, because back then the click's only job was to
+	 * lengthen a hover, and that is exactly what sent the user to AI ("when we click an item it does not expand because our
+	 * hover text button is off"). AI moved the description into the cell, so the click is not about hover text at all - and
+	 * since release 1.2.0 deleted the switch there is no hover setting left for it to depend on.
 	 *
-	 * <p>The seam is read as well as the cell, because a row that opened on screen while writing nothing would
-	 * fold itself up again on the next publish - which under the switch's OFF setting would be a reader's whole
-	 * experience of it.
+	 * <p>The seam is read as well as the cell, because a row that opened on screen while writing nothing would fold itself
+	 * up again on the next publish.
 	 */
 	@Test
-	public void theCellOpensAndShutsAtEitherSettingOfTheHoverSwitch() throws Exception
+	public void theCellOpensAndShutsOnAClick() throws Exception
 	{
 		onEdt(() ->
 		{
-			for (ViewOptions view : new ViewOptions[]{HOVERS_ON, ViewOptions.DEFAULT})
-			{
-				final String state = view.showHoverText() ? "hovers on" : "hovers off";
-				final RecordingExpansion seam = new RecordingExpansion();
-				final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY, view,
-					seam);
-				assertFalse(state + ": a fresh row is shut", p.expanded());
-				assertFalse(state + ": and says nothing under its face", detail(p).isVisible());
-				assertEquals(state + ": building only reads the seam", 0, seam.writes);
+			final RecordingExpansion seam = new RecordingExpansion();
+			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY, ViewOptions.DEFAULT,
+				seam);
+			assertFalse("a fresh row is shut", p.expanded());
+			assertFalse("and says nothing under its face", detail(p).isVisible());
+			assertEquals("building only reads the seam", 0, seam.writes);
 
-				leftClick(p);
-				assertTrue(state + ": the click opened it", p.expanded());
-				assertTrue(state + ": the description is showing", detail(p).isVisible());
-				assertEquals(state + ": the cell grew by the block's own height",
-					MovementRowPanel.ROW_HEIGHT + detailHeight(p), p.getPreferredSize().height);
-				assertTrue(state + ": ...and the seam knows, so the next publish brings it back open",
-					seam.isExpanded(4151));
+			leftClick(p);
+			assertTrue("the click opened it", p.expanded());
+			assertTrue("the description is showing", detail(p).isVisible());
+			assertEquals("the cell grew by the block's own height",
+				MovementRowPanel.ROW_HEIGHT + detailHeight(p), p.getPreferredSize().height);
+			assertTrue("...and the seam knows, so the next publish brings it back open", seam.isExpanded(4151));
 
-				leftClick(p);
-				assertFalse(state + ": and a second click shuts it", p.expanded());
-				assertFalse(state + ": the description is hidden again", detail(p).isVisible());
-				assertEquals(state + ": exactly the 62 px card, which is what the four renders are of",
-					new Dimension(MovementRowPanel.ROW_WIDTH, MovementRowPanel.ROW_HEIGHT), p.getPreferredSize());
-				assertFalse(state, seam.isExpanded(4151));
-				assertEquals(state + ": one write per click, whatever the switch says", 2, seam.writes);
-			}
+			leftClick(p);
+			assertFalse("and a second click shuts it", p.expanded());
+			assertFalse("the description is hidden again", detail(p).isVisible());
+			assertEquals("exactly the 62 px card, which is what the four renders are of",
+				new Dimension(MovementRowPanel.ROW_WIDTH, MovementRowPanel.ROW_HEIGHT), p.getPreferredSize());
+			assertFalse(seam.isExpanded(4151));
+			assertEquals("one write per click", 2, seam.writes);
 		});
 	}
 
@@ -2622,7 +2577,7 @@ public class MovementRowPanelTest
 			}
 		}
 		assertTrue("a null window reads as the default, like every other reader of one",
-			MovementRowPanel.detail(whip(), null, THEN_DAY, ViewOptions.DEFAULT, false)
+			MovementRowPanel.detail(whip(), null, THEN_DAY, 0L, ViewOptions.DEFAULT, false)
 				.contains(MovementRowPanel.L_CHANGE + MovementWindow.DEFAULT.label()));
 	}
 
@@ -2635,7 +2590,7 @@ public class MovementRowPanelTest
 	public void aRowWithNoPriceDashesEveryFigureAndGuessesNoZero()
 	{
 		final MovementRow none = row("Mystery box", null, null, null, null);
-		final String html = MovementRowPanel.detail(none, MovementWindow.D7, null, ViewOptions.DEFAULT, false);
+		final String html = MovementRowPanel.detail(none, MovementWindow.D7, null, 0L, ViewOptions.DEFAULT, false);
 		assertInOrder(html,
 			MovementRowPanel.L_NOW, MovementMath.DASH,
 			MovementRowPanel.L_WAS, MovementMath.DASH, "(-)",
@@ -2700,69 +2655,58 @@ public class MovementRowPanelTest
 	public void theCarriedSplitIsInTheCellOnlyWhileAMergingSwitchIsOn()
 	{
 		final MovementRow split = carried(3, 1, 1);
-		final String on = MovementRowPanel.detail(split, MovementWindow.D1, THEN_DAY, ViewOptions.DEFAULT, false);
+		final String on = MovementRowPanel.detail(split, MovementWindow.D1, THEN_DAY, 0L, ViewOptions.DEFAULT, false);
 		assertTrue(on, on.contains("</table>3 in bank, 1 in inventory, 1 worn"));
 
-		final String off = MovementRowPanel.detail(split, MovementWindow.D1, THEN_DAY,
+		final String off = MovementRowPanel.detail(split, MovementWindow.D1, THEN_DAY, 0L,
 			ViewOptions.DEFAULT.withCountInventory(false).withCountGrandExchange(false), false);
 		assertFalse(off, off.contains("in bank"));
 		assertFalse(off, off.contains("worn"));
 		assertTrue("...and the four lines are untouched by the switches", off.endsWith("</table></div></html>"));
 
 		// 1.0.9 part 3: the open cell names the offers too, and the Grand Exchange switch alone keeps the line.
-		final String offered = MovementRowPanel.detail(carried(3, 1, 1, 2), MovementWindow.D1, THEN_DAY,
+		final String offered = MovementRowPanel.detail(carried(3, 1, 1, 2), MovementWindow.D1, THEN_DAY, 0L,
 			ViewOptions.DEFAULT, false);
 		assertTrue(offered, offered.contains("</table>3 in bank, 1 in inventory, 1 worn, 2 in the Grand Exchange"));
-		final String offersAlone = MovementRowPanel.detail(carried(3, 0, 0, 2), MovementWindow.D1, THEN_DAY,
+		final String offersAlone = MovementRowPanel.detail(carried(3, 0, 0, 2), MovementWindow.D1, THEN_DAY, 0L,
 			ViewOptions.DEFAULT.withCountInventory(false), false);
 		assertTrue(offersAlone, offersAlone.contains("</table>3 in bank, 2 in the Grand Exchange"));
 
 		assertFalse("a stack the bank holds whole says nothing",
-			MovementRowPanel.detail(carried(5, 0, 0), MovementWindow.D1, THEN_DAY, ViewOptions.DEFAULT, false)
+			MovementRowPanel.detail(carried(5, 0, 0), MovementWindow.D1, THEN_DAY, 0L, ViewOptions.DEFAULT, false)
 				.contains("in bank"));
 	}
 
 	/**
-	 * What survives of AK's dropped live line, and what does not.
+	 * What AK dropped from the live line, and what contract 1.2.0 then dropped of the rest.
 	 *
-	 * <p>The VOLUME survives as a note, because that is what says whether a live price can be trusted. The
-	 * buy/sell SPREAD is gone: it was the densest thing the old block carried and it serves a flipper, who has
-	 * the Grand Exchange open anyway. Its absence is asserted out loud - "buy " and "sell " appear NOWHERE -
-	 * because a deliberate removal is exactly the kind of thing a future hand puts back while restoring
-	 * something else, and nothing else in this file would notice.
-	 *
-	 * <p>The refusal line is the other live note and is pinned here with it: a reader who switched live prices
-	 * on wants to know which of their rows are actually live, and the two notes are the only answer.
+	 * <p>The buy/sell SPREAD went at AK: it was the densest thing the old block carried and it serves a flipper, who has
+	 * the Grand Exchange open anyway. Its absence is asserted out loud - the old "Live price, N traded yesterday" note
+	 * and the old prose line appear NOWHERE - because a deliberate removal is exactly the kind of thing a future hand
+	 * puts back while restoring something else, and nothing else in this file would notice. 1.2.0 then took the volume
+	 * note and the refusal line out as well: a row the traded feeds graded explains itself in the sentence under the
+	 * table ({@code GradedRowDisplayTest}), and a row that carries no grade has nothing to say about them.
 	 */
 	@Test
-	public void theTradedNoteSurvivesAndTheBuySellSpreadAppearsNowhere()
+	public void theOpenCellOfARowWithNoGradeCarriesNoLiveNotes()
 	{
 		final MovementRow live = liveBow(MovementRow.PriceSource.LIVE);
 		final String html = block(live, MovementWindow.D1);
-		assertTrue(html, html.contains("Live price, 517 traded yesterday"));
-		assertFalse("the spread is gone (AK), on purpose: " + html, html.contains("buy "));
-		assertFalse("the spread is gone (AK), on purpose: " + html, html.contains("sell "));
+		assertTrue(html, html.endsWith("</table></div></html>"));
+		assertFalse("no volume note: " + html, html.contains("traded yesterday"));
 		assertFalse(html, html.contains("63.6m"));
 		assertFalse(html, html.contains("63.3m"));
-		assertFalse("and the old prose line went with it", html.contains(MovementRowPanel.LIVE_PRICE_PREFIX));
+		assertFalse("and the old prose line is nowhere", html.contains(MovementRowPanel.LIVE_PRICE_PREFIX));
 
 		// A guide row has no traded note, and neither has the same live row with the switch off.
 		assertFalse(block(guideBow(), MovementWindow.D1).contains("traded yesterday"));
-		assertFalse(MovementRowPanel.detail(live, MovementWindow.D1, TRADED_DAY, LIVE_OFF, false)
+		assertFalse(MovementRowPanel.detail(live, MovementWindow.D1, TRADED_DAY, 0L, LIVE_OFF, false)
 			.contains("traded yesterday"));
 
-		// ...nor a live row the feed recorded no volume for: the note exists to carry a figure.
-		final MovementRow unmeasured = guideBow().asLive(null, null,
-			new MovementRow.LiveFacts(63_600_000L, 63_300_000L, 0L, null));
-		assertFalse(block(unmeasured, MovementWindow.D1).contains("Live price,"));
-
-		// The other live note: which check kept a row on the guide series, and only while the switch is on.
+		// A row the service priced at the guide carries its reason on the long description only; the cell stays four lines.
 		final MovementRow thin = whip().withLiveRefusal(
-			new MovementRow.LiveFacts(1_540_000L, 1_200_000L, 12L, "12 traded yesterday"));
-		assertTrue(block(thin, MovementWindow.D1)
-			.contains("</table>Guide price - live not used: 12 traded yesterday"));
-		assertFalse(MovementRowPanel.detail(thin, MovementWindow.D1, THEN_DAY, LIVE_OFF, false)
-			.contains("live not used"));
+			new MovementRow.LiveFacts(1_540_000L, 1_200_000L, 12L, GradeWords.NO_TRADES));
+		assertTrue(block(thin, MovementWindow.D1), block(thin, MovementWindow.D1).endsWith("</table></div></html>"));
 	}
 
 	/**
@@ -2776,7 +2720,7 @@ public class MovementRowPanelTest
 	@Test
 	public void theNameIsBoldedAboveTheTableOnlyWhenTheFaceHadToCutIt() throws Exception
 	{
-		assertInOrder(MovementRowPanel.detail(whip(), MovementWindow.D1, THEN_DAY, ViewOptions.DEFAULT, true),
+		assertInOrder(MovementRowPanel.detail(whip(), MovementWindow.D1, THEN_DAY, 0L, ViewOptions.DEFAULT, true),
 			"<b>Abyssal whip</b>", "<table");
 		assertFalse("a name the face shows whole is not repeated",
 			block(whip(), MovementWindow.D1).contains("<b>"));
@@ -2809,7 +2753,7 @@ public class MovementRowPanelTest
 	public void theNameIsEscapedAndTheFiguresAreNotDoubleEscaped()
 	{
 		final MovementRow odd = row("Zulrah's <scales> & co", 100L, 90L, 10L, 11.1);
-		final String html = MovementRowPanel.detail(odd, MovementWindow.D1, THEN_DAY, ViewOptions.DEFAULT, true);
+		final String html = MovementRowPanel.detail(odd, MovementWindow.D1, THEN_DAY, 0L, ViewOptions.DEFAULT, true);
 		assertTrue(html, html.contains("<b>Zulrah&#39;s &lt;scales&gt; &amp; co</b>"));
 		assertFalse("the raw name would open a tag inside the block", html.contains("<scales>"));
 
@@ -2823,7 +2767,7 @@ public class MovementRowPanelTest
 		// A part name comes from the game too, and is escaped where the note appends it.
 		final String parts = MovementRowPanel.detail(
 			body("Crystal body", Collections.singletonList(new BankItem.Part(23956, 3L, "Zulrah's <seed>"))),
-			MovementWindow.D1, THEN_DAY, ViewOptions.DEFAULT, false);
+			MovementWindow.D1, THEN_DAY, 0L, ViewOptions.DEFAULT, false);
 		assertTrue(parts, parts.contains("3 x Zulrah&#39;s &lt;seed&gt;"));
 		assertFalse(parts, parts.contains("<seed>"));
 	}
@@ -2849,10 +2793,11 @@ public class MovementRowPanelTest
 		assertTrue(two, two.contains("</table>" + MovementRowPanel.ALCH_NOTE + "<br>1 worn"));
 		assertTrue(two, two.endsWith("1 worn</div></html>"));
 
-		// Three, on the tallest block this plugin writes: one break fewer than there are notes, always.
+		// Four, on the tallest block this plugin writes - the parts, the split, and since 1.2.0 the live figure's sentence
+		// and the last print of each side: one break fewer than there are notes, always.
 		final String three = block(longDescription(), MovementWindow.D1);
 		assertFalse(three, three.contains("</table><br>"));
-		assertEquals("one <br> per note after the first", 2, countOf(three, "<br>"));
+		assertEquals("one <br> per note after the first", 3, countOf(three, "<br>"));
 
 		// And none at all ends the block on the table.
 		assertTrue(block(whip(), MovementWindow.D1), block(whip(), MovementWindow.D1)
@@ -3027,7 +2972,7 @@ public class MovementRowPanelTest
 				twin.setBorder(block.getBorder());
 				twin.setHorizontalAlignment(block.getHorizontalAlignment());
 				twin.setVerticalAlignment(block.getVerticalAlignment());
-				twin.setText(MovementRowPanel.detail(r, MovementWindow.D1, THEN_DAY, ViewOptions.DEFAULT,
+				twin.setText(MovementRowPanel.detail(r, MovementWindow.D1, THEN_DAY, 0L, ViewOptions.DEFAULT,
 					!r.name().equals(p.nameText())));
 				final int written = twin.getPreferredSize().height;
 				assertTrue(r.name() + ": a written block is taller than the air above it (" + written + " vs "
@@ -3070,7 +3015,7 @@ public class MovementRowPanelTest
 			assertEquals("the constructor wrote the one block its seam asked for", before + 1,
 				MovementRowPanel.detailBuilds());
 			assertEquals("...and it is this row's block",
-				MovementRowPanel.detail(whip(), MovementWindow.D1, THEN_DAY, ViewOptions.DEFAULT, false),
+				MovementRowPanel.detail(whip(), MovementWindow.D1, THEN_DAY, 0L, ViewOptions.DEFAULT, false),
 				detail(p).getText());
 			assertTrue(detail(p).isVisible());
 			assertEquals(MovementRowPanel.ROW_HEIGHT + detailHeight(p), p.getPreferredSize().height);
@@ -3194,6 +3139,72 @@ public class MovementRowPanelTest
 	 * the usual day, the switch on) reads differently. Both texts are compared with the pure builders under the
 	 * row's own arguments, and the defaults' texts are asserted to differ, or the comparison proves nothing.
 	 */
+	/** 2026-09-07T21:32:16Z: a baseline table's own {@code %LAST_UPDATE%} on {@link #THEN_DAY}. */
+	private static final long TABLE_0907 = 1_788_816_736L;
+
+	/**
+	 * Contract 1.1.2: the wiki saves eight tables a day, so the open block's "Was" line names the baseline TABLE by its
+	 * time as well as its day - in UTC, and saying so, beside a date that is a UTC date. No time, or one that is not on
+	 * the status's baseline day, prints the day alone as every earlier build did; the hidden block keeps the time, which
+	 * is not an amount; and a live row's traded day, a whole UTC day, keeps its date alone.
+	 */
+	@Test
+	public void theOpenBlockNamesTheBaselineTablesTime()
+	{
+		assertEquals("the fixture is a time on the baseline day", THEN_DAY, RevisionRef.dayOf(TABLE_0907));
+		final String timed = MovementRowPanel.detail(whip(), MovementWindow.D1, THEN_DAY, TABLE_0907,
+			ViewOptions.DEFAULT, false);
+		assertTrue(timed, timed.contains("1,500,000 gp&nbsp; (07&nbsp;Sep&nbsp;21:32&nbsp;UTC)"));
+		assertTrue(MovementRowPanel.detail(whip(), MovementWindow.D1, THEN_DAY, 0L, ViewOptions.DEFAULT, false)
+			.contains("1,500,000 gp&nbsp; (07 Sep)"));
+		assertTrue("a time on another day is not this day's table",
+			MovementRowPanel.detail(whip(), MovementWindow.D1, THEN_DAY, TABLE_0907 + 86_400L, ViewOptions.DEFAULT, false)
+				.contains("&nbsp; (07 Sep)"));
+		assertTrue(MovementRowPanel.maskedDetail(whip(), MovementWindow.D1, THEN_DAY, TABLE_0907, ViewOptions.DEFAULT,
+			false).contains("(07&nbsp;Sep&nbsp;21:32&nbsp;UTC)"));
+
+		final String live = MovementRowPanel.detail(liveBow(MovementRow.PriceSource.LIVE, TRADED_DAY), MovementWindow.D1,
+			THEN_DAY, TABLE_0907, ViewOptions.DEFAULT, false);
+		assertTrue(live, live.contains("(10 Sep)"));
+		assertFalse("the guide table's time never stands beside a traded day: " + live, live.contains("UTC"));
+	}
+
+	/**
+	 * The time costs the open block no line where the figure is short, and at most ONE where it is long - the value
+	 * wraps, never the label column ({@code MovementRowPanel.cell}'s {@code nowrap}): before it, the whip's block grew
+	 * by three lines as "Worth now", "You have" and "Change 1d" broke in two.
+	 */
+	@Test
+	public void theTableTimeCostsTheOpenBlockAtMostOneLine() throws Exception
+	{
+		onEdt(() ->
+		{
+			final MovementRow shortFigure = row("Shark", 1_000L, 990L, 10L, 1.0d);
+			assertEquals("a short figure: the same height", openHeight(shortFigure, 0L), openHeight(shortFigure, TABLE_0907));
+
+			final MovementRowPanel probe = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY, TABLE_0907,
+				ViewOptions.DEFAULT, url -> { }, null, false);
+			leftClick(probe);
+			final int line = detail(probe).getFontMetrics(detail(probe).getFont()).getHeight();
+			for (final MovementRow wide : Arrays.asList(whip(), row("Twisted bow", 1_634_372_640L, 1_621_000_000L,
+				13_372_640L, 0.8d)))
+			{
+				final int grew = openHeight(wide, TABLE_0907) - openHeight(wide, 0L);
+				assertTrue(wide.name() + " grew by " + grew + " px, more than one " + line + " px line", grew <= line + 1);
+			}
+		});
+	}
+
+	/** The height of {@code row}'s cell opened, its block written with {@code thenSeconds}. EDT only. */
+	private static int openHeight(final MovementRow row, final long thenSeconds)
+	{
+		final MovementRowPanel p = new MovementRowPanel(row, null, MovementWindow.D1, THEN_DAY, thenSeconds,
+			ViewOptions.DEFAULT, url -> { }, null, false);
+		leftClick(p);
+		assertTrue(p.expanded());
+		return p.getPreferredSize().height;
+	}
+
 	@Test
 	public void theLateTextsAreWrittenFromWhatTheRowWasBuiltWith() throws Exception
 	{
@@ -3203,13 +3214,13 @@ public class MovementRowPanelTest
 			final MovementRow live = liveBow(MovementRow.PriceSource.LIVE);
 			final MovementRowPanel p = new MovementRowPanel(live, null, MovementWindow.D30, day, LIVE_OFF);
 			leftClick(p);
-			final String block = MovementRowPanel.detail(live, MovementWindow.D30, day, LIVE_OFF, false);
+			final String block = MovementRowPanel.detail(live, MovementWindow.D30, day, 0L, LIVE_OFF, false);
 			assertEquals("the block, as the row's own window, day and switches write it", block,
 				detail(p).getText());
 			assertTrue(block, block.contains(MovementRowPanel.L_CHANGE + MovementWindow.D30.label()));
 			assertTrue(block, block.contains("(12 Aug)"));
 			assertNotEquals("the defaults write another block, or this proves nothing", block,
-				MovementRowPanel.detail(live, MovementWindow.DEFAULT, THEN_DAY, ViewOptions.DEFAULT, false));
+				MovementRowPanel.detail(live, MovementWindow.DEFAULT, THEN_DAY, 0L, ViewOptions.DEFAULT, false));
 
 			final String tip = MovementRowPanel.tooltip(live, MovementWindow.D30, day, LIVE_OFF);
 			assertEquals("the long description, likewise", tip, p.tooltipHtml());
@@ -3256,7 +3267,7 @@ public class MovementRowPanelTest
 	/** The open cell's block for one row, under the default switches and the fixed baseline day. */
 	private static String block(MovementRow row, MovementWindow window)
 	{
-		return MovementRowPanel.detail(row, window, THEN_DAY, ViewOptions.DEFAULT, false);
+		return MovementRowPanel.detail(row, window, THEN_DAY, 0L, ViewOptions.DEFAULT, false);
 	}
 
 	/**
@@ -3349,8 +3360,9 @@ public class MovementRowPanelTest
 	/**
 	 * The tallest description this plugin can write: every optional line at once. The name, a live traded price
 	 * with both sides and the volume (T6), a parts line (R4), a window line stamped with the traded day and its
-	 * "(traded average)" note (U3), the holding, a three-way carried split (Y3) and the change - seven lines,
-	 * against the three an alch row has, and every one of them long enough to wrap again inside the cell.
+	 * "(average of that day's trades)" note (U3), the holding, a three-way carried split (Y3), the change, and since
+	 * contract 1.2.0 the live figure's one sentence about both sides and its last print of each - against the three
+	 * an alch row has, and every one of them long enough to wrap again inside the cell.
 	 *
 	 * <p>Synthetic, and deliberately so: no real item is both untradeable-with-parts and liquid enough to be
 	 * priced live. It is a HEIGHT fixture, and what it has to be is the row whose description wraps to the most
@@ -3362,9 +3374,15 @@ public class MovementRowPanelTest
 		sources.put(MovementWindow.D1, MovementRow.PriceSource.LIVE);
 		final Map<MovementWindow, LocalDate> days = new EnumMap<>(MovementWindow.class);
 		days.put(MovementWindow.D1, TRADED_DAY);
+		final GradedMove.Side buy = new GradedMove.Side(16_800_000L, 18_400_000L, 16_800_000d / 18_400_000d - 1d, 6,
+			16_800_000L, LAST_PRINT_SECONDS);
+		final GradedMove.Side sell = new GradedMove.Side(16_600_000L, 18_200_000L, 16_600_000d / 18_200_000d - 1d, 5,
+			16_600_000L, LAST_PRINT_SECONDS + 1_500L);
+		final GradedMove graded = new GradedMove(Grade.SOFT, GradeWords.volume(3), -1_605_234d / 18_300_000d,
+			18_300_000L, -1_605_234L, false, buy, sell, TRADED_DAY.plusDays(1L), TRADED_DAY, 17_500_000L);
 		return new MovementRow(23975, "Crystal body", 5, false, 16_694_766L, 18_300_000L, -1_605_234L,
 			-1_605_234d * 100.0 / 18_300_000d, 83_473_830L, MovementRow.PriceSource.LIVE, seeds(), sources, days,
-			new MovementRow.LiveFacts(16_800_000L, 16_600_000L, 517L, null), 3, 1, 1);
+			new MovementRow.LiveFacts(16_800_000L, 16_600_000L, 517L, null), 3, 1, 1, 0, graded);
 	}
 
 	/**

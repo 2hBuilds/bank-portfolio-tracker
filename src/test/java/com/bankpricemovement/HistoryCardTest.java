@@ -252,8 +252,7 @@ public class HistoryCardTest
 
 	/**
 	 * Ruling 9.7: in History the second line ("n days recorded since d") carries no hover - the guide-price sentence
-	 * would describe a line that is not there - and in Items the guide-price hover comes back. Only visible with
-	 * "Show hover text" on, which is why it is switched on here.
+	 * would describe a line that is not there - and in Items the guide-price hover comes back.
 	 */
 	@Test
 	public void theRecordLineCarriesNoHoverAndItemsGetsItsOwnBack() throws Exception
@@ -261,7 +260,6 @@ public class HistoryCardTest
 		draw(readings(TODAY.minusDays(1), TODAY));
 		onEdt(() ->
 		{
-			panel.applyOptions(ViewOptions.DEFAULT.withShowHoverText(true));
 			assertEquals(SidebarView.HISTORY, panel.view());
 			assertNull("no hover on the record line", panel.updateLabel().getToolTipText());
 			panel.pressView(SidebarView.ITEMS);

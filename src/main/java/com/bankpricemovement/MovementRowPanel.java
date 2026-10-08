@@ -113,12 +113,12 @@ import net.runelite.client.util.LinkBrowser;
  * comes from - and its price history on the wiki, both through {@link LinkBrowser#browse}. The tests hand in
  * their own browser through the package-private constructor; the public ones use RuneLite's.
  *
- * <p><b>Guide prices (addendum K), by calendar day (addendum L).</b> The unit price is the Jagex GUIDE price -
- * what the in-game Grand Exchange, the GE web site and RuneLite's own tooltip all show - and "then" is that same
- * table as it stood on an earlier DAY. So the tooltip names the figure ("Guide price:") and stamps the baseline
- * with the day the table's own {@code %LAST_UPDATE%} claims ("1d ago (07 Sep): 1,124 gp", L7): the series is one
- * step per UTC day (L-A) and the wiki's bot republishes it at a random hour (L-C), so the publication clock the
- * K build printed here said nothing about which day's prices the reader was looking at.
+ * <p><b>Guide prices (addendum K), as they stood a window earlier (addendum L, contract 1.1.2).</b> The unit price is
+ * the Jagex GUIDE price - what the in-game Grand Exchange, the GE web site and RuneLite's own tooltip all show - and
+ * "then" is that same table as it stood at least the window's span earlier. So the tooltip names the figure ("Guide
+ * price:") and stamps the baseline with the day the table's own {@code %LAST_UPDATE%} claims ("1d ago (07 Sep): 1,124
+ * gp", L7) - never a revision's publication clock, which says nothing about which prices the reader is looking at -
+ * and since the wiki saves several tables a day the open block adds that table's own time ({@link #detail}).
  *
  * <p>The block the row opens stays load-bearing, for a narrower reason than before. Its figures are EXACT and
  * the face's are not: {@code signedGp} prints "+3.4k" where the block prints "+3,432", because a gp column
@@ -142,7 +142,10 @@ import net.runelite.client.util.LinkBrowser;
  * and now waits for a caller that asks.
  *
  * <p>The change is signed by the gp figure, not by the percentage (L2): a fall too small to survive
- * truncation still reads "-0.0%" and still paints red, exactly as the GE site's own row does.
+ * truncation still reads "-0.0%" and still paints red, exactly as the GE site's own row does. A GRADED row
+ * (contract 1.2.0) is signed by its MOVE instead ({@link #signSource}): its gp figure is rounded to whole gp and a
+ * cheap item's small move can round to 0 while the percentage does not, which would have printed an unsigned grey
+ * "0.4%" - so the sign, the colour and the rail follow the move, and only a move of exactly zero is flat.
  *
  * <p><b>Three switches are handed to the row</b> ({@link ViewOptions}, at build time - a row is built once and
  * never re-read, so a switch that moves rebuilds the page). The two texts written later since addendum AS, the
@@ -168,16 +171,16 @@ import net.runelite.client.util.LinkBrowser;
  * known yet" everywhere else on this panel and this figure is never coming - and the tooltip says the whole of
  * it in a sentence ({@link #untradeableLine}) rather than stamping a baseline day and a change that cannot
  * exist.</li>
- * <li><b>Live prices</b> (addendum T, line T6; {@code docs/bank-price-movement-addendum-T-2026-09-12.md}). A row
- * the service priced from the wiki's live TRADED series paints exactly as a guide row does - same price line,
- * same gp figure, same percentage, same rail - because a live price is a price and a tag on every liquid row
- * would be a tag on most of the list. The tooltip is where the series is named: "Live traded price: ... (buy ...,
- * sell ...; 517 traded yesterday)", the window line's "(traded average)" or "(guide - too few or too scattered
- * trades that day)",
- * and, on a row that stayed on the guide while the switch was on, the one check that refused it. Nothing on the
- * face moves, which is the whole of T6. Since addendum U (line U3) that window line also stamps the day the ROW
- * compared against ({@link #stampedDay}) rather than the guide's baseline day, because the two are different days
- * whenever Jagex has not yet published today's table.</li>
+ * <li><b>Live prices</b> (addendum T, line T6; {@code docs/bank-price-movement-addendum-T-2026-09-12.md}; contract
+ * 1.2.0, line L5). A row the service priced from today's trades paints exactly as a guide row does - same price line,
+ * same gp figure, same percentage, same rail - because a live price is a price and a tag on every liquid row would be
+ * a tag on most of the list. The ONE thing a graded row can add to its face is a WORD in the free slot under the
+ * percentage ({@link #slotWord}): "low vol 3", "spread 55%", "last 1d ago" for a figure that is soft,
+ * "no trades" for a row with no figure at all - 11 px, the slot's grey, nothing else about the row changed by a pixel
+ * (the user's pick, option a). The open block is where the figure is explained, in one sentence about both sides
+ * ({@link #provenance}) and the last print of each. Since addendum U (line U3) the window line also stamps the day
+ * the ROW compared against ({@link #stampedDay}) rather than the guide's baseline day, because the two are
+ * different days whenever Jagex has not yet published today's table.</li>
  * <li><b>Inventory and worn gear</b> (addendum Y, line Y3). Nothing on the FACE moves: a merged stack is one row
  * with the combined quantity, which is what the row would have drawn had the bank held them all. The tooltip is
  * where the merge is explained, in one line under the holding ({@link #splitLine}), and only on a row that is not
@@ -261,37 +264,32 @@ public class MovementRowPanel extends JPanel
 	 */
 	public static final String PARTS_PREFIX = "Untradeable - valued as its parts: ";
 	/**
-	 * How a LIVE row's tooltip opens instead of "Guide price: " (addendum T, line T6;
-	 * {@code docs/bank-price-movement-addendum-T-2026-09-12.md}). The row's FACE is the same as a guide row's -
-	 * a live price is a price - so the tooltip is the one place that names the series, exactly as it is the one
-	 * place that names a parts valuation.
+	 * How a graded row's tooltip opens instead of "Guide price: " (addendum T, line T6, as contract 1.2.0 rewords it): the
+	 * price is built from today's trades - yesterday's average moved by the same-side move today ({@link GradedMove}) -
+	 * and not read off the guide table, and the tooltip is the one place that says so, exactly as it is the one place
+	 * that names a parts valuation. The row's FACE is the same as a guide row's: a price is a price, and how far its
+	 * move can be trusted is the word under the percentage ({@link #slotWord}).
 	 */
-	public static final String LIVE_PRICE_PREFIX = "Live traded price: ";
+	public static final String LIVE_PRICE_PREFIX = "Price from today's trades: ";
 	/**
-	 * What a live window's baseline figure is (T4): the volume-weighted average of that calendar day's bulk
-	 * traded bucket, not a guide table's entry. Said on the line so a reader comparing the row against the Grand
+	 * What a graded window's baseline figure is (T4, contract 1.2.0): the average of that calendar day's trades, side
+	 * by side, and not a guide table's entry. Said on the line so a reader comparing the row against the Grand
 	 * Exchange site knows why the two differ.
 	 */
-	public static final String TRADED_AVERAGE_NOTE = " (traded average)";
+	public static final String TRADED_AVERAGE_NOTE = " (average of that day's trades)";
 	/**
-	 * What a live row's window says when that day's traded bucket could not answer (T4, T6): the window fell back
-	 * to the row's guide figures, both ends of it, so the comparison is a guide one even though the price above is
-	 * live. The dash rules and the arithmetic are unchanged; only this says which series answered.
-	 *
-	 * <p>"too few or too scattered" because there are now two ways a bucket is refused (addendum V, lines V3 and
-	 * V5): too little volume, as since T4, or two daily averages more than a tenth apart - the Tinderbox bucket
-	 * whose buy side averaged 37 gp on 5,063 trades against a sell side of 12 gp on 484. One note covers both
-	 * deliberately: the reader of a window line wants to know that the figure beside it is a guide figure, and
-	 * which of the two refusals it was is a fact about the wiki's day and not about this item.
+	 * What a graded row's window line says when that window has no figure at all (contract 1.2.0): nothing traded that
+	 * day, or nothing today to set against it, so the line is a dash and the note says why. Before 1.2.0 a window like
+	 * that fell back to the guide's own two ends and this line named the five liquidity checks that refused it.
 	 */
-	public static final String WINDOW_FELL_BACK_NOTE = " (guide - too few or too scattered trades that day)";
+	public static final String WINDOW_NO_FIGURE_NOTE = " (no trades to compare with that day)";
 	/**
-	 * How the one line a GUIDE row gains while the live switch is on opens (T6), before the check that refused it
-	 * ({@link MovementRow.LiveFacts#reason()}). Without it a reader who switched live prices on has no way to tell
-	 * a row the traded series moved from one it left alone - the two paint identically - and the whole question
-	 * they have is which of their items are actually live.
+	 * How the one line a row priced at the GUIDE gains while the live switch is on opens (T6, contract 1.2.0), before
+	 * the 1d grade's word ({@link MovementRow.LiveFacts#reason()}) - "Valued at the guide price: no trades". Without it a
+	 * reader who switched live prices on has no way to tell a row the trades priced from one they left alone: the two
+	 * paint identically.
 	 */
-	public static final String LIVE_NOT_USED_PREFIX = "Guide price - live not used: ";
+	public static final String GUIDE_VALUED_PREFIX = "Valued at the guide price: ";
 	/**
 	 * The places a merged stack can be, as the split line names them (addendum Y, line Y3;
 	 * {@code docs/bank-price-movement-addendum-Y-2026-09-13.md}). Each is a suffix on its own figure, so the line
@@ -422,6 +420,16 @@ public class MovementRowPanel extends JPanel
 	private static final Font PCT_FONT = Widgets.sansBold(PCT_SIZE);
 	private static final Font GP_FONT = Widgets.sans(GP_SIZE);
 	private static final Font MENU_FONT = Widgets.sans(MENU_SIZE);
+	/**
+	 * The faces a grade word is tried at, largest first (contract 1.2.0, L5): the 11 px of line 3's working, then 10 and 9. A
+	 * word is drawn at the first that holds it whole in the slot under the percentage ({@link #PCT_COLUMN} px), which is the
+	 * 11 px of every word but the longest - "last 10h ago" to "last 23h ago" measure 59 at 11 px in the Swing sans this
+	 * plugin draws in and 58 at 10, so they step on to 9 - because the face is the platform's logical one and no table of
+	 * widths measured on one machine holds on another (the 10 px step is there for a face a pixel wider than this one;
+	 * {@link #alignBaselines} makes the same point about descents). Never an ellipsis in practice: the shortest
+	 * face holds every word the grade can say, which a test measures.
+	 */
+	private static final Font[] WORD_FONTS = {SMALL_FONT, Widgets.sans(10), Widgets.sans(9)};
 
 	/**
 	 * How many times {@link #detail} and the four-argument {@link #tooltip} have run in this JVM - the evidence
@@ -458,6 +466,8 @@ public class MovementRowPanel extends JPanel
 	private final MovementWindow window;
 	@Nullable
 	private final LocalDate thenDay;
+	/** The baseline table's own time, unix seconds, which the open block prints beside {@link #thenDay}; 0 = unknown. */
+	private final long thenSeconds;
 	private final ViewOptions view;
 	/** 1.1.0 part E: whether this row prints its masks in place of every amount and quantity ({@link AmountMask}). */
 	private final boolean hide;
@@ -577,6 +587,21 @@ public class MovementRowPanel extends JPanel
 		@Nullable LocalDate thenDay, @Nullable ViewOptions options, Consumer<String> browser,
 		@Nullable Expansion expansion, boolean hideAmounts)
 	{
+		this(row, icon, window, thenDay, 0L, options, browser, expansion, hideAmounts);
+	}
+
+	/**
+	 * The list builder's constructor since contract 1.1.2.
+	 *
+	 * @param thenSeconds the baseline table's own time ({@code %LAST_UPDATE%}, unix seconds) - {@code Status
+	 *                    .baselineRevisionSeconds()} - which the open block prints beside the day ("06 Oct 21:35 UTC"),
+	 *                    because since the wiki saves eight tables a day a date no longer names one; 0 prints the day
+	 *                    alone, as every build before it did
+	 */
+	MovementRowPanel(MovementRow row, @Nullable AsyncBufferedImage icon, MovementWindow window,
+		@Nullable LocalDate thenDay, long thenSeconds, @Nullable ViewOptions options, Consumer<String> browser,
+		@Nullable Expansion expansion, boolean hideAmounts)
+	{
 		this.row = Objects.requireNonNull(row, "row");
 		this.hide = hideAmounts;
 		this.icon = icon;
@@ -585,6 +610,7 @@ public class MovementRowPanel extends JPanel
 		// AS: kept rather than spent here - the open block and the long description are both written later.
 		this.window = window;
 		this.thenDay = thenDay;
+		this.thenSeconds = thenSeconds;
 		this.view = options == null ? ViewOptions.DEFAULT : options;
 		this.rail = railColor(row);
 
@@ -807,13 +833,20 @@ public class MovementRowPanel extends JPanel
 	 * paying for 250 blocks nobody had opened. Every call is counted ({@link #detailBuilds()}), which is how the
 	 * tests prove that a page writes none.
 	 *
+	 * <p><b>The "Was" line names the table's TIME</b> (contract 1.1.2): "4,190 gp (06 Oct 21:35 UTC)" when
+	 * {@code thenSeconds} is the baseline table's own time and the line is the guide's, because the wiki saves eight
+	 * tables a day and a date alone no longer says which one the row compared against. A live row's traded day is a
+	 * whole UTC day and keeps its date alone.
+	 *
+	 * @param thenSeconds the baseline table's own time, unix seconds ({@code Status.baselineRevisionSeconds()}); 0 or a
+	 *                    time on another day than {@code thenDay} prints the day alone
 	 * @param showName whether to bold the item's name above the table - true only when the row's face had to cut
 	 *                 it, which is the one case a reader cannot read it from the cell they are looking at
 	 */
 	public static String detail(MovementRow row, @Nullable MovementWindow window, @Nullable LocalDate thenDay,
-		@Nullable ViewOptions options, boolean showName)
+		long thenSeconds, @Nullable ViewOptions options, boolean showName)
 	{
-		return detail(row, window, thenDay, options, showName, false);
+		return detail(row, window, thenDay, thenSeconds, options, showName, false);
 	}
 
 	/**
@@ -824,13 +857,13 @@ public class MovementRowPanel extends JPanel
 	 * untradeable item reverts to - say nothing about the player's holding and are left as they are.
 	 */
 	public static String maskedDetail(MovementRow row, @Nullable MovementWindow window, @Nullable LocalDate thenDay,
-		@Nullable ViewOptions options, boolean showName)
+		long thenSeconds, @Nullable ViewOptions options, boolean showName)
 	{
-		return detail(row, window, thenDay, options, showName, true);
+		return detail(row, window, thenDay, thenSeconds, options, showName, true);
 	}
 
 	private static String detail(MovementRow row, @Nullable MovementWindow window, @Nullable LocalDate thenDay,
-		@Nullable ViewOptions options, boolean showName, boolean hide)
+		long thenSeconds, @Nullable ViewOptions options, boolean showName, boolean hide)
 	{
 		Objects.requireNonNull(row, "row");
 		DETAIL_BUILDS.incrementAndGet();
@@ -852,11 +885,15 @@ public class MovementRowPanel extends JPanel
 		cell(sb, L_NOW, row.unitPrice() == null
 			? MovementMath.DASH : (hide ? AmountMask.AMOUNT : MovementMath.formatExact(row.unitPrice())) + " gp each", null);
 
+		// A graded row with no figure (contract 1.2.0, "no trades") has nothing it was compared against, so its Was line is
+		// the dash alone - a day in brackets would claim a comparison nothing made.
+		final GradedMove graded = live ? row.graded() : null;
+		final boolean noFigure = graded != null && !graded.hasFigure();
 		if (!alch)
 		{
-			cell(sb, L_WAS, (row.thenPrice() == null
+			cell(sb, L_WAS, noFigure ? MovementMath.DASH : (row.thenPrice() == null
 				? MovementMath.DASH : (hide ? AmountMask.AMOUNT : MovementMath.formatExact(row.thenPrice())) + " gp")
-				+ "&nbsp; (" + MovementMath.formatDay(stampedDay(row, w, thenDay, live)) + ")", null);
+				+ "&nbsp; (" + stampedText(row, w, thenDay, thenSeconds, live) + ")", null);
 		}
 
 		cell(sb, L_HAVE, AmountMask.quantity(hide, MovementMath.formatExact(row.quantity())) + "&nbsp; =&nbsp; "
@@ -869,7 +906,7 @@ public class MovementRowPanel extends JPanel
 			// quiet one its face uses (AL), because here it has nothing beside it to compete with.
 			cell(sb, L_CHANGE + w.label(), row.hasMovement()
 				? (hide ? AmountMask.SHORT : signedExact(row.deltaGp())) + " each&nbsp; "
-				+ MovementMath.formatPct(row.deltaPct(), row.deltaGp())
+				+ MovementMath.formatPct(row.deltaPct(), signSource(row))
 				: MovementMath.DASH, row.hasMovement() ? textChangeColor(row) : null);
 		}
 		sb.append("</table>");
@@ -877,8 +914,12 @@ public class MovementRowPanel extends JPanel
 		final List<String> notes = new ArrayList<>(4);
 		addNote(notes, alch ? ALCH_NOTE : partsLine(row));
 		addNote(notes, view.countInventory() || view.countGrandExchange() ? splitLine(row, hide) : "");
-		addNote(notes, live ? liveRefusalLine(row) : "");
-		addNote(notes, live ? tradedNote(row) : "");
+		// Contract 1.2.0, L5: what the live figure was made of, in one sentence about both sides, and the last print of each.
+		if (graded != null)
+		{
+			addNote(notes, provenance(graded, w, hide));
+			addNote(notes, lastPrints(graded, hide));
+		}
 		for (int i = 0; i < notes.size(); i++)
 		{
 			note(sb, notes.get(i), i == 0);
@@ -886,10 +927,18 @@ public class MovementRowPanel extends JPanel
 		return sb.append("</div></html>").toString();
 	}
 
-	/** One labelled line; {@code colour} paints the value, null leaves it the block's own grey. */
+	/**
+	 * One labelled line; {@code colour} paints the value, null leaves it the block's own grey.
+	 *
+	 * <p>The label cell is {@code nowrap} (contract 1.1.2): a value too wide for its column - "1,621,000,000 gp (07 Sep
+	 * 21:32 UTC)" since the "Was" line names the table's time - used to make Swing's table squeeze the LABEL column,
+	 * wrapping "Worth now", "You have" and "Change 1d" onto two lines each, three lines taller for one long figure. With
+	 * the labels held whole the value wraps instead, the time as one piece ({@code &nbsp;} inside it): one line, and
+	 * only on a row whose figure is that wide.
+	 */
 	private static void cell(StringBuilder sb, String label, String value, @Nullable Color colour)
 	{
-		sb.append("<tr><td>").append(Widgets.escapeHtml(label)).append("&nbsp;&nbsp;</td><td>");
+		sb.append("<tr><td nowrap>").append(Widgets.escapeHtml(label)).append("&nbsp;&nbsp;</td><td>");
 		if (colour != null)
 		{
 			sb.append("<font color='#").append(String.format("%06X", colour.getRGB() & 0xFFFFFF)).append("'>")
@@ -922,18 +971,161 @@ public class MovementRowPanel extends JPanel
 		sb.append(first ? "" : "<br>").append(Widgets.escapeHtml(text));
 	}
 
+	/** What a row with no figure says on 1d (contract 1.2.0, L5): nothing to compare, so the guide price stands. */
+	static final String PROVENANCE_NONE = "No trades in the last 24 hours or yesterday; valued at the guide price.";
+	/** The 1d fallback's opening (L5): nothing traded in the last 24 hours, so the figure is yesterday's own move. */
+	static final String PROVENANCE_YDAY = "No trades in the last 24 hours; this is yesterday's move";
+	/** What a side with no print in the last 24 hours is told as ("no sells in the last 24 hours"). */
+	private static final String LAST_24_HOURS = "in the last 24 hours";
+	/** The sentence that closes a two-sided figure whose sides moved together (L3's ten points). */
+	static final String SIDES_AGREE = "Both sides agree.";
+	/** ...and the one that closes a figure whose sides moved apart. */
+	static final String SIDES_DISAGREE = "The sides disagree, so the move is uncertain.";
+	/** The spread clause's opening (the row says "spread 30%" and this explains it): "The buy and sell prices are 30% apart." */
+	private static final String SPREAD_OPENING = "The buy and sell prices are ";
+	/** ...and its close, after the whole percentage. */
+	private static final String SPREAD_CLOSING = "% apart.";
+
 	/**
-	 * What survives of the live line (AK): how many traded yesterday, which is what says whether a live price
-	 * can be trusted. The buy and sell sides went with the spread - see {@link #detail}.
+	 * The open block's one sentence about HOW the figure was made (contract 1.2.0, L5), from the graded move's sides:
+	 *
+	 * <pre>
+	 * Buyers paid 1,338 in the last 24 hours vs 2,280 on average yesterday (-41.3%); sellers got 1,250 vs 2,176 (-42.5%). Both sides agree.
+	 * Buyers paid 1,338 in the last 24 hours vs 2,280 on average yesterday (-41.3%); sellers got 1,250 vs 2,176 (+3.0%). The sides disagree, so the move is uncertain.
+	 * Buyers paid 1,338 in the last 24 hours vs 2,280 on average yesterday (-41.3%); sellers got 1,000 vs 2,176 (-54.0%). Both sides agree. The buy and sell prices are 30% apart.
+	 * Buyers paid 1,338 in the last 24 hours vs 2,280 on average yesterday (-41.3%); no sells in the last 24 hours.
+	 * No trades in the last 24 hours; this is yesterday's move (06 Oct vs 05 Oct).
+	 * No trades in the last 24 hours or yesterday; valued at the guide price.
+	 * </pre>
+	 *
+	 * <p>A measured figure compares each side's median of the last 24 hours' trades with that side's average on the
+	 * window's day; the day is "yesterday" on 1d and its date ("on 30 Sep") on every longer window. A side with nothing in
+	 * the last 24 hours says so ("no sells in the last 24 hours" - and the row is priced at the other side alone) and a
+	 * side with no average to compare with says that instead. The percentages are
+	 * {@link MovementMath#formatPct} as the rest of the plugin prints one. While the amounts are hidden every price is
+	 * the mask, as the block's own figures are ({@link AmountMask}): the item's price times the quantity the mask hides
+	 * is the stack, and a sentence that printed it would undo the block's own masking.
+	 *
+	 * <p>A row whose word is the spread word ("spread 30%", {@link GradeWords#isSpread}) adds one clause at the end of a
+	 * two-sided figure's sentence, "The buy and sell prices are 30% apart." - what the number on the face means. It is
+	 * {@link GradedMove#spreadPercent}, the current pair's gap as a whole percentage of its middle - a percentage, so the
+	 * mask leaves it - and it is left out when the figure carries none (a pair is only a spread when both of its prints are
+	 * from the last 24 hours, and the plain "spread" of a price outside the anchor's range has no pair to measure).
+	 *
+	 * @param graded the row's graded move
+	 * @param window the window on screen; null reads as 1d
+	 * @param hide   whether the amounts are hidden
 	 */
-	private static String tradedNote(MovementRow row)
+	public static String provenance(GradedMove graded, @Nullable MovementWindow window, boolean hide)
 	{
-		final MovementRow.LiveFacts facts = row.liveFacts();
-		if (!row.isLive() || facts == null || facts.volumeYesterday() <= 0L)
+		final MovementWindow w = window == null ? MovementWindow.DEFAULT : window;
+		final boolean oneDay = w == MovementWindow.D1;
+		if (!graded.hasFigure())
+		{
+			return oneDay ? PROVENANCE_NONE
+				: "No trades to compare with over " + w.label() + ", so there is no figure for it.";
+		}
+		final LocalDate thenDay = graded.thenDay();
+		if (graded.fallback())
+		{
+			return (oneDay ? PROVENANCE_YDAY : "No trades in the last 24 hours; this is the move up to yesterday") + " ("
+				+ MovementMath.formatDay(graded.nowDay()) + " vs " + MovementMath.formatDay(thenDay) + ").";
+		}
+		final boolean yesterday = oneDay && thenDay != null && graded.nowDay() != null
+			&& thenDay.equals(graded.nowDay().minusDays(1L));
+		final String dayName = yesterday ? "yesterday" : thenDay == null ? "that day" : "on " + MovementMath.formatDay(thenDay);
+		final GradedMove.Side buy = graded.buy();
+		final GradedMove.Side sell = graded.sell();
+		final boolean buyToday = buy.now() != null;
+		final boolean sellToday = sell.now() != null;
+		final StringBuilder sb = new StringBuilder(160);
+		if (buyToday && sellToday)
+		{
+			sb.append(sideClause("Buyers paid", buy, dayName, true, hide)).append("; ")
+				.append(sideClause("sellers got", sell, dayName, false, hide)).append('.');
+			if (buy.move() != null && sell.move() != null)
+			{
+				sb.append(' ').append(graded.sidesAgree() ? SIDES_AGREE : SIDES_DISAGREE);
+			}
+			sb.append(spreadClause(graded));
+		}
+		else if (buyToday)
+		{
+			sb.append(sideClause("Buyers paid", buy, dayName, true, hide)).append("; no sells ").append(LAST_24_HOURS)
+				.append('.');
+		}
+		else
+		{
+			sb.append(sideClause("Sellers got", sell, dayName, true, hide)).append("; no buys ").append(LAST_24_HOURS)
+				.append('.');
+		}
+		return sb.toString();
+	}
+
+	/**
+	 * The spread clause of {@link #provenance}: " The buy and sell prices are 30% apart." (with its leading space) for a
+	 * row whose word is the spread word and whose figure carries the pair's spread, or "" for any other row and for one
+	 * whose pair is no current spread.
+	 */
+	private static String spreadClause(GradedMove graded)
+	{
+		if (!GradeWords.isSpread(graded.word()))
 		{
 			return "";
 		}
-		return "Live price, " + MovementMath.formatExact(facts.volumeYesterday()) + " traded yesterday";
+		final Long pct = graded.spreadPercent();
+		return pct == null ? "" : " " + SPREAD_OPENING + pct + SPREAD_CLOSING;
+	}
+
+	/**
+	 * One side of {@link #provenance}: "Buyers paid 1,338 in the last 24 hours vs 2,280 on average yesterday (-41.3%)", or -
+	 * as the second clause, where "in the last 24 hours" and "on average yesterday" were said a moment ago - "sellers got
+	 * 1,250 vs 2,176 (-42.5%)". A side with a price and no average to set it against says "(no average for yesterday)".
+	 */
+	private static String sideClause(String who, GradedMove.Side side, String dayName, boolean full, boolean hide)
+	{
+		final String now = AmountMask.amount(hide, MovementMath.formatExact(side.now()));
+		if (side.then() == null || side.move() == null)
+		{
+			return who + " " + now + (full ? " " + LAST_24_HOURS : "") + " (no average for " + dayName + ")";
+		}
+		final String then = AmountMask.amount(hide, MovementMath.formatExact(side.then()));
+		return who + " " + now + (full ? " " + LAST_24_HOURS : "") + " vs " + then
+			+ (full ? " on average " + dayName : "") + " (" + MovementMath.formatPct(side.move() * 100.0d) + ")";
+	}
+
+	/**
+	 * The open block's last line for a graded row (contract 1.2.0, L5): the last print of each side with its time -
+	 * "Last bought 1,338 at 13:40 UTC; last sold 1,250 at 14:02 UTC." - in UTC like every date beside it, with the date as
+	 * well when the print is not from the figure's own day. A side with no print is left out and a row with none at all
+	 * adds no line. Prices are the mask while the amounts are hidden.
+	 */
+	static String lastPrints(GradedMove graded, boolean hide)
+	{
+		final List<String> parts = new ArrayList<>(2);
+		addLast(parts, "last bought", graded.buy(), graded, hide);
+		addLast(parts, "last sold", graded.sell(), graded, hide);
+		if (parts.isEmpty())
+		{
+			return "";
+		}
+		final String joined = String.join("; ", parts);
+		return Character.toUpperCase(joined.charAt(0)) + joined.substring(1) + ".";
+	}
+
+	private static void addLast(List<String> parts, String what, GradedMove.Side side, GradedMove graded, boolean hide)
+	{
+		if (side.last() == null || side.lastSeconds() <= 0L)
+		{
+			return;
+		}
+		// The print's own UTC day against "today": the figure's day when measured, the day after it for a fallback (whose
+		// "now" is yesterday), unknown for a row with no figure - which prints the date.
+		final LocalDate today = graded.nowDay() == null ? null
+			: graded.fallback() ? graded.nowDay().plusDays(1L) : graded.nowDay();
+		final boolean sameDay = today != null && today.equals(RevisionRef.dayOf(side.lastSeconds()));
+		parts.add(what + " " + AmountMask.amount(hide, MovementMath.formatExact(side.last())) + " at "
+			+ (sameDay ? MovementMath.formatUtcClock(side.lastSeconds()) : MovementMath.formatTableTime(side.lastSeconds())));
 	}
 
 	/**
@@ -960,8 +1152,8 @@ public class MovementRowPanel extends JPanel
 			// AK's rule, which is why this cannot run before the face is built: the name is repeated above the
 			// table only when the face had to CUT it, and that is read off the label the face drew.
 			final boolean showName = !row.name().equals(nameLabel.getText());
-			detailLabel.setText(hide ? maskedDetail(row, window, thenDay, view, showName)
-				: detail(row, window, thenDay, view, showName));
+			detailLabel.setText(hide ? maskedDetail(row, window, thenDay, thenSeconds, view, showName)
+				: detail(row, window, thenDay, thenSeconds, view, showName));
 			detailBuilt = true;
 		}
 		detailLabel.setVisible(open);
@@ -1094,12 +1286,53 @@ public class MovementRowPanel extends JPanel
 		Widgets.fixed(itemGpLabel, GP_COLUMN, itemGpLabel.getPreferredSize().height);
 		final JPanel figures = transparent(new BorderLayout(0, 0));
 		figures.add(itemGpLabel, BorderLayout.WEST);
-		// 1 px tall: it is holding a width open, and a taller spacer would fight line 3's own height.
-		figures.add(Widgets.fixed(transparent(new BorderLayout(0, 0)), PCT_COLUMN, 1), BorderLayout.EAST);
+		// The slot under the percentage (contract 1.2.0, L5). A solid row, an ungraded row and an alch row leave it empty -
+		// 1 px tall, because it is holding a width open and a taller spacer would fight line 3's own height - which is
+		// what keeps every row of a guide-only list byte for byte what it was. A soft or a none row prints its word there.
+		final String word = slotWord(row);
+		if (word.isEmpty())
+		{
+			figures.add(Widgets.fixed(transparent(new BorderLayout(0, 0)), PCT_COLUMN, 1), BorderLayout.EAST);
+		}
+		else
+		{
+			// SMALL_FONT in the working's own grey, right-aligned under the percentage's right edge; the longest words step down
+			// to 10 px to stay whole (wordFont), and the fit is a safety net that never cuts one today - the tests measure
+			// every word the grade can say against the slot.
+			final JLabel wordLabel = Widgets.label("", SMALL_FONT, ColorScheme.LIGHT_GRAY_COLOR);
+			wordLabel.setHorizontalAlignment(SwingConstants.RIGHT);
+			wordLabel.setFont(wordFont(wordLabel, word));
+			sitOnTheWorkingsBaseline(wordLabel);
+			Widgets.setFitted(wordLabel, word, PCT_COLUMN);
+			Widgets.fixed(wordLabel, PCT_COLUMN, wordLabel.getPreferredSize().height);
+			figures.add(wordLabel, BorderLayout.EAST);
+		}
 		final JPanel line = transparent(new BorderLayout(0, 0));
 		line.add(workingLabel, BorderLayout.WEST);
 		line.add(figures, BorderLayout.EAST);
 		return line;
+	}
+
+	/**
+	 * Puts the grade word of line 3 on the baseline of the working beside it ("5 x 4,618", {@link #SMALL_FONT}). A label
+	 * centres its text vertically in the cell it is stretched to, which is the line's whole height, so a word stepped down
+	 * to 10 or 9 px by {@link #wordFont} sat a pixel or two ABOVE the working's baseline - its own height is smaller, the
+	 * centre is the same. The word is bottom-aligned instead, lifted by the difference between what the working's face and
+	 * its own leave BELOW the baseline in Swing's text box - the descent plus the leading, {@code height - ascent}: at 9 px
+	 * this platform's face has a leading of 1 that sits under the baseline, so the descent alone would leave the word a pixel
+	 * high. It is the {@link #alignBaselines} idiom; at the working's own size the difference is 0 and the label is what it
+	 * was, so the row is unchanged.
+	 */
+	private static void sitOnTheWorkingsBaseline(JLabel wordLabel)
+	{
+		wordLabel.setVerticalAlignment(SwingConstants.BOTTOM);
+		final FontMetrics working = wordLabel.getFontMetrics(SMALL_FONT);
+		final FontMetrics word = wordLabel.getFontMetrics(wordLabel.getFont());
+		final int lift = (working.getHeight() - working.getAscent()) - (word.getHeight() - word.getAscent());
+		if (lift > 0)
+		{
+			wordLabel.setBorder(new EmptyBorder(0, 0, lift, 0));
+		}
 	}
 
 	/**
@@ -1244,7 +1477,51 @@ public class MovementRowPanel extends JPanel
 		{
 			return MovementMath.DASH;
 		}
-		return MovementMath.formatPctCompact(row.deltaPct(), row.deltaGp());
+		return MovementMath.formatPctCompact(row.deltaPct(), signSource(row));
+	}
+
+	/** The largest of {@link #WORD_FONTS} that holds {@code word} whole in the slot, the smallest when none does. */
+	private static Font wordFont(JLabel label, String word)
+	{
+		for (Font face : WORD_FONTS)
+		{
+			if (label.getFontMetrics(face).stringWidth(word) <= PCT_COLUMN)
+			{
+				return face;
+			}
+		}
+		return WORD_FONTS[WORD_FONTS.length - 1];
+	}
+
+	/**
+	 * The word line 3 prints in the free slot under the percentage (contract 1.2.0, L5): the grade's word
+	 * ({@link GradedMove#word()}) for a SOFT row ("low vol 3", "spread 55%", "last 1d ago") and "no trades" for a row with no
+	 * figure, "" for everything else - a SOLID figure, a row nothing graded (live prices off, no usable snapshot) and an
+	 * alch row - which is the slot left empty, exactly as before 1.2.0. Never null.
+	 */
+	static String slotWord(MovementRow row)
+	{
+		final GradedMove graded = row.graded();
+		return graded == null || graded.grade() == Grade.SOLID || isAlch(row) ? "" : graded.word();
+	}
+
+	/**
+	 * Where the percentage, its colour and the rail take their sign from, as the long {@link MovementMath#formatPct} and
+	 * the colour rule read it: the gp change for a row nothing graded (L2 - a fall too small to survive truncation
+	 * still reads "-0.0%"), and the sign of the MOVE for a graded row with a figure (contract 1.2.0). The graded row's gp
+	 * change is {@code round(thenMark x move)} per item, so a cheap item's small move rounds to 0 gp while the move is
+	 * not zero, and a sign taken from the gp read "0.4%" in grey on a row that had risen. Null without a move.
+	 */
+	@Nullable
+	private static Long signSource(MovementRow row)
+	{
+		final GradedMove graded = row.graded();
+		if (graded != null && graded.hasFigure() && graded.move() != null)
+		{
+			final double move = graded.move();
+			return move > 0.0d ? 1L : move < 0.0d ? -1L : 0L;
+		}
+		return row.deltaGp();
 	}
 
 	/**
@@ -1382,16 +1659,16 @@ public class MovementRowPanel extends JPanel
 	}
 
 	/**
-	 * The first line of a LIVE row's tooltip, under the name (T6): "Live traded price: 63,437,264 gp (buy 63.6m,
-	 * sell 63.3m; 517 traded yesterday)".
+	 * The first line of a LIVE row's tooltip, under the name (T6, reworded by contract 1.2.0): "Price from today's trades:
+	 * 63,437,264 gp (last bought 63.6m, last sold 63.3m; 517 traded yesterday)".
 	 *
-	 * <p>Three figures, and each is there because a reader who has switched live prices on asks for it: the mid
-	 * this row is actually priced at, the two sides it is the middle of - so a wide spread is visible rather than
-	 * hidden inside one number - and the volume that let the row qualify at all. The mid is exact and the two
-	 * sides are in stack form, because the sides are context for the figure and not the figure.
+	 * <p>Three figures, and each is there because a reader who has switched live prices on asks for it: the price this
+	 * row is actually valued at, the last print of each side of the book - so a wide spread is visible rather than
+	 * hidden inside one number - and how much of the item traded yesterday. The price is exact and the two prints are
+	 * in stack form, because they are context for the figure and not the figure.
 	 *
-	 * <p>"" when the row is not live ({@link MovementRow#isLive()}), so a caller can ask blind. A side the feed had
-	 * no value for is simply left out rather than printed as a dash: the parenthetical is context, and half of it
+	 * <p>"" when the row is not live ({@link MovementRow#isLive()}), so a caller can ask blind. A print the feed had
+	 * none of is simply left out rather than printed as a dash: the parenthetical is context, and half of it
 	 * still helps.
 	 */
 	public static String liveLine(MovementRow row)
@@ -1406,11 +1683,11 @@ public class MovementRowPanel extends JPanel
 		final StringBuilder inner = new StringBuilder(48);
 		if (facts.buy() != null)
 		{
-			inner.append("buy ").append(MovementMath.formatGp(facts.buy()));
+			inner.append("last bought ").append(MovementMath.formatGp(facts.buy()));
 		}
 		if (facts.sell() != null)
 		{
-			inner.append(inner.length() == 0 ? "" : ", ").append("sell ").append(MovementMath.formatGp(facts.sell()));
+			inner.append(inner.length() == 0 ? "" : ", ").append("last sold ").append(MovementMath.formatGp(facts.sell()));
 		}
 		if (facts.volumeYesterday() > 0L)
 		{
@@ -1425,11 +1702,10 @@ public class MovementRowPanel extends JPanel
 	}
 
 	/**
-	 * The one line a row that stayed on the guide gains while the live switch is on (T6): "Guide price - live not
-	 * used: 12 traded yesterday". The phrase after the colon is the FIRST of the five checks that refused the row
-	 * (T3's three, and addendum V's two on yesterday's own bucket), in their own order, as {@code PriceService}
-	 * recorded it - this class states no rule of its
-	 * own about liquidity, it prints the one the service applied.
+	 * The one line a row priced at the guide gains while the live switch is on (T6, reworded by contract 1.2.0):
+	 * "Valued at the guide price: no trades". The phrase after the colon is the 1d grade's word, as
+	 * {@code PriceService} recorded it - this class states no rule of its own about liquidity, it prints the word the
+	 * service graded the row with (before 1.2.0 it was the first of addendum T's five checks that refused the row).
 	 *
 	 * <p>"" when the row is live, or when the traded feeds never looked at it - which is every row built while the
 	 * switch was off, and is what keeps a guide-only tooltip exactly what it was before addendum T.
@@ -1438,7 +1714,7 @@ public class MovementRowPanel extends JPanel
 	{
 		final MovementRow.LiveFacts facts = row.liveFacts();
 		final String reason = facts == null ? null : facts.reason();
-		return reason == null || reason.isEmpty() ? "" : LIVE_NOT_USED_PREFIX + reason;
+		return reason == null || reason.isEmpty() ? "" : GUIDE_VALUED_PREFIX + reason;
 	}
 
 	/** Green for a rise, red for a fall, the dim grey for a dash or a zero move (contract C31, L2). */
@@ -1490,8 +1766,8 @@ public class MovementRowPanel extends JPanel
 	 */
 	private static int signum(MovementRow row)
 	{
-		final Long gp = row.deltaGp();
-		return gp == null ? 0 : Long.signum(gp);
+		final Long sign = signSource(row);
+		return sign == null ? 0 : Long.signum(sign);
 	}
 
 	/**
@@ -1670,12 +1946,12 @@ public class MovementRowPanel extends JPanel
 		sb.append("<br>").append(window == null ? MovementWindow.DEFAULT.label() : window.label());
 		sb.append(" ago (").append(MovementMath.formatDay(stampedDay(row, window, thenDay, live))).append("): ");
 		sb.append(row.thenPrice() == null ? MovementMath.DASH : MovementMath.formatExact(row.thenPrice()) + " gp");
-		// T4: which series THIS window compared, said only on a row the traded feeds actually touched - a guide-only
-		// row's window line is what it always was.
+		// T4, as contract 1.2.0 leaves it: which series THIS window compared, said only on a row the traded feeds actually
+		// touched - a guide-only row's window line is what it always was. A window with no figure is a dash, and says why.
 		if (live && !liveLine.isEmpty())
 		{
 			sb.append(row.windowSource(window) == MovementRow.PriceSource.LIVE
-				? TRADED_AVERAGE_NOTE : WINDOW_FELL_BACK_NOTE);
+				? TRADED_AVERAGE_NOTE : WINDOW_NO_FIGURE_NOTE);
 		}
 		sb.append("<br>Holding: ").append(MovementMath.formatExact(row.quantity())).append(" = ");
 		sb.append(row.unitPrice() == null ? MovementMath.DASH : MovementMath.formatExact(row.holdingValue()) + " gp");
@@ -1687,7 +1963,7 @@ public class MovementRowPanel extends JPanel
 		if (row.hasMovement())
 		{
 			sb.append(signedExact(row.deltaGp())).append(" gp (")
-				.append(MovementMath.formatPct(row.deltaPct(), row.deltaGp())).append(')');
+				.append(MovementMath.formatPct(row.deltaPct(), signSource(row))).append(')');
 		}
 		else
 		{
@@ -1730,6 +2006,25 @@ public class MovementRowPanel extends JPanel
 		}
 		final LocalDate day = row.windowDay(window);
 		return day == null ? thenDay : day;
+	}
+
+	/**
+	 * {@link #stampedDay} as the open block's "Was" line prints it (contract 1.1.2): the guide table's TIME
+	 * ({@link MovementMath#formatTableTime}) when the line is the guide's and {@code thenSeconds} falls on
+	 * {@code thenDay}, and the day alone otherwise - a live row's traded day, which is a whole UTC day, and every
+	 * caller that has no time to give. The time is one unbreakable piece ({@code &nbsp;}), so where the line is too
+	 * wide it moves to the next line whole rather than splitting "07 Sep" from "21:32 UTC" ({@link #cell}).
+	 */
+	private static String stampedText(MovementRow row, MovementWindow window, @Nullable LocalDate thenDay,
+		long thenSeconds, boolean live)
+	{
+		final LocalDate day = stampedDay(row, window, thenDay, live);
+		final boolean guideTable = day != null && day.equals(thenDay) && (!live || row.windowDay(window) == null);
+		if (guideTable && thenSeconds > 0L && day.equals(RevisionRef.dayOf(thenSeconds)))
+		{
+			return MovementMath.formatTableTime(thenSeconds).replace(" ", "&nbsp;");
+		}
+		return MovementMath.formatDay(day);
 	}
 
 	/**

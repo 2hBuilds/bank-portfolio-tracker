@@ -254,12 +254,12 @@ public class ChartColourTest
 	}
 
 	/**
-	 * The menu's "Single chart colour" row: after the caption, which is component 24 with or without the days item (21 before
+	 * The menu's "Single chart colour" row: after the caption, which is component 23 with or without the days item (24 before 1.2.0 took the hover item out; 21 before
 	 * 1.1.0 part J put a rule above the colour rows and Slot 1 and its save row under the presets; 17 before part H).
 	 */
 	private SwatchRow chartRow()
 	{
-		final Component c = panel.heroMenu().getComponent(25);
+		final Component c = panel.heroMenu().getComponent(24);
 		assertTrue(String.valueOf(c), c instanceof SwatchRow);
 		return (SwatchRow) c;
 	}
@@ -408,9 +408,10 @@ public class ChartColourTest
 	/**
 	 * C3: the menu at the end of part C, in order - header, rule, the three Show items, (since part J) a rule, the Up and
 	 * Down colour rows, (since parts H and J) the "Colour presets" caption and its five rows, rule, Use live prices, the
-	 * four Include items, rule, the preset row, Show hover text, rule, the "Net worth chart" caption, Single chart colour,
+	 * four Include items, rule, the preset row, rule, the "Net worth chart" caption, Single chart colour,
 	 * the OK row - and with days before 1.0.9 the Include-days item stands after Single chart colour. (Part J moved the
-	 * indices and the counts below; no assertion was weakened.)
+	 * indices and the counts below; no assertion was weakened. Release 1.2.0 took "Show hover text" out of the menu:
+	 * one component fewer, and every index after the preset row one lower.)
 	 */
 	@Test
 	public void c3_theMenuReadsInOrderWithAndWithoutDaysBeforeV109() throws Exception
@@ -420,7 +421,7 @@ public class ChartColourTest
 		onEdt(() ->
 		{
 			final Component[] c = panel.heroMenu().getComponents();
-			assertEquals(27, c.length);
+			assertEquals(26, c.length);
 			assertFalse(c[0] instanceof JSeparator || c[0] instanceof javax.swing.AbstractButton);
 			assertTrue(c[1] instanceof JSeparator);
 			assertSame(panel.showValueItem(), c[2]);
@@ -441,26 +442,25 @@ public class ChartColourTest
 			assertSame(panel.countGrandExchangeItem(), c[19]);
 			assertTrue(c[20] instanceof JSeparator);
 			assertSame(panel.presetRow(), c[21]);
-			assertSame(panel.showHoverTextItem(), c[22]);
-			assertTrue(c[23] instanceof JSeparator);
-			assertEquals("Net worth chart", find(c[24], JLabel.class).getText());
-			assertTrue(c[25] instanceof SwatchRow);
-			assertEquals("Single chart colour", ((SwatchRow) c[25]).getText());
-			assertEquals(BankPriceMovementPanel.SINGLE_CHART_COLOUR_TEXT, ((SwatchRow) c[25]).getText());
-			assertEquals(Widgets.sans(12), c[25].getFont());
-			assertSame(panel.okRow(), c[26]);
+			assertTrue(c[22] instanceof JSeparator);
+			assertEquals("Net worth chart", find(c[23], JLabel.class).getText());
+			assertTrue(c[24] instanceof SwatchRow);
+			assertEquals("Single chart colour", ((SwatchRow) c[24]).getText());
+			assertEquals(BankPriceMovementPanel.SINGLE_CHART_COLOUR_TEXT, ((SwatchRow) c[24]).getText());
+			assertEquals(Widgets.sans(12), c[24].getFont());
+			assertSame(panel.okRow(), c[25]);
 		});
 
 		load(withLegacyDays());
 		onEdt(() ->
 		{
 			final Component[] c = panel.heroMenu().getComponents();
-			assertEquals(28, c.length);
-			assertEquals("Net worth chart", find(c[24], JLabel.class).getText());
-			assertEquals("Single chart colour", ((SwatchRow) c[25]).getText());
-			assertEquals(BankPriceMovementPanel.LEGACY_TEXT, ((JCheckBoxMenuItem) c[26]).getText());
-			assertFalse("an ordinary check item, not a swatch row", c[26] instanceof SwatchRow);
-			assertSame("the OK row is still last", panel.okRow(), c[27]);
+			assertEquals(27, c.length);
+			assertEquals("Net worth chart", find(c[23], JLabel.class).getText());
+			assertEquals("Single chart colour", ((SwatchRow) c[24]).getText());
+			assertEquals(BankPriceMovementPanel.LEGACY_TEXT, ((JCheckBoxMenuItem) c[25]).getText());
+			assertFalse("an ordinary check item, not a swatch row", c[25] instanceof SwatchRow);
+			assertSame("the OK row is still last", panel.okRow(), c[26]);
 		});
 	}
 
@@ -906,6 +906,6 @@ public class ChartColourTest
 	@Test
 	public void c7_theVersionIs110()
 	{
-		assertEquals("1.1.1", Version.CURRENT);
+		assertEquals("1.2.0", Version.CURRENT);
 	}
 }

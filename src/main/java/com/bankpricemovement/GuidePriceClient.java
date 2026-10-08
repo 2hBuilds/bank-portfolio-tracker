@@ -9,6 +9,7 @@ import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -16,7 +17,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.regex.Pattern;
 import okhttp3.Call;
 import okhttp3.Callback;
 import okhttp3.OkHttpClient;
@@ -36,8 +39,8 @@ import org.slf4j.LoggerFactory;
  * "Green hat +1,413 gp (+12845.5 %)" while the GE web site said -38 gp (-3 %). Nothing was broken: the wiki's
  * hourly TRADE bucket 24 h earlier held nine units at an average high of 11 gp with no low side. The number every
  * player recognises - in-game GE, the GE web site, RuneLite's own tooltips - is the Jagex daily GUIDE price, and
- * the wiki republishes the whole guide table as {@value #PAGE} (bot "Gaz GEBot", one revision a day, 4,566 names,
- * 126 KB). Its revisions reproduce Jagex's own daily history exactly: 70 of 70 archived values across 14 items
+ * the wiki republishes the whole guide table as {@value #PAGE} (bot "Gaz GEBot", one revision a day until 29 Sep 2026
+ * and about eight a day since, 4,566 names, 126 KB). Its revisions reproduce Jagex's own daily history exactly: 70 of 70 archived values across 14 items
  * and five spans match {@code secure.runescape.com/m=itemdb_oldschool/api/graph/<id>.json} (L-A). Evidence:
  * {@code docs/research/bank-price-movement-calibration-2026-09-08.md} and addendum L.
  *
@@ -46,9 +49,10 @@ import org.slf4j.LoggerFactory;
  * the wrong revision about half the time, because the bot publishes at a random hour (L-C). This client instead
  * fetches:
  * <ul>
- * <li>the revision INDEX once ({@link #fetchRevisionIndex}): one call, {@code rvlimit=250}, about 232 days of
- * history in roughly 3.6 KB gzipped. The baseline for any window is then chosen from that list LOCALLY, by
- * calendar day ({@link RevisionRef#pickThen}), with no request at all;</li>
+ * <li>the revision INDEX ({@link #fetchRevisionIndex}): one call of {@code rvlimit=250} revisions, roughly 3.6 KB
+ * gzipped, followed back with {@code rvcontinue} - the same query, at most {@value #MAX_INDEX_PAGES} calls, one at a
+ * time - only as far as the caller asks (contract 1.1.2, T2). The baseline for any window is then chosen from that
+ * list LOCALLY, by time ({@link RevisionRef#pickThen}), with no request at all;</li>
  * <li>the bodies it still needs ({@link #fetchTables}): several whole tables in ONE call through
  * {@code revids=a|b|c}. Measured by the lead: two revisions, 76.6 KB on the wire, 0.37 s. The
  * {@code index.php?action=raw} route of K2 is gone - it is served uncompressed, 126 KB per revision (L-G).</li>
@@ -58,8 +62,9 @@ import org.slf4j.LoggerFactory;
  * <p><b>What leaves the client, exactly</b> (B035; the evidence the Hub manifest's {@code warning=} decision
  * rests on - the decision itself is the lead's, beside D15). Three URLs exist in this plugin and NONE of them
  * carries anything derived from the player: {@link #revisionIndexUrl()} is a fixed query for one fixed page
- * title, {@link #tablesUrl(Collection)} carries only wiki revision ids the plugin picked out of that public
- * index, and {@link #MAPPING_URL} is a bare GET of a public table. No item id, no item name, no quantity, no
+ * title (its later pages add only the wiki's own {@code rvcontinue} token), {@link #tablesUrl(Collection)} carries
+ * only wiki revision ids the plugin picked out of that public index, and {@link #MAPPING_URL} is a bare GET of a public
+ * table. No item id, no item name, no quantity, no
  * account and no search text is ever a parameter, so every user of this plugin issues BYTE-IDENTICAL requests
  * and the hosts learn only an IP - which the descriptive {@link #USER_AGENT} already discloses - and that this
  * plugin is installed. The bank itself never leaves the client: it is read on the client thread and persisted
@@ -128,18 +133,28 @@ public class GuidePriceClient
 	public static final String USER_AGENT_HEADER = "User-Agent";
 
 	/**
-	 * How many revisions the index asks for (L4). 250 is the anonymous {@code rvlimit} ceiling, and no
-	 * continuation is followed, so ONE call sees at most this many revisions however far back the page goes.
+	 * How many revisions one index call asks for (L4). 250 is the anonymous {@code rvlimit} ceiling, so ONE call sees
+	 * at most this many revisions however far back the page goes.
 	 *
-	 * <p>The margin is thinner than it looks: 250 revisions is about 232 days at the one bot run a day L-C
-	 * measured, against a longest window of 180 - but only about 178 days at 1.4 revisions a day, which a stretch
-	 * of maintenance edits produces (the live index on this machine already averages 1.11). Because a shortfall
-	 * would show as "No 180d history", the same sentence an honestly short page gets,
-	 * {@code PriceService.finishIndex} MERGES each fetch with the index it already holds rather than replacing it,
-	 * so a long-running install keeps reach it has already seen, and {@code PriceService.reconcile} logs the
-	 * ambiguity once per session.
+	 * <p>That was about 232 days at the one bot run a day L-C measured, and it is about 31 at the eight a day the bot
+	 * has saved since 30 Sep 2026 - short of every window past 30d. So a caller that needs more asks for it
+	 * ({@link #fetchRevisionIndex}'s reach) and the client follows the wiki's {@code rvcontinue} back, at most
+	 * {@link #MAX_INDEX_PAGES} calls; {@code PriceService.finishIndex} MERGES each answer with the index it already
+	 * holds, so a long-running install keeps reach it has already seen.
 	 */
 	public static final int INDEX_LIMIT = 250;
+
+	/**
+	 * How many calls one index fetch may make: {@value} (contract 1.1.2, T2). Eight pages of {@value #INDEX_LIMIT} are
+	 * 2,000 revisions - about 250 days at eight a day, past the 181 a fresh install asks for.
+	 */
+	public static final int MAX_INDEX_PAGES = 8;
+
+	/**
+	 * The shape of the wiki's {@code rvcontinue} token, {@code <yyyymmddhhmmss>|<revid>} - all digits round one bar. A
+	 * token of any other shape ends the paging rather than reaching a URL: nothing but digits and the bar is ever sent.
+	 */
+	private static final Pattern CONTINUE_TOKEN = Pattern.compile("[0-9]{1,20}\\|[0-9]{1,20}");
 
 	/**
 	 * How many revision ids one batched body call may carry (L6). 50 is MediaWiki's own {@code revids} ceiling
@@ -147,7 +162,7 @@ public class GuidePriceClient
 	 */
 	public static final int MAX_REVIDS = 50;
 
-	/** The table's own day marker, and the authoritative one (L7, evidence L-E). */
+	/** The table's own time marker, and the authoritative one (L7, evidence L-E; contract 1.1.2). */
 	public static final String LAST_UPDATE_KEY = "%LAST_UPDATE%";
 
 	/** Keys in the guide table that are bookkeeping, not items: {@code %LAST_UPDATE%}, {@code %LAST_UPDATE_F%}. */
@@ -156,7 +171,7 @@ public class GuidePriceClient
 	/**
 	 * How far BEHIND its own save time a body's {@code %LAST_UPDATE%} may be before the body is refused (L7).
 	 * Two days: a human maintenance edit republishes the previous day's table (L-E), which is one day behind and
-	 * must be accepted so L5's retry can recognise it; anything older than that is not this page's data.
+	 * is still a real table, labelled with its own time; anything older than that is not this page's data.
 	 */
 	private static final long MAX_DATA_LAG_SECONDS = 48L * 60L * 60L;
 
@@ -208,21 +223,113 @@ public class GuidePriceClient
 	// ---------------------------------------------------------------- L4: the revision index
 
 	/**
-	 * The page's recent revision history, newest first - one call, no content (L4).
+	 * The page's revision history back to {@code reachSeconds}, newest first, no content (L4; contract 1.1.2, T2).
 	 *
-	 * <p>This is what makes calendar-day selection possible at all: with the whole history in hand, the baseline
-	 * for any window is {@link RevisionRef#pickThen} on a date, decided locally and instantly, and a window
-	 * change costs a request only when the chosen revision is one the store has not already got (L10).
+	 * <p>The first call is today's query, the newest {@value #INDEX_LIMIT} revisions. While the oldest revision in hand
+	 * is still newer than {@code reachSeconds} and the wiki says there is more ({@code continue.rvcontinue}), the next
+	 * page is asked for - the same query plus that token, AFTER the previous one has answered, so the calls are spaced
+	 * one at a time and never overlap - up to {@value #MAX_INDEX_PAGES} calls in all. A caller refreshing an index it
+	 * holds passes its newest revision's time and gets one call, a second only to close a gap of more than
+	 * {@value #INDEX_LIMIT} revisions; a fresh install passes 181 days back. A run of more than one call writes ONE
+	 * info line - how many revisions over which span - and never one per call.
 	 *
-	 * @param nowMillis the caller's clock; not used by the request itself, but taken so the SERVICE's settable
-	 *                  clock - never {@code System.currentTimeMillis()} in here - decides when the index is
-	 *                  stale (six hours, L4) and what stamp {@code revindex.json} is written with
+	 * <p>With an index in hand the baseline for any window is {@link RevisionRef#pickThen} on a time, decided locally
+	 * and instantly, and a window change costs a request only when the chosen revision is one the store has not
+	 * already got (L10).
+	 *
+	 * <p>A FIRST call that fails fails the whole fetch: the caller keeps the index it holds and tries again on its next
+	 * tick. A LATER page that fails ends the run with the pages already in hand - a fresh install is better off with
+	 * the days the first call reached than with no baseline at all until the next tick - and the answer is a
+	 * {@link CutShortIndex}, so the caller can tell it from a whole history and page again. Revisions are immutable, so
+	 * what was fetched is as true as a whole history; only its reach is short.
+	 *
+	 * @param nowMillis    the caller's clock; not used by the request itself, but taken so the SERVICE's settable
+	 *                     clock - never {@code System.currentTimeMillis()} in here - decides when the index is stale
+	 *                     and what stamp {@code revindex.json} is written with
+	 * @param reachSeconds how far back the history must reach, unix seconds; paging stops once a revision at or before
+	 *                     it is in hand
 	 * @return a future completing with the history, or exceptionally with {@link WikiPriceException}
 	 */
-	public CompletableFuture<List<RevisionRef>> fetchRevisionIndex(final long nowMillis)
+	public CompletableFuture<List<RevisionRef>> fetchRevisionIndex(final long nowMillis, final long reachSeconds)
 	{
-		log.debug("bank-portfolio-tracker: fetching the guide-table revision index at {}", nowMillis);
-		return request(revisionIndexUrl(), this::parseRevisionIndex);
+		log.debug("bank-portfolio-tracker: fetching the guide-table revision index at {}, back to {}", nowMillis,
+			reachSeconds);
+		final CompletableFuture<List<RevisionRef>> done = new CompletableFuture<>();
+		indexPage(null, 1, reachSeconds, new ArrayList<>(), done);
+		return done;
+	}
+
+	/**
+	 * One call of {@link #fetchRevisionIndex}'s run, and the decision on its answer: another page, or done. The
+	 * completion runs on OkHttp's dispatcher thread; every path through it completes {@code done} or starts exactly
+	 * one more call, and a {@link Throwable} out of it completes {@code done} first (B006's rule, {@link #request}).
+	 */
+	private void indexPage(final String token, final int call, final long reachSeconds, final List<RevisionRef> found,
+		final CompletableFuture<List<RevisionRef>> done)
+	{
+		final CompletableFuture<IndexPage> page = request(token == null ? revisionIndexUrl() : revisionIndexUrl(token),
+			this::parseRevisionPage);
+		page.whenComplete((answer, error) ->
+		{
+			try
+			{
+				if (error != null)
+				{
+					if (call > 1 && !found.isEmpty())
+					{
+						found.sort(RevisionRef.NEWEST_FIRST);
+						log.debug("bank-portfolio-tracker: the revision index run was cut short at call {} ({}): keeping the"
+							+ " {} revisions of the earlier calls", call, messageOf(error), found.size());
+						done.complete(new CutShortIndex(found));
+						return;
+					}
+					done.completeExceptionally(error instanceof CompletionException && error.getCause() != null
+						? error.getCause() : error);
+					return;
+				}
+				found.addAll(answer.revisions);
+				long oldest = Long.MAX_VALUE;
+				for (final RevisionRef ref : found)
+				{
+					oldest = Math.min(oldest, ref.editSeconds());
+				}
+				if (oldest > reachSeconds && answer.next != null && call < MAX_INDEX_PAGES)
+				{
+					indexPage(answer.next, call + 1, reachSeconds, found, done);
+					return;
+				}
+				found.sort(RevisionRef.NEWEST_FIRST);
+				if (call > 1)
+				{
+					log.info("bank-portfolio-tracker: paged the guide-table revision index: {} revisions in {} calls,"
+						+ " {} back to {}", found.size(), call, found.get(0).editDay(),
+						found.get(found.size() - 1).editDay());
+				}
+				done.complete(found);
+			}
+			catch (final Throwable t)
+			{
+				done.completeExceptionally(new WikiPriceException("could not page the revision index: " + messageOf(t), t));
+				if (t instanceof Error)
+				{
+					throw (Error) t;
+				}
+			}
+		});
+	}
+
+	/**
+	 * The answer of an index run whose paging was cut short by a failed later page ({@link #fetchRevisionIndex}): the
+	 * revisions of the earlier calls, newest first. A list in every other respect; the type is the flag.
+	 */
+	static final class CutShortIndex extends ArrayList<RevisionRef>
+	{
+		private static final long serialVersionUID = 1L;
+
+		CutShortIndex(final Collection<? extends RevisionRef> revisions)
+		{
+			super(revisions);
+		}
 	}
 
 	// ---------------------------------------------------------------- L6: the batched bodies
@@ -326,6 +433,16 @@ public class GuidePriceClient
 	}
 
 	/**
+	 * The next page of the same query (contract 1.1.2, T2): {@link #revisionIndexUrl()} plus the wiki's own
+	 * {@code &rvcontinue=<token>}, which carries nothing but the timestamp and revision id the previous page stopped at
+	 * ({@link #parseRevisionPage} refuses any other shape).
+	 */
+	static String revisionIndexUrl(final String continueToken)
+	{
+		return revisionIndexUrl() + "&rvcontinue=" + continueToken;
+	}
+
+	/**
 	 * The batched content query of L6:
 	 * {@code api.php?action=query&prop=revisions&revids=<a>|<b>&rvprop=ids|timestamp|content&rvslots=main&format=json&formatversion=2}.
 	 *
@@ -359,24 +476,27 @@ public class GuidePriceClient
 	// ---------------------------------------------------------------- parsers (package-private, pure, L4/L6)
 
 	/**
-	 * The revision index as a newest-first list (L4). Shape under {@code formatversion=2}:
-	 * {@code {"batchcomplete":true,"query":{"pages":[{"pageid":180412,"title":"Module:GEPrices/data.json",
-	 * "revisions":[{"revid":15334656,"parentid":15333448,"timestamp":"2026-09-08T09:25:12Z","user":"Gaz GEBot",
-	 * "comment":"GE update"}, ...]}]}}}.
+	 * One page of the revision index (L4): its revisions as a newest-first list, and the wiki's token for the page after
+	 * it. Shape under {@code formatversion=2}:
+	 * {@code {"continue":{"rvcontinue":"20261002155512|15360320","continue":"||"},"query":{"pages":[{"pageid":180412,
+	 * "title":"Module:GEPrices/data.json","revisions":[{"revid":15334656,"parentid":15333448,
+	 * "timestamp":"2026-09-08T09:25:12Z","user":"Gaz GEBot","comment":"GE update"}, ...]}]}}}.
 	 *
 	 * <p>{@code pages} is an ARRAY under {@code formatversion=2} and an object keyed by page id in the default
 	 * output format; both are read, because the wiki could switch its default and a silently empty index is
 	 * worse than a loud failure. One revision that cannot be used - no id, or a timestamp that will not parse,
-	 * without which no calendar day can be derived - is skipped; an index with nothing usable in it is fatal.
+	 * without which it has no time - is skipped; a page with nothing usable in it is fatal.
 	 *
-	 * <p>The result is SORTED newest-first rather than trusted to arrive that way, so a change of default
+	 * <p>The revisions are SORTED newest-first rather than trusted to arrive that way, so a change of default
 	 * ordering at the wiki could only make the dev bridge's echo untidy. {@link RevisionRef#pickThen} does not
-	 * depend on the order either way.
+	 * depend on the order either way. The token is {@code null} when the wiki sends none - the history ends here - or
+	 * one that is not the {@code <digits>|<digits>} shape it has always had, which ends the paging rather than putting
+	 * an unknown string into a URL.
 	 *
 	 * @throws WikiPriceException on a non-object body, an {@code error} member, a missing page or no usable
 	 *                            revision at all
 	 */
-	List<RevisionRef> parseRevisionIndex(final String json) throws WikiPriceException
+	IndexPage parseRevisionPage(final String json) throws WikiPriceException
 	{
 		final JsonObject root = readObject(json);
 		failOnErrorMember(root);
@@ -406,20 +526,51 @@ public class GuidePriceClient
 		}
 
 		index.sort(RevisionRef.NEWEST_FIRST);
-		return index;
+		String next = null;
+		final JsonElement more = root.get("continue");
+		if (more != null && more.isJsonObject())
+		{
+			final String token = memberText(more.getAsJsonObject(), "rvcontinue");
+			if (token != null && CONTINUE_TOKEN.matcher(token).matches())
+			{
+				next = token;
+			}
+			else if (token != null)
+			{
+				log.debug("bank-portfolio-tracker: the revision index's continuation token has an unknown shape - paging"
+					+ " stops here");
+			}
+		}
+		return new IndexPage(index, next);
+	}
+
+	/** One page of the revision index: what {@link #parseRevisionPage} read. Immutable. */
+	static final class IndexPage
+	{
+		/** The page's revisions, newest first; never empty. */
+		final List<RevisionRef> revisions;
+		/** The wiki's {@code rvcontinue} token for the next page, or null when there is none to follow. */
+		final String next;
+
+		IndexPage(final List<RevisionRef> revisions, final String next)
+		{
+			this.revisions = Collections.unmodifiableList(revisions);
+			this.next = next;
+		}
 	}
 
 	/**
 	 * Every revision body in a batched answer, keyed by revision id (L6). Shape is
-	 * {@link #parseRevisionIndex}'s, with the text under
+	 * {@link #parseRevisionPage}'s, with the text under
 	 * {@code query.pages[0].revisions[i].slots.main.content} and several revisions of the one page in the array.
 	 *
 	 * <p>Each body is validated before it is kept (L7): its {@code %LAST_UPDATE%} must sit between 48 hours
 	 * before and 5 minutes after the revision's own save time. That window is what a human maintenance edit
 	 * looks like - it republishes the previous day's table under a later timestamp (L-E) - while a body with no
 	 * marker at all, or one from another page entirely, falls outside it. A revision that fails is skipped with
-	 * a log line, never guessed at: L5's "is this really day T's table?" step compares
-	 * {@code GuideSnapshot.dataDay()} against the date it asked for, and a marker invented here would defeat it.
+	 * a log line, never guessed at: the marker is the TIME the service picks every window's table by once the body
+	 * is read ({@code GuideSnapshot.dataSeconds()}, contract 1.1.2) and the time each row is labelled with, and a
+	 * marker invented here would put a table behind a window it is too new for.
 	 *
 	 * @param nowMillis stamped onto every snapshot as {@code fetchedAtMillis}
 	 * @throws WikiPriceException on a non-object body, an {@code error} member, or a batch in which no revision
@@ -915,8 +1066,8 @@ public class GuidePriceClient
 
 	/**
 	 * A revision's {@code timestamp} as unix seconds, or null when it is absent or not ISO-8601. Null costs the
-	 * revision its place in the index or the batch: without a save time there is no calendar day to select on
-	 * and no window to validate a body's day marker against.
+	 * revision its place in the index or the batch: without a save time there is no time to select on and no
+	 * window to validate a body's time marker against.
 	 */
 	private static Long optInstantSeconds(final JsonObject revision)
 	{

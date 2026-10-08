@@ -6,6 +6,7 @@ import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.EnumMap;
@@ -41,11 +42,12 @@ import org.slf4j.LoggerFactory;
 
 /**
  * The orchestrator between the guide-price history client, the store, the bank capture and the panel
- * (contract C20-C27 as rewritten by addendum K and again by addendum L - lines L1, L3, L5, L7, L10, L11, L13;
- * {@code docs/bank-price-movement-addendum-L-2026-09-08.md}). It owns the current bank snapshot, the id-to-wiki-name
- * mapping, the guide page's revision INDEX, the newest guide table R0, one baseline per {@link MovementWindow},
- * the derived anchor day, and the rows computed for the current filter; it decides WHEN the wiki is asked (L10)
- * and it is the only thing that publishes to the panel.
+ * (contract C20-C27 as rewritten by addendum K and again by addendum L - lines L1, L5, L7, L10, L11, L13;
+ * {@code docs/bank-price-movement-addendum-L-2026-09-08.md} - and by contract 1.1.2, which replaced L3's anchor day
+ * with a "now" TIME; {@code docs/handoff/contract-1.1.2-guide-then-by-time-2026-10-07.md}). It owns the current bank
+ * snapshot, the id-to-wiki-name mapping, the guide page's revision INDEX, the newest guide table R0, one baseline per
+ * {@link MovementWindow}, the derived "now" time, and the rows computed for the current filter; it decides WHEN the
+ * wiki is asked (L10) and it is the only thing that publishes to the panel.
  *
  * <p><b>The two sides of a movement.</b> "Now" is the Jagex GUIDE price RuneLite already holds:
  * {@code ItemManager.getItemPriceWithSource(id, false)} - the {@code price} field of RuneLite's price table,
@@ -53,8 +55,8 @@ import org.slf4j.LoggerFactory;
  * runelite-parent-1.12.37: {@code useWikiPrice ? getWikiPrice(ip) : ip.getPrice()} at :356; the table is
  * refreshed every 30 minutes by {@code scheduleWithFixedDelay(this::refreshPrices, 0, 30, MINUTES)} at :218).
  * No request is made for it, and 0 means "no price". "Then" is the same Jagex table as the wiki republishes it
- * ({@code Module:GEPrices/data.json}) on the CALENDAR DAY the window asks for, keyed by item NAME; the service
- * joins it onto ids itself (L8, {@link #project}).
+ * ({@code Module:GEPrices/data.json}) as it stood at least the window's span before "now", keyed by item NAME; the
+ * service joins it onto ids itself (L8, {@link #project}).
  *
  * <p><b>The one carve-out on "now"</b> ({@link #rewrittenByItemMapping}). {@code getItemPriceWithSource} does not
  * always answer the item's OWN guide price: at {@code ItemManager.java:348} it asks {@code ItemMapping.map(id)}
@@ -99,26 +101,48 @@ import org.slf4j.LoggerFactory;
  * carried coins do. They are read by the plugin at the same moments as the inventory and ride on the snapshot, so
  * flipping the switch costs no bank visit and no request, and with it off every figure is what it was without it.
  *
- * <p><b>Why a calendar day and not "now minus the window"</b> (L-C, L-D). Addendum K fetched "the newest
- * revision at or before now - W seconds". Six analysts measured that against live data and it picked the right
- * Jagex day on only 50-56 % of clock hours, because the wiki's bot writes day D's table at a random hour of day
- * D and RuneLite's table leads the wiki's by one Jagex day for roughly half of every day. The GE site's own
- * arithmetic is {@code daily[D] - daily[D-N]} over calendar days (L-B), so this service now:
+ * <p><b>Why "then" is chosen by TIME</b> (contract 1.1.2, superseding addendum L's L3). Addendum L chose the
+ * baseline by CALENDAR DAY because the wiki's bot saved one table a day at a random hour (L-C), and derived the
+ * day RuneLite's prices belonged to - the anchor day D - from their agreement with the newest table R0, reading any
+ * disagreement as "RuneLite already holds the next day" and taking D = R0's day + 1. Since 30 Sep 2026 the bot saves
+ * the table about EIGHT times a day, each save moving 5-20 % of all items, and RuneLite's own feed follows the newest
+ * Jagex step within about half an hour. RuneLite then disagreed with R0 whenever it held a step the index had not
+ * seen yet - about 60 % of ticks, and right after any start with an index under six hours old - the "+1" made the 1d
+ * target R0's OWN date, the newest revision of that date was R0 itself, and the 1d move compared RuneLite's price
+ * with a table about two and a half hours older: 368 of 499 rows read 0.0 % on the user's bank (2026-10-07). So this
+ * service now:
  * <ol>
- * <li>fetches the page's revision INDEX once (L4, {@link GuidePriceClient#fetchRevisionIndex}) and the newest
- * table R0 (L3);</li>
- * <li>DERIVES the anchor day D from the data on every recompute ({@link #deriveAnchorDay}, L3): over bank items
- * that have both a RuneLite price and an R0 value, if at least {@value #AGREE_MIN_SAMPLES} items compare and at
- * least {@value #AGREE_THRESHOLD} of them agree, D is R0's own {@code %LAST_UPDATE%} day; if enough compare but
- * they disagree, RuneLite already holds the NEXT Jagex day and D is that day plus one; with fewer than
- * {@value #AGREE_MIN_SAMPLES} comparable items nothing can be told, D is R0's day and R0 also stands in as
- * "now" for the rows. Never a wall clock, never a hard-coded rollover hour (L9);</li>
- * <li>picks every window's baseline revision LOCALLY from the index ({@link #pickBaseline}, L5:
- * {@code RevisionRef.pickThen(index, D.minusDays(N))}), fetches the bodies it does not already hold in ONE
- * batched call ({@link GuidePriceClient#fetchTables}, L6), and validates each body's own day marker
- * ({@code GuideSnapshot.dataDay()}, L7) against the date asked for, with the single retry of L5 when a body is
- * stale ({@link #resolveLocked}).</li>
+ * <li>fetches the page's revision INDEX (L4, {@link GuidePriceClient#fetchRevisionIndex}) - paging back past the
+ * longest window when it holds none, one call to catch up after that - keeps it by {@link RevisionRef#pruned}'s rule,
+ * and fetches the newest table R0;</li>
+ * <li>identifies the NOW TIME on every recompute ({@link #deriveNowTime}): the table time of the newest indexed
+ * revision RuneLite's prices match - R0 when at least {@value #AGREE_THRESHOLD} of at least
+ * {@value #AGREE_MIN_SAMPLES} comparable bank items agree with it, else an older table in memory that they match
+ * (RuneLite BEHIND the wiki), else the CLOCK, with the index marked stale so the next tick refetches it (RuneLite
+ * AHEAD of the index). With fewer than {@value #AGREE_MIN_SAMPLES} comparable items nothing can be told, R0's time is
+ * taken and R0 also stands in as "now" for the rows. Never a "+1 day";</li>
+ * <li>picks every window's baseline revision LOCALLY from the index ({@link #pickBaseline}:
+ * {@code RevisionRef.pickThen(index, now - N x 24 h)}, the newest revision at least the window's span older than the
+ * now time, a bot run of its day preferred - never the one RuneLite matches, never a newer one), fetches the bodies
+ * it does not already hold in
+ * ONE batched call ({@link GuidePriceClient#fetchTables}, L6), learns each body's own table time
+ * ({@code GuideSnapshot.dataSeconds()}, L7) and re-picks with it ({@link #resolveLocked}), with one retry past a body
+ * the client refused.</li>
  * </ol>
+ * The labels still print the baseline table's own UTC DATE ("1d vs 06 Oct"); the row's open block and the card's
+ * hover add its time.
+ *
+ * <p><b>Graded live moves</b> (contract 1.2.0, {@code docs/handoff/contract-1.2.0-graded-live-moves-2026-10-07.md}).
+ * With live prices on and a usable {@code /latest} snapshot, every tradeable stack is GRADED ({@link Figures},
+ * {@link GradeMath}): per window a same-side figure - the last 24 hours' buy prints against the window day's buy
+ * average, its sell prints against its sell average, each side's "now" the median of its plausible observations (the
+ * current prints, every distinct print this session's polls saw in the last 24 hours, {@link PollMemory}, and the last
+ * closed hour's {@code /1h} bucket) - or, with nothing traded in the last 24 hours, yesterday's move against the day
+ * before ({@code traded-D2.json}, kept at the rollover); SOLID, SOFT with a word ({@link GradeWords}) or NONE. The
+ * row's price is the 1d figure's {@code thenMark x (1 + move)} - or, for a figure reported on one side only, that
+ * side's own price - the guide where it has none, and the bank value and the Net Worth History follow it. Addendum T's
+ * and V's five checks are retired as price gates. With the switch off nothing here changes: every row is the guide row
+ * of addenda K to S.
  *
  * <p><b>Threads.</b> Five threads touch this object and none of them may wait on another:
  * <ul>
@@ -164,9 +188,10 @@ import org.slf4j.LoggerFactory;
  * LOGIN_SCREEN again once it has been there.
  *
  * <p><b>Cadence (L10).</b> One timer every {@value #TICK_MS} ms while the sidebar is visible (first run at once
- * on activation): it recomputes the rows (L1 - the series is a daily step and RuneLite refreshes its own table
- * every 30 minutes), refetches the index when it is older than {@value #HISTORY_MAX_AGE_MS} ms (L4), fetches R0
- * when the index names a newer revision than the one in memory, and picks every window's baseline locally,
+ * on activation): it recomputes the rows (L1 - RuneLite refreshes its own table every 30 minutes), refetches the
+ * index when it is older than {@value #HISTORY_MAX_AGE_MS} ms or the last computation found RuneLite ahead of it
+ * (L4, contract 1.1.2), fetches R0 when the index names a newer revision than the one in memory, and picks every
+ * window's baseline locally,
  * fetching only the bodies whose revision id differs from the stored one - all of them in one batched call.
  * The mapping is refetched weekly on the same tick (K3). The traded {@code /latest} snapshot of addendum T rides
  * the same tick too, but only once the one in hand is at least {@value #LATEST_MIN_AGE_MS} ms old (addendum AS,
@@ -176,7 +201,7 @@ import org.slf4j.LoggerFactory;
  * is hidden. A revision is immutable, so a body is never fetched twice for the same revision id in one session,
  * and the newest table R0 is refetched only when the index's newest revision changes.
  *
- * <p><b>Failure (L11).</b> A window whose target predates the whole index is not an error - it shows
+ * <p><b>Failure (L11).</b> A window whose target time predates the whole index is not an error - it shows
  * "No 180d history" and nothing is requested for it. A stored baseline is kept until a newer body parses and
  * validates; a failed fetch marks the service degraded and is retried on the next tick. A body the wiki returned
  * but the client refused (no usable day marker, L7) is remembered as unusable for the session so it is never
@@ -207,16 +232,17 @@ public class PriceService
 	 * The one timer while the sidebar is visible (L1, L10): rows recomputed, the index's age checked, the baselines
 	 * re-picked, and - with live prices on (addendum T) - the traded {@code /latest} snapshot asked for again once it
 	 * is {@link #LATEST_MIN_AGE_MS} old, which a snapshot the previous run fetched always is by the next one (addendum
-	 * AS). Thirty minutes because the guide series is a daily step and RuneLite itself refreshes its price table every
-	 * thirty minutes ({@code ItemManager.java:218}); the anchor day is re-derived on every run, so the panel follows
-	 * the Jagex rollover within one tick (L3).
+	 * AS). Thirty minutes because RuneLite itself refreshes its price table every thirty minutes
+	 * ({@code ItemManager.java:218}); the now time is re-identified on every run, so the panel follows a new Jagex
+	 * step within one tick (contract 1.1.2).
 	 */
 	public static final long TICK_MS = 30L * 60L * 1000L;
 
 	/**
-	 * The revision index is refetched when older than this (L4, L10): the bot publishes exactly one revision a
-	 * day (247 of 247 days, L-C), so six hours catches the day's new revision the same day without asking for
-	 * the same 250 lines four times an hour.
+	 * The revision index is refetched when older than this (L4, L10). Sized when the bot published one revision a
+	 * day (247 of 247 days, L-C); since it publishes about eight, the age alone would leave RuneLite a step or two
+	 * ahead of the index for hours, so a computation that finds RuneLite matching no indexed table also MARKS the
+	 * index stale and the next tick refetches it whatever its age (contract 1.1.2, {@link #indexStaleLocked}).
 	 */
 	public static final long HISTORY_MAX_AGE_MS = 6L * 60L * 60L * 1000L;
 
@@ -235,15 +261,18 @@ public class PriceService
 
 	/**
 	 * How many bank items must have BOTH a RuneLite price and an R0 value before their agreement is trusted to
-	 * derive the anchor day (L3, "n >= 20"). Below it the two tables cannot be told apart and R0's own day is
-	 * taken, with R0 standing in as "now".
+	 * identify the now time (L3, "n >= 20"; contract 1.1.2). Below it the tables cannot be told apart and R0's own
+	 * time is taken, with R0 standing in as "now".
 	 */
 	public static final int AGREE_MIN_SAMPLES = 20;
 
 	/**
-	 * The share of comparable items that must agree for RuneLite's table to be called the same Jagex day as R0
-	 * (L3, "agree >= 0.90"). Measured separation: 100 % on the same day against about 41 % one day apart, so
-	 * 0.90 sits far from both; compared in integers ({@code matches * 10 >= n * 9}) so 18 of 20 is exactly 0.90.
+	 * The share of comparable items that must agree for RuneLite's table to be called the same table as an indexed
+	 * one (L3, "agree >= 0.90"). Measured separation: 100 % on the same table against about 41 % one day apart. One
+	 * eight-a-day step apart it is 60-93 % (a step moves 7-40 % of the user's bank, contract 1.1.2), so with
+	 * RuneLite on one table and R0 the next, a step that moved little can still read as R0: the now time is then R0's,
+	 * one step (a few hours) later than RuneLite's own table, and every window's span is that much SHORTER than its
+	 * label, never longer. Compared in integers ({@code matches * 10 >= n * 9}) so 18 of 20 is exactly 0.90.
 	 */
 	public static final double AGREE_THRESHOLD = 0.90d;
 
@@ -255,11 +284,18 @@ public class PriceService
 	static final int EXTRA_TABLES_KEPT = 4;
 
 	/**
-	 * How many revision lines the merged index keeps (B027, {@link #finishIndex}). One call can only ever return
-	 * {@value GuidePriceClient#INDEX_LIMIT}; at the measured 1.1 revisions a day 400 lines reach back about a
-	 * year, comfortably past the longest window, and the whole file is about 21 KB at 250 lines.
+	 * How far back a paging run of the revision index reaches: {@value} days (contract 1.1.2, T2) - the longest
+	 * window plus a day, so its target time is inside the index even with the now time at the clock. The index is
+	 * then kept by {@link RevisionRef#pruned}'s rule, which replaced the old cap of 400 lines (B027).
 	 */
-	static final int INDEX_KEPT = 400;
+	static final int INDEX_REACH_DAYS = 181;
+
+	/**
+	 * How many of the newest indexed revisions, R0 included, the now time is looked for among (contract 1.1.2, T1):
+	 * {@value}. Only tables already in memory are compared - nothing is fetched to answer it - and a RuneLite that
+	 * matches none of them is taken to be AHEAD of the index.
+	 */
+	static final int MATCH_DEPTH = 4;
 
 	/**
 	 * How long after a FAILED body fetch the next attempt is made, while the sidebar is visible (B109). The
@@ -276,62 +312,14 @@ public class PriceService
 	/** K7 wording when the history fetch failed and the window has no stored baseline to show instead. */
 	public static final String PROBLEM_HISTORY_UNAVAILABLE = "Wiki history down - no movement";
 
-	// ------------------------------------------- addendum T: the liquidity checks (T3, checks 4 and 5 from V3/V4)
+	// ------------------------------------------- the traded feeds' freshness (addendum T, T7; addendum AS)
 
-	/**
-	 * <b>T3 check 1.</b> How many units of an item must have changed hands in YESTERDAY's bulk bucket (both sides
-	 * added) before its live traded price is trusted: {@value}.
-	 *
-	 * <p>Measured on the user's own bank, 2026-09-12 ({@code docs/research/live-1d-study-2026-09-12.md}): the rows
-	 * where live 1d and guide 1d disagree wildly are all thin junk - Compost potion(4) read +1006 %, Tatty larupia
-	 * fur +569 %, Harpoon +561 % - because a single trade at a silly price IS the latest mid on an item nobody
-	 * trades, while the 13 rows holding a million or more sat a median 2.4 points apart. A hundred units a day is
-	 * the line between "somebody is making a market in this" and "one person cleared their bank".
+	/*
+	 * Contract 1.2.0 retired addendum T's three liquidity checks and addendum V's two (volume, today's gap, the guide
+	 * drift, yesterday's gap, the jump) as PRICE GATES: a row no longer goes live or stays on the guide by them. Every
+	 * row with a trade today, or yesterday, now has a figure graded SOLID or SOFT by GradeMath, whose constants are the
+	 * thresholds now; the reasons the checks named survive only as GradeWords.
 	 */
-	public static final long LIVE_MIN_VOLUME = 100L;
-
-	/**
-	 * <b>T3 check 2.</b> How far apart the instant-buy and instant-sell sides of {@code /latest} may be, as a
-	 * percentage of their mid, before the mid is called meaningless: {@value} %.
-	 *
-	 * <p>The mid of a wide pair is not a price anybody paid - it is the middle of a gap nobody crossed - and the
-	 * same study found that shape behind the worst of the long tail. Ten percent leaves every liquid item alone
-	 * (a market maker's own margin is well inside it) and refuses the items whose two sides are a guess.
-	 */
-	public static final int LIVE_MAX_SPREAD_PCT = 10;
-
-	/**
-	 * <b>T3 check 3.</b> How far the live mid may sit from the Jagex guide price, either way, before it is refused:
-	 * {@value} % - the user's own "ignore live data changes that is >50 % of the 24 hour value" (addendum T).
-	 *
-	 * <p>Jagex moves a guide price by at most about 5 % a day, so a live mid half again the guide is not a market
-	 * that has moved: it is a manipulated or barely-traded item, or a feed reading the wrong thing. The guide is
-	 * the anchor precisely because it cannot run away.
-	 */
-	public static final int LIVE_MAX_GUIDE_DRIFT_PCT = 50;
-
-	/**
-	 * <b>V4 check 5.</b> How far the live mid may sit from YESTERDAY's traded average, either way, before it is
-	 * refused: {@value} % - the user's own rule ("ignore live data changes that is >50 % of the 24 hour value",
-	 * 2026-09-12) read against the 24-hour figure itself, which is what they named, rather than only against the
-	 * guide as check 3 reads it.
-	 *
-	 * <p>Check 3 cannot catch this on its own, because the guide price of a junk item IS the junk price: Tinderbox
-	 * on the live look of 2026-09-12 quoted 100 / 96 (mid 98) against a guide in the same nineties, so it sailed
-	 * through the sanity check - while the day it had actually traded on averaged about 35 (37 x 5,063 bought,
-	 * 12 x 484 sold), and the row read <b>+181 %</b> at the top of "Biggest gainers". A live price nearly triple
-	 * what the whole of yesterday paid is not a day's move; it is the top of a thin book.
-	 *
-	 * <p>Yesterday ONLY. A 90-day move over half is ordinary - that is what a 90-day window is for - so the older
-	 * windows are untouched by this and keep T4's own rule.
-	 */
-	public static final int LIVE_MAX_DAY_JUMP_PCT = 50;
-
-	/**
-	 * <b>T3 check 2, the freshness half.</b> How old either side of a {@code /latest} quote may be: {@value}
-	 * seconds, one day. A price last traded a week ago is not a live price whatever its spread looks like.
-	 */
-	public static final long LIVE_QUOTE_MAX_AGE_SECONDS = 24L * 60L * 60L;
 
 	/**
 	 * <b>T7.</b> How old the stored {@code /latest} snapshot may be before it stops being used at all: six hours.
@@ -364,32 +352,6 @@ public class PriceService
 
 	/** T7: what {@link Status#degradedReason()} says once the traded feed is unusable and every row is on the guide. */
 	public static final String LIVE_UNAVAILABLE = "live prices unavailable - showing guide prices";
-
-	/** T3/T6: the refusal when a feed this row needed was simply not in hand - no quote, or no bucket at all. */
-	public static final String LIVE_NO_DATA = "no live data";
-
-	/**
-	 * What an item the day's feed does not NAME reads as: a bucket of no prices and no trades. The difference
-	 * between this and a null bucket is the difference between a measurement and an absence - the feed answered
-	 * for that day and this item was not in it, so it really did trade nothing, and check 1 says "0 traded
-	 * yesterday" rather than {@link #LIVE_NO_DATA}. Immutable, so one instance serves every caller.
-	 */
-	private static final TradedPriceClient.Bucket NOT_TRADED = new TradedPriceClient.Bucket(null, 0L, null, 0L);
-
-	/**
-	 * The largest price {@link #liveRefusal} will reason about, above which a figure is refused as
-	 * {@link #LIVE_NO_DATA} rather than measured: {@link Long#MAX_VALUE} / 200.
-	 *
-	 * <p>Not a market rule - the most valuable item in the game is four orders of magnitude below it - but an
-	 * arithmetic one. The five checks are integer comparisons that multiply a price by up to 200
-	 * ({@code spread x 100} against {@code mid x 10}, {@code |mid - guide| x 100} against {@code guide x 50}, and
-	 * since addendum V {@code gap x 100} against {@code bucketMid x 10} and {@code |mid - yesterday| x 100}
-	 * against {@code yesterday x 50}), and a product that wrapped would come out NEGATIVE and pass every check
-	 * silently, putting a nonsense price on a row and into the bank total. A ceiling is the one line that makes
-	 * "a wrapped comparison cannot happen" a property rather than a hope, and nothing the wiki has ever served
-	 * comes near it.
-	 */
-	static final long LIVE_SANE_PRICE_CEILING = Long.MAX_VALUE / 200L;
 
 	private final GuidePriceClient wiki;
 	/**
@@ -425,12 +387,13 @@ public class PriceService
 	 */
 	private final Map<Long, GuideSnapshot> tablesByRev = new LinkedHashMap<>();
 	/**
-	 * What is known about a revision's body: present with a day = fetched (or read off a baseline file) and its
-	 * {@code %LAST_UPDATE%} day; present with null = the wiki answered but the body was unusable (L7), never to be
-	 * asked for again; absent = never seen. This is what bounds L5's retry to ONE: a candidate that is already
-	 * known is judged, never refetched.
+	 * What is known about a revision's body: present with a time = fetched (or read off a baseline file) and its
+	 * {@code %LAST_UPDATE%} in unix seconds - the time {@link RevisionRef#pickThen} reads for it from then on;
+	 * present with null = the wiki answered but the body was unusable (L7), never to be asked for again; absent =
+	 * never seen. This is what bounds a window's retry to ONE: a candidate that is already known is judged, never
+	 * refetched.
 	 */
-	private final Map<Long, LocalDate> knownDays = new HashMap<>();
+	private final Map<Long, Long> knownTimes = new HashMap<>();
 	/** Windows whose target predates the whole index (L11: "No 180d history", not an error). */
 	private final EnumSet<MovementWindow> noHistory = EnumSet.noneOf(MovementWindow.class);
 	/** Windows whose every candidate revision came back unusable - nothing left to try. */
@@ -506,6 +469,39 @@ public class PriceService
 	private LocalDate liveDayUsed;
 	private final Map<MovementWindow, LocalDate> windowDaysUsed = new EnumMap<>(MovementWindow.class);
 
+	// ---- contract 1.2.0: the graded live figures' own inputs (L1)
+
+	/** The newest closed hour's {@code /1h} bucket, {@link PriceStore.TradedHour#EMPTY} until loaded or fetched. */
+	private PriceStore.TradedHour hour = PriceStore.TradedHour.EMPTY;
+	/** Whether the {@code /1h} request is out; one at a time. */
+	private boolean hourInFlight;
+	/**
+	 * The start of the closed hour the {@code /1h} feed was last asked for, unix seconds; 0 = never. An hour is asked for
+	 * at most {@link GradeMath#HOUR_MAX_TRIES_PER_HOUR} times - the first request, then a retry every
+	 * {@link GradeMath#HOUR_RETRY_MILLIS} while the wiki answers it empty - and a transport or HTTP failure ends the
+	 * tries for that hour at once, so it waits for the next hour.
+	 */
+	private long hourAsked;
+	/** How many requests went out for {@link #hourAsked}; reset when the wanted hour moves on. */
+	private int hourTries;
+	/** The earliest clock (epoch millis) the next try for {@link #hourAsked} may go out; 0 = no wait. */
+	private long hourRetryAtMillis;
+	/** The UTC day {@link #hourFetches} counts on, and how many {@code /1h} requests went out that day (the 24 cap). */
+	@Nullable
+	private LocalDate hourFetchDay;
+	private int hourFetches;
+	/**
+	 * The day before yesterday's bucket ({@code traded-D2.json}): yesterday's D1 bucket, kept when today's arrives (the
+	 * UTC rollover) - never fetched. {@link PriceStore.TradedDay#EMPTY} until the first rollover or a stored file.
+	 */
+	private PriceStore.TradedDay d2 = PriceStore.TradedDay.EMPTY;
+	/** Every distinct print this session's {@code /latest} polls have seen in the last 24 hours (L1); memory only. */
+	private PollMemory prints = PollMemory.EMPTY;
+	/** The start of the {@code /1h} bucket the last computation graded with, unix seconds; 0 = none (L1's echo). */
+	private long hourAtUsed;
+	/** How the last computation's counted rows graded, and whether the card is soft (L3). */
+	private GradeSummary gradesUsed = GradeSummary.NONE;
+
 	/** Item id to wiki name (L8 a); empty until loaded or fetched, never null, always unmodifiable. */
 	private Map<Integer, String> mapping = Collections.emptyMap();
 	/** Folded wiki name to the id that owns it in {@link #mapping} - the L8 b refusal test. Never null. */
@@ -525,23 +521,47 @@ public class PriceService
 	private GuideSnapshot r0 = GuideSnapshot.EMPTY;
 	/** {@link #r0} projected onto ids (the agreement test and the degraded "now"); EMPTY with it. */
 	private PriceMap r0Map = PriceMap.EMPTY;
-	/** The derived anchor day D (L3); null until a computation with R0 and a bank has run. */
+	/**
+	 * The UTC date of {@link #nowSeconds} - what {@link Status#anchorDay()} still prints (contract 1.1.2); null while
+	 * there is no now time.
+	 */
 	@Nullable
 	private LocalDate anchorDay;
+	/**
+	 * The now time every window counts back from (contract 1.1.2, T1), unix seconds: the table time of the indexed
+	 * revision RuneLite's prices match, or the clock while they match none. 0 until a computation with R0 and a bank
+	 * has run. What {@link #resolveLocked} reads.
+	 */
+	private long nowSeconds;
+	/**
+	 * The revision RuneLite's prices matched in the last computation (R0, or an older table when RuneLite was behind);
+	 * 0 when they matched none. No window's baseline may ever be this revision or a newer one ({@link #resolveLocked}).
+	 */
+	private long matchedRevId;
+	/** Whether the last computation found RuneLite's prices matching no indexed table - the clock was the now time. */
+	private boolean nowAhead;
+	/**
+	 * Set by a computation that found RuneLite's prices matching no indexed table - RuneLite AHEAD of the index - and
+	 * cleared when an index fetch succeeds: {@link #indexStaleLocked} reads it, so the next tick refetches the index
+	 * whatever its age (contract 1.1.2, T1). A computation that still finds RuneLite ahead after the refetch sets it
+	 * again, so the index is asked for once a tick until the wiki has the table RuneLite holds.
+	 */
+	private boolean indexMarkedStale;
+	/**
+	 * Whether a paging run of the revision index has succeeded this session (contract 1.1.2, T2). An index that does
+	 * not reach {@link #INDEX_REACH_DAYS} back - none at all, or one a single call filled at eight revisions a day - is
+	 * paged back once a session; after that every refresh is one call for what is newer.
+	 */
+	private boolean indexPaged;
 	/** The last agreement, matches / n, or -1 when nothing compared (L3). */
 	private double agree = -1.0d;
 	/** How many bank items had both a RuneLite price and an R0 value in the last computation (L3's n). */
 	private int agreeSamples;
 	/** True when the last computation used R0 as "now" because fewer than {@link #AGREE_MIN_SAMPLES} compared (L3). */
 	private boolean anchorDegraded;
-	/**
-	 * True when the last computation found RuneLite's price table a day BEHIND the wiki's newest rather than a day
-	 * ahead of it, and stepped the anchor day back to match ({@link #agrees}, B002).
-	 */
-	private boolean anchorBehind;
 	/** True after an index or body fetch failed and until one succeeds; the rows run on stored data meanwhile (L11). */
 	private boolean historyFailed;
-	/** Whether the "the index is full and still does not reach every window" line has been logged this session (B009). */
+	/** Whether the "the index does not reach every window" line has been logged this session (B009). */
 	private boolean indexReachLogged;
 	private BankSnapshot bank = BankSnapshot.EMPTY;
 	/**
@@ -691,7 +711,8 @@ public class PriceService
 	 * @param executor     RuneLite's injected scheduled executor (single-threaded, shared); a direct-run stub in tests
 	 * @param clockMillis  {@code System::currentTimeMillis} in the plugin; settable in tests so every staleness
 	 *                     decision is deterministic (C27). Only the "Bank as of HH:MM" clock is ever shown in local
-	 *                     time; every DATE decision is UTC (L9) and never touches this clock
+	 *                     time; every DATE is UTC (L9), and the now time is this clock only while RuneLite holds a
+	 *                     table the index has not seen (contract 1.1.2)
 	 * @param edt          {@code SwingUtilities::invokeLater} in the plugin; {@code Runnable::run} in tests - the only
 	 *                     way a {@link Listener} is ever invoked
 	 */
@@ -761,7 +782,7 @@ public class PriceService
 	// ---------------------------------------------------------------- nested types (C20, C21, K13, L13)
 
 	/**
-	 * The service's one-shot timers, one slot each. Both obey the same rule - at most one pending, arming
+	 * The service's one-shot timers, one slot each. All obey the same rule - at most one pending, arming
 	 * replaces, {@link #stop()} cancels - which is why they share {@link #armOneShot} and this key.
 	 */
 	private enum OneShot
@@ -769,7 +790,9 @@ public class PriceService
 		/** The publish that removes the refresh-cooldown sentence when the cooldown ends (B042). */
 		COOLDOWN_CLEAR,
 		/** The backed-off body retry armed by a failed batch (B109). */
-		BODY_RETRY
+		BODY_RETRY,
+		/** The second try at a closed hour the wiki had not cut yet (contract 1.2.0, L1). */
+		HOUR_RETRY
 	}
 
 	/**
@@ -884,6 +907,7 @@ public class PriceService
 			@Nullable
 			private final LocalDate liveDay;
 			private final Map<MovementWindow, LocalDate> windowDays;
+			private final long hourAtSeconds;
 
 			/**
 			 * The pre-addendum-U arity: the five figures, with no live calendar behind them. Kept so every caller
@@ -916,6 +940,20 @@ public class PriceService
 				final int guideRows, final int alchRows, @Nullable final LocalDate liveDay,
 				@Nullable final Map<MovementWindow, LocalDate> windowDays)
 			{
+				this(fetchedAtMillis, latestItems, liveRows, guideRows, alchRows, liveDay, windowDays, 0L);
+			}
+
+			/**
+			 * The same, carrying the start of the {@code /1h} bucket these rows were graded with (contract 1.2.0, L1).
+			 * The arity above is the pre-1.2.0 one and delegates with none.
+			 *
+			 * @param hourAtSeconds the {@code /1h} bucket's start, unix seconds; 0 or less when none was in hand
+			 */
+			public LiveStatus(final long fetchedAtMillis, final int latestItems, final int liveRows,
+				final int guideRows, final int alchRows, @Nullable final LocalDate liveDay,
+				@Nullable final Map<MovementWindow, LocalDate> windowDays, final long hourAtSeconds)
+			{
+				this.hourAtSeconds = Math.max(0L, hourAtSeconds);
 				this.fetchedAtMillis = fetchedAtMillis;
 				this.latestItems = latestItems;
 				this.liveRows = liveRows;
@@ -991,10 +1029,20 @@ public class PriceService
 			}
 
 			/**
+			 * The start of the {@code /1h} bucket these rows were graded with, unix seconds (contract 1.2.0, L1) - the
+			 * last closed hour the plugin holds; 0 when none was in hand.
+			 */
+			public long hourAtSeconds()
+			{
+				return hourAtSeconds;
+			}
+
+			/**
 			 * The figures under T8's own key names, in T8's own order, with addendum U's two calendar keys after
 			 * them: {@code fetchedAt}, {@code latestItems}, {@code liveRows}, {@code guideRows}, {@code alchRows},
 			 * then {@code liveDay} (an ISO date string, or null) and {@code windowDays} (an object keyed by window
-			 * label - {@code 1d}, {@code 7d}, ... - of ISO date strings and nulls).
+			 * label - {@code 1d}, {@code 7d}, ... - of ISO date strings and nulls), and last contract 1.2.0's
+			 * {@code hourAt} - the {@code /1h} bucket's start as an ISO-8601 UTC instant, or null.
 			 *
 			 * <p>Values are {@link Long}, {@link String}, a nested {@code LinkedHashMap<String, String>} and null,
 			 * which is what lets the panel's {@code describe()} write the object without a Gson it does not have -
@@ -1018,6 +1066,7 @@ public class PriceService
 					days.put(window.label(), day == null ? null : day.toString());
 				}
 				map.put("windowDays", days);
+				map.put("hourAt", hourAtSeconds() <= 0L ? null : Instant.ofEpochSecond(hourAtSeconds()).toString());
 				return map;
 			}
 
@@ -1039,13 +1088,15 @@ public class PriceService
 					&& guideRows == other.guideRows
 					&& alchRows == other.alchRows
 					&& Objects.equals(liveDay, other.liveDay)
-					&& windowDays.equals(other.windowDays);
+					&& windowDays.equals(other.windowDays)
+					&& hourAtSeconds == other.hourAtSeconds;
 			}
 
 			@Override
 			public int hashCode()
 			{
-				return Objects.hash(fetchedAtMillis, latestItems, liveRows, guideRows, alchRows, liveDay, windowDays);
+				return Objects.hash(fetchedAtMillis, latestItems, liveRows, guideRows, alchRows, liveDay, windowDays,
+					hourAtSeconds);
 			}
 
 			@Override
@@ -1096,6 +1147,10 @@ public class PriceService
 		private final int alchCounted;
 		/** The service's count of placeholder restarts when this status was built (1.1.1 part B); 0 from every public constructor. */
 		private final int placeholderRestarts;
+		/** The now time the windows counted back from (contract 1.1.2), unix seconds; 0 from every public constructor. */
+		private final long nowSeconds;
+		/** How the counted rows graded (contract 1.2.0, L3); {@link GradeSummary#NONE} from every public constructor. */
+		private final GradeSummary grades;
 
 		/**
 		 * @param pricesAtMillis          when the guide prices in the rows were read (the last computation that
@@ -1121,7 +1176,7 @@ public class PriceService
 		 * @param baselineRevId           the wiki revision id of that baseline; 0 = no baseline
 		 * @param mappingAtMillis         when the id-to-wiki-name table was fetched; 0 = none loaded
 		 * @param indexAtMillis           when the revision index was fetched; 0 = none loaded (L4)
-		 * @param anchorDay               the derived anchor day D (L3), or null when none is derived yet
+		 * @param anchorDay               the UTC date of the now time (contract 1.1.2), or null when there is none yet
 		 * @param agree                   the last agreement matches / n in [0, 1], or -1 when nothing compared (L3)
 		 * @param agreeSamples            the n of that agreement - bank items with both a RuneLite price and an R0 value
 		 * @param r0Day                   the newest guide table's own day, or null when R0 is not in memory (L3)
@@ -1222,15 +1277,19 @@ public class PriceService
 			this.alchStacks = 0;
 			this.alchCounted = 0;
 			this.placeholderRestarts = 0;
+			this.nowSeconds = 0L;
+			this.grades = GradeSummary.NONE;
 		}
 
 		/**
 		 * Every field of {@code base}, with {@code bankHistory} in place of its series (amendment 9.3), the two alch
-		 * counts of 1.1.0 part G and the placeholder restarts of 1.1.1 part B.
+		 * counts of 1.1.0 part G, the placeholder restarts of 1.1.1 part B and the now time of contract 1.1.2.
 		 */
 		private Status(final Status base, final BankHistorySeries bankHistory, final int alchStacks, final int alchCounted,
-			final int placeholderRestarts)
+			final int placeholderRestarts, final long nowSeconds, final GradeSummary grades)
 		{
+			this.grades = grades;
+			this.nowSeconds = nowSeconds;
 			this.alchStacks = alchStacks;
 			this.alchCounted = alchCounted;
 			this.placeholderRestarts = placeholderRestarts;
@@ -1271,7 +1330,7 @@ public class PriceService
 		public Status withBankHistory(@Nullable final BankHistorySeries series)
 		{
 			return new Status(this, series == null ? BankHistorySeries.EMPTY : series, alchStacks, alchCounted,
-				placeholderRestarts);
+				placeholderRestarts, nowSeconds, grades);
 		}
 
 		/**
@@ -1281,7 +1340,8 @@ public class PriceService
 		 */
 		public Status withAlchStacks(final int all, final int counted)
 		{
-			return new Status(this, bankHistory, Math.max(0, all), Math.max(0, counted), placeholderRestarts);
+			return new Status(this, bankHistory, Math.max(0, all), Math.max(0, counted), placeholderRestarts, nowSeconds,
+				grades);
 		}
 
 		/**
@@ -1289,7 +1349,50 @@ public class PriceService
 		 */
 		public Status withPlaceholderRestarts(final int restarts)
 		{
-			return new Status(this, bankHistory, alchStacks, alchCounted, Math.max(0, restarts));
+			return new Status(this, bankHistory, alchStacks, alchCounted, Math.max(0, restarts), nowSeconds, grades);
+		}
+
+		/**
+		 * This status carrying the now time its windows counted back from (contract 1.1.2) - the table time of the
+		 * revision RuneLite's prices matched, or the clock while they matched none. Negative reads as 0.
+		 */
+		public Status withNowSeconds(final long seconds)
+		{
+			return new Status(this, bankHistory, alchStacks, alchCounted, placeholderRestarts, Math.max(0L, seconds),
+				grades);
+		}
+
+		/**
+		 * This status carrying how its computation's counted rows graded (contract 1.2.0, L3) - the solid, soft and none
+		 * counts, and whether the card is soft. Null reads as {@link GradeSummary#NONE}.
+		 */
+		public Status withGrades(@Nullable final GradeSummary summary)
+		{
+			return new Status(this, bankHistory, alchStacks, alchCounted, placeholderRestarts, nowSeconds,
+				summary == null ? GradeSummary.NONE : summary);
+		}
+
+		/**
+		 * How the counted rows of the window on screen graded (contract 1.2.0, L3): how many are solid, soft and none,
+		 * and whether the CARD is soft - its solid rows under {@value GradeMath#CARD_SOLID_VALUE_PCT} % of the counted
+		 * value, or its soft rows over {@value GradeMath#CARD_SOFT_MOVE_PCT} % of the gp move ({@link GradeSummary#soft()}).
+		 * {@link GradeSummary#NONE} while nothing is graded - live prices off - and for a status the service did not
+		 * build. Never null.
+		 */
+		public GradeSummary grades()
+		{
+			return grades;
+		}
+
+		/**
+		 * The now time every window counted back from (contract 1.1.2), unix seconds: the table time of the indexed
+		 * revision RuneLite's prices matched, or the clock while they matched none (RuneLite ahead of the index). 0
+		 * when there is none, and for a status the service did not build. {@link #anchorDay()} is its UTC date. Not
+		 * part of a status's identity: it is echoed by the dev bridge and drawn nowhere.
+		 */
+		public long nowSeconds()
+		{
+			return nowSeconds;
 		}
 
 		/**
@@ -1417,8 +1520,9 @@ public class PriceService
 		}
 
 		/**
-		 * The derived anchor day D (L3) - the Jagex day the "now" prices belong to - or null when it has not been
-		 * derived yet (no R0 in memory, or no bank). UTC.
+		 * The UTC date of {@link #nowSeconds()} - the day the "now" prices belong to (addendum L called it the anchor
+		 * day D; since contract 1.1.2 it is no longer derived on its own and never "R0's day + 1") - or null when there
+		 * is no now time yet (no R0 in memory, or no bank).
 		 */
 		@Nullable
 		public LocalDate anchorDay()
@@ -1429,7 +1533,8 @@ public class PriceService
 		/**
 		 * The last agreement between RuneLite's prices and the newest guide table, matches / n in [0, 1], or -1
 		 * when no item could be compared (L3). At or above {@value PriceService#AGREE_THRESHOLD} with enough samples
-		 * means RuneLite is on R0's day; below it means RuneLite is a day ahead.
+		 * means RuneLite holds R0's table; below it, RuneLite holds an older table in memory or one the index has not
+		 * seen (contract 1.1.2).
 		 */
 		public double agree()
 		{
@@ -1458,8 +1563,8 @@ public class PriceService
 		/**
 		 * The UTC day the current window's baseline prices belong to - what the header prints ("1d vs 07 Sep")
 		 * and the tooltip repeats ("1d ago (07 Sep)", L7) - or null when there is no baseline. It is the REAL day
-		 * of the table in use, which after L5's walk-back or a stale-body retry that could not reach the target may
-		 * differ from {@code window.targetDate(anchorDay)}.
+		 * of the table in use, the UTC date of {@link #baselineRevisionSeconds()}; the open row and the card's hover
+		 * print that time as well (contract 1.1.2).
 		 */
 		@Nullable
 		public LocalDate thenDay()
@@ -1474,11 +1579,11 @@ public class PriceService
 		}
 
 		/**
-		 * True when the rows are computed in a fallback mode and a reader should trust them less: the anchor day
-		 * could not be derived from RuneLite's prices (fewer than {@value PriceService#AGREE_MIN_SAMPLES}
+		 * True when the rows are computed in a fallback mode and a reader should trust them less: the now time
+		 * could not be identified from RuneLite's prices (fewer than {@value PriceService#AGREE_MIN_SAMPLES}
 		 * comparable items, L3 - the newest guide table stands in as "now", see {@link #anchorDegraded()});
-		 * RuneLite's price table was found a day BEHIND the wiki's and the anchor was stepped back to match
-		 * (B002); or the last history fetch failed and the rows run on stored baselines (L11).
+		 * RuneLite's price table was found BEHIND the wiki's and the windows count back from the older table it
+		 * holds (B002); or the last history fetch failed and the rows run on stored baselines (L11).
 		 * {@link #degradedReason()} says which.
 		 */
 		public boolean degraded()
@@ -1488,8 +1593,8 @@ public class PriceService
 
 		/**
 		 * The one flavour of {@link #degraded()} a reader has to be told about differently: fewer than
-		 * {@value PriceService#AGREE_MIN_SAMPLES} bank stacks could be compared, so the anchor day could not be
-		 * derived and the newest guide TABLE stands in as "now" for every row (L3) - a different price series from
+		 * {@value PriceService#AGREE_MIN_SAMPLES} bank stacks could be compared, so the now time could not be
+		 * identified and the newest guide TABLE stands in as "now" for every row (L3) - a different price series from
 		 * the one RuneLite's own tooltip shows, on a small or fresh account. Always false when
 		 * {@link #degraded()} is false.
 		 *
@@ -1661,7 +1766,8 @@ public class PriceService
 				&& options.equals(other.options)
 				&& live.equals(other.live)
 				&& bankHistory.equals(other.bankHistory)
-				&& placeholderRestarts == other.placeholderRestarts;
+				&& placeholderRestarts == other.placeholderRestarts
+				&& grades.equals(other.grades);
 		}
 
 		@Override
@@ -1670,7 +1776,7 @@ public class PriceService
 			return Objects.hash(pricesAtMillis, bankAtMillis, bankLoaded, loggedIn, source, problem, totalRows,
 				bankItems, window, baselineLoaded, baselineRevisionSeconds, baselineRevId, mappingAtMillis,
 				indexAtMillis, anchorDay, agree, agreeSamples, r0Day, r0RevId, degraded, anchorDegraded,
-				degradedReason, portfolio, options, live, bankHistory, placeholderRestarts);
+				degradedReason, portfolio, options, live, bankHistory, placeholderRestarts, grades);
 		}
 
 		@Override
@@ -1680,19 +1786,20 @@ public class PriceService
 				+ ", loggedIn=" + loggedIn + ", source=" + source + ", problem=" + problem + ", totalRows=" + totalRows
 				+ ", bankItems=" + bankItems + ", window=" + window.name() + ", baselineLoaded=" + baselineLoaded
 				+ ", thenDay=" + thenDay() + ", baselineRevId=" + baselineRevId + ", mappingAt=" + mappingAtMillis
-				+ ", indexAt=" + indexAtMillis + ", anchorDay=" + anchorDay + ", agree=" + agree
+				+ ", indexAt=" + indexAtMillis + ", anchorDay=" + anchorDay + ", now=" + nowSeconds + ", agree=" + agree
 				+ ", agreeSamples=" + agreeSamples + ", r0Day=" + r0Day + ", r0RevId=" + r0RevId
 				+ ", degraded=" + degraded + ", bankValue=" + portfolio.valueNow()
 				+ ", options=" + options
 				+ (LiveStatus.OFF.equals(live) ? "" : ", live=" + live)
-				+ (bankHistory.isEmpty() ? "" : ", bankHistory=" + bankHistory.size()) + '}';
+				+ (bankHistory.isEmpty() ? "" : ", bankHistory=" + bankHistory.size())
+				+ (grades.graded() ? ", grades=" + grades : "") + '}';
 		}
 	}
 
 	/**
-	 * What {@link #resolveLocked} decides for one window (L5): the revision whose table to adopt now (possibly
-	 * a provisional, stale one), the revision whose body must still be fetched, or one of the two terminal
-	 * answers - no history that far back (L11) or every candidate exhausted.
+	 * What {@link #resolveLocked} decides for one window (contract 1.1.2, T1): the revision whose table to adopt now,
+	 * the revision whose body must still be fetched, or one of the two terminal answers - no history that far back
+	 * (L11) or every candidate exhausted.
 	 */
 	private static final class Resolution
 	{
@@ -1724,12 +1831,6 @@ public class PriceService
 		static Resolution fetch(final RevisionRef ref)
 		{
 			return new Resolution(null, ref, false, false);
-		}
-
-		/** Adopt {@code accept} for now (a stale body is still a real past price) and fetch the retry candidate. */
-		static Resolution acceptAndFetch(final RevisionRef accept, final RevisionRef fetch)
-		{
-			return new Resolution(accept, fetch, false, false);
 		}
 	}
 
@@ -1851,12 +1952,12 @@ public class PriceService
 		final Map<MovementWindow, GuideSnapshot> tables;
 		/**
 		 * Every guide table in memory, R0 and the spares {@link #evictLocked()} keeps alike - the pool
-		 * {@link #tableForDay} searches when {@link #agrees} asks whether RuneLite's table matches the day BEFORE
-		 * R0's (B002). A list rather than a day-keyed map because the question is asked on one branch of one
-		 * recompute in a while, and building the map cost a {@code dataDay()} per table on every recompute that
-		 * never asked. Never null; a handful of entries, all immutable, held by reference.
+		 * {@link #olderTables} searches when {@link #agrees} asks whether RuneLite's table matches a revision OLDER
+		 * than R0 (B002, contract 1.1.2). Never null; a handful of entries, all immutable, held by reference.
 		 */
 		final List<GuideSnapshot> inMemory;
+		/** The revision index this computation was taken with, newest first; never null, immutable. */
+		final List<RevisionRef> index;
 		final GuideSnapshot r0;
 		final PriceMap r0Map;
 		final Map<Integer, String> mapping;
@@ -1891,8 +1992,17 @@ public class PriceService
 		final boolean liveOn;
 		/** A {@code /latest} fetch has failed and not recovered - half of T7's "live prices unavailable" test. */
 		final boolean liveFailed;
-		/** The clock this computation was taken at, unix seconds - T3 check 2's freshness half. */
+		/** The clock this computation was taken at, unix seconds - how old a print and an hour are (contract 1.2.0, L2). */
 		final long nowSeconds;
+		/**
+		 * The day before yesterday's bucket ({@code traded-D2.json}, contract 1.2.0 L1) when it is the day just before
+		 * the D1 bucket in use - the anchor's second choice and the 1d fallback's "then" - else EMPTY. Never null.
+		 */
+		final PriceStore.TradedDay d2;
+		/** The newest {@code /1h} bucket in hand (L1), EMPTY with no usable snapshot; its freshness is GradeMath's. */
+		final PriceStore.TradedHour hour;
+		/** The poll memory of the live day (L1), EMPTY when it is of another day or there is no snapshot. */
+		final PollMemory prints;
 		/**
 		 * The priced snapshot itself (addendum AU, plan 7.1 item 3): the owner of any bank-history reading this
 		 * computation makes - always the snapshot's, never the live login - its capture stamp, whether it is a
@@ -1903,12 +2013,17 @@ public class PriceService
 		Inputs(final Stacks stacks, final Stacks everything, final List<BankItem> droppedAlch, final long currencyGp,
 			final RowFilter filter,
 			final ViewOptions options, final Map<MovementWindow, PriceMap> baselines,
-			final Map<MovementWindow, GuideSnapshot> tables, final List<GuideSnapshot> inMemory, final GuideSnapshot r0,
+			final Map<MovementWindow, GuideSnapshot> tables, final List<GuideSnapshot> inMemory,
+			final List<RevisionRef> index, final GuideSnapshot r0,
 			final PriceMap r0Map, final Map<Integer, String> mapping, final Map<Integer, String> foldedNames,
 			final Map<String, Integer> owners, final Map<Integer, TradedPriceClient.Quote> quotes,
 			final Map<MovementWindow, PriceStore.TradedDay> tradedDays, @Nullable final LocalDate liveDay,
-			final boolean liveOn, final boolean liveFailed, final long nowSeconds, final PricedBank priced)
+			final boolean liveOn, final boolean liveFailed, final long nowSeconds, final PricedBank priced,
+			final PriceStore.TradedDay d2, final PriceStore.TradedHour hour, final PollMemory prints)
 		{
+			this.d2 = d2;
+			this.hour = hour;
+			this.prints = prints;
 			this.priced = priced;
 			this.items = stacks.items;
 			this.splits = stacks.splits;
@@ -1920,6 +2035,7 @@ public class PriceService
 			this.baselines = baselines;
 			this.tables = tables;
 			this.inMemory = inMemory;
+			this.index = index;
 			this.r0 = r0;
 			this.r0Map = r0Map;
 			this.mapping = mapping;
@@ -1951,55 +2067,30 @@ public class PriceService
 		}
 
 		/**
-		 * Yesterday's bucket for one item - what checks 1, 4 and 5 are all made against - or NULL when the D1
-		 * bucket is not in hand at all, which is a refusal of {@link #LIVE_NO_DATA} rather than a measurement. An
-		 * item the feed simply does not name really did trade 0 units that day, so it answers {@link #NOT_TRADED}
-		 * and is refused by check 1 with "0 traded yesterday".
-		 *
-		 * <p>Always the 1d window's bucket, whichever window the sidebar is showing: "traded yesterday" is a fact
-		 * about the item, not about the span being looked at. Since addendum U that bucket is yesterday by the LIVE
-		 * calendar - {@code liveDay - 1}, or the day before it when the wiki had not closed yesterday yet (U2) - and
-		 * owes nothing to the guide history, which may be a day behind it.
+		 * One window's traded bucket for one item (contract 1.2.0, L2) - the "then" of that window's figure - or null
+		 * when the window has no bucket for the live day, or the bucket does not name the item (it traded nothing that
+		 * day).
 		 */
 		@Nullable
-		TradedPriceClient.Bucket bucketYesterday(final int id)
-		{
-			final PriceStore.TradedDay yesterday = tradedDays.get(MovementWindow.D1);
-			if (yesterday == null || yesterday.isEmpty())
-			{
-				return null;
-			}
-			final TradedPriceClient.Bucket bucket = yesterday.get(id);
-			return bucket == null ? NOT_TRADED : bucket;
-		}
-
-		/**
-		 * How many units of one item changed hands yesterday - the figure a live row's tooltip prints - read off
-		 * {@link #bucketYesterday}, so the tooltip and check 1 can never be looking at two different days.
-		 */
-		@Nullable
-		Long volumeYesterday(final int id)
-		{
-			final TradedPriceClient.Bucket bucket = bucketYesterday(id);
-			return bucket == null ? null : Long.valueOf(bucket.volume());
-		}
-
-		/**
-		 * One window's traded "then" for an item: the bucket's volume-weighted average, but ONLY when that bucket
-		 * is one worth comparing against - {@link #bucketUsable}, which is T4's "names a price and clears
-		 * {@value #LIVE_MIN_VOLUME}" plus addendum V line V3's gap rule. Null sends that window back to the guide's
-		 * own two ends.
-		 *
-		 * <p>V3 reads the predicate here as well as at check 4 deliberately: a stack can be perfectly liquid today
-		 * and yet have had a scattered day three months ago, and pricing its 90d move off an "average" of two
-		 * prices a hundred percent apart would be the same defect one window further out.
-		 */
-		@Nullable
-		Long tradedThen(final MovementWindow window, final int id)
+		TradedPriceClient.Bucket bucket(final MovementWindow window, final int id)
 		{
 			final PriceStore.TradedDay day = tradedDays.get(window);
-			final TradedPriceClient.Bucket bucket = day == null ? null : day.get(id);
-			return bucketUsable(bucket) ? bucket.weightedAverage() : null;
+			return day == null ? null : day.get(id);
+		}
+
+		/**
+		 * One item's graded facts (contract 1.2.0, L2): its anchor, the last 24 hours' observations of each side, the current pair,
+		 * the {@code /1h} bucket and yesterday's and the day before's buckets - the same for every window, so a
+		 * computation asks once per item ({@link Figures}).
+		 *
+		 * @param guideNow the item's guide price now, as the stack prices it - the anchor's first value
+		 */
+		GradeMath.Facts facts(final int id, @Nullable final Long guideNow)
+		{
+			final PriceStore.TradedDay d1 = tradedDays.get(MovementWindow.D1);
+			return GradeMath.facts(nowSeconds, liveDay, guideNow, quotes.get(id), prints.prints(id, true),
+				prints.prints(id, false), hour.get(id), hour.startSeconds(), d1 == null ? null : d1.get(id),
+				d1 == null ? null : d1.day(), d2.get(id), d2.day());
 		}
 
 		/**
@@ -2015,34 +2106,48 @@ public class PriceService
 			return day == null ? null : day.day();
 		}
 
-		/** The guide baseline day of one window (L7) - what a window that fell back to the guide compared against. */
-		@Nullable
-		LocalDate guideDayOf(final MovementWindow window)
-		{
-			final PriceMap baseline = baselines.get(window);
-			return baseline == null ? null : baseline.dataDay();
-		}
-
 		/**
-		 * The table in memory whose own day marker is {@code day}, or null when none is - the LAST such table, as
-		 * the day-keyed map this replaced kept the last writer of a key. Null day, no table.
+		 * The tables in memory of the {@code depth} indexed revisions saved just before R0, newest first - the
+		 * candidates {@link #nowTime} compares RuneLite's prices with when they do not match R0 (contract 1.1.2, T1).
+		 * A revision whose body is not in memory is passed over: nothing is fetched to answer this question. Empty
+		 * without R0.
 		 */
-		@Nullable
-		GuideSnapshot tableForDay(@Nullable final LocalDate day)
+		List<GuideSnapshot> olderTables(final int depth)
 		{
-			if (day == null)
+			final List<GuideSnapshot> found = new ArrayList<>();
+			if (r0.isEmpty() || depth <= 0)
 			{
-				return null;
+				return found;
 			}
-			for (int i = inMemory.size() - 1; i >= 0; i--)
+			int seen = 0;
+			for (final RevisionRef ref : index)
 			{
-				final GuideSnapshot table = inMemory.get(i);
-				if (table != null && !table.isEmpty() && day.equals(table.dataDay()))
+				if (ref == null || !savedBefore(ref, r0))
 				{
-					return table;
+					continue;
+				}
+				if (seen++ >= depth)
+				{
+					break;
+				}
+				for (int i = inMemory.size() - 1; i >= 0; i--)
+				{
+					final GuideSnapshot table = inMemory.get(i);
+					if (table != null && !table.isEmpty() && table.revId() == ref.revId())
+					{
+						found.add(table);
+						break;
+					}
 				}
 			}
-			return null;
+			return found;
+		}
+
+		/** Whether {@code ref} was saved before {@code table}'s revision, by {@link RevisionRef#NEWEST_FIRST}'s order. */
+		private static boolean savedBefore(final RevisionRef ref, final GuideSnapshot table)
+		{
+			return ref.editSeconds() != table.revisionSeconds() ? ref.editSeconds() < table.revisionSeconds()
+				: ref.revId() < table.revId();
 		}
 
 		/** The current window's baseline - what the rows read. */
@@ -2269,9 +2374,9 @@ public class PriceService
 	}
 
 	/**
-	 * The "now" of every tradeable part {@link Lookups#parts} names (R2), and which of them the traded feeds may
-	 * price (T3): {@link #partsNow} and {@link #partsLive}, worked out once per computation over EVERY part so the
-	 * rows and anything else priced from the same computation read the same sums.
+	 * The "now" of every tradeable part {@link Lookups#parts} names (R2) - its guide price, and its ROW price, which is
+	 * the graded figure's where the part has one on 1d (contract 1.2.0, L4) - worked out once per computation over
+	 * EVERY part so the rows and anything else priced from the same computation read the same sums.
 	 */
 	private static final class PartPrices
 	{
@@ -2279,27 +2384,39 @@ public class PriceService
 		final Parts parts;
 		/** Part id to its guide "now" (R0 in the degraded mode and for a rewritten id); absent = no price. */
 		final Map<Integer, Long> now;
-		/** Part id to its live mid, for the parts that pass all five checks. */
-		final Map<Integer, Long> live;
-		/** Part id to the first check that refused it. */
-		final Map<Integer, String> refusal;
+		/** Part id to its row price: the 1d figure's price where it has one, else its guide "now" (L4). */
+		final Map<Integer, Long> price;
+		/** The part ids whose {@link #price} came from a graded figure. */
+		final Set<Integer> graded;
 
-		private PartPrices(final Parts parts, final Map<Integer, Long> now, final Map<Integer, Long> live,
-			final Map<Integer, String> refusal)
+		private PartPrices(final Parts parts, final Map<Integer, Long> now, final Map<Integer, Long> price,
+			final Set<Integer> graded)
 		{
 			this.parts = parts;
 			this.now = now;
-			this.live = live;
-			this.refusal = refusal;
+			this.price = price;
+			this.graded = graded;
 		}
 
-		static PartPrices of(final Inputs in, final Parts parts, final boolean degraded)
+		static PartPrices of(final Inputs in, final Parts parts, final boolean degraded, final Figures figures)
 		{
 			final Map<Integer, Long> now = partsNow(in, parts, degraded);
-			final Map<Integer, Long> live = new HashMap<>();
-			final Map<Integer, String> refusal = new HashMap<>();
-			partsLive(in, parts, now, live, refusal);
-			return new PartPrices(parts, now, live, refusal);
+			if (!figures.active() || parts.isEmpty())
+			{
+				return new PartPrices(parts, now, now, Collections.<Integer>emptySet());
+			}
+			final Map<Integer, Long> price = new HashMap<>(now);
+			final Set<Integer> graded = new HashSet<>();
+			for (final int id : parts.ids)
+			{
+				final Long figured = figures.price(id, now.get(id));
+				if (figured != null)
+				{
+					price.put(id, figured);
+					graded.add(id);
+				}
+			}
+			return new PartPrices(parts, now, price, graded);
 		}
 	}
 
@@ -2309,7 +2426,7 @@ public class PriceService
 	 */
 	enum StackKind
 	{
-		/** A GE-tradeable stack: RuneLite's guide price (or R0 standing in), or the live mid. */
+		/** A GE-tradeable stack: RuneLite's guide price (or R0 standing in), or its graded live figure's price. */
 		TRADEABLE,
 		/** An untradeable stack priced as the sum of its tradeable parts (R2). */
 		PARTS,
@@ -2330,23 +2447,113 @@ public class PriceService
 		 */
 		@Nullable
 		final Long guideUnit;
-		/** The unit price the card counts: the live mid (or the live parts sum) where the stack is live, else guideUnit. */
+		/**
+		 * The unit price the card, the rows and the history count (contract 1.2.0, L4): the 1d graded figure's price
+		 * where the stack has one - {@code thenMark x (1 + move)} - (or its parts' row prices summed), else guideUnit.
+		 */
 		@Nullable
 		final Long cardUnit;
-		/** Whether {@link #cardUnit} came from the traded series (T3). */
+		/** Whether {@link #cardUnit} came from a graded live figure (L4) - wholly, or for a parts stack in part. */
 		final boolean live;
-		/** T3's facts for the row's tooltip; null while the traded series is not usable, and for an alch stack. */
-		@Nullable
-		final MovementRow.LiveFacts facts;
 
 		StackPrice(final StackKind kind, @Nullable final Long guideUnit, @Nullable final Long cardUnit,
-			final boolean live, @Nullable final MovementRow.LiveFacts facts)
+			final boolean live)
 		{
 			this.kind = kind;
 			this.guideUnit = guideUnit;
 			this.cardUnit = cardUnit;
 			this.live = live;
-			this.facts = facts;
+		}
+	}
+
+	/**
+	 * Every graded live figure of one computation (contract 1.2.0, L2-L4): for each item asked about, its figure on
+	 * every window, worked out ONCE from its {@link GradeMath.Facts} and kept by canonical id - so the rows, the card,
+	 * the history cells and a parts sum can never read two different figures for one item.
+	 *
+	 * <p>{@link #active()} only while the traded series may be consulted at all ({@link Inputs#liveUsable}: the switch
+	 * on and a usable {@code /latest} snapshot in hand); otherwise every question answers null and every row is the
+	 * guide row it was before 1.2.0, byte for byte. Executor only: built and read inside one computation.
+	 */
+	private static final class Figures
+	{
+		@Nullable
+		private final Inputs in;
+		private final Map<Integer, Map<MovementWindow, GradedMove>> byId = new HashMap<>();
+
+		Figures(final Inputs in)
+		{
+			this.in = in != null && in.liveUsable() ? in : null;
+		}
+
+		/** Whether this computation grades its rows (the switch on, a usable snapshot). */
+		boolean active()
+		{
+			return in != null;
+		}
+
+		/**
+		 * One tradeable item's figure on every window, or null while inactive.
+		 *
+		 * @param guideNow the item's guide price now as its stack prices it - the anchor's first value
+		 */
+		@Nullable
+		Map<MovementWindow, GradedMove> of(final int id, @Nullable final Long guideNow)
+		{
+			if (in == null)
+			{
+				return null;
+			}
+			final Map<MovementWindow, GradedMove> held = byId.get(id);
+			if (held != null)
+			{
+				return held;
+			}
+			final GradeMath.Facts facts = in.facts(id, guideNow);
+			final Map<MovementWindow, GradedMove> all = new EnumMap<>(MovementWindow.class);
+			for (final MovementWindow window : MovementWindow.values())
+			{
+				all.put(window, GradeMath.figure(facts, window, in.bucket(window, id), in.tradedDayOf(window)));
+			}
+			final Map<MovementWindow, GradedMove> kept = Collections.unmodifiableMap(all);
+			byId.put(id, kept);
+			return kept;
+		}
+
+		/**
+		 * The row price of one tradeable item (L4): its 1d figure's {@link GradedMove#price()} - yesterday's two-sided
+		 * average moved by today's same-side move, or for the fallback yesterday's average - or null when 1d has no
+		 * figure (NONE: the guide stands, as before 1.2.0) or nothing is graded.
+		 */
+		@Nullable
+		Long price(final int id, @Nullable final Long guideNow)
+		{
+			final Map<MovementWindow, GradedMove> all = of(id, guideNow);
+			final GradedMove oneDay = all == null ? null : all.get(MovementWindow.D1);
+			return oneDay == null ? null : oneDay.price();
+		}
+
+		/**
+		 * An untradeable stack's figure on every window as the sum of its parts' ({@link GradeMath#combineParts}), or
+		 * null while inactive.
+		 */
+		@Nullable
+		Map<MovementWindow, GradedMove> parts(final List<BankItem.Part> itemParts, final PartPrices partPrices)
+		{
+			if (in == null)
+			{
+				return null;
+			}
+			final Map<MovementWindow, GradedMove> all = new EnumMap<>(MovementWindow.class);
+			for (final MovementWindow window : MovementWindow.values())
+			{
+				all.put(window, GradeMath.combineParts(itemParts, partId ->
+				{
+					final Map<MovementWindow, GradedMove> part = of(partId, partPrices.now.get(partId));
+					return part == null ? null : part.get(window);
+				}));
+			}
+			return all;
 		}
 	}
 
@@ -2395,13 +2602,53 @@ public class PriceService
 
 		/**
 		 * L3's threshold: at least {@value #AGREE_MIN_SAMPLES} comparable items and {@value #AGREE_THRESHOLD} of
-		 * them equal. Integer arithmetic so 18 of 20 is exactly the threshold, as in {@link #deriveAnchorDay} -
-		 * which needs the rule in a different shape (too few samples reads as "the same day" there, not as
+		 * them equal. Integer arithmetic so 18 of 20 is exactly the threshold, as in {@link #deriveNowTime} -
+		 * which needs the rule in a different shape (too few samples reads as "R0's table" there, not as
 		 * disagreement) and so spells it itself.
 		 */
 		boolean clears()
 		{
 			return samples >= AGREE_MIN_SAMPLES && (long) matches * 10L >= (long) samples * 9L;
+		}
+	}
+
+	/**
+	 * What one computation decided "now" is (contract 1.1.2, T1; {@link #deriveNowTime}): the time every window counts
+	 * back from, the revision RuneLite's prices matched, and which case it was. Immutable.
+	 */
+	static final class NowTime
+	{
+		/** No R0 in memory, or no bank: no now time, so no baseline is picked. */
+		static final NowTime NONE = new NowTime(0L, 0L, false, false);
+
+		/** Unix seconds; 0 for {@link #NONE}. A table's {@code %LAST_UPDATE%}, or the clock when {@link #ahead}. */
+		final long seconds;
+		/** The revision RuneLite's prices matched - R0, or an older one when {@link #behind}; 0 when none. */
+		final long revId;
+		/** RuneLite matched a revision OLDER than R0 (B002). */
+		final boolean behind;
+		/** RuneLite matched no indexed table: the clock is "now" and the index is marked stale. */
+		final boolean ahead;
+
+		NowTime(final long seconds, final long revId, final boolean behind, final boolean ahead)
+		{
+			this.seconds = seconds;
+			this.revId = revId;
+			this.behind = behind;
+			this.ahead = ahead;
+		}
+
+		/** The UTC date of {@link #seconds} - what the status still calls the anchor day; null for {@link #NONE}. */
+		@Nullable
+		LocalDate day()
+		{
+			return seconds <= 0L ? null : RevisionRef.dayOf(seconds);
+		}
+
+		@Override
+		public String toString()
+		{
+			return "NowTime{seconds=" + seconds + ", revId=" + revId + ", behind=" + behind + ", ahead=" + ahead + '}';
 		}
 	}
 
@@ -2414,7 +2661,7 @@ public class PriceService
 		final List<MovementRow> rows;
 		final PortfolioSummary summary;
 		final int priced;
-		/** Stacks priced at a live traded mid (T5/T8); 0 with the switch off. */
+		/** Stacks priced from a graded live figure (contract 1.2.0, L4); 0 with the switch off. */
 		final int live;
 		/** Untradeable stacks counted at their High Alchemy value (Q5). */
 		final int alch;
@@ -2431,17 +2678,20 @@ public class PriceService
 		 */
 		@Nullable
 		final BankHistoryCells bankHistoryCells;
+		/** How the counted rows graded for the window on screen, and whether the card is soft (contract 1.2.0, L3). */
+		final GradeSummary grades;
 
 		Computed(final List<MovementRow> rows, final PortfolioSummary summary, final int priced, final int live,
-			final int alch, final int leftOut, final int alchStacks)
+			final int alch, final int leftOut, final int alchStacks, final GradeSummary grades)
 		{
-			this(rows, summary, priced, live, alch, leftOut, alchStacks, null);
+			this(rows, summary, priced, live, alch, leftOut, alchStacks, null, grades);
 		}
 
 		private Computed(final List<MovementRow> rows, final PortfolioSummary summary, final int priced,
 			final int live, final int alch, final int leftOut, final int alchStacks,
-			@Nullable final BankHistoryCells bankHistoryCells)
+			@Nullable final BankHistoryCells bankHistoryCells, final GradeSummary grades)
 		{
+			this.grades = grades;
 			this.rows = rows;
 			this.summary = summary;
 			this.priced = priced;
@@ -2455,7 +2705,7 @@ public class PriceService
 		/** This computation with its bank-history cells on it. */
 		Computed withBankHistoryCells(@Nullable final BankHistoryCells cells)
 		{
-			return new Computed(rows, summary, priced, live, alch, leftOut, alchStacks, cells);
+			return new Computed(rows, summary, priced, live, alch, leftOut, alchStacks, cells, grades);
 		}
 
 		/** Stacks priced from the Jagex guide table - a parts sum is guide prices summed (R3), so it counts here. */
@@ -2545,170 +2795,6 @@ public class PriceService
 	static boolean tradedDayUsable(@Nullable final LocalDate wanted, @Nullable final LocalDate held)
 	{
 		return wanted != null && held != null && (held.equals(wanted) || held.equals(wanted.minusDays(1)));
-	}
-
-	// ---------------------------------------------------------------- T3: the five checks, in ONE place
-
-	/**
-	 * Whether a traded daily bucket is a price worth comparing against (addendum V, line V3). The ONE predicate,
-	 * read in two places so a bucket cannot be good enough for one of them and not the other: check 4 reads it on
-	 * YESTERDAY's bucket to decide whether a stack goes live at all, and {@link Inputs#tradedThen} reads it on
-	 * EVERY window's bucket to decide whether that window compares traded figures or falls back to the guide pair.
-	 *
-	 * <p>Usable means three things: the bucket names a price at all, its two volumes add to at least
-	 * {@value #LIVE_MIN_VOLUME} (T3 check 1's own line, applied per day), and - when it names BOTH averages - they
-	 * sit no further apart than {@value #LIVE_MAX_SPREAD_PCT} % of their middle, by exactly the integer arithmetic
-	 * and the half-up rounding check 2 measures the live quote's gap with.
-	 *
-	 * <p>A ONE-SIDED bucket is usable: it has no gap to measure, and T4 already reads its single side as the day's
-	 * price. The gap rule exists because the live look of 2026-09-12 found the top of "Biggest gainers" held by
-	 * items whose own day was two prices, not one - Tinderbox averaged 37 over 5,063 bought against 12 over 484
-	 * sold, a hundred percent apart, and the "average" of that is not a number anybody paid. Sixty-seven stacks of
-	 * that bank carried such a bucket.
-	 *
-	 * @param bucket the day's bucket, or null when the feed does not name the item that day
-	 */
-	static boolean bucketUsable(@Nullable final TradedPriceClient.Bucket bucket)
-	{
-		if (bucket == null)
-		{
-			return false;
-		}
-		final Long average = bucket.weightedAverage();
-		if (average == null || average <= 0L)
-		{
-			return false;
-		}
-		if (bucket.volume() < LIVE_MIN_VOLUME)
-		{
-			return false;
-		}
-		final Long gap = bucket.gap();
-		if (gap == null)
-		{
-			// One side only: no gap to measure, and the day's price is that side.
-			return true;
-		}
-		final Long mid = bucket.bucketMid();
-		if (mid == null || mid <= 0L || mid > LIVE_SANE_PRICE_CEILING)
-		{
-			// Unmeasurable rather than wide - refused for LIVE_SANE_PRICE_CEILING's arithmetic reason.
-			return false;
-		}
-		return gap * 100L <= mid * LIVE_MAX_SPREAD_PCT;
-	}
-
-	/**
-	 * Whether one stack may be priced from the LIVE traded series, and why not when it may not (addendum T, line
-	 * T3, extended by addendum V lines V3 and V4). The ONE place the checks live: the rows, the bank value and the
-	 * tooltip's refusal line all read this answer, so no two of them can disagree about what "actively traded"
-	 * means.
-	 *
-	 * <p>Null means LIVE. Anything else is the FIRST failing check's short phrase, in this order - the order
-	 * matters, because a reader gets one line and it should name the reason that would be hardest to fix:
-	 * <ol>
-	 * <li>volume: yesterday's bulk bucket traded at least {@value #LIVE_MIN_VOLUME} units, both sides added;</li>
-	 * <li>gap now: {@code /latest} carries BOTH sides, each traded inside the last
-	 * {@value #LIVE_QUOTE_MAX_AGE_SECONDS} seconds, and their gap is at most {@value #LIVE_MAX_SPREAD_PCT} % of
-	 * the mid;</li>
-	 * <li>guide sanity: the mid sits within {@value #LIVE_MAX_GUIDE_DRIFT_PCT} % of the guide price, either
-	 * way;</li>
-	 * <li>gap yesterday (V3): yesterday's bucket is {@link #bucketUsable} - its own two averages no further apart
-	 * than {@value #LIVE_MAX_SPREAD_PCT} % of their middle;</li>
-	 * <li>jump (V4): the mid sits within {@value #LIVE_MAX_DAY_JUMP_PCT} % of yesterday's traded average.</li>
-	 * </ol>
-	 *
-	 * <p>A feed that is not in hand at all answers {@link #LIVE_NO_DATA} rather than a number that would read as
-	 * a measurement: no quote for the item, no bucket FEED for yesterday (as opposed to a bucket that names no
-	 * trades in it, which really is "0 traded yesterday"), and no guide price to sanity-check against - the last
-	 * of which is why an item RuneLite cannot price never goes live, however busily it trades.
-	 *
-	 * <p>Pure, static and taking every input explicitly, so every edge of every constant is pinned by a test on
-	 * both sides of it without a client, a clock or a network.
-	 *
-	 * @param quote      the item's {@code /latest} pair, or null when the feed had none for it
-	 * @param yesterday  yesterday's bucket - checks 1, 4 and 5 all read it - or NULL when that day's feed is not
-	 *                   in hand at all. A bucket the feed does not NAME is a bucket of 0 traded, which the caller
-	 *                   passes as an empty bucket rather than as this null
-	 * @param guideNow   the row's guide price now - the anchor check 3 measures against; null is a refusal
-	 * @param nowSeconds the caller's clock in unix seconds, for check 2's freshness half
-	 */
-	@Nullable
-	static String liveRefusal(@Nullable final TradedPriceClient.Quote quote,
-		@Nullable final TradedPriceClient.Bucket yesterday, @Nullable final Long guideNow, final long nowSeconds)
-	{
-		if (yesterday == null || quote == null)
-		{
-			return LIVE_NO_DATA;
-		}
-		final long volumeYesterday = yesterday.volume();
-		if (volumeYesterday < LIVE_MIN_VOLUME)
-		{
-			return volumeYesterday + " traded yesterday";
-		}
-		if (!quote.hasBothSides() || !quote.tradedWithin(nowSeconds, LIVE_QUOTE_MAX_AGE_SECONDS))
-		{
-			return LIVE_NO_DATA;
-		}
-		final Long mid = quote.mid();
-		final Long spread = quote.spread();
-		if (mid == null || spread == null || mid <= 0L || mid > LIVE_SANE_PRICE_CEILING)
-		{
-			return LIVE_NO_DATA;
-		}
-		if (spread * 100L > mid * LIVE_MAX_SPREAD_PCT)
-		{
-			return "buy/sell gap " + percentOf(spread, mid) + " %";
-		}
-		if (guideNow == null || guideNow <= 0L || guideNow > LIVE_SANE_PRICE_CEILING)
-		{
-			return LIVE_NO_DATA;
-		}
-		if (Math.abs(mid - guideNow) * 100L > guideNow * LIVE_MAX_GUIDE_DRIFT_PCT)
-		{
-			return "live price " + percentOf(Math.abs(mid - guideNow), guideNow) + " % from guide";
-		}
-		// Check 4 (V3): the volume half is already past, so the only measurable way to fail here is the GAP.
-		if (!bucketUsable(yesterday))
-		{
-			final Long bucketGap = yesterday.gap();
-			final Long bucketMid = yesterday.bucketMid();
-			if (bucketGap == null || bucketMid == null || bucketMid <= 0L
-				|| bucketMid > LIVE_SANE_PRICE_CEILING)
-			{
-				// A bucket that names no price, or one the arithmetic refuses: nothing measured, nothing to say.
-				// The ceiling clause is the same one the other four checks carry (checker): {@link #percentOf}
-				// multiplies the gap by 100, and a day past the ceiling would print a WRAPPED percentage.
-				return LIVE_NO_DATA;
-			}
-			return "buy/sell gap " + percentOf(bucketGap, bucketMid) + " % yesterday";
-		}
-		// Check 5 (V4): against yesterday's own average, which bucketUsable has just vouched for.
-		final Long thenYesterday = yesterday.weightedAverage();
-		if (thenYesterday == null || thenYesterday <= 0L || thenYesterday > LIVE_SANE_PRICE_CEILING)
-		{
-			return LIVE_NO_DATA;
-		}
-		if (Math.abs(mid - thenYesterday) * 100L > thenYesterday * LIVE_MAX_DAY_JUMP_PCT)
-		{
-			return "live price " + percentOf(Math.abs(mid - thenYesterday), thenYesterday)
-				+ " % from yesterday's average";
-		}
-		return null;
-	}
-
-	/**
-	 * {@code part} as a whole percentage of {@code whole}, rounded half up - the figure a refusal phrase names
-	 * ("buy/sell gap 23 %"). Whole percents because this is prose rather than a measurement: the checks
-	 * themselves compare exactly, in integers, and never read this.
-	 */
-	static long percentOf(final long part, final long whole)
-	{
-		if (whole <= 0L)
-		{
-			return 0L;
-		}
-		return (part * 100L + whole / 2L) / whole;
 	}
 
 	// ---------------------------------------------------------------- listeners and bridge getters (C20, L13)
@@ -2831,9 +2917,9 @@ public class PriceService
 	 * {@link PriceMapDto#schema} says an older build wrote it: only a guide revision has an id, so a map without
 	 * one is a trade-era file the start-up sweep ({@code PriceStore.deleteStaleFiles}) did not get to - the
 	 * second lock on the door that let "+12845.5 %" through - and a file from an older shape may not mean what
-	 * this build reads it as. Each stored baseline also teaches the service which
-	 * DAY its revision holds, so a relaunch can tell "the stored 1d baseline is still the right revision" without
-	 * fetching it again (L10). Nothing is fetched here: the sidebar is hidden at start-up.
+	 * this build reads it as. Each stored baseline also teaches the service its revision's TABLE TIME, so a relaunch
+	 * can tell "the stored 1d baseline is still the right revision" without fetching it again (L10). Nothing is
+	 * fetched here: the sidebar is hidden at start-up.
 	 */
 	public void start()
 	{
@@ -2872,6 +2958,9 @@ public class PriceService
 				final PriceStore.TradedDay day = store.loadTradedDay(window);
 				loadedTraded.put(window, day == null ? PriceStore.TradedDay.EMPTY : day);
 			}
+			// 1.2.0, L1: the last closed hour and the day before yesterday, as the last session left them.
+			final PriceStore.TradedHour loadedHour = store.loadTradedHour();
+			final PriceStore.TradedDay loadedD2 = store.loadTradedD2();
 			synchronized (lock)
 			{
 				if (stopped)
@@ -2884,7 +2973,9 @@ public class PriceService
 				}
 				if (!loadedIndex.isEmpty() && (index.isEmpty() || loadedIndexAt > indexAtMillis))
 				{
-					index = sortedIndex(loadedIndex);
+					// Kept by the one rule (contract 1.1.2, T2): an index an older build capped at 400 lines loads
+					// whole and is pruned here, and the next write stores it pruned.
+					index = RevisionRef.pruned(loadedIndex);
 					indexAtMillis = loadedIndexAt;
 				}
 				for (final Map.Entry<MovementWindow, PriceMap> entry : loadedBaselines.entrySet())
@@ -2893,7 +2984,7 @@ public class PriceService
 					if (loaded.fetchedAtMillis() > baselines.get(entry.getKey()).fetchedAtMillis())
 					{
 						baselines.put(entry.getKey(), loaded);
-						rememberDayLocked(loaded.revId(), loaded.dataDay());
+						rememberTimeLocked(loaded.revId(), loaded.bucketSeconds());
 					}
 				}
 				if (!loadedLatest.isEmpty() && loadedLatestAt > latestAtMillis)
@@ -2908,6 +2999,14 @@ public class PriceService
 					{
 						tradedDays.put(entry.getKey(), loaded);
 					}
+				}
+				if (loadedHour != null && !loadedHour.isEmpty() && loadedHour.startSeconds() > hour.startSeconds())
+				{
+					hour = loadedHour;
+				}
+				if (loadedD2 != null && !loadedD2.isEmpty() && (d2.isEmpty() || loadedD2.day().isAfter(d2.day())))
+				{
+					d2 = loadedD2;
 				}
 			}
 			log.debug("bank-portfolio-tracker: loaded {} mapped names, {} index lines, the baselines and {} traded"
@@ -3048,9 +3147,9 @@ public class PriceService
 
 	/**
 	 * A freshly captured bank (C23): replaces the snapshot, persists it on the executor and recomputes - which
-	 * re-derives the anchor day over the new items (L3). Nothing is fetched here: a bank change moves neither
-	 * the guide table nor the wiki's history; if the re-derived anchor day differs, the computation's own
-	 * reconcile picks the baselines afresh. Null is ignored; {@link BankSnapshot#EMPTY} clears the bank without
+	 * re-identifies the now time over the new items (contract 1.1.2). Nothing is fetched here: a bank change moves
+	 * neither the guide table nor the wiki's history; if the now time moves, the computation's own reconcile picks
+	 * the baselines afresh. Null is ignored; {@link BankSnapshot#EMPTY} clears the bank without
 	 * being saved (saving it would write {@code bank-0-STANDARD.json}). The snapshot is kept by reference and
 	 * must not be mutated by the caller afterwards.
 	 *
@@ -3117,8 +3216,8 @@ public class PriceService
 	/**
 	 * {@link #setBank(BankSnapshot)} with the disk write under the caller's control (checker, B021).
 	 *
-	 * <p>Everything else is identical - the snapshot becomes the bank, the panel fills, the anchor day is
-	 * re-derived - so a synthetic bank drives the whole sidebar without touching a file. It exists for the dev
+	 * <p>Everything else is identical - the snapshot becomes the bank, the panel fills, the now time is
+	 * re-identified - so a synthetic bank drives the whole sidebar without touching a file. It exists for the dev
 	 * verb {@code bpm bank=<id>:<qty>}, which stamps its made-up stacks with the LIVE account hash and profile
 	 * (it must: {@code setLoggedIn}'s {@code belongsTo} check throws away a snapshot that belongs to nobody, and
 	 * would reload the disk bank over it on the next {@code LOGGED_IN}). Persisting that was the harm: the file
@@ -3526,7 +3625,8 @@ public class PriceService
 	 * the traded {@code /latest} snapshot is asked for only when the one in hand is missing or at least
 	 * {@link #LATEST_MIN_AGE_MS} old (addendum AS, decision 3 - this also runs at once on every activation, see
 	 * {@link #setVisible}); the rows are recomputed unconditionally - that IS the 30-minute cadence of L1, and it
-	 * re-derives the anchor day.
+	 * re-identifies the now time. "Older than six hours" includes the mark a computation leaves when RuneLite is
+	 * AHEAD of the index ({@link #indexStaleLocked}, contract 1.1.2).
 	 */
 	private void onTick()
 	{
@@ -3578,6 +3678,8 @@ public class PriceService
 			// bucket is asked for while hidden. Idempotent: a day asked for, in flight or in hand is skipped.
 			reconcileTraded(now, "tick", false);
 		}
+		// 1.2.0, L1: the last closed hour, once per hour while the sidebar shows - and this runs only while it does.
+		startHour(now);
 		scheduleRecompute();
 	}
 
@@ -3587,10 +3689,18 @@ public class PriceService
 	 * Executor. One index request in flight at a time; the completion hops back to the executor. A status-only
 	 * publish follows so the K7 "No 1d history yet" line shows while the request is out.
 	 *
+	 * <p><b>How far back it asks</b> (contract 1.1.2, T2). An index that does not reach {@link #INDEX_REACH_DAYS}
+	 * days back - none at all on a fresh install, or one a single call filled at eight revisions a day - is PAGED
+	 * back that far, once a session ({@link #indexPaged}); every other refresh asks only for what is newer than the
+	 * newest revision held, which is one call (the client pages on only to close a gap of more than
+	 * {@value GuidePriceClient#INDEX_LIMIT} revisions). Either way the answer is merged with the index held.
+	 *
 	 * @param manual a manual refresh: the reconcile that follows may fetch bodies even while hidden
 	 */
 	private void startIndex(final long now, final String reason, final boolean manual)
 	{
+		final boolean paging;
+		final long reachSeconds;
 		synchronized (lock)
 		{
 			if (stopped)
@@ -3608,10 +3718,13 @@ public class PriceService
 				return;
 			}
 			indexInFlight = true;
+			final long reachBack = now / 1000L - INDEX_REACH_DAYS * RevisionRef.DAY_SECONDS;
+			paging = index.isEmpty() || (!indexPaged && index.get(index.size() - 1).editSeconds() > reachBack);
+			reachSeconds = paging ? reachBack : index.get(0).editSeconds();
 		}
-		log.debug("bank-portfolio-tracker: GET the revision index ({})", reason);
-		start(() -> wiki.fetchRevisionIndex(now), (list, error) -> finishIndex(now, manual, list, error),
-			"fetchRevisionIndex");
+		log.debug("bank-portfolio-tracker: GET the revision index ({}){}", reason, paging ? ", paging back" : "");
+		start(() -> wiki.fetchRevisionIndex(now, reachSeconds),
+			(list, error) -> finishIndex(now, manual, paging, list, error), "fetchRevisionIndex");
 		publishStatusOnly(null);
 	}
 
@@ -3656,17 +3769,21 @@ public class PriceService
 	 * locally so a window can be served from memory.
 	 *
 	 * <p><b>Why a merge and not a replacement</b> (B027). One call returns the newest {@value GuidePriceClient#INDEX_LIMIT}
-	 * revisions and no more - that is the anonymous ceiling - which reaches back about 232 days at the one bot
-	 * run a day L-C measured, but only about 178 at 1.4 revisions a day. A wave of maintenance edits therefore
-	 * eats the margin over the 180d window, and replacing the file wholesale threw away revisions the plugin had
-	 * already seen: the 180d chip would read "No 180d history" over history that WAS in hand an hour earlier, and
-	 * the sentence for that is the same one an honestly short page gets. Keeping up to {@value #INDEX_KEPT} of
-	 * them costs a few tens of kilobytes and lets a long-running install reach further back than any single call
-	 * can. A revision is immutable, so an older entry can never go stale; one deleted from the wiki simply fails
-	 * its body fetch and is remembered as unusable (L7).
+	 * revisions and no more - that is the anonymous ceiling - which reached back about 232 days at the one bot
+	 * run a day L-C measured, and reaches back about 31 at the eight a day the bot has saved since 30 Sep 2026.
+	 * Replacing the file wholesale would throw away revisions the plugin had already seen, and the 180d chip would
+	 * read "No 180d history" over history that WAS in hand an hour earlier. The merge is kept by
+	 * {@link RevisionRef#pruned}'s rule (contract 1.1.2, T2) - every revision of the last eight days, one a day before
+	 * that, 400 days at most - which costs a few tens of kilobytes. A revision is immutable, so an older entry can
+	 * never go stale; one deleted from the wiki simply fails its body fetch and is remembered as unusable (L7).
+	 *
+	 * <p>A success also clears the "RuneLite is ahead of the index" mark ({@link #indexMarkedStale}): the next
+	 * computation sets it again if the wiki still has not saved the table RuneLite holds.
+	 *
+	 * @param paging whether this was the paging run of {@link #startIndex}; its success is remembered for the session
 	 */
-	private void finishIndex(final long fetchedAt, final boolean manual, @Nullable final List<RevisionRef> list,
-		@Nullable final Throwable error)
+	private void finishIndex(final long fetchedAt, final boolean manual, final boolean paging,
+		@Nullable final List<RevisionRef> list, @Nullable final Throwable error)
 	{
 		final boolean ok = error == null && list != null && !list.isEmpty();
 		final List<RevisionRef> adopted;
@@ -3686,6 +3803,9 @@ public class PriceService
 				index = adopted;
 				indexAtMillis = fetchedAt;
 				historyFailed = false;
+				indexMarkedStale = false;
+				// A run a failed later page cut short has not paged the index back: the next stale refresh tries again.
+				indexPaged |= paging && !(list instanceof GuidePriceClient.CutShortIndex);
 			}
 			else
 			{
@@ -3710,7 +3830,7 @@ public class PriceService
 	// ---------------------------------------------------------------- L3, L5, L6, L10: picking and fetching bodies
 
 	/**
-	 * Executor. The local half of L10, run whenever the index, the anchor day or the window changes and on every
+	 * Executor. The local half of L10, run whenever the index, the now time or the window changes and on every
 	 * tick: settle which revision is R0 (the newest usable one in the index) and which revision each window's
 	 * baseline should be read from ({@link #resolveLocked}), adopt from memory whatever is already in hand, and
 	 * fetch the rest - R0 and every window's missing body - in ONE batched call (L6). A window is fetched only
@@ -3731,6 +3851,7 @@ public class PriceService
 		boolean r0Wanted = false;
 		boolean r0Adopted = false;
 		LocalDate reachShort = null;
+		String reachShortWindows = null;
 		synchronized (lock)
 		{
 			if (stopped || index.isEmpty())
@@ -3796,13 +3917,14 @@ public class PriceService
 			}
 			evictLocked();
 			// B009: "No 180d history" is the honest answer for a page that does not reach that far back, and it
-			// is ALSO what a truncated index produces - one call returns at most INDEX_LIMIT revisions, about 232
-			// days at one bot run a day but only about 178 at 1.4. Say which, once per session, at a level the
-			// user's own client.log carries, so the two cannot be confused in a bug report.
-			if (!noHistory.isEmpty() && !indexReachLogged && index.size() >= GuidePriceClient.INDEX_LIMIT)
+			// is ALSO what a short index produces - a paging run cut at its call limit, or one still to run. Say how
+			// far the index reaches, once per session, at a level the user's own client.log carries, so the two
+			// cannot be confused in a bug report.
+			if (!noHistory.isEmpty() && !indexReachLogged)
 			{
 				indexReachLogged = true;
 				reachShort = index.get(index.size() - 1).editDay();
+				reachShortWindows = noHistory.toString();
 			}
 			fetch = !want.isEmpty() && (visible || manual);
 			if (fetch)
@@ -3812,9 +3934,8 @@ public class PriceService
 		}
 		if (reachShort != null)
 		{
-			log.info("bank-portfolio-tracker: the revision index is full ({} revisions back to {}) and does not reach"
-				+ " every window - the guide page is edited more than once a day, so the longest windows may read"
-				+ " \"no history\" over history the wiki still has", GuidePriceClient.INDEX_LIMIT, reachShort);
+			log.info("bank-portfolio-tracker: the revision index reaches back to {} and holds no table old enough for {}"
+				+ " - those windows read \"no history\"", reachShort, reachShortWindows);
 		}
 		for (final Map.Entry<MovementWindow, PriceMap> entry : adopted.entrySet())
 		{
@@ -3843,74 +3964,90 @@ public class PriceService
 	}
 
 	/**
-	 * Under the lock. The L5 rule for one window, against the anchor day in force and what is known about the
-	 * candidate bodies:
+	 * Under the lock. The rule for one window (contract 1.1.2, T1, replacing L5's calendar day and its stale-body
+	 * retry), against the now time in force and what is known about the candidate bodies:
 	 * <ol>
-	 * <li>no anchor day yet: nothing to pick;</li>
-	 * <li>{@code first = pickThen(index, D.minusDays(N))}: null means the whole index is newer than the target -
-	 * "No 180d history" (L11), never a request;</li>
-	 * <li>{@code first}'s body unknown: fetch it;</li>
-	 * <li>its day marker is the date it was saved on (walk-back included - the date pickThen actually landed on
-	 * is the one remembered): accept;</li>
-	 * <li>its day marker is OLDER than that date (a name-only edit republishing the previous table, L-E): the ONE
-	 * retry - the revision saved just before it on the same date, or the newest bot revision of the next date
-	 * when the date had only that human edit. Unknown: adopt the stale body meanwhile (a real past price beats
-	 * none) and fetch the candidate; known and on the date: accept the candidate; known and also off: accept
-	 * whichever day is closer to the date, the older one on a tie - "if still not T, accept the table and label
-	 * rows/status with its real day". A candidate that is already known is never fetched again, which is what
-	 * makes this loop at most once.</li>
+	 * <li>no now time yet: nothing to pick;</li>
+	 * <li>{@code first = pickThen(index, now - N x 24 h, knownTimes)} - the newest revision whose time is old
+	 * enough, a bot run of its day preferred, its table time once its body is known and its save time until then:
+	 * null means the whole index is newer than the target - "No 180d history" (L11), never a request;</li>
+	 * <li>the guard: {@code first} is the revision RuneLite's prices match, or newer than it - impossible by
+	 * construction, since the target is at least a day before that revision's own time - and then the window gets
+	 * no baseline rather than a 0 % one;</li>
+	 * <li>{@code first}'s body unknown: fetch it. Known: accept it - its table time is at or before the target, or
+	 * {@code pickThen} would not have answered it, so a baseline is never newer than its window's target;</li>
+	 * <li>its body was refused (L7): the ONE retry - the newest candidate but that one, provided it is at most a day
+	 * older (eight tables a day leave several), fetched when unknown and accepted when known; a refused retry, or none
+	 * that close, leaves the window {@link Resolution#EXHAUSTED}. A candidate that is already known is never fetched
+	 * again, which is what makes this loop at most once.</li>
 	 * </ol>
-	 * A body the wiki returned but the client refused (L7) counts as known-and-unusable and is skipped the way a
-	 * stale one is; a window with nothing usable left is {@link Resolution#EXHAUSTED}.
+	 * When a fetched body's table time turns out later than its save time suggested, the next reconcile simply
+	 * picks again with the time it now knows - which is how a body read off the wiki can never stand behind a
+	 * window it is too new for.
 	 */
 	private Resolution resolveLocked(final MovementWindow window)
 	{
-		final LocalDate target = window.targetDate(anchorDay);
-		if (target == null)
+		if (nowSeconds <= 0L)
 		{
 			return Resolution.NONE;
 		}
-		final RevisionRef first = RevisionRef.pickThen(index, target);
+		final long target = window.targetSeconds(nowSeconds);
+		final RevisionRef first = RevisionRef.pickThen(index, target, knownTimes, 0L);
 		if (first == null)
 		{
 			return Resolution.NO_HISTORY;
 		}
-		final LocalDate landed = first.editDay();
-		if (!knownDays.containsKey(first.revId()))
+		if (notOlderThanMatchedLocked(first))
+		{
+			log.debug("bank-portfolio-tracker: {} would have read revision {}, which is not older than the one RuneLite"
+				+ " matches ({}) - no baseline", window.name(), first.revId(), matchedRevId);
+			return Resolution.NO_HISTORY;
+		}
+		if (!knownTimes.containsKey(first.revId()))
 		{
 			return Resolution.fetch(first);
 		}
-		final LocalDate firstDay = knownDays.get(first.revId());
-		if (firstDay != null && !firstDay.isBefore(landed))
+		if (knownTimes.get(first.revId()) != null)
 		{
 			return Resolution.accept(first);
 		}
+		final RevisionRef second = RevisionRef.pickThen(index, target, knownTimes, first.revId());
+		if (second == null || notOlderThanMatchedLocked(second)
+			|| first.timeIn(knownTimes) - second.timeIn(knownTimes) > RevisionRef.DAY_SECONDS)
+		{
+			// Nothing else old enough, or only a table more than a day older than the refused one: a "30d" read off
+			// a table two months back would be a number under the wrong label.
+			return Resolution.EXHAUSTED;
+		}
+		if (!knownTimes.containsKey(second.revId()))
+		{
+			return Resolution.fetch(second);
+		}
+		return knownTimes.get(second.revId()) != null ? Resolution.accept(second) : Resolution.EXHAUSTED;
+	}
 
-		RevisionRef second = RevisionRef.previousOn(index, first);
-		if (second == null)
+	/**
+	 * Under the lock. Whether {@code ref} is the revision RuneLite's prices matched in the last computation, or one
+	 * saved after it - a "then" that can never be (contract 1.1.2, T2's guard). False while nothing was matched.
+	 */
+	private boolean notOlderThanMatchedLocked(final RevisionRef ref)
+	{
+		if (matchedRevId == 0L)
 		{
-			second = RevisionRef.newestBotOn(index, landed.plusDays(1));
+			return false;
 		}
-		if (second == null || second.revId() == first.revId())
+		if (ref.revId() == matchedRevId)
 		{
-			return firstDay != null ? Resolution.accept(first) : Resolution.EXHAUSTED;
+			return true;
 		}
-		if (!knownDays.containsKey(second.revId()))
+		for (final RevisionRef held : index)
 		{
-			return firstDay != null ? Resolution.acceptAndFetch(first, second) : Resolution.fetch(second);
+			if (held != null && held.revId() == matchedRevId)
+			{
+				return RevisionRef.NEWEST_FIRST.compare(ref, held) < 0;
+			}
 		}
-		final LocalDate secondDay = knownDays.get(second.revId());
-		if (secondDay == null)
-		{
-			return firstDay != null ? Resolution.accept(first) : Resolution.EXHAUSTED;
-		}
-		if (firstDay == null || secondDay.equals(landed))
-		{
-			return Resolution.accept(second);
-		}
-		final long firstOff = Math.abs(ChronoUnit.DAYS.between(landed, firstDay));
-		final long secondOff = Math.abs(ChronoUnit.DAYS.between(landed, secondDay));
-		return secondOff < firstOff ? Resolution.accept(second) : Resolution.accept(first);
+		return false;
 	}
 
 	/**
@@ -3930,9 +4067,9 @@ public class PriceService
 	}
 
 	/**
-	 * Executor: the batch outcome (L6, L7, L11). Success remembers every body that arrived - and, for a requested
-	 * revision that did NOT arrive, that the wiki has nothing usable under that id, so it is never asked for
-	 * again - then reconciles, which adopts what is now in memory and may issue L5's one retry. A failure keeps
+	 * Executor: the batch outcome (L6, L7, L11). Success remembers every body that arrived with its table time - and,
+	 * for a requested revision that did NOT arrive, that the wiki has nothing usable under that id, so it is never
+	 * asked for again - then reconciles, which adopts what is now in memory and may issue a window's one retry. A failure keeps
 	 * every stored baseline (a real past price beats none, D9), marks the windows it was serving and the service
 	 * degraded, and does NOT reconcile with fetching: never a tight loop.
 	 *
@@ -3961,16 +4098,16 @@ public class PriceService
 				for (final Long revId : requested)
 				{
 					final GuideSnapshot table = tables.get(revId);
-					if (table != null && !table.isEmpty() && table.revId() == revId && table.dataDay() != null)
+					if (table != null && !table.isEmpty() && table.revId() == revId && table.dataSeconds() > 0L)
 					{
 						tablesByRev.put(revId, table);
-						knownDays.put(revId, table.dataDay());
+						knownTimes.put(revId, table.dataSeconds());
 						arrived++;
 					}
 					else
 					{
 						log.debug("bank-portfolio-tracker: revision {} came back unusable; it will not be asked for again", revId);
-						knownDays.put(revId, null);
+						knownTimes.put(revId, null);
 					}
 				}
 				historyFailed = false;
@@ -4055,7 +4192,7 @@ public class PriceService
 	{
 		for (final RevisionRef ref : index)
 		{
-			if (ref != null && !(knownDays.containsKey(ref.revId()) && knownDays.get(ref.revId()) == null))
+			if (ref != null && !(knownTimes.containsKey(ref.revId()) && knownTimes.get(ref.revId()) == null))
 			{
 				return ref;
 			}
@@ -4063,41 +4200,44 @@ public class PriceService
 		return null;
 	}
 
-	/** Under the lock. R0 and its id projection; the anchor day follows on the next computation (L3). */
+	/** Under the lock. R0 and its id projection; the now time follows on the next computation (contract 1.1.2). */
 	private void adoptR0Locked(final GuideSnapshot table)
 	{
 		r0 = table;
 		r0Map = project(table, foldedNames, owners, tradeableItemsOf(bank, options));
 		tablesByRev.put(table.revId(), table);
-		rememberDayLocked(table.revId(), table.dataDay());
+		rememberTimeLocked(table.revId(), table.dataSeconds());
 	}
 
-	/** Under the lock. One window's baseline from a table in memory (L7 stamps: the table's own day marker). */
+	/** Under the lock. One window's baseline from a table in memory (L7 stamps: the table's own time marker). */
 	private PriceMap adoptLocked(final MovementWindow window, final GuideSnapshot table)
 	{
 		final PriceMap map = project(table, foldedNames, owners, tradeableItemsOf(bank, options));
 		baselines.put(window, map);
 		tablesByRev.put(table.revId(), table);
-		rememberDayLocked(table.revId(), table.dataDay());
+		rememberTimeLocked(table.revId(), table.dataSeconds());
 		baselineFailed.remove(window);
 		return map;
 	}
 
-	/** Under the lock. A revision's day marker, learned from a fetched body or a baseline file; a null day teaches nothing. */
-	private void rememberDayLocked(final long revId, @Nullable final LocalDate day)
+	/**
+	 * Under the lock. A revision's table time ({@code %LAST_UPDATE%}, unix seconds), learned from a fetched body or a
+	 * baseline file; a time of 0 or less teaches nothing.
+	 */
+	private void rememberTimeLocked(final long revId, final long tableSeconds)
 	{
-		if (revId > 0L && day != null)
+		if (revId > 0L && tableSeconds > 0L)
 		{
-			knownDays.put(revId, day);
+			knownTimes.put(revId, tableSeconds);
 		}
 	}
 
 	/**
 	 * Under the lock. Drops every table that is neither R0 nor behind an adopted baseline, except the newest
-	 * {@link #EXTRA_TABLES_KEPT} of them. A body that arrived and was not adopted keeps its DAY in
-	 * {@link #knownDays}, which is all a later resolution reads; its bytes are kept a while because they tend to
-	 * be wanted again shortly: the R0 the index just superseded becomes the 1d baseline the moment the anchor
-	 * day advances (L3), and the loser of L5's retry is still the closer day when the winner turns out worse.
+	 * {@link #EXTRA_TABLES_KEPT} of them. A body that arrived and was not adopted keeps its TIME in
+	 * {@link #knownTimes}, which is all a later resolution reads; its bytes are kept a while because they tend to
+	 * be wanted again shortly: the R0 the index just superseded is the table a RuneLite that is BEHIND the wiki still
+	 * holds ({@link #agrees}), and a body read ahead of a sliding window is the next one that window adopts.
 	 */
 	private void evictLocked()
 	{
@@ -4316,6 +4456,9 @@ public class PriceService
 				latest = adopted;
 				latestAtMillis = fetchedAt;
 				liveFailed = false;
+				// 1.2.0, L1: every distinct print of the last 24 hours this poll saw joins the memory, and what is older
+				// than that leaves it. Only a poll records - a snapshot read off disk at start-up is no poll of this session.
+				prints = prints.record(fetchedAt, adopted);
 			}
 			else
 			{
@@ -4325,7 +4468,8 @@ public class PriceService
 		}
 		if (ok)
 		{
-			log.debug("bank-portfolio-tracker: the traded /latest snapshot holds {} items", adopted.size());
+			log.debug("bank-portfolio-tracker: the traded /latest snapshot holds {} items; {} prints of the last 24 hours held",
+				adopted.size(), printsHeld());
 			submitWrite("saving " + PriceStore.TRADED_LATEST_FILE, () -> store.saveTradedLatest(adopted, fetchedAt));
 			// U1: this snapshot's own UTC date IS the live day, so the buckets every window counts back to are
 			// decided here - not after the guide baselines, which is where addendum T asked for them and where the
@@ -4462,6 +4606,7 @@ public class PriceService
 		final boolean ok = error == null && !empty;
 		final boolean fallback = empty && retryOneDayBack;
 		final PriceStore.TradedDay adopted;
+		final PriceStore.TradedDay rotated;
 		synchronized (lock)
 		{
 			if (!fallback)
@@ -4476,8 +4621,18 @@ public class PriceService
 			adopted = ok ? new PriceStore.TradedDay(day, buckets, fetchedAt) : null;
 			if (adopted != null)
 			{
+				rotated = window == MovementWindow.D1 ? rotateD2Locked(tradedDays.get(MovementWindow.D1), adopted) : null;
 				tradedDays.put(window, adopted);
 			}
+			else
+			{
+				rotated = null;
+			}
+		}
+		if (rotated != null)
+		{
+			log.debug("bank-portfolio-tracker: the D1 bucket of {} is kept as the day before yesterday's", rotated.day());
+			submitWrite("saving " + PriceStore.TRADED_D2_FILE, () -> store.saveTradedD2(rotated));
 		}
 		if (adopted != null)
 		{
@@ -4507,60 +4662,219 @@ public class PriceService
 		scheduleRecompute();
 	}
 
-	// ---------------------------------------------------------------- pure helpers (L3, L5, L8) - tested on their own
-
 	/**
-	 * The anchor day D of L3, from the agreement between RuneLite's prices and the newest guide table R0:
-	 * <ul>
-	 * <li>{@code r0Day == null} (no R0 in memory): null - nothing can be derived, no baseline is picked;</li>
-	 * <li>{@code n < AGREE_MIN_SAMPLES}: {@code r0Day} - too few items compare to tell the two tables apart; the
-	 * caller also uses R0 as "now" for the rows;</li>
-	 * <li>{@code matches / n >= AGREE_THRESHOLD}: {@code r0Day} - RuneLite holds the same Jagex day as R0;</li>
-	 * <li>otherwise {@code r0Day.plusDays(1)} - RuneLite already holds the NEXT Jagex day (the state between the
-	 * Jagex rollover and the bot's run, roughly half of every day, L-D).</li>
-	 * </ul>
-	 * Measured separation: 100 % agreement on the same day against about 41 % one day apart, so the threshold
-	 * is nowhere near either (L3). Integer arithmetic ({@code matches * 10 >= n * 9}) so 18 of 20 is exactly the
-	 * threshold and no floating-point rounding can move it. Never the wall clock, never a rollover hour (L9).
-	 *
-	 * <p><b>This rule only knows one direction.</b> A disagreement means RuneLite is not on R0's day; L3 measured
-	 * only the case the wiki's bot creates, where RuneLite is a day AHEAD, so that is what the last line answers.
-	 * RuneLite can also be BEHIND (its price table is loaded once and refreshed every 30 minutes, so an outage
-	 * strands a long session on an older day), and then {@code r0Day + 1} is two days wrong. {@link #finish}
-	 * therefore checks the other direction before it takes this answer, against a table already in memory
-	 * ({@link #agrees}); this method stays the pure rule the tests pin.
-	 *
-	 * @param matches items whose RuneLite price equals their R0 value
-	 * @param n       items with both a RuneLite price (> 0) and an R0 value
-	 * @param r0Day   R0's own {@code %LAST_UPDATE%} day (UTC), or null
+	 * Under the lock. Yesterday's D1 bucket becomes the day before yesterday's (contract 1.2.0, L1) when a NEWER day's
+	 * bucket replaces it - the UTC rollover - and nothing is fetched for it. Answers the bucket kept, for the caller to
+	 * save as {@code traded-D2.json}, or null when nothing rolled over.
 	 */
-	static LocalDate deriveAnchorDay(final int matches, final int n, @Nullable final LocalDate r0Day)
+	@Nullable
+	private PriceStore.TradedDay rotateD2Locked(@Nullable final PriceStore.TradedDay old,
+		final PriceStore.TradedDay next)
 	{
-		if (r0Day == null)
+		if (old == null || old.isEmpty() || next.day() == null || !old.day().isBefore(next.day()))
 		{
 			return null;
 		}
-		if (n < AGREE_MIN_SAMPLES)
+		if (!d2.isEmpty() && !old.day().isAfter(d2.day()))
 		{
-			return r0Day;
+			return null;
 		}
-		return (long) matches * 10L >= (long) n * 9L ? r0Day : r0Day.plusDays(1);
+		d2 = old;
+		return old;
+	}
+
+	/** Under the lock or not: how many prints the poll memory holds, for a debug line. */
+	private int printsHeld()
+	{
+		synchronized (lock)
+		{
+			return prints.size();
+		}
 	}
 
 	/**
-	 * The revision a window's baseline should be read from (L5): {@code RevisionRef.pickThen(index,
-	 * window.targetDate(anchorDay))}. Null when there is no anchor day, no window, or nothing in the index is as
-	 * old as the target (L11: "No 180d history"). Pure; the L5 day check and retry are {@link #resolveLocked}'s.
+	 * The start of the latest CLOSED hour at {@code nowMillis}, unix seconds - the one the {@code /1h} feed answers
+	 * with (contract 1.2.0, L1): the hour before the one the clock is in.
+	 */
+	static long latestClosedHour(final long nowMillis)
+	{
+		final long hourStart = Math.floorDiv(Math.floorDiv(nowMillis, 1000L), GradeMath.HOUR_SECONDS)
+			* GradeMath.HOUR_SECONDS;
+		return hourStart - GradeMath.HOUR_SECONDS;
+	}
+
+	/**
+	 * Executor, from {@link #onTick} and from the retry one-shot: the {@code /1h} bucket of the latest CLOSED hour
+	 * (contract 1.2.0, L1), asked for BY ITS HOUR - {@code /1h?timestamp=<hour>}; the bare URL answers the hour two back.
+	 * Only while the sidebar shows (the tick runs only then), only with live prices on and a traded client, one request
+	 * at a time, never more than {@value GradeMath#HOUR_MAX_FETCHES_PER_DAY} requests in one UTC day, and at most
+	 * {@value GradeMath#HOUR_MAX_TRIES_PER_HOUR} times for one hour: an EMPTY answer (the wiki has not cut the hour yet)
+	 * is tried again {@link GradeMath#HOUR_RETRY_MILLIS} later ({@link #finishHour}), while a failure is not retried
+	 * until the next hour closes. The figures carry on with today's prints meanwhile, which is what the feed adds to.
+	 */
+	private void startHour(final long now)
+	{
+		final TradedPriceClient client;
+		final long wanted = latestClosedHour(now);
+		synchronized (lock)
+		{
+			if (stopped || !visible || traded == null || !options.livePrices() || hourInFlight
+				|| wanted <= hour.startSeconds())
+			{
+				return;
+			}
+			if (wanted != hourAsked)
+			{
+				hourAsked = wanted;
+				hourTries = 0;
+				hourRetryAtMillis = 0L;
+			}
+			if (hourTries >= GradeMath.HOUR_MAX_TRIES_PER_HOUR || now < hourRetryAtMillis)
+			{
+				return;
+			}
+			final LocalDate today = utcDay(now);
+			if (!Objects.equals(today, hourFetchDay))
+			{
+				hourFetchDay = today;
+				hourFetches = 0;
+			}
+			if (hourFetches >= GradeMath.HOUR_MAX_FETCHES_PER_DAY)
+			{
+				return;
+			}
+			hourFetches++;
+			hourTries++;
+			hourInFlight = true;
+			client = traded;
+		}
+		log.debug("bank-portfolio-tracker: GET the traded /1h bucket (the hour from {})", wanted);
+		start(() -> client.fetchHour(wanted, now), (got, error) -> finishHour(wanted, got, error), "fetchHour");
+	}
+
+	/**
+	 * Executor: the {@code /1h} outcome for the hour {@code wanted}. The hour asked for, with items, and newer than the one
+	 * held is adopted, saved as {@code traded-H1.json} and recomputed with. An EMPTY answer - or one that is not the hour
+	 * asked for - is "not yet": nothing is adopted, and unless the hour has had its {@link GradeMath#HOUR_MAX_TRIES_PER_HOUR}
+	 * tries a retry is armed {@link GradeMath#HOUR_RETRY_MILLIS} out. A failure keeps what is held and ends the tries for
+	 * that hour.
+	 */
+	private void finishHour(final long wanted, @Nullable final PriceStore.TradedHour got, @Nullable final Throwable error)
+	{
+		final boolean failed = error != null || got == null;
+		final boolean notYet = !failed && (got.isEmpty() || got.startSeconds() != wanted);
+		final PriceStore.TradedHour adopted;
+		boolean retry = false;
+		synchronized (lock)
+		{
+			hourInFlight = false;
+			if (stopped)
+			{
+				return;
+			}
+			adopted = !failed && !notYet && got.startSeconds() > hour.startSeconds() ? got : null;
+			if (adopted != null)
+			{
+				hour = adopted;
+				hourRetryAtMillis = 0L;
+			}
+			else if (failed)
+			{
+				hourTries = GradeMath.HOUR_MAX_TRIES_PER_HOUR;
+			}
+			else if (notYet && wanted == hourAsked && hourTries < GradeMath.HOUR_MAX_TRIES_PER_HOUR)
+			{
+				hourRetryAtMillis = clockMillis.getAsLong() + GradeMath.HOUR_RETRY_MILLIS;
+				retry = true;
+			}
+		}
+		if (adopted != null)
+		{
+			log.debug("bank-portfolio-tracker: the traded /1h bucket of {} holds {} items", adopted.startSeconds(),
+				adopted.buckets().size());
+			submitWrite("saving " + PriceStore.TRADED_HOUR_FILE, () -> store.saveTradedHour(adopted));
+			scheduleRecompute();
+		}
+		else if (failed)
+		{
+			log.debug("bank-portfolio-tracker: the traded /1h fetch failed, keeping the hour held: {}", describe(error));
+			fetchFailed("traded-hour", "traded hour", error);
+		}
+		else if (retry)
+		{
+			log.debug("bank-portfolio-tracker: the traded /1h bucket of {} is not cut yet, asking again in {} s", wanted,
+				GradeMath.HOUR_RETRY_MILLIS / 1000L);
+			armOneShot(OneShot.HOUR_RETRY, GradeMath.HOUR_RETRY_MILLIS, "the hour retry", () -> startHour(clockMillis.getAsLong()));
+		}
+		else if (notYet)
+		{
+			log.debug("bank-portfolio-tracker: the traded /1h bucket of {} is still empty after {} tries, leaving it", wanted,
+				GradeMath.HOUR_MAX_TRIES_PER_HOUR);
+		}
+	}
+
+	// ---------------------------------------------------------------- pure helpers (L3, L5, L8) - tested on their own
+
+	/**
+	 * The now time of contract 1.1.2 (T1), which replaced addendum L's anchor day, from the agreement between
+	 * RuneLite's prices and the newest guide table R0 - and, where they disagree, an older table they match:
+	 * <ul>
+	 * <li>{@code r0Seconds <= 0} (no R0 in memory): {@link NowTime#NONE} - nothing can be identified, no baseline is
+	 * picked;</li>
+	 * <li>{@code n < AGREE_MIN_SAMPLES}: R0's time - too few items compare to tell the tables apart; the caller also
+	 * uses R0 as "now" for the rows;</li>
+	 * <li>{@code matches / n >= AGREE_THRESHOLD}: R0's time - RuneLite holds R0's table;</li>
+	 * <li>otherwise, an older revision RuneLite's prices match ({@code olderSeconds > 0}, found by the caller among
+	 * the tables in memory, {@link #agrees}): THAT revision's time, and the computation is BEHIND (B002);</li>
+	 * <li>otherwise the CLOCK, {@code clockSeconds}: RuneLite holds a table the index has not seen yet, so the only
+	 * time it is known to be no later than is now, and the caller marks the index stale so the next tick refetches
+	 * it ({@link NowTime#ahead}).</li>
+	 * </ul>
+	 * Never a "+1 day": that was addendum L's reading of every disagreement, made when the bot saved one table a day,
+	 * and since it saves eight it put the 1d target on R0's own date and R0 itself in as the "then" (the 1.1.2
+	 * finding). Integer arithmetic ({@code matches * 10 >= n * 9}) so 18 of 20 is exactly the threshold.
+	 *
+	 * @param matches      items whose RuneLite price equals their R0 value
+	 * @param n            items with both a RuneLite price (> 0) and an R0 value
+	 * @param r0Seconds    R0's own {@code %LAST_UPDATE%}, unix seconds, or 0 without R0
+	 * @param r0RevId      R0's revision id
+	 * @param olderSeconds the table time of the newest older revision RuneLite's prices match, or 0 for none
+	 * @param olderRevId   that revision's id
+	 * @param clockSeconds the clock, unix seconds
+	 */
+	static NowTime deriveNowTime(final int matches, final int n, final long r0Seconds, final long r0RevId,
+		final long olderSeconds, final long olderRevId, final long clockSeconds)
+	{
+		if (r0Seconds <= 0L)
+		{
+			return NowTime.NONE;
+		}
+		if (n < AGREE_MIN_SAMPLES || (long) matches * 10L >= (long) n * 9L)
+		{
+			return new NowTime(r0Seconds, r0RevId, false, false);
+		}
+		if (olderSeconds > 0L)
+		{
+			return new NowTime(olderSeconds, olderRevId, true, false);
+		}
+		return new NowTime(clockSeconds, 0L, false, true);
+	}
+
+	/**
+	 * The revision a window's baseline should be read from with no table time known yet:
+	 * {@code RevisionRef.pickThen(index, window.targetSeconds(nowSeconds))} (contract 1.1.2, T1). Null when there is no
+	 * now time, no window, or nothing in the index is as old as the target (L11: "No 180d history"). Pure; the known
+	 * table times, the guard and the one retry are {@link #resolveLocked}'s.
 	 */
 	@Nullable
-	static RevisionRef pickBaseline(@Nullable final List<RevisionRef> index, @Nullable final LocalDate anchorDay,
+	static RevisionRef pickBaseline(@Nullable final List<RevisionRef> index, final long nowSeconds,
 		@Nullable final MovementWindow window)
 	{
-		if (window == null)
+		if (window == null || nowSeconds <= 0L)
 		{
 			return null;
 		}
-		return RevisionRef.pickThen(index, window.targetDate(anchorDay));
+		return RevisionRef.pickThen(index, window.targetSeconds(nowSeconds));
 	}
 
 	/**
@@ -4771,7 +5085,7 @@ public class PriceService
 	private void computeUnguarded(final long generation)
 	{
 		final Inputs in;
-		// Read before the lock, and used for T3's freshness half and T7's staleness alike, so one computation
+		// Read before the lock, and used for a print's age (1.2.0, L2) and T7's staleness alike, so one computation
 		// cannot judge a quote fresh and the snapshot it came from stale.
 		final long nowMillis = clockMillis.getAsLong();
 		synchronized (lock)
@@ -4791,7 +5105,7 @@ public class PriceService
 				snapshotTables.put(window, table == null ? GuideSnapshot.EMPTY : table);
 			}
 			// Every table in memory (B002), by reference and in insertion order: a handful of immutable entries.
-			// Which one belongs to which DAY is worked out only on the branch that asks (Inputs.tableForDay).
+			// Which revision each one is matters only on the branch that asks (Inputs.olderTables).
 			final List<GuideSnapshot> inMemory = new ArrayList<>(tablesByRev.values());
 			// T2/T4/T7/U1: the traded half, decided here once. The quotes are EMPTY unless the switch is on, a
 			// client exists and the snapshot is inside its six hours; a window's bucket rides along only when the
@@ -4815,6 +5129,23 @@ public class PriceService
 					}
 				}
 			}
+			// 1.2.0, L1: the graded figures' own inputs, decided here once like the buckets above. The day before
+			// yesterday counts only as the day just before the D1 bucket in use (or before the one D1 wants, while it has
+			// none); the poll memory and the hour whatever their age - GradeMath judges that, print by print, against
+			// the clock (the last 24 hours, and the hour's three).
+			PriceStore.TradedDay snapshotD2 = PriceStore.TradedDay.EMPTY;
+			PriceStore.TradedHour snapshotHour = PriceStore.TradedHour.EMPTY;
+			PollMemory snapshotPrints = PollMemory.EMPTY;
+			if (liveDay != null)
+			{
+				final PriceStore.TradedDay d1 = snapshotTraded.get(MovementWindow.D1);
+				final boolean d2Usable = !d2.isEmpty() && (d1 != null
+					? d2.day().equals(d1.day().minusDays(1))
+					: tradedDayUsable(wantedTradedDay(liveDay, MovementWindow.D1).minusDays(1), d2.day()));
+				snapshotD2 = d2Usable ? d2 : PriceStore.TradedDay.EMPTY;
+				snapshotHour = hour;
+				snapshotPrints = prints;
+			}
 			// Q4/Q5/Y3: the switches that change the FIGURES choose, here and once, the stacks the rows and the
 			// card may add up (the bank's, what the player carries and wears when Y3's switch is on, and what is in
 			// the Grand Exchange offers when theirs is, folded into one list) and the cash they may count. AV: EVERY
@@ -4829,9 +5160,9 @@ public class PriceService
 			final List<BankItem> droppedAlch = options.countUntradeables() ? Collections.<BankItem>emptyList()
 				: alchOnlyOf(stacksOf(bank, options.withCountUntradeables(true)).items);
 			in = new Inputs(counted, everything, droppedAlch, cashOf(bank, options),
-				filter, options, snapshotBaselines, snapshotTables, inMemory, r0, r0Map, mapping, foldedNames, owners,
+				filter, options, snapshotBaselines, snapshotTables, inMemory, index, r0, r0Map, mapping, foldedNames, owners,
 				snapshotQuotes, snapshotTraded, liveDay, liveOn, liveFailed, nowMillis / 1000L,
-				new PricedBank(bank, bankPersist));
+				new PricedBank(bank, bankPersist), snapshotD2, snapshotHour, snapshotPrints);
 		}
 		final List<BankItem> all = in.everything.items;
 		if (all.isEmpty())
@@ -4957,13 +5288,13 @@ public class PriceService
 	}
 
 	/**
-	 * Executor: the rows and the anchor day, from one snapshot of inputs, in three steps.
+	 * Executor: the rows and the now time, from one snapshot of inputs, in three steps.
 	 *
-	 * <p><b>The day</b> ({@link #agreement}, here): over every item with a RuneLite price and an R0 value, how many
-	 * are equal. {@link #deriveAnchorDay} turns that into D, and {@link #agrees} checks the one direction that rule
-	 * cannot see (B002). When fewer than {@value #AGREE_MIN_SAMPLES} items compare, the computation is DEGRADED and
-	 * R0 is "now" (L3) - its value where it has one, RuneLite's price where it has none, so a priced item stays
-	 * priced.
+	 * <p><b>The now time</b> ({@link #agreement} and {@link #nowTime}, here): over every item with a RuneLite price
+	 * and an R0 value, how many are equal; where too few are, the older tables in memory are asked the same question
+	 * (B002); {@link #deriveNowTime} turns the answers into the time every window counts back from (contract 1.1.2).
+	 * When fewer than {@value #AGREE_MIN_SAMPLES} items compare, the computation is DEGRADED and R0 is "now" (L3) -
+	 * its value where it has one, RuneLite's price where it has none, so a priced item stays priced.
 	 *
 	 * <p><b>The rows and the bank value line</b> ({@link #rowsAndPortfolio}): each row is
 	 * {@code MovementMath.row(item, now, baseline.get(id) or the L8 b fallback, 0)} - or, for an untradeable stack
@@ -4975,13 +5306,12 @@ public class PriceService
 	 * {@link PortfolioSummary#EMPTY}, unless it holds cash (P1): coins are not a stack, so a bank of nothing but
 	 * coins has no rows and still has a value.
 	 *
-	 * <p><b>The publish</b> ({@link #commit}): dropped when a newer computation exists; and if the anchor day
-	 * changed, the baselines are re-picked at once (L3: "re-evaluated on every recompute, so the panel follows the
-	 * Jagex rollover within one recompute").
+	 * <p><b>The publish</b> ({@link #commit}): dropped when a newer computation exists; and if the now time moved,
+	 * the baselines are re-picked at once, so the panel follows a new Jagex step within one recompute.
 	 *
 	 * <p><b>Addendum AV.</b> {@code lookups} covers EVERY stack of the snapshot ({@link Inputs#everything}); the
 	 * day, the agreement and the degraded flag are still decided over the switched list {@link Inputs#items} alone,
-	 * exactly as before, so pricing more stacks moves no anchor. {@link #priceStacks} answers the "now" of any list
+	 * exactly as before, so pricing more stacks moves no now time. {@link #priceStacks} answers the "now" of any list
 	 * drawn from the same snapshot with the same {@code lookups}, {@code degraded} and {@link PartPrices}.
 	 *
 	 * @param lookups what the client-thread trip read, by canonical id: RuneLite's guide price, the members name,
@@ -4992,34 +5322,59 @@ public class PriceService
 		final long[] guide = lookups.guideFor(in.items);
 		final String[] names = lookups.namesFor(in.items);
 		final Agreement against = agreement(in, guide, names);
-		final LocalDate r0Day = in.r0.dataDay();
-		final LocalDate derived = in.items.isEmpty() ? null : deriveAnchorDay(against.matches, against.samples, r0Day);
-		// The other direction (B002): deriveAnchorDay reads every disagreement as "RuneLite leads", so a table
-		// that LAGS the wiki would be pushed a day the wrong way. Only the disagreement branch can be wrong that
-		// way, and only a table in memory can settle it.
-		final boolean behind = derived != null && r0Day != null && derived.isAfter(r0Day)
-			&& agrees(in.tableForDay(r0Day.minusDays(1)), in, guide, names);
-		final LocalDate anchor = behind ? r0Day.minusDays(1) : derived;
+		final NowTime now = in.items.isEmpty() ? NowTime.NONE : nowTime(in, against, guide, names);
 		final boolean degraded = !in.r0.isEmpty() && !in.items.isEmpty() && against.samples < AGREE_MIN_SAMPLES;
 
-		final PartPrices partPrices = PartPrices.of(in, lookups.parts, degraded);
+		// 1.2.0: every graded figure of this computation, worked out once per item and read by the rows, the card, the
+		// history cells and the parts sums alike (L2-L4). OFF - nothing graded - without a usable live snapshot.
+		final Figures figures = new Figures(in);
+		final PartPrices partPrices = PartPrices.of(in, lookups.parts, degraded, figures);
 
 		// AU: the bank-history cells beside the rows, over EVERY stack, by the same rule and the same degraded flag -
 		// so the parts the switches pick add up to the card's figure to the gp (contract section 2, the invariant).
-		final Computed computed = rowsAndPortfolio(in, lookups, against.values, degraded, partPrices);
+		final Computed computed = rowsAndPortfolio(in, lookups, against.values, degraded, partPrices, figures);
 		// 1.0.8: the history's cells are a side dish of the computation. If pricing the whole snapshot for them
 		// throws, that reading is not recorded this time and the rows and the card are published all the same.
 		BankHistoryCells cells = null;
 		try
 		{
-			cells = bankHistoryCells(in, lookups, degraded, partPrices);
+			cells = bankHistoryCells(in, lookups, degraded, partPrices, figures);
 		}
 		catch (final RuntimeException e)
 		{
 			warn("history-cells", "bank-portfolio-tracker: the net worth reading could not be worked out"
 				+ " - not recorded this time", e);
 		}
-		commit(generation, in, computed.withBankHistoryCells(cells), anchor, against, degraded, behind);
+		commit(generation, in, computed.withBankHistoryCells(cells), now, against, degraded);
+	}
+
+	/**
+	 * The now time of one computation ({@link #deriveNowTime}): R0's when RuneLite's prices agree with it or too few
+	 * items compare; on a disagreement, the newest of the {@value #MATCH_DEPTH} newest indexed revisions (R0 included)
+	 * whose table is in memory and agrees ({@link Inputs#olderTables}, {@link #agrees}) - RuneLite BEHIND the wiki -
+	 * and the clock when none does - RuneLite AHEAD of the index. Only the disagreement branch looks past R0, and only
+	 * at tables already in memory.
+	 */
+	private static NowTime nowTime(final Inputs in, final Agreement against, @Nullable final long[] guide,
+		@Nullable final String[] names)
+	{
+		final long r0Seconds = in.r0.isEmpty() ? 0L : in.r0.dataSeconds();
+		long olderSeconds = 0L;
+		long olderRevId = 0L;
+		if (r0Seconds > 0L && against.samples >= AGREE_MIN_SAMPLES && !against.clears())
+		{
+			for (final GuideSnapshot table : in.olderTables(MATCH_DEPTH - 1))
+			{
+				if (table.dataSeconds() > 0L && agrees(table, in, guide, names))
+				{
+					olderSeconds = table.dataSeconds();
+					olderRevId = table.revId();
+					break;
+				}
+			}
+		}
+		return deriveNowTime(against.matches, against.samples, r0Seconds, in.r0.revId(), olderSeconds, olderRevId,
+			in.nowSeconds);
 	}
 
 	/**
@@ -5045,10 +5400,10 @@ public class PriceService
 	 * no counting switch is read, so flipping one changes no cell.
 	 */
 	private BankHistoryCells bankHistoryCells(final Inputs in, final Lookups lookups, final boolean degraded,
-		final PartPrices partPrices)
+		final PartPrices partPrices, final Figures figures)
 	{
 		final List<BankItem> items = in.everything.items;
-		final StackPrice[] prices = priceStacks(in, items, lookups, null, degraded, partPrices);
+		final StackPrice[] prices = priceStacks(in, items, lookups, null, degraded, partPrices, figures);
 		final long[] card = new long[BankHistoryPoint.CELLS];
 		final long[] guide = new long[BankHistoryPoint.CELLS];
 		boolean anyTradeable = false;
@@ -5126,8 +5481,8 @@ public class PriceService
 	 * projected {@link Inputs#r0Map} first and the L8 name ladder second - the same ladder a row's "then" uses -
 	 * and it is kept because {@link #rowsAndPortfolio} needs it as "now" in the degraded mode.
 	 *
-	 * <p>No R0 in memory means no value for anything and therefore no sample, which is what makes
-	 * {@link #deriveAnchorDay} answer null and the rows fall back to RuneLite's own prices.
+	 * <p>No R0 in memory means no value for anything and therefore no sample, and {@link #deriveNowTime} answers
+	 * {@link NowTime#NONE}: no baseline is picked and the rows fall back to RuneLite's own prices.
 	 */
 	private static Agreement agreement(final Inputs in, @Nullable final long[] guide, @Nullable final String[] names)
 	{
@@ -5169,7 +5524,8 @@ public class PriceService
 	}
 
 	/**
-	 * The "now" of every stack of {@code items} (addendum AV): {@link #priceStack} over the list, in its order,
+	 * The "now" of every stack of {@code items} (addendum AV, and contract 1.2.0 L4): {@link #priceStack} over the
+	 * list, in its order,
 	 * null where the list holds null. Any list drawn from the computation's own snapshot may be asked - the
 	 * switched {@link Inputs#items} (what {@link #rowsAndPortfolio} does) or the whole of
 	 * {@link Inputs#everything} - and a stack gets the same answer in either, because every figure it reads is
@@ -5180,7 +5536,7 @@ public class PriceService
 	 * @param degraded the computation's L3 flag, as {@link #finish} decided it
 	 */
 	StackPrice[] priceStacks(final Inputs in, final List<BankItem> items, final Lookups lookups,
-		@Nullable final Long[] r0Values, final boolean degraded, final PartPrices partPrices)
+		@Nullable final Long[] r0Values, final boolean degraded, final PartPrices partPrices, final Figures figures)
 	{
 		final StackPrice[] out = new StackPrice[items.size()];
 		for (int i = 0; i < out.length; i++)
@@ -5195,7 +5551,7 @@ public class PriceService
 				final boolean fromR0 = !item.untradeable && (degraded || lookups.rewrittenOf(item.id));
 				final Long r0 = !fromR0 ? null
 					: r0Values != null ? r0Values[i] : r0Of(in, item, lookups.nameOf(item.id));
-				out[i] = priceStack(in, item, lookups, r0, degraded, partPrices);
+				out[i] = priceStack(item, lookups, r0, degraded, partPrices, figures);
 			}
 			catch (final RuntimeException e)
 			{
@@ -5203,7 +5559,7 @@ public class PriceService
 				// table does not name - and never the reason the rest of the bank is not shown. The "no price" value
 				// is a StackPrice of the kind the stack is with nothing in it, because every reader below treats a
 				// null entry as a null item and would fail on this one.
-				out[i] = new StackPrice(item.untradeable ? StackKind.ALCH : StackKind.TRADEABLE, null, null, false, null);
+				out[i] = new StackPrice(item.untradeable ? StackKind.ALCH : StackKind.TRADEABLE, null, null, false);
 				warn("price-stack", "bank-portfolio-tracker: could not price item {} - left without a price",
 					item.id, e);
 			}
@@ -5212,23 +5568,26 @@ public class PriceService
 	}
 
 	/**
-	 * THE per-stack "now" rule (R2, Q5, L3, B001, T3), in one place so nothing priced from a computation can
-	 * drift from what the card counts:
+	 * THE per-stack "now" rule (R2, Q5, L3, B001, and contract 1.2.0 L4), in one place so nothing priced from a
+	 * computation can drift from what the card counts:
 	 *
 	 * <ul>
 	 * <li>an untradeable stack whose tradeable parts can ALL be priced is {@link StackKind#PARTS}: their guide sum,
-	 * and the live sum where every part passes the five checks;</li>
-	 * <li>any other untradeable stack is {@link StackKind#ALCH}: its High Alchemy value, no live price;</li>
+	 * and for the card each part at its row price - its 1d graded figure's where it has one, its guide price where it
+	 * has none;</li>
+	 * <li>any other untradeable stack is {@link StackKind#ALCH}: its High Alchemy value, never graded;</li>
 	 * <li>a tradeable stack is {@link StackKind#TRADEABLE}: RuneLite's guide price - R0 standing in for it in the
-	 * degraded mode and for an id RuneLite rewrites, when R0 names it - and the live mid where it passes.</li>
+	 * degraded mode and for an id RuneLite rewrites, when R0 names it - and, for the card, the 1d graded figure's price
+	 * where the item has one: {@code thenMark x (1 + move)}, yesterday's two-sided average moved by today's same-side
+	 * move (L4). The five checks of addenda T and V no longer decide this - they are retired as price gates.</li>
 	 * </ul>
 	 *
 	 * <p>It never looks at a counting switch: which of these the rows and the card add up is decided by the caller.
 	 *
 	 * @param r0 R0's value for a tradeable stack that takes its "now" from R0; ignored otherwise
 	 */
-	private static StackPrice priceStack(final Inputs in, final BankItem item, final Lookups lookups,
-		@Nullable final Long r0, final boolean degraded, final PartPrices partPrices)
+	private static StackPrice priceStack(final BankItem item, final Lookups lookups, @Nullable final Long r0,
+		final boolean degraded, final PartPrices partPrices, final Figures figures)
 	{
 		if (item.untradeable)
 		{
@@ -5237,37 +5596,51 @@ public class PriceService
 				final Long unit = partsSum(item.parts, partPrices.now::get);
 				if (unit != null)
 				{
-					// T3: the whole stack is live only when every part is - the parts ARE the market for it, and a
-					// sum of one live price and one guide price is neither series.
-					final Long liveUnit = in.liveUsable() ? partsSum(item.parts, partPrices.live::get) : null;
-					final MovementRow.LiveFacts facts = in.liveUsable()
-						? partsFacts(in, item.parts, liveUnit, partPrices.refusal) : null;
-					return new StackPrice(StackKind.PARTS, unit, liveUnit != null ? liveUnit : unit, liveUnit != null,
-						facts);
+					// L4 for a parts stack: each part at the price its own row would carry. Every part with a guide price
+					// has a row price, so this sum is there whenever the guide sum is.
+					final Long card = figures.active() ? partsSum(item.parts, partPrices.price::get) : unit;
+					final boolean live = card != null && anyGraded(item.parts, partPrices.graded);
+					return new StackPrice(StackKind.PARTS, unit, card != null ? card : unit, live);
 				}
 			}
 			final Long alch = item.alchPrice();
-			return new StackPrice(StackKind.ALCH, alch, alch, false, null);
+			return new StackPrice(StackKind.ALCH, alch, alch, false);
 		}
 		final long price = lookups.guideOf(item.id);
 		// R0 stands in as "now" in L3's degraded mode, and for an id RuneLite would answer another item's price for
 		// (the class javadoc's carve-out) - which leaves the stack unpriced when R0 cannot name it.
 		final boolean fromR0 = degraded || lookups.rewrittenOf(item.id);
 		final Long nowGp = fromR0 && r0 != null ? r0 : (price > 0 ? Long.valueOf(price) : null);
-		// T3 and V3/V4: the five checks, asked once per stack, in the one place that spells them.
-		final MovementRow.LiveFacts facts = in.liveUsable() ? facts(in, item.id, nowGp) : null;
-		final Long liveMid = facts != null && facts.live() ? in.quotes.get(item.id).mid() : null;
-		return new StackPrice(StackKind.TRADEABLE, nowGp, liveMid != null ? liveMid : nowGp, liveMid != null, facts);
+		// L4: the 1d graded figure's price, asked once per item in the one place that spells it.
+		final Long graded = figures.price(item.id, nowGp);
+		return new StackPrice(StackKind.TRADEABLE, nowGp, graded != null ? graded : nowGp, graded != null);
+	}
+
+	/** Whether any of a stack's parts is priced from a graded figure. */
+	private static boolean anyGraded(final List<BankItem.Part> itemParts, final Set<Integer> graded)
+	{
+		if (graded.isEmpty())
+		{
+			return false;
+		}
+		for (final BankItem.Part part : itemParts)
+		{
+			if (part != null && graded.contains(part.id))
+			{
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**
 	 * The L3 tally over one table's values: an item counts as a SAMPLE when RuneLite prices it and the table names
 	 * it, and as a MATCH when the two are the same number. Shared by {@link #agreement} and {@link #agrees} so the
-	 * question "does RuneLite hold this table's day?" is asked exactly one way whichever table is asked about.
+	 * question "does RuneLite hold this table?" is asked exactly one way whichever table is asked about.
 	 *
 	 * <p>An id {@link ItemMapping} rewrites carries price 0 here ({@link #compute} never asked RuneLite for it), so
 	 * it drops out of the sample on its own. Deliberate: it would otherwise score a free match on every one of
-	 * them - its "now" IS the table's value - and bias the anchor with items that cannot be compared at all.
+	 * them - its "now" IS the table's value - and bias the now time with items that cannot be compared at all.
 	 */
 	private static Agreement tally(final Long[] values, @Nullable final long[] guide)
 	{
@@ -5305,15 +5678,17 @@ public class PriceService
 	 * @param r0Values   R0's value per item of {@link Inputs#items} from {@link #agreement}, the "now" of a degraded
 	 *                   computation
 	 * @param degraded   fewer than {@value #AGREE_MIN_SAMPLES} items compared, so R0 IS "now" (L3)
-	 * @param partPrices the parts' "now" and live prices (R2, T3)
+	 * @param partPrices the parts' guide "now" and their row prices (R2, L4)
+	 * @param figures    every graded figure of this computation; OFF while nothing is graded (contract 1.2.0)
 	 */
 	private Computed rowsAndPortfolio(final Inputs in, final Lookups lookups, final Long[] r0Values,
-		final boolean degraded, final PartPrices partPrices)
+		final boolean degraded, final PartPrices partPrices, final Figures figures)
 	{
 		final int count = in.items.size();
 		final List<MovementRow> all = new ArrayList<>(count);
-		// T4: where a window's series differs from the headline's, for the bank value line. Only a live row ever
-		// puts anything in either - with the switch off both stay empty and the portfolio reads exactly as before.
+		// T4 / 1.2.0: per window, the pair each GRADED stack compares - its figure's mark and its figure's own "now" - for
+		// the bank value line; a graded stack with no figure in a window is in windowThen with a null, which keeps it out
+		// of that window's sums as its row's dash is. With nothing graded both stay empty and the card reads as before.
 		final Map<MovementWindow, Map<Integer, Long>> windowNow = new EnumMap<>(MovementWindow.class);
 		final Map<MovementWindow, Map<Integer, Long>> windowThen = new EnumMap<>(MovementWindow.class);
 		int live = 0;
@@ -5331,9 +5706,11 @@ public class PriceService
 		final PriceMap baseline = in.baseline();
 		final GuideSnapshot table = in.table();
 		final MovementWindow current = in.filter.window();
+		// 1.2.0, L3: the card's grade, over exactly the stacks the bank value counts.
+		final GradeSummary.Tally tally = new GradeSummary.Tally(figures.active());
 		// AV: the "now" of every stack, by the one rule - which of them the rows and the card add up is decided
 		// below, after pricing, because only pricing knows whether a parts stack ended on its parts or its alch.
-		final StackPrice[] prices = priceStacks(in, in.items, lookups, r0Values, degraded, partPrices);
+		final StackPrice[] prices = priceStacks(in, in.items, lookups, r0Values, degraded, partPrices, figures);
 		// AV2: the stacks left out because they ended on the alch rule while "Include alch-only untradeables" is
 		// off. Null until the first one, so a bank that loses none hands the summary the very list it had before.
 		boolean[] leftOut = null;
@@ -5355,31 +5732,27 @@ public class PriceService
 			// whose parts cannot ALL be priced, keeps Q5's alch rule below: half a sum is not the item's price.
 			if (price.kind == StackKind.PARTS)
 			{
-				final Long unit = price.guideUnit;
-				final Long partsThen = partsSum(item.parts,
-					id -> thenPrice(baseline, table, id, partNames.get(id), partNames.get(id), in.owners));
-				final Long liveUnit = price.live ? price.cardUnit : null;
-				MovementRow row = MovementMath
-					.row(item, guidePoint(unit), partsThen == null ? null : guidePoint(partsThen), 0)
-					.asParts(item.parts);
-				if (liveUnit != null)
+				final MovementRow row;
+				final Map<MovementWindow, GradedMove> moves = figures.parts(item.parts, partPrices);
+				if (moves != null)
 				{
-					final Map<MovementWindow, MovementRow.PriceSource> sources = new EnumMap<>(MovementWindow.class);
-					final Map<MovementWindow, LocalDate> days = new EnumMap<>(MovementWindow.class);
-					final Long tradedThen = partsWindows(in, item.id, item.parts, unit, sources, days,
-						windowNow, windowThen, current);
-					row = rebuildLive(item, row, liveUnit, tradedThen)
-						.asParts(item.parts)
-						.asLive(liveUnit, sources, days, price.facts);
-					live++;
+					// 1.2.0: the parts' figures summed, window by window, and graded as the worst of them.
+					row = gradedRow(item, price, moves, current, 0L).asParts(item.parts);
+					recordWindows(item.id, moves, windowNow, windowThen);
+					live += price.live ? 1 : 0;
 				}
 				else
 				{
-					row = row.withLiveRefusal(price.facts);
+					final Long partsThen = partsSum(item.parts,
+						id -> thenPrice(baseline, table, id, partNames.get(id), partNames.get(id), in.owners));
+					row = MovementMath.row(item, guidePoint(price.guideUnit),
+						partsThen == null ? null : guidePoint(partsThen), 0).asParts(item.parts);
 				}
-				all.add(in.withSplit(row));
-				// Priced: every gp in that sum came out of the guide table, which is what the word means here
-				// and what the header's GUIDE source and its clock are about (R3).
+				final MovementRow split = in.withSplit(row);
+				all.add(split);
+				tally.add(split);
+				// Priced: every gp in that sum came out of the guide table or a graded figure, which is what the word
+				// means here and what the header's GUIDE source and its clock are about (R3).
 				priced++;
 				nowById.put(item.id, price.cardUnit);
 				partsById.put(item.id, item.parts);
@@ -5392,8 +5765,8 @@ public class PriceService
 			{
 				// 1.1.0 part G: the stack is a ROW whatever the switch says - the Items list decides whether to show it
 				// (its own tick, and the search) - and the switch decides only whether it is in the bank value.
-				final MovementRow alchRow = MovementMath.alchRow(item);
-				all.add(in.withSplit(alchRow));
+				final MovementRow alchRow = in.withSplit(MovementMath.alchRow(item));
+				all.add(alchRow);
 				// An untradeable with no alch value becomes a row with no price, which the list drops like any unpriced
 				// row: it is not an alch row, and the alch counts the panel's "n of m" works with leave it out.
 				if (MovementMath.isAlch(alchRow))
@@ -5413,41 +5786,37 @@ public class PriceService
 					leftOutCount++;
 					continue;
 				}
+				tally.add(alchRow);
 				alch++;
 				continue;
 			}
 			final Long nowGp = price.guideUnit;
 			final String membersName = lookups.nameOf(item.id);
-			final PricePoint now = nowGp == null ? null : guidePoint(nowGp);
-			final Long thenGp = thenPrice(baseline, table, item.id, membersName, item.name, in.owners);
-			final PricePoint then = thenGp == null ? null : guidePoint(thenGp);
-			final Long liveMid = price.live ? price.cardUnit : null;
-			MovementRow row;
-			if (liveMid != null)
+			final MovementRow row;
+			final Map<MovementWindow, GradedMove> moves = figures.of(item.id, nowGp);
+			if (moves != null)
 			{
-				final Map<MovementWindow, MovementRow.PriceSource> sources = new EnumMap<>(MovementWindow.class);
-				final Map<MovementWindow, LocalDate> days = new EnumMap<>(MovementWindow.class);
-				// T4/U3: every window in one pass - which series it uses, which DAY it compared against, and, where
-				// that differs from the headline, the pair the bank value line is to compare for it.
-				final Long tradedThen = windows(in, item.id, nowGp, sources, days, windowNow, windowThen, current);
-				// The CURRENT window decides the figures on the row: the traded pair when that window is live,
-				// the guide pair when it fell back - and the live mid is printed either way (T4, asLive).
-				row = (tradedThen != null
-					? MovementMath.row(item, guidePoint(liveMid), guidePoint(tradedThen), 0)
-					: MovementMath.row(item, now, then, 0))
-					.asLive(liveMid, sources, days, price.facts);
-				live++;
+				// 1.2.0, L2-L4: the window's graded figure decides the row's then, move and percentage, and the 1d
+				// figure its price; the guide's own two ends play no part while the stack is graded.
+				final TradedPriceClient.Bucket yesterday = in.bucket(MovementWindow.D1, item.id);
+				row = gradedRow(item, price, moves, current, yesterday == null ? 0L : yesterday.volume());
+				recordWindows(item.id, moves, windowNow, windowThen);
+				live += price.live ? 1 : 0;
 			}
 			else
 			{
-				row = MovementMath.row(item, now, then, 0).withLiveRefusal(price.facts);
+				final PricePoint now = nowGp == null ? null : guidePoint(nowGp);
+				final Long thenGp = thenPrice(baseline, table, item.id, membersName, item.name, in.owners);
+				row = MovementMath.row(item, now, thenGp == null ? null : guidePoint(thenGp), 0);
 			}
 			if (row.unitPrice() != null)
 			{
 				priced++;
 			}
-			all.add(in.withSplit(row));
-			// T5: the headline counts each stack at the price its own row prints - the live mid for a live stack.
+			final MovementRow split = in.withSplit(row);
+			all.add(split);
+			tally.add(split);
+			// T5 / L4: the headline counts each stack at the price its own row prints.
 			if (price.cardUnit != null)
 			{
 				nowById.put(item.id, price.cardUnit);
@@ -5477,7 +5846,8 @@ public class PriceService
 			? PortfolioSummary.EMPTY
 			: summarise(in, summed, nowById, membersNames, bankNames, partsById, partNames, windowNow, windowThen,
 				live);
-		return new Computed(MovementMath.apply(all, in.filter), summary, priced, live, alch, leftOutCount, alchStacks);
+		return new Computed(MovementMath.apply(all, in.filter), summary, priced, live, alch, leftOutCount, alchStacks,
+			tally.done());
 	}
 
 	/** {@code items} without the stacks {@code drop} marks - a fresh list, in the same order. */
@@ -5495,57 +5865,68 @@ public class PriceService
 	}
 
 	/**
-	 * T3 for one bank stack: the five checks against the feeds in hand, packed with the numbers they were made
-	 * on so the tooltip can show either the live price or the reason it is not used (T6). Never null while the
-	 * switch is on and a usable snapshot is in hand - a row that is refused still says so.
+	 * One GRADED row (contract 1.2.0, L2-L4): the stack's price is its {@link StackPrice#cardUnit} - the 1d figure's
+	 * {@code thenMark x (1 + move)} where it has one, the guide where it has none - and, when the window on screen has
+	 * a figure, the row's "then" is that figure's mark, its move the figure's gp move and its percentage the figure x
+	 * 100, so the % and the gp agree and on 1d the price, the then and the move add up to the gp. A window with no
+	 * figure is the dash. The row carries the window's {@link GradedMove} for the sidebar, which series each window
+	 * used ({@link MovementRow.PriceSource#LIVE} where it has a figure) and the day it compared against, and - for the
+	 * panel's live lines until it reads the grade - {@link MovementRow.LiveFacts}: the last print of each side, and
+	 * as the reason the 1d word when the price is the guide's.
 	 */
-	private static MovementRow.LiveFacts facts(final Inputs in, final int id, @Nullable final Long guideNow)
+	private static MovementRow gradedRow(final BankItem item, final StackPrice price,
+		final Map<MovementWindow, GradedMove> moves, final MovementWindow current, final long volumeYesterday)
 	{
-		final TradedPriceClient.Quote quote = in.quotes.get(id);
-		final TradedPriceClient.Bucket yesterday = in.bucketYesterday(id);
-		final String reason = liveRefusal(quote, yesterday, guideNow, in.nowSeconds);
-		return new MovementRow.LiveFacts(quote == null ? null : quote.buy(), quote == null ? null : quote.sell(),
-			yesterday == null ? 0L : yesterday.volume(), reason);
+		final GradedMove move = moves.get(current);
+		final Long unit = price.cardUnit;
+		final boolean figure = unit != null && move != null && move.hasFigure();
+		final Map<MovementWindow, MovementRow.PriceSource> sources = new EnumMap<>(MovementWindow.class);
+		final Map<MovementWindow, LocalDate> days = new EnumMap<>(MovementWindow.class);
+		for (final Map.Entry<MovementWindow, GradedMove> entry : moves.entrySet())
+		{
+			if (entry.getValue() != null && entry.getValue().hasFigure())
+			{
+				sources.put(entry.getKey(), MovementRow.PriceSource.LIVE);
+				putDay(days, entry.getKey(), entry.getValue().thenDay());
+			}
+		}
+		final GradedMove oneDay = moves.get(MovementWindow.D1);
+		final GradedMove sides = move == null ? oneDay : move;
+		final Long lastBuy = sides == null ? null : sides.buy().last();
+		final Long lastSell = sides == null ? null : sides.sell().last();
+		final MovementRow.PriceSource source = unit == null ? MovementRow.PriceSource.NONE
+			: price.live ? MovementRow.PriceSource.LIVE : MovementRow.PriceSource.GUIDE;
+		final MovementRow row = new MovementRow(item.id, item.name, item.quantity, item.stackable, unit,
+			figure ? move.thenMark() : null, figure ? move.deltaGp() : null, figure ? move.move() * 100.0d : null,
+			MovementMath.holdingValue(unit, item.quantity), source, null, sources, days,
+			price.live ? new MovementRow.LiveFacts(lastBuy, lastSell, volumeYesterday, null) : null, 0, 0, 0, 0, move);
+		// A row whose price is the guide's says why, as the panel's refusal line has since addendum T: the 1d word.
+		return price.live ? row : row.withLiveRefusal(new MovementRow.LiveFacts(lastBuy, lastSell, volumeYesterday,
+			oneDay == null ? GradeWords.NO_TRADES : oneDay.word()));
 	}
 
 	/**
-	 * T4 for one LIVE stack, over EVERY window: records which series each window uses, fills the two per-window
-	 * maps the bank value line reads where that window's pair differs from the headline's, and answers the
-	 * CURRENT window's traded "then" (null when it fell back to the guide).
-	 *
-	 * <p>One pass rather than one per window per caller, because the row and the card must agree window by window:
-	 * the sources map that ends up on the row and the pairs the portfolio sums are decided by the same test here.
+	 * One graded stack's pairs for the bank value line, window by window (L4): its figure's mark and its figure's own
+	 * "now" where the window has a figure, and a null "then" where it has none - which leaves the stack out of that
+	 * window's sums, as its row's dash is.
 	 */
-	@Nullable
-	private static Long windows(final Inputs in, final int id, @Nullable final Long guideNow,
-		final Map<MovementWindow, MovementRow.PriceSource> sources, final Map<MovementWindow, LocalDate> days,
-		final Map<MovementWindow, Map<Integer, Long>> windowNow, final Map<MovementWindow, Map<Integer, Long>> windowThen,
-		final MovementWindow current)
+	private static void recordWindows(final int id, final Map<MovementWindow, GradedMove> moves,
+		final Map<MovementWindow, Map<Integer, Long>> windowNow, final Map<MovementWindow, Map<Integer, Long>> windowThen)
 	{
-		Long currentThen = null;
 		for (final MovementWindow window : MovementWindow.values())
 		{
-			final Long tradedThen = in.tradedThen(window, id);
-			sources.put(window, tradedThen != null ? MovementRow.PriceSource.LIVE : MovementRow.PriceSource.GUIDE);
-			// U3: the day this window really compared against - the bucket's own day when it is live, the guide
-			// baseline's when it fell back - so the tooltip can print it instead of the header's one day.
-			putDay(days, window, tradedThen != null ? in.tradedDayOf(window) : in.guideDayOf(window));
-			if (tradedThen != null)
+			final GradedMove move = moves.get(window);
+			final Map<Integer, Long> then = windowThen.computeIfAbsent(window, w -> new HashMap<>());
+			if (move != null && move.hasFigure())
 			{
-				windowThen.computeIfAbsent(window, w -> new HashMap<>()).put(id, tradedThen);
+				then.put(id, move.thenMark());
+				windowNow.computeIfAbsent(window, w -> new HashMap<>()).put(id, move.price());
 			}
-			else if (guideNow != null)
+			else
 			{
-				// The window fell back: it compares the GUIDE's two ends, so the card's "now" for it is the guide
-				// price even though the row prints the live mid (T4, "never live-now against guide-then").
-				windowNow.computeIfAbsent(window, w -> new HashMap<>()).put(id, guideNow);
-			}
-			if (window == current)
-			{
-				currentThen = tradedThen;
+				then.put(id, null);
 			}
 		}
-		return currentThen;
 	}
 
 	/** One day into the per-window map, null dropped: a window with no day is a window the row cannot date (U3). */
@@ -5556,124 +5937,6 @@ public class PriceService
 		{
 			days.put(window, day);
 		}
-	}
-
-	/**
-	 * {@link #windows} for a PARTS stack: a window is live for it only when EVERY part has a traded average that
-	 * day, and its traded "then" is the sum of them - the same all-or-nothing rule R2 already applies to the guide
-	 * side, for the same reason (half a sum is not the item's price).
-	 */
-	@Nullable
-	private static Long partsWindows(final Inputs in, final int id, final List<BankItem.Part> itemParts,
-		@Nullable final Long guideNow, final Map<MovementWindow, MovementRow.PriceSource> sources,
-		final Map<MovementWindow, LocalDate> days,
-		final Map<MovementWindow, Map<Integer, Long>> windowNow, final Map<MovementWindow, Map<Integer, Long>> windowThen,
-		final MovementWindow current)
-	{
-		Long currentThen = null;
-		for (final MovementWindow window : MovementWindow.values())
-		{
-			final Long tradedThen = partsSum(itemParts, partId -> in.tradedThen(window, partId));
-			sources.put(window, tradedThen != null ? MovementRow.PriceSource.LIVE : MovementRow.PriceSource.GUIDE);
-			putDay(days, window, tradedThen != null ? in.tradedDayOf(window) : in.guideDayOf(window));
-			if (tradedThen != null)
-			{
-				windowThen.computeIfAbsent(window, w -> new HashMap<>()).put(id, tradedThen);
-			}
-			else if (guideNow != null)
-			{
-				windowNow.computeIfAbsent(window, w -> new HashMap<>()).put(id, guideNow);
-			}
-			if (window == current)
-			{
-				currentThen = tradedThen;
-			}
-		}
-		return currentThen;
-	}
-
-	/**
-	 * The row a LIVE parts stack is built from: the traded pair when the current window has one, the guide pair
-	 * when it fell back. Separate from the tradeable branch above only because a parts row's two ends are sums
-	 * rather than lookups; the rule is the same one, and {@code asLive} puts the live unit on either.
-	 */
-	private static MovementRow rebuildLive(final BankItem item, final MovementRow guideRow, final Long liveUnit,
-		@Nullable final Long tradedThen)
-	{
-		if (tradedThen == null)
-		{
-			return guideRow;
-		}
-		return MovementMath.row(item, guidePoint(liveUnit), guidePoint(tradedThen), 0);
-	}
-
-	/**
-	 * T3 for every tradeable PART of the untradeable stacks (R2): the parts that pass all FIVE checks, by id and
-	 * at their live mid, and the first failing check for the rest. Two maps rather than one nullable value because
-	 * {@link #partsSum} reads "no price" as a null lookup, which is exactly the all-or-nothing rule wanted here.
-	 */
-	private static void partsLive(final Inputs in, final Parts parts, final Map<Integer, Long> partNow,
-		final Map<Integer, Long> intoLive, final Map<Integer, String> intoRefusal)
-	{
-		if (!in.liveUsable() || parts.isEmpty())
-		{
-			return;
-		}
-		for (final int id : parts.ids)
-		{
-			final TradedPriceClient.Quote quote = in.quotes.get(id);
-			final String reason = liveRefusal(quote, in.bucketYesterday(id), partNow.get(id), in.nowSeconds);
-			if (reason == null)
-			{
-				intoLive.put(id, quote.mid());
-			}
-			else
-			{
-				intoRefusal.put(id, reason);
-			}
-		}
-	}
-
-	/**
-	 * The live facts of a PARTS stack (T6). The two sides are the parts' own sides summed the way the price is -
-	 * so "buy" really is what buying the parts costs - and the volume is the SMALLEST of the parts', because that
-	 * is the one that had to clear {@value #LIVE_MIN_VOLUME} for the stack to qualify at all. A refused stack
-	 * carries the first failing part's reason, in the stack's own part order.
-	 */
-	private static MovementRow.LiveFacts partsFacts(final Inputs in, final List<BankItem.Part> itemParts,
-		@Nullable final Long liveUnit, final Map<Integer, String> partRefusal)
-	{
-		if (liveUnit == null)
-		{
-			String reason = LIVE_NO_DATA;
-			for (final BankItem.Part part : itemParts)
-			{
-				final String refused = part == null ? null : partRefusal.get(part.id);
-				if (refused != null)
-				{
-					reason = refused;
-					break;
-				}
-			}
-			return new MovementRow.LiveFacts(null, null, 0L, reason);
-		}
-		final Long buy = partsSum(itemParts, id ->
-		{
-			final TradedPriceClient.Quote quote = in.quotes.get(id);
-			return quote == null ? null : quote.buy();
-		});
-		final Long sell = partsSum(itemParts, id ->
-		{
-			final TradedPriceClient.Quote quote = in.quotes.get(id);
-			return quote == null ? null : quote.sell();
-		});
-		long volume = Long.MAX_VALUE;
-		for (final BankItem.Part part : itemParts)
-		{
-			final Long partVolume = part == null ? null : in.volumeYesterday(part.id);
-			volume = Math.min(volume, partVolume == null ? 0L : partVolume);
-		}
-		return new MovementRow.LiveFacts(buy, sell, volume == Long.MAX_VALUE ? 0L : volume, null);
 	}
 
 	/**
@@ -5774,10 +6037,11 @@ public class PriceService
 	/**
 	 * Executor: takes the finished computation, drops it if a newer one exists, and publishes. The whole write of
 	 * this computation happens inside ONE lock hold, so no listener can ever see the rows of one computation
-	 * beside the anchor day of another.
+	 * beside the now time of another.
 	 *
-	 * <p>A changed anchor day reconciles at once, AFTER the publish (L3: "the panel follows the Jagex rollover
-	 * within one recompute").
+	 * <p>A moved now time reconciles at once, AFTER the publish, so the panel follows a new Jagex step within one
+	 * recompute. A computation that found RuneLite AHEAD of the index marks the index stale here
+	 * ({@link #indexMarkedStale}, contract 1.1.2) - the next tick refetches it.
 	 *
 	 * <p><b>Addendum AU.</b> Inside the same lock hold and BEFORE the status is built, today's bank-history reading
 	 * is folded into the in-memory series of the PRICED snapshot's owner ({@link #foldBankHistoryLocked}), so the
@@ -5785,8 +6049,8 @@ public class PriceService
 	 * {@link #submitWrite}, which {@link #flush()} covers at shutdown. A new owner's series is read from the store
 	 * here, on the executor, before the lock is taken.
 	 */
-	private void commit(final long generation, final Inputs in, final Computed computed, @Nullable final LocalDate anchor,
-		final Agreement against, final boolean degraded, final boolean behind)
+	private void commit(final long generation, final Inputs in, final Computed computed, final NowTime now,
+		final Agreement against, final boolean degraded)
 	{
 		final long readAt = clockMillis.getAsLong();
 		// 1.0.8: the history is guarded three times over - the local day, the read of a new owner's file and the fold
@@ -5805,7 +6069,8 @@ public class PriceService
 			readDay = null;
 			historyGuard(e);
 		}
-		final boolean anchorChanged;
+		final boolean reconcileNow;
+		final boolean marked;
 		final BankHistoryWrite recorded;
 		synchronized (lock)
 		{
@@ -5824,6 +6089,9 @@ public class PriceService
 			alchRows = computed.alch;
 			leftOutRows = computed.leftOut;
 			alchStacksAll = computed.alchStacks;
+			// 1.2.0: how the counted rows graded, and the /1h bucket they were graded with (L1, L3).
+			gradesUsed = computed.grades;
+			hourAtUsed = in.liveUsable() ? in.hour.startSeconds() : 0L;
 			// U1/U4: the live calendar these rows were computed on - the snapshot's own UTC date, and the day each
 			// window's bucket really held (U2's fallback included, because that is the day the rows compared
 			// against and the day the tooltip prints).
@@ -5843,12 +6111,20 @@ public class PriceService
 			liveUnavailable = in.liveOn && in.liveFailed && in.quotes.isEmpty();
 			pricedRows = computed.priced;
 			guideReadAtMillis = computed.priced > 0 ? readAt : 0L;
-			anchorChanged = !Objects.equals(anchorDay, anchor);
-			anchorDay = anchor;
+			reconcileNow = nowDecidesPicksLocked(now);
+			nowSeconds = now.seconds;
+			matchedRevId = now.revId;
+			nowAhead = now.ahead;
+			anchorDay = now.day();
 			agree = against.samples == 0 ? -1.0d : against.matches / (double) against.samples;
 			agreeSamples = against.samples;
 			anchorDegraded = degraded;
-			anchorBehind = behind;
+			marked = now.ahead && !indexMarkedStale;
+			if (now.ahead || now.revId != 0L)
+			{
+				// Ahead: the index lacks the table RuneLite holds. Matched (R0, or an older table): it does not.
+				indexMarkedStale = now.ahead;
+			}
 			BankHistoryWrite folded = null;
 			if (readDay != null)
 			{
@@ -5872,12 +6148,58 @@ public class PriceService
 			submitWrite("recording the bank history", () -> writeBankHistory(recorded));
 		}
 		publish();
-		if (anchorChanged)
+		if (marked)
 		{
-			log.debug("bank-portfolio-tracker: anchor day {} (R0 day {}, {} of {} agree)", anchor, in.r0.dataDay(),
-				against.matches, against.samples);
-			reconcile(readAt, "anchor day " + anchor, false);
+			log.debug("bank-portfolio-tracker: RuneLite's prices match no indexed table ({} of {} agree with R0) - the"
+				+ " revision index is marked stale for the next tick", against.matches, against.samples);
 		}
+		if (reconcileNow)
+		{
+			log.debug("bank-portfolio-tracker: now time {} (revision {}, R0 {}, {} of {} agree{})", now.seconds,
+				now.revId, in.r0.revId(), against.matches, against.samples, now.ahead ? ", ahead: the clock"
+					: now.behind ? ", behind" : "");
+			reconcile(readAt, "now time", false);
+		}
+	}
+
+	/**
+	 * Under the lock, before {@link #nowSeconds} and {@link #matchedRevId} take the computation's values: whether this
+	 * computation's now time changes what the windows should read, so {@link #commit} reconciles. It does when RuneLite
+	 * matched another revision than last time, when the ahead state began or ended, and - while RuneLite matches a table
+	 * - when that table's time changed (its own time marker was learned). While RuneLite is AHEAD the now time is the
+	 * clock, which differs on every computation, so there it does only when a window's pick actually moved
+	 * ({@link #pickIdsLocked}): pure clock drift must never reconcile, because a reconcile starts the body requests
+	 * again and ignores the failure backoff ({@link #nextRetryDelayLocked}) - a slow failing fetch would then loop at
+	 * its own timeout cadence. The tick and the index refresh reconcile anyway.
+	 */
+	private boolean nowDecidesPicksLocked(final NowTime now)
+	{
+		if (matchedRevId != now.revId || nowAhead != now.ahead)
+		{
+			return true;
+		}
+		if (!now.ahead)
+		{
+			return nowSeconds != now.seconds;
+		}
+		return nowSeconds != now.seconds && !Arrays.equals(pickIdsLocked(nowSeconds), pickIdsLocked(now.seconds));
+	}
+
+	/** Under the lock. The revision each window would read at {@code atSeconds}, in {@link MovementWindow} order; 0 for none. */
+	private long[] pickIdsLocked(final long atSeconds)
+	{
+		final MovementWindow[] windows = MovementWindow.values();
+		final long[] ids = new long[windows.length];
+		if (atSeconds <= 0L)
+		{
+			return ids;
+		}
+		for (int i = 0; i < windows.length; i++)
+		{
+			final RevisionRef pick = RevisionRef.pickThen(index, windows[i].targetSeconds(atSeconds), knownTimes, 0L);
+			ids[i] = pick == null ? 0L : pick.revId();
+		}
+		return ids;
 	}
 
 	/** A throw out of the history's day, load or fold (1.0.8): raised once, and otherwise ignored by the commit. */
@@ -6251,31 +6573,28 @@ public class PriceService
 	}
 
 	/**
-	 * Whether RuneLite's prices agree with a table OTHER than R0, by exactly the rule
-	 * {@link #deriveAnchorDay} applies to R0 ({@value #AGREE_MIN_SAMPLES} comparable items,
-	 * {@value #AGREE_THRESHOLD} of them equal). Only asked on the disagreement branch, and only of the table for
-	 * the day before R0's.
+	 * Whether RuneLite's prices agree with a table OTHER than R0, by exactly the rule {@link #deriveNowTime} applies
+	 * to R0 ({@value #AGREE_MIN_SAMPLES} comparable items, {@value #AGREE_THRESHOLD} of them equal). Only asked on the
+	 * disagreement branch, and only of the tables in memory of the few revisions saved just before R0
+	 * ({@link Inputs#olderTables}).
 	 *
-	 * <p><b>Why it exists.</b> L3 was measured in one direction only - the wiki's bot publishes day D some hours
-	 * after Jagex steps to it, so RuneLite LEADS the wiki for part of every day - and the code took every
-	 * disagreement as that case. The other direction is real too: RuneLite loads its price table once and
-	 * refreshes it every thirty minutes ({@code ItemManager.java:218}), so a long session across an outage of
-	 * {@code api.runelite.net} leaves the client on an older Jagex day while the wiki's bot carries on. Agreement
-	 * then collapses and the anchor was pushed to {@code r0Day + 1} - the WRONG way - putting every window two
-	 * days from the day the prices are really from and inverting the sign of a 1d move. When RuneLite instead
-	 * matches R0's PREDECESSOR the answer is {@code r0Day - 1}, and the service says so
-	 * ({@link Status#degraded()}).
+	 * <p><b>Why it exists.</b> A disagreement with R0 has two readings. RuneLite can be AHEAD - it follows Jagex's
+	 * newest step within about half an hour, and the index the wiki's bot writes lags it - or BEHIND: RuneLite loads
+	 * its price table once and refreshes it every thirty minutes ({@code ItemManager.java:218}), so a long session
+	 * across an outage of {@code api.runelite.net}, or simply the minutes after the index moved on, leave the client
+	 * on an older table while the wiki carries on. Taking the clock as "now" there would count every window back from
+	 * a time the prices are not from, and a 1d move would be measured from a table up to a step newer than the one
+	 * RuneLite holds - inverting its sign for those minutes. When RuneLite instead matches one of R0's predecessors,
+	 * THAT table's time is "now", and the service says so ({@link Status#degraded()}).
 	 *
-	 * <p>The predecessor is only consulted when its bytes are already in memory - which is precisely the shape
+	 * <p>The predecessors are only consulted when their bytes are already in memory - which is precisely the shape
 	 * of the failure: the table RuneLite still holds was R0 until the index moved on, and {@link #evictLocked()}
 	 * keeps the superseded R0. Nothing is fetched to answer this question, so a client that starts up already
-	 * lagging keeps today's behaviour (the anchor stays {@code r0Day + 1}) rather than issuing a request per
-	 * recompute.
+	 * lagging is taken to be ahead (the clock) rather than issuing a request per recompute.
 	 *
-	 * <p><b>Why a quiet bank cannot trip it.</b> A bank of illiquid items can be 90 % unchanged over two days -
+	 * <p><b>Why a quiet bank cannot trip it.</b> A bank of illiquid items can be 90 % unchanged over two steps -
 	 * but then it is at least as unchanged over ONE, so the agreement against R0 clears the same threshold and
-	 * this method is never reached: it is asked only after that comparison has already failed. Reaching it on a
-	 * bank that is not really behind would need most of the bank to have moved yesterday and moved back today.
+	 * this method is never reached: it is asked only after that comparison has already failed.
 	 *
 	 * @param table the candidate; null or empty answers false
 	 */
@@ -6388,10 +6707,11 @@ public class PriceService
 				{
 					return null;
 				}
-				final Long traded = tradedThen == null ? null : tradedThen.get(id);
-				if (traded != null)
+				// 1.2.0: a graded stack's "then" for this window is its figure's mark - and a stack with NO figure in this
+				// window (NONE) is in the map with a null, which keeps it out of this window's sums as its row's dash is.
+				if (tradedThen != null && tradedThen.containsKey(id))
 				{
-					return traded;
+					return tradedThen.get(id);
 				}
 				final List<BankItem.Part> itemParts = partsById.get(id);
 				if (itemParts != null)
@@ -6493,15 +6813,11 @@ public class PriceService
 		// about in the same red the guide failure gets, and it comes LAST because a guide problem is the graver
 		// one - without the guide there is no movement at all, while without the traded feed there is still the
 		// series every other addendum shipped.
-		final boolean degraded = anchorDegraded || anchorBehind || historyFailed || liveUnavailable;
+		final boolean degraded = anchorDegraded || historyFailed || liveUnavailable;
 		final String reason;
 		if (anchorDegraded)
 		{
 			reason = "fewer than " + AGREE_MIN_SAMPLES + " bank items compare with the newest guide table - it stands in as now";
-		}
-		else if (anchorBehind)
-		{
-			reason = "RuneLite's price table is behind the wiki - the baseline day is stepped back to match";
 		}
 		else if (historyFailed)
 		{
@@ -6549,12 +6865,16 @@ public class PriceService
 			// at all, is byte for byte what it was before addendum T.
 			liveOnUsed
 				? new Status.LiveStatus(latestAtMillis, latest.size(), liveRows, guideRows, alchRows, liveDayUsed,
-					windowDaysUsed)
+					windowDaysUsed, hourAtUsed)
 				: Status.LiveStatus.OFF)
 			// AU, amendment 9.3: the one place a status is built, so a status-only publish carries the series too.
 			.withBankHistory(bankHistory)
 			// 1.1.1 part B: and the restarts, so every status after one carries it to the panel.
 			.withPlaceholderRestarts(placeholderRestarts)
+			// 1.1.2: the now time the windows counted back from, for the bridge's echo.
+			.withNowSeconds(nowSeconds)
+			// 1.2.0: how the counted rows graded, and whether the card is soft (L3).
+			.withGrades(gradesUsed)
 			// 1.1.0 part G: how many stacks ended on the alch rule, and how many of them bankItems has in it - all of them
 			// while the switch is on, none while it is off - so the panel can say "n of m items" over the alch rows it lists.
 			.withAlchStacks(alchStacksAll, optionsUsed.countUntradeables() ? alchStacksAll : 0);
@@ -6576,7 +6896,7 @@ public class PriceService
 	 * events cannot fight over one line: a window WITH a baseline never complains (a stale revision is still a
 	 * real past price, L11); one whose target predates the index says "No 180d history" (not an error); one
 	 * without a baseline says "No 1d history yet" while any history request is out (the chain index, R0,
-	 * anchor, bodies ends by serving the current window); and "unavailable" once the last attempt failed or every
+	 * now time, bodies ends by serving the current window); and "unavailable" once the last attempt failed or every
 	 * candidate revision proved unusable.
 	 */
 	private Problem problemLocked()
@@ -6603,10 +6923,14 @@ public class PriceService
 
 	// ---------------------------------------------------------------- staleness rules (L4, L10, K3)
 
-	/** Under the lock. No index, unstamped, or fetched at least {@link #HISTORY_MAX_AGE_MS} ago (L4). */
+	/**
+	 * Under the lock. No index, unstamped, fetched at least {@link #HISTORY_MAX_AGE_MS} ago (L4), or marked stale by a
+	 * computation that found RuneLite holding a table the index has not seen ({@link #indexMarkedStale}, contract
+	 * 1.1.2).
+	 */
 	private boolean indexStaleLocked(final long now)
 	{
-		return index.isEmpty() || expired(indexAtMillis, now, HISTORY_MAX_AGE_MS);
+		return index.isEmpty() || indexMarkedStale || expired(indexAtMillis, now, HISTORY_MAX_AGE_MS);
 	}
 
 	/** Under the lock. Absent, unstamped, or fetched at least {@link #MAPPING_MAX_AGE_MS} ago. */
@@ -6822,46 +7146,17 @@ public class PriceService
 	}
 
 	/**
-	 * The fetched index unioned with the one already held, newest first, one entry per revision id and at most
-	 * {@value #INDEX_KEPT} of them (B027; see {@link #finishIndex}). The fetched copy wins a collision, since its
+	 * The fetched index unioned with the one already held, newest first, one entry per revision id, kept by
+	 * {@link RevisionRef#pruned}'s rule (B027, contract 1.1.2 T2; see {@link #finishIndex}) - so every write of
+	 * {@code revindex.json}, which writes exactly this, is pruned. The fetched copy wins a collision, since its
 	 * metadata is the fresher reading of the same immutable revision.
 	 */
 	private static List<RevisionRef> mergedIndex(final Collection<RevisionRef> held, final Collection<RevisionRef> fetched)
 	{
-		final Map<Long, RevisionRef> byId = new LinkedHashMap<>();
-		for (final RevisionRef ref : fetched)
-		{
-			if (ref != null)
-			{
-				byId.put(ref.revId(), ref);
-			}
-		}
-		for (final RevisionRef ref : held)
-		{
-			if (ref != null)
-			{
-				byId.putIfAbsent(ref.revId(), ref);
-			}
-		}
-		final List<RevisionRef> copy = new ArrayList<>(byId.values());
-		copy.sort(RevisionRef.NEWEST_FIRST);
-		final List<RevisionRef> kept = copy.size() > INDEX_KEPT ? new ArrayList<>(copy.subList(0, INDEX_KEPT)) : copy;
-		return Collections.unmodifiableList(kept);
-	}
-
-	/** The index sorted newest first and made unmodifiable, null entries dropped ({@code RevisionRef.NEWEST_FIRST}). */
-	private static List<RevisionRef> sortedIndex(final Collection<RevisionRef> refs)
-	{
-		final List<RevisionRef> copy = new ArrayList<>(refs.size());
-		for (final RevisionRef ref : refs)
-		{
-			if (ref != null)
-			{
-				copy.add(ref);
-			}
-		}
-		copy.sort(RevisionRef.NEWEST_FIRST);
-		return Collections.unmodifiableList(copy);
+		final List<RevisionRef> both = new ArrayList<>(fetched.size() + held.size());
+		both.addAll(fetched);
+		both.addAll(held);
+		return RevisionRef.pruned(both);
 	}
 
 	/**
@@ -6874,7 +7169,7 @@ public class PriceService
 	 * longer mean what this build reads them as. A K-era baseline carries a revision id exactly like a current
 	 * one, so the first test cannot see it, and yet its {@code bucketSeconds} is the revision's SAVE time where
 	 * this build reads the table's own {@code %LAST_UPDATE%} (L7) - a day apart often enough to flip the sign
-	 * on a row, and once adopted it teaches {@code rememberDayLocked} that wrong day for a revision that
+	 * on a row, and once adopted it teaches {@code rememberTimeLocked} that wrong time for a revision that
 	 * {@code resolveLocked} will then accept without ever refetching the body.</li>
 	 * </ul>
 	 *

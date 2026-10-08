@@ -239,9 +239,10 @@ public class UntradeablePartsAlwaysCountTest
 	// ---------------------------------------------------------------- review and mutation fixes
 
 	/**
-	 * A parts stack on the LIVE series with the untradeables switch off (T3 through AV): its one part passes all
-	 * five checks, so the stack is live at three times the seed's traded mid - the row prints that, it stays a
-	 * PARTS row, it is counted live, and the bank value holds exactly what the rows print.
+	 * A parts stack on the LIVE series with the untradeables switch off (T3 through AV, and contract 1.2.0's L4): its one
+	 * part has a graded figure - bought today at 5,600,000 against yesterday's buy side at the old mid, so its price is
+	 * yesterday's mark moved by today's buy-side move, 5,600,000 - and the stack is live at three times that: the row
+	 * prints it, it stays a PARTS row, it is counted live, and the bank value holds exactly what the rows print.
 	 */
 	@Test
 	public void aPartsStackWhosePartsAreAllLiveIsALivePartsRowWithTheSwitchOff()
@@ -255,7 +256,7 @@ public class UntradeablePartsAlwaysCountTest
 			Collections.singletonMap(PriceServiceTest.ARMOUR_SEED,
 				new TradedPriceClient.Quote(buy, now - 3_600L, sell, now - 7_200L)));
 		final Map<Integer, TradedPriceClient.Bucket> yesterday = new LinkedHashMap<>(PriceServiceTest.tradedSep7());
-		// 500 units yesterday, all at today's mid on one side of the book: no gap and no jump (checks 4 and 5).
+		// 500 units yesterday, all at today's mid and all on the buy side of the book.
 		yesterday.put(PriceServiceTest.ARMOUR_SEED, new TradedPriceClient.Bucket(mid, 500L, null, 0L));
 		f.answerDay(PriceServiceTest.SEP_7, yesterday);
 
@@ -264,7 +265,8 @@ public class UntradeablePartsAlwaysCountTest
 		assertNotNull(body);
 		assertEquals("valued as its parts first", MovementRow.PriceSource.PARTS, body.source());
 		assertTrue("and live", body.isLive());
-		assertEquals("three seeds at the traded mid", Long.valueOf(3L * mid), body.unitPrice());
+		assertEquals("three seeds at the seed's graded price (L4): yesterday's buy side moved by today's buy",
+			Long.valueOf(3L * buy), body.unitPrice());
 		final PortfolioSummary summary = f.lastStatus().portfolio();
 		long printed = 0L;
 		int live = 0;

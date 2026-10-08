@@ -51,12 +51,12 @@ public final class MovementRow
 		 */
 		GUIDE,
 		/**
-		 * The OSRS Wiki's REAL-TIME TRADED mid - the mean of the newest instant-buy and instant-sell from
-		 * {@code prices.runescape.wiki/api/v1/osrs/latest} - for a stack that passed all five liquidity checks
-		 * (addendum T line T3, extended by addendum V lines V3 and V4) while the {@code livePrices} switch was on:
-		 * at least 100 units traded yesterday, a buy/sell gap inside 10 % of the mid, a mid inside 50 % of the
-		 * guide price, a buy/sell gap inside 10 % of the middle of YESTERDAY's daily bucket, and a mid inside 50 %
-		 * of that bucket's volume-weighted average.
+		 * A price from the OSRS Wiki's TRADED series - since contract 1.2.0 (L4) the graded figure's mark: yesterday's
+		 * two-sided average moved by the last 24 hours' same-side move ({@link GradedMove#price()}) - or, for a figure
+		 * reported on one side only, that side's own price - or yesterday's average when nothing traded in the last 24
+		 * hours - for a stack with a 1d figure while the {@code livePrices} switch was on. Addendum T's
+		 * five liquidity checks no longer decide this; how far the figure can be trusted is its {@link Grade}
+		 * ({@link MovementRow#graded()}).
 		 *
 		 * <p>A different series from {@link #GUIDE}, and the only one in this plugin that moves between two Jagex
 		 * days. A LIVE row paints exactly as a GUIDE row does (T6) and carries a real {@link MovementRow#thenPrice()},
@@ -120,11 +120,9 @@ public final class MovementRow
 	 * <ul>
 	 * <li>a LIVE row: {@link #reason()} null, and the two sides and yesterday's volume behind the price the row is
 	 * printing - the tooltip's "Live traded price: 63,437,264 gp (buy 63.6m, sell 63.3m; 517 traded yesterday)";</li>
-	 * <li>a row that stayed on the guide: {@link #reason()} is the FIRST of the five checks that refused it, in
-	 * their own order - "12 traded yesterday", "buy/sell gap 23 %", "live price 61 % from guide", "buy/sell gap
-	 * 100 % yesterday" (V3), "live price 181 % from yesterday's average" (V4), or "no live data" when a feed was
-	 * not in hand at all. The sides and the volume are whatever WAS known, so a reader can see the
-	 * numbers the refusal was made on.</li>
+	 * <li>a row that stayed on the guide: {@link #reason()} is why - since contract 1.2.0 the 1d grade's word, which
+	 * for a row priced at the guide is "no trades" ({@link GradeWords#NO_TRADES}); before it, the first of addendum T's
+	 * five checks that refused it. The sides and the volume are whatever WAS known.</li>
 	 * </ul>
 	 *
 	 * <p>Immutable, like the row that holds it.
@@ -258,6 +256,13 @@ public final class MovementRow
 	private final int inventoryQuantity;
 	private final int wornQuantity;
 	private final int exchangeQuantity;
+	/**
+	 * The graded live figure of the window this row was built for (contract 1.2.0, L2-L4) - its grade, its word and
+	 * every number behind it - or null on a row the traded feeds did not grade: every row computed with live prices
+	 * off or without a usable snapshot, and every alch row. Read through {@link #graded()}.
+	 */
+	@Nullable
+	private final GradedMove graded;
 
 	/**
 	 * @param id           canonical item id
@@ -366,6 +371,25 @@ public final class MovementRow
 		@Nullable final Map<MovementWindow, LocalDate> windowDays, @Nullable final LiveFacts liveFacts,
 		final int bankQuantity, final int inventoryQuantity, final int wornQuantity, final int exchangeQuantity)
 	{
+		this(id, name, quantity, stackable, unitPrice, thenPrice, deltaGp, deltaPct, holdingValue, source, parts,
+			windowSources, windowDays, liveFacts, bankQuantity, inventoryQuantity, wornQuantity, exchangeQuantity, null);
+	}
+
+	/**
+	 * The same, carrying the graded live figure of the row's window (contract 1.2.0, L2-L4). The arity above is the
+	 * pre-1.2.0 one, kept so every caller that knows nothing of grades keeps compiling AND keeps its meaning: it
+	 * delegates with no grade, which is what a row computed with live prices off carries.
+	 *
+	 * @param graded the window's graded figure, or null for an ungraded row
+	 */
+	public MovementRow(final int id, final String name, final int quantity, final boolean stackable,
+		final Long unitPrice, final Long thenPrice, final Long deltaGp, final Double deltaPct,
+		final long holdingValue, final PriceSource source, @Nullable final List<BankItem.Part> parts,
+		@Nullable final Map<MovementWindow, PriceSource> windowSources,
+		@Nullable final Map<MovementWindow, LocalDate> windowDays, @Nullable final LiveFacts liveFacts,
+		final int bankQuantity, final int inventoryQuantity, final int wornQuantity, final int exchangeQuantity,
+		@Nullable final GradedMove graded)
+	{
 		this.id = id;
 		this.name = name == null ? "" : name;
 		this.quantity = quantity;
@@ -386,6 +410,7 @@ public final class MovementRow
 		this.inventoryQuantity = Math.max(0, inventoryQuantity);
 		this.wornQuantity = Math.max(0, wornQuantity);
 		this.exchangeQuantity = Math.max(0, exchangeQuantity);
+		this.graded = graded;
 	}
 
 	/** One defensive copy, null keys and values dropped; an empty map is stored as null - the pre-T shape. */
@@ -586,7 +611,7 @@ public final class MovementRow
 
 		return new MovementRow(id, name, quantity, stackable, unitPrice, thenPrice, deltaGp, deltaPct, holdingValue,
 			PriceSource.PARTS, parts, windowSources, windowDays, liveFacts, bankQuantity, inventoryQuantity,
-			wornQuantity, exchangeQuantity);
+			wornQuantity, exchangeQuantity, graded);
 	}
 
 	/**
@@ -611,7 +636,7 @@ public final class MovementRow
 
 		return new MovementRow(id, name, quantity, stackable, unitPrice, thenPrice, deltaGp, deltaPct, holdingValue,
 			source, parts, windowSources, windowDays, liveFacts, bankQuantity, inventoryQuantity, wornQuantity,
-			exchangeQuantity);
+			exchangeQuantity, graded);
 	}
 
 	/**
@@ -738,7 +763,7 @@ public final class MovementRow
 		return new MovementRow(id, name, quantity, stackable, unit, thenPrice, deltaGp, deltaPct,
 			MovementMath.holdingValue(unit, quantity),
 			source == PriceSource.PARTS ? PriceSource.PARTS : PriceSource.LIVE, parts, windowSources, windowDays,
-			facts, bankQuantity, inventoryQuantity, wornQuantity, exchangeQuantity);
+			facts, bankQuantity, inventoryQuantity, wornQuantity, exchangeQuantity, graded);
 	}
 
 	/**
@@ -757,7 +782,23 @@ public final class MovementRow
 
 		return new MovementRow(id, name, quantity, stackable, unitPrice, thenPrice, deltaGp, deltaPct, holdingValue,
 			source, parts, windowSources, windowDays, facts, bankQuantity, inventoryQuantity, wornQuantity,
-			exchangeQuantity);
+			exchangeQuantity, graded);
+	}
+
+	/**
+	 * The graded live figure of the window this row was built for (contract 1.2.0, L2-L4): its {@link Grade}, the word
+	 * the sidebar prints under a soft figure ({@link GradedMove#word()}), the price and the mark the figure moved from,
+	 * both sides' "now" and "then" and the newest print of each side with its time. NULL on a row nothing graded - live
+	 * prices off, no usable snapshot, an alch row - which is drawn exactly as before 1.2.0.
+	 *
+	 * <p>On a graded row with a figure, {@link #thenPrice()} is {@link GradedMove#thenMark()}, {@link #deltaGp()} its
+	 * {@link GradedMove#deltaGp()} and {@link #deltaPct()} its {@link GradedMove#move()} x 100; {@link #unitPrice()} is
+	 * the row's price, which on the 1d window is {@link GradedMove#price()} itself (L4).
+	 */
+	@Nullable
+	public GradedMove graded()
+	{
+		return graded;
 	}
 
 	/**
@@ -805,7 +846,9 @@ public final class MovementRow
 			&& bankQuantity == other.bankQuantity
 			&& inventoryQuantity == other.inventoryQuantity
 			&& wornQuantity == other.wornQuantity
-			&& exchangeQuantity == other.exchangeQuantity;
+			&& exchangeQuantity == other.exchangeQuantity
+			// And the GRADE (1.2.0): the same figure, solid or soft, is two different rows on the screen.
+			&& Objects.equals(graded, other.graded);
 	}
 
 	@Override
@@ -813,7 +856,7 @@ public final class MovementRow
 	{
 		return Objects.hash(id, name, quantity, stackable, unitPrice, thenPrice, deltaGp, deltaPct,
 			holdingValue, source, parts, windowSources, windowDays, liveFacts, bankQuantity, inventoryQuantity,
-			wornQuantity, exchangeQuantity);
+			wornQuantity, exchangeQuantity, graded);
 	}
 
 	@Override
@@ -835,6 +878,7 @@ public final class MovementRow
 			// Printed only when there IS a split, so a row computed with the switch off reads exactly as it did.
 			+ (split() ? ", bank=" + bankQuantity + ", inventory=" + inventoryQuantity + ", worn=" + wornQuantity
 				+ (exchangeQuantity > 0 ? ", exchange=" + exchangeQuantity : "") : "")
+			+ (graded == null ? "" : ", graded=" + graded)
 			+ '}';
 	}
 }

@@ -79,9 +79,9 @@ public class PriceMapTest
 	/**
 	 * Addendum L (L7) changed what {@code bucketSeconds} holds: the table's own {@code %LAST_UPDATE%} rather
 	 * than the revision's save time, because a human maintenance edit republishes the previous day's prices
-	 * under a later timestamp (L-E). {@link PriceMap#dataDay()} is the DAY the status line and the tooltip print
-	 * and the day a caller compares against {@code MovementWindow.targetDate(anchorDay)} to see whether a stored
-	 * baseline is still the right one.
+	 * under a later timestamp (L-E). {@link PriceMap#dataDay()} is the DAY the status line and the tooltip print;
+	 * whether a stored baseline is still the right one is the time rule's call since contract 1.1.2
+	 * ({@code RevisionRef.pickThen} on {@code MovementWindow.targetSeconds(nowSeconds)}), not a comparison of days.
 	 */
 	@Test
 	public void theStoredMomentIsADayMarkerAndReadsBackAsAUtcDate()

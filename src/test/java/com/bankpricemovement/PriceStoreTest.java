@@ -860,8 +860,9 @@ public class PriceStoreTest
 		final PriceStore store = store();
 		store.saveRevisionIndex(history(), 1L);
 
-		final RevisionRef live = RevisionRef.pickThen(history(), LocalDate.of(2026, 9, 3));
-		final RevisionRef reloaded = RevisionRef.pickThen(store.loadRevisionIndex().value(), LocalDate.of(2026, 9, 3));
+		// 2026-09-03T23:59:59Z: the last second of the date both of the 3rd's revisions were saved on.
+		final RevisionRef live = RevisionRef.pickThen(history(), 1_788_479_999L);
+		final RevisionRef reloaded = RevisionRef.pickThen(store.loadRevisionIndex().value(), 1_788_479_999L);
 
 		assertNotNull(reloaded);
 		assertEquals("the bot's run of 2026-09-03, not Riblet15's edit of the same date", 15_330_300L,
@@ -872,7 +873,7 @@ public class PriceStoreTest
 	/**
 	 * Writing an empty index would stamp it as freshly fetched, and the six-hourly cadence would then leave
 	 * every window without a baseline for six hours. Both this and
-	 * {@code GuidePriceClient.parseRevisionIndex} refuse it.
+	 * {@code GuidePriceClient.parseRevisionPage} refuse it.
 	 */
 	@Test
 	public void aNullOrEmptyRevisionIndexIsNeverWritten()

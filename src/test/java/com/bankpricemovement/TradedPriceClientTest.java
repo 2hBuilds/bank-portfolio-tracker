@@ -299,22 +299,59 @@ public class TradedPriceClientTest
 		assertEquals(Long.valueOf(0L), quote(5L, 5L).spread());
 	}
 
-	/** T3 check 2's freshness half: both sides inside the window, and clock skew forgiven. */
+	// ---------------------------------------------------------------- /1h (contract 1.2.0, L1)
+
+	/**
+	 * One closed hour: a GET of {@value TradedPriceClient#HOUR_URL} that NAMES the hour (`?timestamp=<start>` - the bare
+	 * URL answers the hour two back), with the one User-Agent, read as the hour's start and its buckets, stamped with
+	 * the caller's clock. Synthetic ids.
+	 */
 	@Test
-	public void aQuoteIsFreshWhenBothSidesTradedInsideTheWindow()
+	public void theHourIsAskedForByItsTimestampAndReadAsItsStartAndBuckets() throws Exception
 	{
-		final long day = 86_400L;
-		assertTrue(new TradedPriceClient.Quote(10L, NOON_SEP_11 - day, 10L, NOON_SEP_11).tradedWithin(NOON_SEP_11, day));
-		assertFalse("one second past the window is stale",
-			new TradedPriceClient.Quote(10L, NOON_SEP_11 - day - 1L, 10L, NOON_SEP_11).tradedWithin(NOON_SEP_11, day));
-		assertFalse("the OTHER side counts too",
-			new TradedPriceClient.Quote(10L, NOON_SEP_11, 10L, NOON_SEP_11 - day - 1L).tradedWithin(NOON_SEP_11, day));
-		assertTrue("a time in the future is clock skew, not a stale quote",
-			new TradedPriceClient.Quote(10L, NOON_SEP_11 + 600L, 10L, NOON_SEP_11).tradedWithin(NOON_SEP_11, day));
-		assertFalse("a side with no time at all is not fresh",
-			new TradedPriceClient.Quote(10L, 0L, 10L, NOON_SEP_11).tradedWithin(NOON_SEP_11, day));
-		assertFalse("and neither is a one-sided quote",
-			new TradedPriceClient.Quote(10L, NOON_SEP_11, null, 0L).tradedWithin(NOON_SEP_11, day));
+		queue("{\"data\":{\"90001\":{\"avgHighPrice\":1026,\"highPriceVolume\":100,\"avgLowPrice\":1004,"
+			+ "\"lowPriceVolume\":96}},\"timestamp\":" + NOON_SEP_11 + "}");
+
+		final PriceStore.TradedHour hour = client.fetchHour(NOON_SEP_11, 5L).get(5, TimeUnit.SECONDS);
+
+		assertEquals(1, requests.size());
+		assertEquals("https://prices.runescape.wiki/api/v1/osrs/1h?timestamp=" + NOON_SEP_11,
+			requests.get(0).url().toString());
+		assertEquals(TradedPriceClient.USER_AGENT, requests.get(0).header("User-Agent"));
+		assertEquals(NOON_SEP_11, hour.startSeconds());
+		assertEquals(5L, hour.fetchedAtMillis());
+		assertEquals(96L, hour.get(90_001).lowVolume());
+	}
+
+	/**
+	 * An hour the wiki has not cut yet answers {"data":{},"timestamp":<the one asked for>} (live-checked 2026-10-07):
+	 * that is an EMPTY hour the service reads as "not yet" and asks about again - not a failure, which is for a
+	 * transport error, a bad status or a body that is not the shape.
+	 */
+	@Test
+	public void anHourNotCutYetIsAnEmptyHourNotAFailure() throws Exception
+	{
+		queue("{\"data\":{},\"timestamp\":" + NOON_SEP_11 + "}");
+
+		final PriceStore.TradedHour hour = client.fetchHour(NOON_SEP_11, 1L).get(5, TimeUnit.SECONDS);
+
+		assertTrue(hour.isEmpty());
+		assertEquals("it still names the hour it answers for", NOON_SEP_11, hour.startSeconds());
+	}
+
+	/** A body with no data object, an hour with no start and a refusal to name the hour are failures. */
+	@Test
+	public void anHourBodyThatIsNotTheShapeIsAFailure()
+	{
+		queue("{\"timestamp\":" + NOON_SEP_11 + "}");
+		assertTrue(client.fetchHour(NOON_SEP_11, 1L).isCompletedExceptionally());
+
+		queue("{\"data\":{}}");
+		assertTrue("no timestamp names no hour", client.fetchHour(NOON_SEP_11, 1L).isCompletedExceptionally());
+
+		final int sent = requests.size();
+		assertTrue("no hour to ask for", client.fetchHour(0L, 1L).isCompletedExceptionally());
+		assertEquals("and nothing was sent for it", sent, requests.size());
 	}
 
 	// ---------------------------------------------------------------- /24h (T2 b)
@@ -334,18 +371,6 @@ public class TradedPriceClientTest
 		assertEquals("the volume check adds both sides", 517L, whip.volume());
 	}
 
-	/** T4: {@code (avgHigh x hv + avgLow x lv) / (hv + lv)}, rounded half up. */
-	@Test
-	public void theDaysOnePriceIsTheVolumeWeightedAverage()
-	{
-		// (1699000 * 213 + 1688000 * 304) / 517 = 1692531.9... -> 1692532
-		assertEquals(Long.valueOf(1_692_532L),
-			new TradedPriceClient.Bucket(1_699_000L, 213L, 1_688_000L, 304L).weightedAverage());
-		assertEquals("equal weights give the plain mean", Long.valueOf(15L),
-			new TradedPriceClient.Bucket(20L, 5L, 10L, 5L).weightedAverage());
-		assertEquals("half up", Long.valueOf(11L), new TradedPriceClient.Bucket(11L, 1L, 10L, 1L).weightedAverage());
-	}
-
 	/** T4: "one side only when the other is absent" - whatever the volumes say. */
 	@Test
 	public void oneSidedAndUnweightedBucketsStillNameAPrice() throws Exception
@@ -354,41 +379,8 @@ public class TradedPriceClientTest
 		final TradedPriceClient.Bucket shark = client.fetchDay(SEP_11, 1L).get(5, TimeUnit.SECONDS).get(SHARK);
 
 		assertNull("the buy side really is absent", shark.avgHigh());
-		assertEquals("so the sell side IS the day's price", Long.valueOf(990L), shark.weightedAverage());
+		assertEquals("the sell side is there", Long.valueOf(990L), shark.avgLow());
 		assertEquals("and its volume still counts", 41_000L, shark.volume());
-
-		assertEquals("a bucket with prices and no volume falls back to the plain mean rather than dividing by 0",
-			Long.valueOf(15L), new TradedPriceClient.Bucket(20L, 0L, 10L, 0L).weightedAverage());
-		assertNull("a bucket with no price at all names none",
-			new TradedPriceClient.Bucket(null, 5L, null, 7L).weightedAverage());
-	}
-
-	/**
-	 * Addendum V line V3's two inputs: the middle of the day's two averages, rounded half up by exactly the
-	 * arithmetic {@code Quote.mid()} rounds the live pair with, and the absolute gap between them. Both are null
-	 * for a one-sided day - one number has no middle and no gap - which V3 reads as "nothing to measure" rather
-	 * than as a failure.
-	 */
-	@Test
-	public void theDaysMiddleAndGapAreTheOnesTheGapCheckMeasures()
-	{
-		final TradedPriceClient.Bucket tinderbox = new TradedPriceClient.Bucket(37L, 5_063L, 12L, 484L);
-		assertEquals("(37 + 12 + 1) / 2", Long.valueOf(25L), tinderbox.bucketMid());
-		assertEquals("and a gap of exactly its own middle - 100 % apart", Long.valueOf(25L), tinderbox.gap());
-
-		assertEquals("half up, as the live mid rounds", Long.valueOf(11L),
-			new TradedPriceClient.Bucket(11L, 1L, 10L, 1L).bucketMid());
-		assertEquals("a crossed day still reports a gap", Long.valueOf(10_000L),
-			new TradedPriceClient.Bucket(1_690_000L, 5L, 1_700_000L, 5L).gap());
-		assertEquals("no overflow on a pair near Long.MAX_VALUE", Long.valueOf(Long.MAX_VALUE / 2L),
-			new TradedPriceClient.Bucket(Long.MAX_VALUE / 2L, 1L, Long.MAX_VALUE / 2L, 1L).bucketMid());
-
-		final TradedPriceClient.Bucket boughtOnly = new TradedPriceClient.Bucket(1_000L, 5L, null, 0L);
-		final TradedPriceClient.Bucket soldOnly = new TradedPriceClient.Bucket(null, 0L, 1_000L, 5L);
-		assertNull(boughtOnly.bucketMid());
-		assertNull(boughtOnly.gap());
-		assertNull(soldOnly.bucketMid());
-		assertNull(soldOnly.gap());
 	}
 
 	@Test
@@ -399,9 +391,9 @@ public class TradedPriceClientTest
 
 		final TradedPriceClient.Bucket bucket = client.fetchDay(SEP_11, 1L).get(5, TimeUnit.SECONDS).get(WHIP);
 
-		assertNotNull("kept: T3's volume check reads the volumes and T4's price rule reads the price", bucket);
+		assertNotNull("kept: the volumes are read whatever the prices say", bucket);
 		assertEquals(1_000L, bucket.volume());
-		assertNull(bucket.weightedAverage());
+		assertNull(bucket.avgHigh());
 	}
 
 	@Test

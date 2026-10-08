@@ -1074,40 +1074,33 @@ public class BankPriceMovementWiringTest
 		verify(panel).applyHeroVisibility(HeroVisibility.of(false, true, false));
 	}
 
-	// --------------- addendum Q's two surviving view switches (Q3), addendum T's (T1), Y's, AH's; AO1 took one
+	// --------------- addendum Q's two surviving view switches (Q3), addendum T's (T1), Y's and 1.0.9 part 3's; AO1 and 1.2.0 took one each
 
 	/**
-	 * Q3, T1, Y1 and AH: the five stored keys as one value, in the order the gear menu lists them. The last was
-	 * deleted by addendum AI and restored by addendum AJ - the user asked where it had gone ("where is the show
-	 * hover text box and wording and default 'off' setting?", 2026-09-20) - so it is a live stored key again, read
-	 * here rather than swept.
+	 * Q3, T1, Y1 and 1.0.9 part 3: the five stored keys as one value, in the order the gear menu lists them. A sixth,
+	 * addendum AH's {@code showHoverText}, was deleted by addendum AI, restored by addendum AJ and deleted for good by
+	 * release 1.2.0, when the user made the hovers always on - a stored value under that key is swept at start-up now
+	 * ({@link #aStoredShowHoverTextIsUnsetAtStartUp()}), not read.
 	 *
-	 * <p>There were SIX until addendum AO. {@code holdingOnRows} rode here from addendum Q until the user saw the
+	 * <p>There were SEVEN until addendum AO. {@code holdingOnRows} rode here from addendum Q until the user saw the
 	 * three-line row in a client and found the switch reached nothing drawn (AO1); the key is deleted and swept at
 	 * start-up ({@link #aStoredHoldingOnRowsIsUnsetAtStartUp()}), so a build that still read it would be reading a
 	 * value no item writes.
 	 *
-	 * <p>Every expectation names all six fields (five until 1.0.9 part 3), because {@link ViewOptions} now has exactly
-	 * ONE constructor and
+	 * <p>Every expectation names all five fields, because {@link ViewOptions} now has exactly ONE constructor and
 	 * nothing may stand in for a read that never happened: a stored key left out of the build would mean a user
-	 * who turned live prices - or the carried items, or the hover text - away from the shipped default in
-	 * RuneLite's settings got it back on the next launch, and every {@code ConfigChanged} handed the service the
-	 * wrong answer.
-	 *
-	 * <p>Addendum AH's switch is the one that can hide here most easily, because the value the shipped default
-	 * supplies for it - false - is the very answer a mocked config gives when nothing has been stubbed. So it is
-	 * turned ON and read back on its own line, where neither a default nor an unstubbed proxy can stand in for a
-	 * read that never happened.
+	 * who turned live prices - or the carried items - away from the shipped default in RuneLite's settings got it
+	 * back on the next launch, and every {@code ConfigChanged} handed the service the wrong answer.
 	 */
 	@Test
-	public void theViewOptionsAreBuiltFromTheSixStoredKeys() throws Exception
+	public void theViewOptionsAreBuiltFromTheFiveStoredKeys() throws Exception
 	{
 		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
 		final BankPriceMovementConfig config = mock(BankPriceMovementConfig.class);
 		set(plugin, "config", config);
 		// A mocked proxy answers false for everything until it is told otherwise - here, every switch off, which
 		// is a combination the interface defaults do not give (four of them default on).
-		assertEquals(new ViewOptions(false, false, false, false, false, false), plugin.optionsFromConfig());
+		assertEquals(new ViewOptions(false, false, false, false, false), plugin.optionsFromConfig());
 
 		when(config.countCash()).thenReturn(true);
 		when(config.livePrices()).thenReturn(true);
@@ -1116,35 +1109,34 @@ public class BankPriceMovementWiringTest
 		assertEquals(ViewOptions.DEFAULT, plugin.optionsFromConfig());
 
 		when(config.countUntradeables()).thenReturn(true);
-		assertEquals(new ViewOptions(true, true, true, true, true, false), plugin.optionsFromConfig());
+		assertEquals(new ViewOptions(true, true, true, true, true), plugin.optionsFromConfig());
 
 		// ...and each of the late arrivals is READ rather than assumed: moving only one moves only it.
 		when(config.livePrices()).thenReturn(false);
-		assertEquals(new ViewOptions(true, true, false, true, true, false), plugin.optionsFromConfig());
+		assertEquals(new ViewOptions(true, true, false, true, true), plugin.optionsFromConfig());
 		when(config.countInventory()).thenReturn(false);
 		assertEquals("1.0.9 part 3: the inventory moves alone, the Grand Exchange switch stays as stored",
-			new ViewOptions(true, true, false, false, true, false), plugin.optionsFromConfig());
+			new ViewOptions(true, true, false, false, true), plugin.optionsFromConfig());
 		when(config.countGrandExchange()).thenReturn(false);
-		assertEquals(new ViewOptions(true, true, false, false, false, false), plugin.optionsFromConfig());
+		assertEquals(new ViewOptions(true, true, false, false, false), plugin.optionsFromConfig());
 		// ...and the Grand Exchange switch on its own, with the inventory off: neither reads through the other.
 		when(config.countGrandExchange()).thenReturn(true);
-		assertEquals(new ViewOptions(true, true, false, false, true, false), plugin.optionsFromConfig());
-		// AH: a stored ON is the one answer for this switch that no default and no unstubbed proxy can give.
-		when(config.showHoverText()).thenReturn(true);
-		assertEquals(new ViewOptions(true, true, false, false, true, true), plugin.optionsFromConfig());
+		assertEquals(new ViewOptions(true, true, false, false, true), plugin.optionsFromConfig());
 	}
 
 	/**
-	 * Q3, T1, Y1 and AH: RuneLite's own settings page reaches the gear's five switches, and they take a THIRD
-	 * road - neither the filter's nor the card's. Four of them change what the figures ARE (Q4, Q5, T1, Y3), so
-	 * the service recomputes; all five change what is drawn, so the panel re-renders. What must NOT happen is a
-	 * {@code setFilter}: the band, the ordering and the window are untouched, and a filter the service already
-	 * holds would make it rebuild the whole list for nothing.
+	 * Q3, T1, Y1 and 1.0.9 part 3: RuneLite's own settings page reaches the gear's five switches, and they take a THIRD
+	 * road - neither the filter's nor the card's. Every one of them changes what the figures ARE (Q4, Q5, T1, Y3, and
+	 * 1.0.9 part 3's Grand Exchange offers), so the service recomputes, and the panel re-renders what is already on
+	 * screen. What must NOT happen is a {@code setFilter}: the band, the ordering and the window are untouched, and a
+	 * filter the service already holds would make it rebuild the whole list for nothing.
 	 *
-	 * <p>The road carried SIX until addendum AO. {@code holdingOnRows} was the one passenger that changed only a
-	 * READING of figures already computed, and it is deleted (AO1) - so the last assertions below pin that its
-	 * key is no longer one of the gear's own: a build that still answered true for it would send a swept,
-	 * item-less key down the road on the very {@code ConfigChanged} the start-up unset posts.
+	 * <p>The road carried SEVEN until addendum AO and SIX until release 1.2.0. {@code holdingOnRows} was the passenger
+	 * that changed only a READING of figures already computed (AO1), and {@code showHoverText} the one that changed
+	 * nothing the service computes at all - it only decided whether the hovers were handed to Swing. Both are deleted,
+	 * and the last assertions below pin that their keys are no longer the gear's own: a build that still answered true
+	 * for either would send a swept, item-less key down the road on the very {@code ConfigChanged} the start-up unset
+	 * posts.
 	 */
 	@Test
 	public void aGearSwitchRecomputesTheFiguresAndReRendersTheSidebar() throws Exception
@@ -1157,8 +1149,6 @@ public class BankPriceMovementWiringTest
 		set(plugin, "panel", panel);
 		set(plugin, "config", config);
 		when(config.countUntradeables()).thenReturn(true);
-		// AH: switched ON, so the value that travels this road is one no unstubbed proxy could have produced.
-		when(config.showHoverText()).thenReturn(true);
 
 		for (String key : new String[]{BankPriceMovementPlugin.COUNT_CASH_KEY,
 			BankPriceMovementPlugin.COUNT_UNTRADEABLES_KEY,
@@ -1171,14 +1161,7 @@ public class BankPriceMovementWiringTest
 			BankPriceMovementPlugin.COUNT_INVENTORY_KEY,
 			// 1.0.9 part 3: the Grand Exchange switch is the fifth passenger and takes the same road, for the same
 			// reason - it changes which STACKS exist and what each one's quantity is, so it must reach the service.
-			BankPriceMovementPlugin.COUNT_GRAND_EXCHANGE_KEY,
-			// AH, as addendum AJ leaves it: the hover switch is the last, and the only one that changes
-			// NOTHING the service computes - it decides whether the hero card's hover and every CONTROL's
-			// tooltip are set at all. It rides here anyway, because applyOptions is the only road that hands
-			// the panel a ViewOptions: down the card's road (applyHeroVisibility) the controls would never
-			// hear, and down the filter's the whole list would be recomputed because a reader asked for a
-			// quieter sidebar.
-			BankPriceMovementPlugin.SHOW_HOVER_TEXT_KEY})
+			BankPriceMovementPlugin.COUNT_GRAND_EXCHANGE_KEY})
 		{
 			assertTrue(key + " is one of the gear's own keys", BankPriceMovementPlugin.isOptionKey(key));
 			plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, key));
@@ -1187,9 +1170,9 @@ public class BankPriceMovementWiringTest
 		onEdt(() ->
 		{
 		});
-		final ViewOptions expected = new ViewOptions(false, true, false, false, false, true);
-		verify(service, times(6)).setOptions(expected);
-		verify(panel, times(6)).applyOptions(expected);
+		final ViewOptions expected = new ViewOptions(false, true, false, false, false);
+		verify(service, times(5)).setOptions(expected);
+		verify(panel, times(5)).applyOptions(expected);
 		verify(service, never()).setFilter(any());
 		verify(panel, never()).applyFilter(any());
 		// ...and the card's switches are a different road again (O2): a gear switch never re-renders the hero.
@@ -1198,6 +1181,8 @@ public class BankPriceMovementWiringTest
 		// AO1: the deleted switch's key is not one of the gear's own any more. It is swept at start-up, and that
 		// unset posts a ConfigChanged of its own - which must read as a stranger's key and not as a passenger.
 		assertFalse(BankPriceMovementPlugin.isOptionKey(BankPriceMovementPlugin.LEGACY_HOLDING_KEY));
+		// Release 1.2.0: and the same for the hover switch, the road's sixth passenger until the user retired it.
+		assertFalse(BankPriceMovementPlugin.isOptionKey(BankPriceMovementPlugin.LEGACY_SHOW_HOVER_TEXT_KEY));
 		assertEquals("the stored key of 1.0.9 part 3's switch", "countGrandExchange",
 			BankPriceMovementPlugin.COUNT_GRAND_EXCHANGE_KEY);
 		assertFalse(BankPriceMovementPlugin.isOptionKey("sortMode"));
@@ -1213,23 +1198,19 @@ public class BankPriceMovementWiringTest
 	}
 
 	/**
-	 * Q3, T1, Y1 and AH: the gear menu's check items write through the same {@code Prefs} seam the filter widgets
-	 * and the hero switches use, so RuneLite's settings page follows. All five keys go every time, for
+	 * Q3, T1, Y1 and 1.0.9 part 3: the gear menu's check items write through the same {@code Prefs} seam the filter
+	 * widgets and the hero switches use, so RuneLite's settings page follows. All five keys go every time, for
 	 * {@code saveHero}'s reason - an item that wrote only its own would leave the others unstored on a fresh
 	 * profile - and the service is told as well, which is the one thing {@code saveHero} does not do: hiding a
 	 * figure changes no sum, and counting the cash - or reading a liquid item off the traded series - does.
 	 *
-	 * <p>It was six writes until addendum AO deleted {@code holdingOnRows} (AO1), and the count is pinned below
-	 * as well as the keys: a sixth write would be a write to a key with no item behind it, which the start-up
-	 * sweep would then unset on the next launch and the reader would never see stored at all.
-	 *
-	 * <p>Addendum AH's {@code showHoverText} is written here with the rest even though the service does nothing
-	 * with it. It is a choice about the sidebar, and the whole point of storing it is that a reader who turned
-	 * the hover text on does not meet a silent sidebar again next launch - so the key that is easiest to forget
-	 * in the save is the one whose absence the user would feel.
+	 * <p>It was seven writes until addendum AO deleted {@code holdingOnRows} (AO1) and six until release 1.2.0 deleted
+	 * {@code showHoverText}, and the count is pinned below as well as the keys: another write would be a write to a key
+	 * with no item behind it, which the start-up sweep would then unset on the next launch and the reader would never
+	 * see stored at all.
 	 */
 	@Test
-	public void theOptionsPrefSeamReadsAndWritesTheSixKeysAndTellsTheService() throws Exception
+	public void theOptionsPrefSeamReadsAndWritesTheFiveKeysAndTellsTheService() throws Exception
 	{
 		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
 		final BankPriceMovementConfig config = mock(BankPriceMovementConfig.class);
@@ -1244,14 +1225,13 @@ public class BankPriceMovementWiringTest
 		when(config.countGrandExchange()).thenReturn(true);
 
 		final BankPriceMovementPanel.Prefs prefs = plugin.configPrefs();
-		// The shipped defaults, hover text included: AH's switch defaults OFF, which is what the unstubbed proxy
-		// above answers, and DEFAULT says so too.
+		// The shipped defaults: DEFAULT is what the config above answers.
 		assertEquals(ViewOptions.DEFAULT, prefs.loadOptions());
 
-		// Every switch away from its default, the hover text ON - so each of the five writes below carries a
-		// value the config did not already hold, and a key written from the wrong field would show as the
-		// wrong one.
-		final ViewOptions all = new ViewOptions(false, true, false, false, false, true);
+		// Every switch away from its default (cash off, untradeables on, live off, the inventory off, the offers off),
+		// so each of the five writes below carries a value the config did not already hold, and a key written from the
+		// wrong field would show as the wrong one.
+		final ViewOptions all = new ViewOptions(false, true, false, false, false);
 		prefs.saveOptions(all);
 		final String g = BankPriceMovementConfig.GROUP;
 		verify(cm).setConfiguration(g, BankPriceMovementPlugin.COUNT_CASH_KEY, (Object) Boolean.FALSE);
@@ -1259,16 +1239,17 @@ public class BankPriceMovementWiringTest
 		verify(cm).setConfiguration(g, BankPriceMovementPlugin.LIVE_PRICES_KEY, (Object) Boolean.FALSE);
 		verify(cm).setConfiguration(g, BankPriceMovementPlugin.COUNT_INVENTORY_KEY, (Object) Boolean.FALSE);
 		verify(cm).setConfiguration(g, BankPriceMovementPlugin.COUNT_GRAND_EXCHANGE_KEY, (Object) Boolean.FALSE);
-		verify(cm).setConfiguration(g, BankPriceMovementPlugin.SHOW_HOVER_TEXT_KEY, (Object) Boolean.TRUE);
-		// AO1: and the deleted key is not written at all. The sweep unsets it at start-up, so a save that still
-		// wrote it would put back on every tick the very value the launch had just taken away.
+		// AO1 and release 1.2.0: and the deleted keys are not written at all. The sweep unsets them at start-up, so a
+		// save that still wrote either would put back on every tick the very value the launch had just taken away.
 		verify(cm, never()).setConfiguration(eq(g), eq(BankPriceMovementPlugin.LEGACY_HOLDING_KEY),
+			any(Object.class));
+		verify(cm, never()).setConfiguration(eq(g), eq(BankPriceMovementPlugin.LEGACY_SHOW_HOVER_TEXT_KEY),
 			any(Object.class));
 		verify(service).setOptions(all);
 
 		// Nothing to save is not a crash, and writes nothing more.
 		prefs.saveOptions(null);
-		verify(cm, times(6)).setConfiguration(anyString(), anyString(), any(Object.class));
+		verify(cm, times(5)).setConfiguration(anyString(), anyString(), any(Object.class));
 		verify(service, times(1)).setOptions(any());
 
 		// No manager at all (a field never injected) still reaches the service: the figures on screen must
@@ -1293,8 +1274,8 @@ public class BankPriceMovementWiringTest
 	 * service is still told exactly ONCE, from the tail of the save itself, because that is the half the guard
 	 * suppressed.
 	 *
-	 * <p>Five since addendum AO, six before it: the deleted {@code holdingOnRows} had a branch of its own in the
-	 * fake {@link ConfigManager} below, and it is gone with the key (AO1).
+	 * <p>Five since release 1.2.0, six before it: the deleted {@code showHoverText} had a branch of its own in the
+	 * fake {@link ConfigManager} below, and it is gone with the key (as the branch of {@code holdingOnRows} was before it, AO1).
 	 */
 	@Test
 	public void theGearsOwnWritesDoNotRecomputeOncePerKey() throws Exception
@@ -1342,17 +1323,13 @@ public class BankPriceMovementWiringTest
 			{
 				when(config.countGrandExchange()).thenReturn(value);
 			}
-			else if (BankPriceMovementPlugin.SHOW_HOVER_TEXT_KEY.equals(key))
-			{
-				when(config.showHoverText()).thenReturn(value);
-			}
 			plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, key));
 			return null;
 		}).when(cm).setConfiguration(anyString(), anyString(), any(Object.class));
 
-		// The tick turns the untradeables ON, the live switch OFF, the Grand Exchange switch OFF and the hover text ON,
-		// so four of the six writes really move a stored value and the guard has six events to swallow.
-		final ViewOptions ticked = new ViewOptions(true, true, false, true, false, true);
+		// The tick turns the untradeables ON, the live switch OFF and the Grand Exchange switch OFF, so three of the five
+		// writes really move a stored value and the guard has five events to swallow.
+		final ViewOptions ticked = new ViewOptions(true, true, false, true, false);
 		plugin.configPrefs().saveOptions(ticked);
 
 		// Not "the right options five times": nothing at all from the round trip. The menu applied the switch
@@ -1376,7 +1353,7 @@ public class BankPriceMovementWiringTest
 	}
 
 	/**
-	 * Q3, T1 and AH: the sidebar opens on the stored switches. The panel is built with its own defaults and the
+	 * Q3, T1, Y1 and 1.0.9 part 3: the sidebar opens on the stored switches. The panel is built with its own defaults and the
 	 * service with none at all, so a bank value that counted cash the user had switched off - or a list that
 	 * flashed the untradeables they had not asked for - would be the first thing they saw.
 	 */
@@ -1393,15 +1370,11 @@ public class BankPriceMovementWiringTest
 		// 1.0.9 part 3's Grand Exchange switch, which ships ON, the same.
 		when(f.config.countInventory()).thenReturn(false);
 		when(f.config.countGrandExchange()).thenReturn(false);
-		// AH: switched ON, which is the direction this one can be lost in. It ships OFF, so a panel opened on
-		// ViewOptions.DEFAULT looks exactly right to a build that never read the key, and a reader who asked for
-		// the hover text would silently get none until they went back to the gear menu and ticked it again.
-		when(f.config.showHoverText()).thenReturn(true);
 		onEdt(f.plugin::startUp);
 
 		final BankPriceMovementPanel panel = (BankPriceMovementPanel) field(f.plugin, "panel");
 		assertNotNull(panel);
-		final ViewOptions stored = new ViewOptions(false, true, false, false, false, true);
+		final ViewOptions stored = new ViewOptions(false, true, false, false, false);
 		assertEquals(stored, panel.options());
 		// The service was told too, or the figures behind the card would be the defaults until the first tick.
 		// Its own switches, not the Status's: that one answers what the figures ALREADY on screen were computed
@@ -2353,7 +2326,7 @@ public class BankPriceMovementWiringTest
 			assertNotNull(panel);
 			onEdt(() ->
 			{
-				final SwatchRow row = (SwatchRow) panel.heroMenu().getComponent(25);
+				final SwatchRow row = (SwatchRow) panel.heroMenu().getComponent(24);
 				assertEquals("Single chart colour", row.getText());
 				assertTrue("ticked from the stored switch", row.isSelected());
 			});
@@ -2999,18 +2972,18 @@ public class BankPriceMovementWiringTest
 	}
 
 	/**
-	 * AJ, AO1: {@code startUp} really does run the sweeps it has, and runs them on the keys the deleted items
-	 * used. {@link #aStoredLookIsUnsetAtStartUp()} and {@link #aStoredHoldingOnRowsIsUnsetAtStartUp()} drive two
-	 * of them directly and so cannot see whether anything calls them; this is the assertion that catches a sweep
-	 * WRITTEN and never CALLED, which is the way a start-up repair usually fails.
+	 * AJ, AO1, release 1.2.0: {@code startUp} really does run the sweeps it has, and runs them on the keys the deleted
+	 * items used. {@link #aStoredLookIsUnsetAtStartUp()}, {@link #aStoredHoldingOnRowsIsUnsetAtStartUp()} and
+	 * {@link #aStoredShowHoverTextIsUnsetAtStartUp()} drive three of them directly and so cannot see whether anything
+	 * calls them; this is the assertion that catches a sweep WRITTEN and never CALLED, which is the way a start-up
+	 * repair usually fails.
 	 *
-	 * <p>There are THREE of them since addendum AO - the window's repair (K9), the {@code look} key (O1) and now
-	 * {@code holdingOnRows} (AO1) - and not four. Addendum AI added {@code unstickHoverText} when it deleted the
-	 * hover switch, and addendum AJ put the switch back at the user's word ("where is the show hover text box and
-	 * wording and default 'off' setting? it should be the row above OK", 2026-09-20) - so {@code showHoverText}
-	 * has a config item behind it again and must NOT be swept: a sweep of a live key would clear the reader's
-	 * own answer on every launch. {@code BankPriceMovementConfigTest} pins the item; this pins that start-up
-	 * leaves its stored value alone.
+	 * <p>There are FOUR of them since release 1.2.0 - the window's repair (K9), the {@code look} key (O1),
+	 * {@code holdingOnRows} (AO1) and {@code showHoverText}. The last had a short, odd history: addendum AI deleted the
+	 * hover switch and swept its key, addendum AJ put the switch back at the user's word ("where is the show hover text
+	 * box and wording and default 'off' setting?", 2026-09-20) and so stopped sweeping it - a sweep of a live key would
+	 * have cleared the reader's own answer on every launch - and release 1.2.0 deleted it again (the user, 2026-10-08,
+	 * made the hovers always on), so a stored answer is an orphan once more and goes.
 	 */
 	@Test
 	public void startUpSweepsTheDeletedKeysAndOnlyThose() throws Exception
@@ -3021,16 +2994,67 @@ public class BankPriceMovementWiringTest
 		when(f.configManager.getConfiguration(g, "window")).thenReturn("H24");
 		// AO1: a profile that ticked addendum Q's row switch on. The item is gone, so the value goes with it.
 		when(f.configManager.getConfiguration(g, BankPriceMovementPlugin.LEGACY_HOLDING_KEY)).thenReturn("true");
-		// A profile that turned the hover text on. The value is the user's, and start-up must not touch it.
-		when(f.configManager.getConfiguration(g, BankPriceMovementPlugin.SHOW_HOVER_TEXT_KEY)).thenReturn("true");
+		// Release 1.2.0: a profile that turned the hover text on. The item is gone, so the value goes with it.
+		when(f.configManager.getConfiguration(g, BankPriceMovementPlugin.LEGACY_SHOW_HOVER_TEXT_KEY)).thenReturn("true");
+		// ...and a key that is NOT swept, to prove the sweep names its keys: the live-price switch is a live item.
+		when(f.configManager.getConfiguration(g, BankPriceMovementPlugin.LIVE_PRICES_KEY)).thenReturn("false");
 
 		onEdt(f.plugin::startUp);
 
 		verify(f.configManager).unsetConfiguration(g, BankPriceMovementPlugin.LEGACY_LOOK_KEY);
 		verify(f.configManager).unsetConfiguration(g, "window");
 		verify(f.configManager).unsetConfiguration(g, BankPriceMovementPlugin.LEGACY_HOLDING_KEY);
-		verify(f.configManager, never()).unsetConfiguration(g, BankPriceMovementPlugin.SHOW_HOVER_TEXT_KEY);
+		verify(f.configManager).unsetConfiguration(g, BankPriceMovementPlugin.LEGACY_SHOW_HOVER_TEXT_KEY);
+		verify(f.configManager, never()).unsetConfiguration(g, BankPriceMovementPlugin.LIVE_PRICES_KEY);
+		verify(f.configManager, times(4)).unsetConfiguration(anyString(), anyString());
 		onEdt(f.plugin::shutDown);
+	}
+
+	/**
+	 * Release 1.2.0: the {@code showHoverText} key is swept at startUp, on {@link #aStoredHoldingOnRowsIsUnsetAtStartUp()}'s
+	 * model and for its reason. Addendum AH stored there whether the sidebar's hovers were shown at all; the user
+	 * (2026-10-08) retired the switch because every hover left in the sidebar is one short line, so the hovers are always
+	 * on and a profile that ever touched the gear menu's last item holds a true or a false that nothing reads and that
+	 * RuneLite's config panel will never list for the user to clear by hand.
+	 *
+	 * <p>Pinned in both directions, as the other sweeps are: the stored value goes - a stored "true" just as a stored
+	 * "false", since neither means anything any more - and a profile that has none is left completely alone, because an
+	 * unset of a key holding nothing would post a {@code ConfigChanged} on every launch for ever.
+	 */
+	@Test
+	public void aStoredShowHoverTextIsUnsetAtStartUp() throws Exception
+	{
+		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
+		final ConfigManager cm = mock(ConfigManager.class);
+		set(plugin, "configManager", cm);
+		final String g = BankPriceMovementConfig.GROUP;
+		final String key = BankPriceMovementPlugin.LEGACY_SHOW_HOVER_TEXT_KEY;
+		assertEquals("showHoverText", key);
+
+		// A reader who had turned the hovers on loses nothing by it: they are on for everyone now.
+		when(cm.getConfiguration(g, key)).thenReturn("true");
+		plugin.unstickShowHoverText();
+		verify(cm).unsetConfiguration(g, key);
+
+		// ...and one who had left them off had a value that names a switch no longer there.
+		when(cm.getConfiguration(g, key)).thenReturn("false");
+		plugin.unstickShowHoverText();
+		verify(cm, times(2)).unsetConfiguration(g, key);
+
+		// A profile that never touched the menu's last item has nothing there, and nothing is written.
+		when(cm.getConfiguration(g, key)).thenReturn(null);
+		plugin.unstickShowHoverText();
+		when(cm.getConfiguration(g, key)).thenReturn("");
+		plugin.unstickShowHoverText();
+		verify(cm, times(2)).unsetConfiguration(anyString(), anyString());
+
+		// A manager that throws on either call is logged and swallowed; startUp goes on.
+		when(cm.getConfiguration(g, key)).thenThrow(new IllegalStateException());
+		plugin.unstickShowHoverText();
+
+		// And no manager at all (a field never injected) is a no-op rather than an NPE.
+		set(plugin, "configManager", null);
+		plugin.unstickShowHoverText();
 	}
 
 	/**

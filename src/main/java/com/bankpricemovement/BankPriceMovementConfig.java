@@ -7,14 +7,22 @@ import net.runelite.client.config.ConfigItem;
 
 /**
  * The plugin's single config (contract C39; items 7-9 are addendum O line O2, items 10-11 addendum Q line Q3,
- * item 12 addendum Y line Y1, item 13 1.0.9 part 3, item 14 addendum AH, item 15 addendum T line T1, item 16
- * addendum AU, item 17 1.0.9 part 5, items 18 and 19 1.1.0 part B, items 20 and 21 1.1.0 part C, item 22 1.1.0 part E,
- * item 23 1.1.0 part G). Twenty-four items, and every one of them is also a widget in the sidebar: the config panel and the
- * sidebar are the same switch, so a
- * change in either place is written here and read back by the other through {@code ConfigChanged}. The two exceptions
- * are the sixteenth and the eighteenth, which the settings page does not list at all (see {@code startTab}, the tab
- * used last since 1.1.0, and {@code includeLegacyHistory}); the two colours added by 1.1.0 part B and the chart colour
- * and its switch added by part C are listed, and are rows of the sidebar's settings menu as well.
+ * item 12 addendum Y line Y1, item 13 1.0.9 part 3, item 14 addendum T line T1, item 15 addendum AU, item 16
+ * 1.0.9 part 5, items 17 and 18 1.1.0 part B, items 19 and 20 1.1.0 part C, item 21 1.1.0 part E, item 22 1.1.0
+ * part G, items 23 and 24 1.1.0 part J). Twenty-five items, and every one of them is also a widget in the sidebar: the
+ * config panel and the sidebar are the same switch, so a
+ * change in either place is written here and read back by the other through {@code ConfigChanged}. The exceptions
+ * are the items the settings page does not list at all (see {@code startTab}, the tab used last since 1.1.0,
+ * {@code includeLegacyHistory}, and part J's two Slot 1 colours); the two colours added by 1.1.0 part B and the chart
+ * colour and its switch added by part C are listed, and are rows of the sidebar's settings menu as well.
+ *
+ * <p><b>1.2.0 took one away</b>: {@code showHoverText} ("Show hover text", addendum AH, position 14), which chose
+ * whether the sidebar's hovers were handed to Swing at all. Every hover left in the sidebar is one short line - the
+ * exact bank value, the time of the table, "n of m rows solid", the update line's why, the Refresh tip, "Change
+ * sorting", "Clear the search", the icons - so a switch to hide them was one setting more than the plugin needs, and
+ * the user (2026-10-08) removed it: the hovers are always on. A stored {@code showHoverText} is swept once at startUp
+ * ({@link BankPriceMovementPlugin#unstickShowHoverText()}), the way {@code holdingOnRows} is, and the items below
+ * it moved up by one. Twenty-six items became twenty-five.
  *
  * <p><b>1.0.9 part 5 added an eighteenth and hid it</b>: {@code includeLegacyHistory}, whether the Net Worth History
  * tab shows the days recorded before 1.0.9. It was the only item here that RuneLite's settings page did not draw
@@ -409,50 +417,32 @@ public interface BankPriceMovementConfig extends Config
 	}
 
 	/**
-	 * Addendum AH, narrowed by AI and AJ: whether the sidebar shows hover text at all. Default OFF, and the only
-	 * switch on this page whose default is the quieter sidebar.
-	 *
-	 * <p>It reaches the bank value's hover and every CONTROL's - the sort button, the chips, Refresh, the settings
-	 * menu's own items, the "Item prices update every 24hrs" line. It does not reach the item rows, because since
-	 * addendum AI a row carries no tooltip at any setting: its description is the block the cell opens when it
-	 * is clicked, so there is nothing there for a switch to silence.
-	 */
-	@ConfigItem(
-		position = 14,
-		keyName = "showHoverText",
-		name = "Show hover text",
-		description = "Show hover text anywhere in the sidebar: the bank value and the controls"
-	)
-	default boolean showHoverText()
-	{
-		return false;
-	}
-
-	/**
 	 * Addendum T line T1, the last item on the settings page: whether an item the Grand Exchange is actually TRADING is
-	 * priced from the wiki's live traded series rather than from Jagex's once-a-day guide table. The user asked
+	 * priced from the wiki's live traded series rather than from Jagex's guide table. The user asked
 	 * for it in those words - "for the current 24 hour window if its accurate we should use live prices so people
 	 * can refresh and see live changes" (2026-09-12) - and the answer is a switch rather than a rewrite because a
 	 * live price is only better where there is trade behind it: on this bank today the live 1d figure and the guide
 	 * 1d figure differ by a median 4.3 points a row, and 87 rows read over 20 % under live against 1 under guide,
 	 * almost all of them junk nobody buys ({@code docs/research/live-1d-study-2026-09-12.md}).
 	 *
-	 * <p>So the switch is not "live prices" wholesale: with it ON a stack is priced live only when it passes three
-	 * liquidity checks (T3 - at least 100 units traded yesterday, a buy/sell gap inside 10 %, and a live price
-	 * within 50 % of the guide), and everything that fails one of them keeps the daily guide price it has always
-	 * had. With it OFF not one traded request is made and every figure is exactly what addenda K to S produced -
-	 * which is also the only setting in which the plugin's figures match the Grand Exchange website to the gp.
+	 * <p>So the switch is not "live prices" wholesale. Since contract 1.2.0 (which retired T3's three liquidity checks
+	 * and addendum V's two more) a stack with any trade in the last 24 hours or yesterday is priced from the last 24 hours of trades -
+	 * yesterday's average moved by the same-side move since - and the figure carries a GRADE: a soft one says why in a word under the
+	 * percentage ("low vol 3", "spread 55%", "last 1d ago"). Only a stack with no trades at all
+	 * keeps the guide price it has always had. With the switch OFF not one traded request is made and every figure is
+	 * exactly what addenda K to S produced - which is also the only setting in which the plugin's figures match the
+	 * Grand Exchange website to the gp.
 	 *
 	 * <p>Default ON (the user's choice). It travels with the gear menu's other four as one {@link ViewOptions},
 	 * takes the same {@code ConfigChanged} road as they do ({@link BankPriceMovementPlugin#isOptionKey(String)}),
 	 * and is the first check item in the gear's last group.
 	 */
 	@ConfigItem(
-		position = 15,
+		position = 14,
 		keyName = "livePrices",
 		name = "Use live prices",
-		description = "Actively traded items use the wiki's live traded prices for every figure;"
-			+ " thin items keep the daily guide price"
+		description = "Actively traded items are priced from the last 24 hours of trades; a word under the percentage says"
+			+ " why a figure is uncertain. Items with no trades keep the guide price"
 	)
 	default boolean livePrices()
 	{
@@ -474,7 +464,7 @@ public interface BankPriceMovementConfig extends Config
 	 * tab that is showing now, and the service is never told.
 	 */
 	@ConfigItem(
-		position = 16,
+		position = 15,
 		keyName = "startTab",
 		name = "Last tab",
 		description = "The tab the sidebar showed last. It opens there next time.",
@@ -497,7 +487,7 @@ public interface BankPriceMovementConfig extends Config
 	 * told, because what is drawn changes and no figure does.
 	 */
 	@ConfigItem(
-		position = 17,
+		position = 16,
 		keyName = "includeLegacyHistory",
 		name = "Include days before v1.0.9",
 		description = "Show net worth readings recorded before v1.0.9 on the Net Worth History tab."
@@ -523,7 +513,7 @@ public interface BankPriceMovementConfig extends Config
 	 * never is - what is drawn changes and no figure does.
 	 */
 	@ConfigItem(
-		position = 18,
+		position = 17,
 		keyName = "upColour",
 		name = "Up colour",
 		description = "The colour of a rise, on both tabs."
@@ -540,7 +530,7 @@ public interface BankPriceMovementConfig extends Config
 	 * mark and edge keep the deeper red they have always had.
 	 */
 	@ConfigItem(
-		position = 19,
+		position = 18,
 		keyName = "downColour",
 		name = "Down colour",
 		description = "The colour of a fall, on both tabs."
@@ -563,7 +553,7 @@ public interface BankPriceMovementConfig extends Config
 	 * no figure does.
 	 */
 	@ConfigItem(
-		position = 20,
+		position = 19,
 		keyName = "singleChartColour",
 		name = "Single chart colour",
 		description = "Draw the net worth chart in one colour instead of the up and down colours."
@@ -580,7 +570,7 @@ public interface BankPriceMovementConfig extends Config
 	 * opens RuneLite's colour picker, and it is read on the same road as the switch above.
 	 */
 	@ConfigItem(
-		position = 21,
+		position = 20,
 		keyName = "chartColour",
 		name = "Chart colour",
 		description = "The net worth chart's colour while Single chart colour is on."
@@ -606,7 +596,7 @@ public interface BankPriceMovementConfig extends Config
 	 * drawn changes and no figure does. The eye's own press comes back that way only when it was not the sidebar's write.
 	 */
 	@ConfigItem(
-		position = 22,
+		position = 21,
 		keyName = "hideAmounts",
 		name = "Hide amounts",
 		description = "Hide every gp amount and item quantity in the sidebar, keeping item names and percentages."
@@ -630,7 +620,7 @@ public interface BankPriceMovementConfig extends Config
 	 * rows are drawn changes and no figure does.
 	 */
 	@ConfigItem(
-		position = 23,
+		position = 22,
 		keyName = "showAlchRows",
 		name = "Show alch-only items",
 		description = "Lists untradeables with no tradeable parts, at alch value. Searching finds them either way."
@@ -650,7 +640,7 @@ public interface BankPriceMovementConfig extends Config
 	 * ({@link BankPriceMovementPlugin#isSlotKey}) of the colours' shape: the panel is told and the service never is.
 	 */
 	@ConfigItem(
-		position = 24,
+		position = 23,
 		keyName = "slotUpColour",
 		name = "Slot 1 up colour",
 		description = "The colour of a rise saved in the colour presets' Slot 1.",
@@ -666,7 +656,7 @@ public interface BankPriceMovementConfig extends Config
 	 * Classic's fall, the lifted red ({@code Widgets.MOVE_DOWN_TEXT}). Hidden for the same reason.
 	 */
 	@ConfigItem(
-		position = 25,
+		position = 24,
 		keyName = "slotDownColour",
 		name = "Slot 1 down colour",
 		description = "The colour of a fall saved in the colour presets' Slot 1.",

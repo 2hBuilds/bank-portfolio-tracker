@@ -177,7 +177,7 @@ public final class BankHistoryView extends JPanel
 	 * null options as {@link ViewOptions#DEFAULT} (amendment 9.2); the series is cut to {@code upTo(today)} first,
 	 * today being the clock's LOCAL date, read now. A no-op when the cut series, the five switches that change a
 	 * total ({@code countCash}, {@code countUntradeables}, {@code countInventory}, {@code countGrandExchange},
-	 * {@code livePrices} - not {@code showHoverText}) and today all equal what is drawn (amendment 9.10).
+	 * {@code livePrices}) and today all equal what is drawn (amendment 9.10).
 	 */
 	public void show(@Nullable final BankHistorySeries series, @Nullable final ViewOptions options)
 	{

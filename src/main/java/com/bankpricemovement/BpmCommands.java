@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.file.StandardOpenOption;
 import java.text.SimpleDateFormat;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -59,8 +60,8 @@ import org.slf4j.LoggerFactory;
  * search=&lt;text&gt;             the search box above the item list: part of an item's name (empty clears; 1.0.9
  *                            part 4)
  * hero=value|gp|pct|all|none which of the hero card's three figures are drawn (O5); a field word TOGGLES
- * opt=cash|untradeables|live|inventory|all|none  the gear's four view switches (Q7, T8, Y1, AO1); a field
- *                            word TOGGLES
+ * opt=cash|untradeables|live|inventory|ge|all|none  the gear's five view switches (Q7, T8, Y1, AO1, 1.0.9 part
+ *                            3); a field word TOGGLES
  * refresh                    the Refresh LINK: the price re-check behind its 30 s cooldown - or, with the bank
  *                            OPEN (addendum AS), one local read of the bank, no download and no cooldown
  * more                       the "Show more" button: one more page of rows
@@ -75,13 +76,14 @@ import org.slf4j.LoggerFactory;
  * and {@code height} in front of it), so a script never needs a second call to see what it did.
  *
  * <p>Since addendum L, {@code state.status} carries the whole of how the baseline was CHOSEN (L13):
- * {@code anchorDay} and the {@code agree} fraction (over {@code agreeSamples} items) that derived it,
- * {@code r0Day} / {@code r0RevId}, and for the current window {@code thenDay} / {@code thenRevId}, plus
+ * {@code nowTime} (since contract 1.1.2: the table time RuneLite's prices matched, or the clock while they match
+ * none) with its date {@code anchorDay}, the {@code agree} fraction (over {@code agreeSamples} items) against the
+ * newest table, {@code r0Day} / {@code r0RevId}, and for the current window {@code thenDay} / {@code thenRevId}, plus
  * {@code degraded} with its {@code degradedReason}, {@code mappingAtMillis} and {@code indexAtMillis}; and
- * {@code state.windows} echoes EVERY window's {@code thenDay} / {@code thenRevId} (L13: "per window"). Those are
- * how a live session proves the baseline is the DAY it should be rather than merely a plausible-looking number:
- * addendum K's "newest revision at or before now minus the window" landed on the intended Jagex day only about
- * half the time (L-C), and these fields are what make that visible from a terminal. Since addendum M
+ * {@code state.windows} echoes EVERY window's {@code thenDay} / {@code thenTime} / {@code thenRevId} (L13: "per
+ * window"). Those are how a live session proves the baseline is the TABLE it should be rather than merely a
+ * plausible-looking number: addendum L's calendar day turned into a table a couple of hours old once the wiki began
+ * saving eight a day (contract 1.1.2), and these fields are what make that visible from a terminal. Since addendum M
  * {@code state.portfolio} echoes the bank value line (M5): {@code valueNow} over the whole bank and one
  * {@code {thenDay, valueThen, valueNowCovered, deltaGp, deltaPct, itemsCovered}} per window with a baseline;
  * since addendum P it also carries {@code currencyGp}, the coins and platinum tokens that are already counted
@@ -184,6 +186,14 @@ import org.slf4j.LoggerFactory;
  * more to its author than "opt= wants ...". {@code all} and {@code none} cover FOUR switches now, and
  * {@code state.options} loses its {@code holding} key with the field behind it.
  *
+ * <p><b>Release 1.2.0 takes a second word OUT of {@code opt=}</b>: {@code hover}, addendum AH's "Show hover text"
+ * switch, which the user (2026-10-08) retired - every hover left in the sidebar is one short line, so the hovers are
+ * always on and there is nothing to set. {@code opt=hover} (also {@code hovers}, {@code hovertext},
+ * {@code showhovertext}, {@code tooltip}, {@code tooltips}) is answered by {@link #HOVER_GONE}, on the precedent of
+ * {@link #HOLDING_GONE}, rather than by the generic refusal, and {@code state.options} loses its {@code hover} key
+ * with the field behind it. {@code opt=all} and {@code opt=none} never touched the hover switch and still cover the
+ * five that are left.
+ *
  * <p><b>Addendum AS adds no verb, and echoes an object this class does not build.</b> The plugin now HOLDS the
  * bank while it is open: the first delivery that differs from its last read marks a change pending (and, with the
  * sidebar showing, lights a glow on the Refresh link), every later bank event returns at once, and the bank is
@@ -242,6 +252,13 @@ public class BpmCommands implements Function<String, String>
 	 */
 	static final String HOLDING_GONE = "opt=holding is gone since addendum AO - a row now shows the stack and one"
 		+ " item both, and the gp column always compares the stack";
+	/**
+	 * What {@code opt=hover} answers since release 1.2.0, shaped on {@link #HOLDING_GONE} and there for the same
+	 * reason: the switch is DELETED rather than repaired, so a script that sends the word deserves the one sentence
+	 * that says where it went. The tests assert this text, not the constant.
+	 */
+	static final String HOVER_GONE = "opt=hover is gone since release 1.2.0 - hover text is always on, so there is"
+		+ " no switch to set";
 	/**
 	 * The four columns {@code sort=} presses, as the shortest word for each (W1), for a refusal that says what to
 	 * type instead. Every label and every older alias is accepted too - {@link SortMode#parse(String)} is the whole
@@ -585,14 +602,15 @@ public class BpmCommands implements Function<String, String>
 	 * view switches, driven exactly as {@code hero=} drives the card's. {@code cash} toggles whether coins and platinum
 	 * tokens count in the bank value (Q4), {@code untradeables} whether untradeable stacks are listed at their
 	 * High Alchemy value (Q5), {@code live} whether an actively traded item is priced from the wiki's traded
-	 * series instead of the daily guide table (T1), {@code inventory} whether the player's inventory and worn
-	 * gear count and are listed with the bank's stacks (Y1); {@code all} turns all four on and {@code none} turns
-	 * all four off.
+	 * series instead of the guide table (T1), {@code inventory} whether the player's inventory and worn
+	 * gear count and are listed with the bank's stacks (Y1), {@code ge} whether the Grand Exchange offers do;
+	 * {@code all} turns all five on and {@code none} turns all five off.
 	 *
-	 * <p>Q6's {@code holding} is the one word here that is answered rather than applied: addendum AO deleted the
-	 * switch, and this verb says so in a sentence ({@link #HOLDING_GONE}) before the vocabulary is consulted at
-	 * all, so a script written against any build from Q to AN is told where the word went instead of being
-	 * handed the list it is missing from (AO1).
+	 * <p>Q6's {@code holding} and AH's {@code hover} are the two words here that are answered rather than applied:
+	 * addendum AO deleted the first switch and release 1.2.0 the second, and this verb says so in a sentence
+	 * ({@link #HOLDING_GONE}, {@link #HOVER_GONE}) before the vocabulary is consulted at
+	 * all, so a script written against any build from Q to AN (or from AH to 1.1.2) is told where the word went
+	 * instead of being handed the list it is missing from (AO1).
 	 *
 	 * <p>It presses {@link BankPriceMovementPanel#setOptions}, the gear menu's own check items - not the bare
 	 * {@code applyOptions} - for the reason {@code hero=} presses {@code setHeroVisibility}: that method applies
@@ -607,6 +625,10 @@ public class BpmCommands implements Function<String, String>
 		if (namesHoldingOnRows(value))
 		{
 			return error(HOLDING_GONE);
+		}
+		if (namesShowHoverText(value))
+		{
+			return error(HOVER_GONE);
 		}
 		final ViewOptions next = applyOptionVerb(currentOptions(), value);
 		if (next == null)
@@ -667,10 +689,11 @@ public class BpmCommands implements Function<String, String>
 	 * <p>It lives here rather than on {@link ViewOptions} because the value is shared with the panel and the
 	 * service, which have no business knowing the developer bridge's vocabulary.
 	 *
-	 * <p>Addendum Q's {@code holding} is NOT one of the words any more (AO1), and it is not refused here either:
-	 * {@link #opt(String)} catches it first, so the answer names the addendum that deleted it rather than the
-	 * list it has fallen out of. A caller of this method that wants the same courtesy asks
-	 * {@link #namesHoldingOnRows(String)}.
+	 * <p>Addendum Q's {@code holding} is NOT one of the words any more (AO1), and neither is addendum AH's
+	 * {@code hover} (release 1.2.0), and neither is refused here either: {@link #opt(String)} catches them first, so
+	 * the answer names the change that deleted the switch rather than the list it has fallen out of. A caller of this
+	 * method that wants the same courtesy asks {@link #namesHoldingOnRows(String)} and
+	 * {@link #namesShowHoverText(String)}.
 	 *
 	 * @return the options to apply, or null when the text names none of the words of {@link #OPTION_VERBS} -
 	 *         the caller then answers {@code ok:false} and leaves the sidebar exactly as it was
@@ -724,17 +747,16 @@ public class BpmCommands implements Function<String, String>
 				return options.withCountGrandExchange(!options.countGrandExchange());
 			case "all":
 			case "on":
-				// All FIVE explicitly, and by name rather than through a constructor: the constructors are
-				// positional and their shorter overloads default the newer switches ON, so a word that is meant
-				// to leave nothing standing would quietly leave one - and every addendum that adds or removes a
-				// switch moves the positions under this line (AO1 removed one, 1.0.9 part 3 added one). The hover
-				// switch is set the way addendum AH's own arity left it: "all" has never turned the data hovers on.
+				// All FIVE explicitly, and by name rather than through a constructor: the constructor is
+				// positional, so a word that is meant to leave nothing standing would quietly leave one - and
+				// every addendum that adds or removes a switch moves the positions under this line (AO1 removed
+				// one, 1.0.9 part 3 added one, release 1.2.0 removed the hover switch).
 				return options.withCountCash(true).withCountUntradeables(true).withLivePrices(true)
-					.withCountInventory(true).withCountGrandExchange(true).withShowHoverText(false);
+					.withCountInventory(true).withCountGrandExchange(true);
 			case "none":
 			case "off":
 				return options.withCountCash(false).withCountUntradeables(false).withLivePrices(false)
-					.withCountInventory(false).withCountGrandExchange(false).withShowHoverText(false);
+					.withCountInventory(false).withCountGrandExchange(false);
 			default:
 				return null;
 		}
@@ -763,6 +785,32 @@ public class BpmCommands implements Function<String, String>
 			case "stack":
 			case "stacks":
 			case "holdingonrows":
+				return true;
+			default:
+				return false;
+		}
+	}
+
+	/**
+	 * Whether the text names addendum AH's deleted hover switch (release 1.2.0) - the spellings an operator reaches
+	 * for from the old gear label ("Show hover text"), the stored key ({@code showhovertext}) and the word for the
+	 * thing itself - so a script that sent any of them is told the same thing, on
+	 * {@link #namesHoldingOnRows(String)}'s precedent.
+	 */
+	static boolean namesShowHoverText(@Nullable String text)
+	{
+		if (text == null)
+		{
+			return false;
+		}
+		switch (text.trim().toLowerCase(Locale.ENGLISH))
+		{
+			case "hover":
+			case "hovers":
+			case "hovertext":
+			case "showhovertext":
+			case "tooltip":
+			case "tooltips":
 				return true;
 			default:
 				return false;
@@ -1087,7 +1135,7 @@ public class BpmCommands implements Function<String, String>
 	 *
 	 * <p><b>It is session-only</b> (checker, B021): the push goes through
 	 * {@link PriceService#setBank(BankSnapshot, boolean)} with {@code persist} false, so the panel fills and the
-	 * anchor day is re-derived but nothing is written. Before that the ordinary path saved it, and
+	 * now time is re-identified but nothing is written. Before that the ordinary path saved it, and
 	 * {@code PriceStore} keys the file from the snapshot's own fields - so two made-up rows atomically replaced
 	 * the account's real 500-stack capture in {@code bank-<liveHash>-<profile>.json}, and the next launch drew
 	 * them. The operator runs this verb while working the live acceptance list, so that was one keystroke away.
@@ -1277,6 +1325,9 @@ public class BpmCommands implements Function<String, String>
 		// too - liveDay and windowDays - which is a different calendar from the guide's anchor day in "status"
 		// and "windows" below, and deliberately so (addendum U).
 		m.put("live", liveJson(service.currentStatus()));
+		// 1.2.0, L3: how the counted rows of the window on screen graded, and whether the card is soft - absent while
+		// nothing is graded (live prices off), so the echo with the switch off is what it was before.
+		m.put("grades", gradesJson(service.currentStatus()));
 		m.put("windows", windowsJson());
 		m.put("portfolio", portfolioJson(service.currentStatus()));
 		m.put("shownRows", panel.shownRows());
@@ -1405,6 +1456,34 @@ public class BpmCommands implements Function<String, String>
 	}
 
 	/**
+	 * Contract 1.2.0's {@code grades} echo (L3): {@code solid}, {@code soft} and {@code none} - how many counted rows
+	 * graded each way on the window on screen - {@code solidValue} over {@code countedValue} (gp: what the solid rows'
+	 * stacks are worth against every counted stack, cash left out), {@code softMove} over {@code totalMove} (the soft
+	 * rows' stack moves against every counted row's, signs dropped) and {@code cardSoft}, whether the card is soft.
+	 * Null - absent from the JSON - while nothing is graded.
+	 */
+	@Nullable
+	private static Map<String, Object> gradesJson(@Nullable PriceService.Status s)
+	{
+		final GradeSummary g = s == null || s.grades() == null ? GradeSummary.NONE : s.grades();
+		if (!g.graded())
+		{
+			return null;
+		}
+		final Map<String, Object> m = new LinkedHashMap<>();
+		m.put("solid", g.solidRows());
+		m.put("soft", g.softRows());
+		m.put("none", g.noneRows());
+		m.put("rows", g.gradedRows());
+		m.put("solidValue", g.solidValue());
+		m.put("countedValue", g.countedValue());
+		m.put("softMove", g.softMoveGp());
+		m.put("totalMove", g.totalMoveGp());
+		m.put("cardSoft", g.soft());
+		return m;
+	}
+
+	/**
 	 * The filter as the service holds it. {@code sort} is the lit column's LABEL - "Percent change", "gp change",
 	 * "Item price", "Stack price" since addendum W - and {@code descending} the arrow beside it; the two of them
 	 * are the whole of the ordering (W1).
@@ -1432,14 +1511,14 @@ public class BpmCommands implements Function<String, String>
 	 * The header state, with addendum L's six selection fields at the end (L13) - the whole of how the baseline
 	 * was chosen, so a live session can audit it instead of trusting it:
 	 * <ul>
-	 * <li>{@code anchorDay} - the derived day D the windows count back from (L3). NOT the wall clock: RuneLite's
-	 * price table runs a Jagex day ahead of the wiki's newest revision for about half of every day (L-D).</li>
-	 * <li>{@code agree} - the fraction of bank items whose RuneLite price equals the newest table, the
-	 * measurement that derived D (>= 0.90 means "same day", L3).</li>
-	 * <li>{@code r0Day} - the day the newest revision's own {@code %LAST_UPDATE%} claims, so {@code anchorDay ==
-	 * r0Day} or exactly one day past it.</li>
-	 * <li>{@code thenDay} - the day the CURRENT window's baseline table actually claims, which on a maintenance
-	 * edit is not {@code anchorDay - window} (L5); this is the day the status line and every row tooltip print.</li>
+	 * <li>{@code nowTime} - the time every window counts back from (contract 1.1.2), ISO-8601 UTC: the table time of
+	 * the indexed revision RuneLite's prices match, or the clock while they match none (RuneLite ahead of the index,
+	 * which also marks the index stale). {@code anchorDay} is its date.</li>
+	 * <li>{@code agree} - the fraction of bank items whose RuneLite price equals the newest table (>= 0.90 means
+	 * "R0's table", L3).</li>
+	 * <li>{@code r0Day} - the day the newest revision's own {@code %LAST_UPDATE%} claims.</li>
+	 * <li>{@code thenDay} - the day the CURRENT window's baseline table actually claims; this is the day the status
+	 * line and every row tooltip print. Its table is at least the window's span older than {@code nowTime}.</li>
 	 * <li>{@code thenRevId} - the wiki revision that baseline was read from, so the same id can be fetched by
 	 * hand and a row's "then" price read straight out of it.</li>
 	 * <li>{@code degraded} - the rows run in a FALLBACK mode and deserve less trust: fewer than
@@ -1474,6 +1553,7 @@ public class BpmCommands implements Function<String, String>
 		m.put("bankItems", s.bankItems());
 		m.put("window", s.window().label());
 		m.put("baselineLoaded", s.baselineLoaded());
+		m.put("nowTime", time(s.nowSeconds()));
 		m.put("anchorDay", day(s.anchorDay()));
 		m.put("agree", s.agree());
 		m.put("agreeSamples", s.agreeSamples());
@@ -1493,7 +1573,8 @@ public class BpmCommands implements Function<String, String>
 	 * holds them ({@link PriceService#baseline}), not only the current window's, so one {@code state} shows all
 	 * five choices and a live session can check a window's day without switching to it (added by the checker,
 	 * 2026-09-09). A window with no baseline in memory is absent from the object; the day is the table's own
-	 * {@code %LAST_UPDATE%} date (L7), ISO-8601, and {@code schema} is the shape of the document the map was read
+	 * {@code %LAST_UPDATE%} date (L7), ISO-8601, {@code thenTime} the same marker as an ISO-8601 UTC instant (contract
+	 * 1.1.2: eight tables a day share a date), and {@code schema} is the shape of the document the map was read
 	 * from ({@link PriceMapDto#schema}) - anything below {@link PriceMapDto#SCHEMA} is refused at start-up and so
 	 * can never appear here (B028).
 	 */
@@ -1509,6 +1590,7 @@ public class BpmCommands implements Function<String, String>
 			}
 			final Map<String, Object> one = new LinkedHashMap<>();
 			one.put("thenDay", day(baseline.dataDay()));
+			one.put("thenTime", time(baseline.bucketSeconds()));
 			one.put("thenRevId", baseline.revId());
 			// Which document shape the map came from (B028, checker 2026-09-09). Without it, a maintainer
 			// looking at a window that says "no baseline" cannot tell a file that was never fetched from one
@@ -1578,6 +1660,16 @@ public class BpmCommands implements Function<String, String>
 	}
 
 	/**
+	 * A unix-seconds instant as ISO-8601 UTC ({@code "2026-10-06T21:32:00Z"}), or null - absent from the JSON - when it
+	 * is 0 or less, for the same reason as {@link #day}: no 1970 in the echo.
+	 */
+	@Nullable
+	private static String time(long seconds)
+	{
+		return seconds <= 0L ? null : Instant.ofEpochSecond(seconds).toString();
+	}
+
+	/**
 	 * One row. {@code qty} is the whole stack, and since addendum Y (Y1) a row carries the SPLIT behind it -
 	 * {@code bankQty}, {@code invQty}, {@code wornQty}, and since 1.0.9 part 3 {@code geQty}, which sum to
 	 * {@code qty} - but only while the {@code inventory} or the {@code ge} switch is on, because with both off there
@@ -1610,6 +1702,51 @@ public class BpmCommands implements Function<String, String>
 		m.put("gp", row.deltaGp());
 		m.put("pct", row.deltaPct());
 		m.put("source", String.valueOf(row.source()));
+		// 1.2.0, L3: the window's grade and word, and the numbers behind the figure, on every row the feeds graded.
+		final GradedMove graded = row.graded();
+		if (graded != null)
+		{
+			m.put("grade", graded.grade().label());
+			m.put("word", graded.word());
+			m.put("sides", sidesJson(graded));
+		}
+		return m;
+	}
+
+	/**
+	 * One graded row's figure as a terminal reads it (contract 1.2.0, L2): {@code thenMark}, the window's own
+	 * {@code price}, the {@code move} as a ratio, {@code fallback} (yesterday's move), {@code nowDay} and
+	 * {@code thenDay}, {@code anchor}, {@code sidesAgree}, and per side ({@code buy}, {@code sell}) {@code now},
+	 * {@code then}, {@code move}, {@code obs} (observations of the last 24 hours) and the last print with its time ({@code last},
+	 * {@code lastAt}, ISO-8601 UTC). A missing number is absent, as every null of this bridge is.
+	 */
+	private static Map<String, Object> sidesJson(GradedMove graded)
+	{
+		final Map<String, Object> m = new LinkedHashMap<>();
+		m.put("thenMark", graded.thenMark());
+		m.put("price", graded.price());
+		m.put("deltaGp", graded.deltaGp());
+		m.put("move", graded.move());
+		m.put("fallback", graded.fallback());
+		m.put("nowDay", day(graded.nowDay()));
+		m.put("thenDay", day(graded.thenDay()));
+		m.put("anchor", graded.anchor());
+		m.put("sidesAgree", graded.sidesAgree());
+		m.put("buy", sideJson(graded.buy()));
+		m.put("sell", sideJson(graded.sell()));
+		return m;
+	}
+
+	/** One side of a graded figure - see {@link #sidesJson}. */
+	private static Map<String, Object> sideJson(GradedMove.Side side)
+	{
+		final Map<String, Object> m = new LinkedHashMap<>();
+		m.put("now", side.now());
+		m.put("then", side.then());
+		m.put("move", side.move());
+		m.put("obs", side.observations());
+		m.put("last", side.last());
+		m.put("lastAt", time(side.lastSeconds()));
 		return m;
 	}
 

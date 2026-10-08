@@ -327,8 +327,7 @@ public class UpDownColoursTest
 
 	/**
 	 * B3: a press on a row calls the seam ONCE with the colour in force and its title - "Up colour" / "Down colour" - and
-	 * the sidebar's own panel as the anchor the picker is placed beside; the hovers are the config items' descriptions,
-	 * behind "Show hover text".
+	 * the sidebar's own panel as the anchor the picker is placed beside; the hovers are the config items' descriptions.
 	 */
 	@Test
 	public void b3_aPressCallsTheSeamOnceWithTheColourAndTheTitle() throws Exception
@@ -340,8 +339,6 @@ public class UpDownColoursTest
 		load();
 		onEdt(() ->
 		{
-			assertNull("no hover while the switch is off", row(true).getToolTipText());
-			panel.applyOptions(ViewOptions.DEFAULT.withShowHoverText(true));
 			assertEquals("The colour of a rise, on both tabs.", row(true).getToolTipText());
 			assertEquals("The colour of a fall, on both tabs.", row(false).getToolTipText());
 			assertEquals(BankPriceMovementPanel.UP_COLOUR_TIP, row(true).getToolTipText());

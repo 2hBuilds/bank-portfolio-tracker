@@ -5,7 +5,9 @@ import java.math.RoundingMode;
 import java.text.ParseException;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -380,6 +382,12 @@ public final class MovementMath
 	 * columns and both directions: it never moved and its price is a constant, so it has no place among the items whose
 	 * price is a series. Among themselves the alch rows order by the rules above.
 	 *
+	 * <p><b>The % and gp columns are ONE list</b> (the user, 2026-10-07, on the first live look at 1.2.0: "sort as 1
+	 * list and not a separate second list for problem ones"): a {@link Grade#SOFT} figure sorts by its figure like any
+	 * other - the word under its percentage is what says how much to lean on it - and a {@link Grade#NONE} row, which
+	 * has no figure, sorts with the dashes as it always did. Contract 1.2.0's L5 asked for three tiers (solid, soft,
+	 * none); they were built and removed the same day.
+	 *
 	 * <p><b>Every key is a property of the row alone.</b> {@code holdingOnRows} used to make
 	 * {@link SortMode#GP_MOVE} compare the whole STACK's change (Q6) and, for one addendum, {@link
 	 * SortMode#UNIT_PRICE} the whole stack's WORTH (V1) - the question V was answering, that a hundred Robin
@@ -725,6 +733,43 @@ public final class MovementMath
 		}
 
 		return DAY.format(day);
+	}
+
+	/**
+	 * A guide TABLE's time - "06 Oct 21:35 UTC" - as the open row block and the card's hover print it beside the day
+	 * (contract 1.1.2). Since 30 Sep 2026 the wiki saves Jagex's table about eight times a day, so a date no longer
+	 * names one table and the time is what tells two of them apart. The day is {@link #formatDay}'s, the UTC date of
+	 * the same instant, and the clock is in UTC too and SAYS so: printed bare beside a UTC date it would read as the
+	 * viewer's own clock, which is the misreading the paragraph above warns of.
+	 *
+	 * @param seconds the table's own {@code %LAST_UPDATE%}, unix seconds; 0 or less gives {@link #DASH}
+	 */
+	public static String formatTableTime(final long seconds)
+	{
+		if (seconds <= 0L)
+		{
+			return DASH;
+		}
+
+		final OffsetDateTime at = Instant.ofEpochSecond(seconds).atOffset(ZoneOffset.UTC);
+		return DAY.format(at) + " " + CLOCK.format(at) + " UTC";
+	}
+
+	/**
+	 * A trade's time of day - "14:02 UTC" (contract 1.2.0, L5: the open block's "last sold 1,250 at 14:02 UTC"). In UTC and
+	 * SAYING so, for the reason {@link #formatTableTime} gives: the dates beside it are UTC dates, and a bare clock would
+	 * read as the viewer's own.
+	 *
+	 * @param seconds the print's own time, unix seconds; 0 or less gives {@link #DASH}
+	 */
+	public static String formatUtcClock(final long seconds)
+	{
+		if (seconds <= 0L)
+		{
+			return DASH;
+		}
+
+		return CLOCK.format(Instant.ofEpochSecond(seconds).atOffset(ZoneOffset.UTC)) + " UTC";
 	}
 
 	/**

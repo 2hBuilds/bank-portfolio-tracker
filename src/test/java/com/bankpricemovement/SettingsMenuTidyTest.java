@@ -205,11 +205,12 @@ public class SettingsMenuTidyTest
 	/**
 	 * A1: without days before 1.0.9 the menu is header, rule, the three Show items, (since 1.1.0 part J) a rule, (since part B)
 	 * the Up colour and Down colour rows, (since parts H and J) the "Colour presets" caption and its rows (Classic, 2h,
-	 * Colour-blind, Slot 1, the save row), rule, Use live prices, the four Include items, rule, the preset row, Show hover
-	 * text, rule, the "Net worth chart" caption, (since part C) Single chart colour, the OK row; with such days the
+	 * Colour-blind, Slot 1, the save row), rule, Use live prices, the four Include items, rule, the preset row,
+	 * rule, the "Net worth chart" caption, (since part C) Single chart colour, the OK row; with such days the
 	 * Include-days item stands after Single chart colour (after the caption itself until part C).
 	 * (Updated for part J by index and count only: the rule above Up colour and Slot 1 with its save row moved what
-	 * follows them; no assertion was weakened.)
+	 * follows them; no assertion was weakened. Release 1.2.0 took "Show hover text" out of the menu: one component
+	 * fewer, and every index after the preset row one lower.)
 	 */
 	@Test
 	public void a1_theMenuReadsInOrderWithoutDaysBeforeV109AndTheItemFollowsTheCaptionWithThem() throws Exception
@@ -223,7 +224,7 @@ public class SettingsMenuTidyTest
 			// part C: Single chart colour stands under the caption - one more; part H: the presets' caption and its three
 			// rows stand under the colour rows - four more; part J: a rule above the colour rows, and Slot 1 and the save
 			// row under the presets - three more.
-			assertEquals(27, c.length);
+			assertEquals(26, c.length);
 			assertFalse("the header is neither a rule nor an item", c[0] instanceof JSeparator
 				|| c[0] instanceof AbstractButton);
 			assertTrue(c[1] instanceof JSeparator);
@@ -244,9 +245,8 @@ public class SettingsMenuTidyTest
 			assertSame(panel.countGrandExchangeItem(), c[19]);
 			assertTrue(c[20] instanceof JSeparator);
 			assertSame(panel.presetRow(), c[21]);
-			assertSame(panel.showHoverTextItem(), c[22]);
-			assertTrue(c[23] instanceof JSeparator);
-			final JLabel caption = find(c[24], JLabel.class);
+			assertTrue(c[22] instanceof JSeparator);
+			final JLabel caption = find(c[23], JLabel.class);
 			assertNotNull(caption);
 			assertEquals("Net worth chart", caption.getText());
 			assertEquals(BankPriceMovementPanel.NET_WORTH_CHART_TEXT, caption.getText());
@@ -255,8 +255,8 @@ public class SettingsMenuTidyTest
 			assertEquals(ColorScheme.LIGHT_GRAY_COLOR, caption.getForeground());
 			assertEquals(presets.getForeground(), caption.getForeground());
 			assertNull("no hover of its own", caption.getToolTipText());
-			assertEquals(BankPriceMovementPanel.SINGLE_CHART_COLOUR_TEXT, ((JCheckBoxMenuItem) c[25]).getText());
-			assertSame(panel.okRow(), c[26]);
+			assertEquals(BankPriceMovementPanel.SINGLE_CHART_COLOUR_TEXT, ((JCheckBoxMenuItem) c[24]).getText());
+			assertSame(panel.okRow(), c[25]);
 			assertNull("no item yet", legacyItem());
 		});
 
@@ -264,13 +264,13 @@ public class SettingsMenuTidyTest
 		onEdt(() ->
 		{
 			final Component[] c = panel.heroMenu().getComponents();
-			assertEquals(28, c.length);
-			assertEquals("Net worth chart", find(c[24], JLabel.class).getText());
-			assertEquals(BankPriceMovementPanel.SINGLE_CHART_COLOUR_TEXT, ((JCheckBoxMenuItem) c[25]).getText());
-			assertSame(legacyItem(), c[26]);
-			assertEquals(BankPriceMovementPanel.LEGACY_TEXT, ((JCheckBoxMenuItem) c[26]).getText());
-			assertEquals(Widgets.sans(12), c[26].getFont());
-			assertSame("the OK row is still last", panel.okRow(), c[27]);
+			assertEquals(27, c.length);
+			assertEquals("Net worth chart", find(c[23], JLabel.class).getText());
+			assertEquals(BankPriceMovementPanel.SINGLE_CHART_COLOUR_TEXT, ((JCheckBoxMenuItem) c[24]).getText());
+			assertSame(legacyItem(), c[25]);
+			assertEquals(BankPriceMovementPanel.LEGACY_TEXT, ((JCheckBoxMenuItem) c[25]).getText());
+			assertEquals(Widgets.sans(12), c[25].getFont());
+			assertSame("the OK row is still last", panel.okRow(), c[26]);
 		});
 	}
 
@@ -445,7 +445,7 @@ public class SettingsMenuTidyTest
 			assertNotNull("nothing has told the menu yet", legacyItem());
 			opens();
 			assertNull("the open synced it", legacyItem());
-			assertEquals(27, panel.heroMenu().getComponentCount());
+			assertEquals(26, panel.heroMenu().getComponentCount());
 		});
 
 		when(s.bankHistory()).thenReturn(withLegacyDays());
@@ -453,7 +453,7 @@ public class SettingsMenuTidyTest
 		{
 			opens();
 			assertNotNull(legacyItem());
-			assertEquals(28, panel.heroMenu().getComponentCount());
+			assertEquals(27, panel.heroMenu().getComponentCount());
 		});
 	}
 

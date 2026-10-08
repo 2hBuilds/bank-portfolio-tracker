@@ -365,7 +365,7 @@ public class HideAmountsTest
 	// ---------------------------------------------------------------- E2: what the eye does (and, since part I, where it stands)
 
 	/**
-	 * E2: the eye toggles and stores. Its hover reads "Hide amounts" and then "Show amounts" with "Show hover text" OFF; a left
+	 * E2: the eye toggles and stores. Its hover reads "Hide amounts" and then "Show amounts"; a left
 	 * press toggles and stores once, a right press does nothing; it stands where it stood whatever the total says; and with
 	 * "Show bank value" off the eye is still there.
 	 *
@@ -381,7 +381,6 @@ public class HideAmountsTest
 	{
 		final Memory memory = new Memory();
 		build(memory);
-		assertFalse("the quieter sidebar is what ships", panel.options().showHoverText());
 		publish(Arrays.asList(CLAWS, PENNY), 7L, rising());
 		final Rectangle[] firstBox = new Rectangle[1];
 		onEdt(() ->
@@ -404,7 +403,6 @@ public class HideAmountsTest
 			press(eye, MouseEvent.BUTTON1);
 			assertEquals("the hover, with them hidden", "Show amounts", eye.getToolTipText());
 			assertEquals("stored once", Collections.singletonList(true), memory.hideSaves);
-			assertFalse("and still no sentence hovers: the switch is off", panel.options().showHoverText());
 
 			// The eye stands where it stood, whatever the total says: 7 gp then, and a billion now.
 			layout(panel);
@@ -644,7 +642,6 @@ public class HideAmountsTest
 	{
 		final Memory memory = new Memory();
 		build(memory);
-		onEdt(() -> panel.applyOptions(ViewOptions.DEFAULT.withShowHoverText(true)));
 		publish(Arrays.asList(CLAWS, PENNY), VALUE_NOW, rising());
 		final String[] shown = new String[5];
 		onEdt(() ->
@@ -827,8 +824,8 @@ public class HideAmountsTest
 			MovementRowPanel.splitLine(SPLIT, false));
 		assertEquals(AmountMask.SHORT + " in bank, " + AmountMask.SHORT + " in inventory",
 			MovementRowPanel.splitLine(SPLIT, true));
-		final String shown = MovementRowPanel.detail(SPLIT, MovementWindow.D1, TODAY, ViewOptions.DEFAULT, false);
-		final String hidden = MovementRowPanel.maskedDetail(SPLIT, MovementWindow.D1, TODAY, ViewOptions.DEFAULT, false);
+		final String shown = MovementRowPanel.detail(SPLIT, MovementWindow.D1, TODAY, 0L, ViewOptions.DEFAULT, false);
+		final String hidden = MovementRowPanel.maskedDetail(SPLIT, MovementWindow.D1, TODAY, 0L, ViewOptions.DEFAULT, false);
 		assertTrue(shown, shown.contains("3 in bank, 4 in inventory") && shown.contains("700 gp"));
 		assertTrue(hidden, hidden.contains(AmountMask.SHORT + " in bank, " + AmountMask.SHORT + " in inventory"));
 		assertFalse(hidden, hidden.contains("700") || hidden.contains("100 gp") || hidden.contains("90 gp"));
@@ -1063,7 +1060,6 @@ public class HideAmountsTest
 	public void e6_whileHiddenNoFigureOfTheFixtureIsOnScreenOnEitherTab() throws Exception
 	{
 		build(new Memory());
-		onEdt(() -> panel.applyOptions(ViewOptions.DEFAULT.withShowHoverText(true)));
 		publish(Arrays.asList(CLAWS, SPLIT), VALUE_NOW, rising());
 		final List<String> figures = Arrays.asList("736m", "736,412,683", "32.3k", "4,618", "+3.0k", "+428", "-950k", "951",
 			"700", "+10", "4,618", "32,326");

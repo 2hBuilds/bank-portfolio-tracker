@@ -164,7 +164,8 @@ public class StartTabTest
 		assertEquals("A4: the plugin reads and writes the same key", "startTab", BankPriceMovementPlugin.START_TAB_KEY);
 		assertEquals("1.1.0 part A: the item is the tab used last", "Last tab", item.name());
 		assertEquals("The tab the sidebar showed last. It opens there next time.", item.description());
-		assertEquals("1.0.9 part 3 put the Grand Exchange switch above it and moved it down one", 16, item.position());
+		assertEquals("1.0.9 part 3 moved it down one for the Grand Exchange switch, release 1.2.0 up one again for the hover"
+			+ " switch it deleted", 15, item.position());
 		assertTrue("hidden from the settings page since 1.1.0 part A", item.hidden());
 		assertEquals(SidebarView.class, m.getReturnType());
 		int items = 0;
@@ -187,7 +188,8 @@ public class StartTabTest
 		// 1.1.0 part B added the two colours, part C the chart switch and colour, part E the hide switch and part G the
 		// alch tick, all listed on the page: twenty-two on the page and the two hidden ones; part J added two more hidden
 		// ones (the slot colours): twenty-two on the page and the four hidden ones.
-		assertEquals("twenty-two items on the page and the four hidden ones", 26, items);
+		// Release 1.2.0 deleted the hover switch, which was listed: twenty-one on the page and the four hidden ones.
+		assertEquals("twenty-one items on the page and the four hidden ones", 25, items);
 		assertEquals(4, hidden);
 	}
 

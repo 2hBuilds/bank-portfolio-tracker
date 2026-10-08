@@ -126,7 +126,7 @@ public class SidebarHistorySeamTest
 
 		// A wiki that never answers: nothing here waits on a price table - RuneLite's own prices price every row.
 		final GuidePriceClient wiki = mock(GuidePriceClient.class);
-		when(wiki.fetchRevisionIndex(anyLong())).thenAnswer(invocation -> new CompletableFuture<>());
+		when(wiki.fetchRevisionIndex(anyLong(), anyLong())).thenAnswer(invocation -> new CompletableFuture<>());
 		when(wiki.fetchTables(anyCollection(), anyLong())).thenAnswer(invocation -> new CompletableFuture<>());
 		when(wiki.fetchMapping(anyLong())).thenAnswer(invocation -> new CompletableFuture<>());
 		service = new PriceService(wiki, f.store, f.itemManager, f.clientThread, f.scheduler, f.clock::get,

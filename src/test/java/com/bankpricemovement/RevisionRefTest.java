@@ -7,15 +7,21 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import org.junit.Test;
 
 /**
- * {@link RevisionRef} and the pure baseline selection of addendum L line L5 - the rule that replaced K's
- * "newest revision at or before now minus the window", which six analysts measured as a coin flip (L-C).
+ * {@link RevisionRef} and the pure baseline selection - addendum L line L5's calendar day until contract 1.1.2, the
+ * newest revision at least the window's span before the "now" table since (T1) - and the rule that keeps the index
+ * (T2).
  *
  * <p>Every fixture below is a REAL revision of {@code Module:GEPrices/data.json} taken from
  * {@code docs/research/bank-price-movement-calibration-2026-09-08.md} and from addendum L's own evidence lines,
@@ -149,72 +155,96 @@ public class RevisionRefTest
 		assertEquals(LocalDate.of(2026, 9, 9), new RevisionRef(1L, 1_788_912_000L, null, null).editDay());
 	}
 
-	// ---------------------------------------------------------------- pickThen (L5)
+	// ---------------------------------------------------------------- pickThen (contract 1.1.2, T1)
+
+	/** The last second of a UTC date, unix seconds. */
+	private static long endOf(final LocalDate day)
+	{
+		return day.plusDays(1).atStartOfDay(ZoneOffset.UTC).toEpochSecond() - 1L;
+	}
 
 	@Test
-	public void theBaselineForADateIsThatDatesBotRevision()
+	public void theBaselineIsTheNewestRevisionAtOrBeforeTheTarget()
 	{
-		assertSame(BOT_0907, RevisionRef.pickThen(HISTORY, SEP_7));
-		assertSame(BOT_0908, RevisionRef.pickThen(HISTORY, SEP_8));
-		assertSame(BOT_0904, RevisionRef.pickThen(HISTORY, SEP_4));
+		assertSame("at or before: a revision saved at the target second counts", BOT_0907,
+			RevisionRef.pickThen(HISTORY, BOT_0907.editSeconds()));
+		assertSame("one second earlier it is too new", BOT_0906,
+			RevisionRef.pickThen(HISTORY, BOT_0907.editSeconds() - 1L));
+		assertSame(BOT_0908, RevisionRef.pickThen(HISTORY, BOT_0908.editSeconds() + 86_400L));
+		assertSame(BOT_0904, RevisionRef.pickThen(HISTORY, endOf(SEP_4)));
 	}
 
 	/**
-	 * The fixture addendum L was written around: 2026-09-03 holds a human edit at 06:46 and the bot's run at
-	 * 21:45. The bot's table is 09-03's prices; Riblet15's is 09-02's.
+	 * The discriminating case. A human edit saved AFTER the day's bot run is the newest revision old enough, and its
+	 * body is the table it was saved over (L-E). The bot run of the same day carries those prices without the doubt.
 	 */
 	@Test
-	public void aDateHoldingBothAHumanEditAndABotRunAnswersTheBotRun()
-	{
-		assertSame(BOT_0903, RevisionRef.pickThen(HISTORY, SEP_3));
-	}
-
-	/**
-	 * The discriminating case. A human edit saved AFTER the day's bot run is the LAST revision of the date, so
-	 * "take the newest revision of the date" would answer it - and its body is the previous day's table.
-	 * Preferring the bot is what makes the rule right rather than merely last.
-	 */
-	@Test
-	public void aHumanEditSavedAfterTheBotRunStillLosesToIt()
+	public void aHumanEditSavedAfterTheBotRunLosesToThatDaysBot()
 	{
 		final List<RevisionRef> index = withExtra(HUMAN_AFTER_BOT_0904);
 
 		assertTrue("the fixture only proves anything if the human edit really is the newer of the two",
 			HUMAN_AFTER_BOT_0904.editSeconds() > BOT_0904.editSeconds());
-		assertSame(BOT_0904, RevisionRef.pickThen(index, SEP_4));
+		assertSame(BOT_0904, RevisionRef.pickThen(index, endOf(SEP_4)));
 	}
 
+	/**
+	 * The preference stays inside the day: Riblet15's 06:46 edit is the newest revision before noon on 2026-09-03 and
+	 * that day's bot ran at 21:45, so the edit is taken - its table is at worst one step stale - rather than the bot run
+	 * of 9 Aug, 25 days older.
+	 */
 	@Test
-	public void aDateWithTwoBotRunsAnswersTheLaterOne()
+	public void aHumanEditWhoseDayHasNoBotRunOldEnoughIsTaken()
+	{
+		final long noonSep3 = endOf(SEP_2) + 1L + 12L * 3_600L;
+
+		assertSame(HUMAN_0903, RevisionRef.pickThen(HISTORY, noonSep3));
+		assertSame("the evening of the 3rd: the bot's run", BOT_0903, RevisionRef.pickThen(HISTORY, endOf(SEP_3)));
+	}
+
+	/** Eight runs a day: the newest run old enough, not the last of its date. */
+	@Test
+	public void aDayWithTwoBotRunsAnswersTheNewestOneOldEnough()
 	{
 		final List<RevisionRef> index = withExtra(BOT_0903_EARLY);
 
-		assertSame(BOT_0903, RevisionRef.pickThen(index, SEP_3));
+		assertSame(BOT_0903, RevisionRef.pickThen(index, endOf(SEP_3)));
+		assertSame("before the later run, the earlier one - the calendar rule would have said the later",
+			BOT_0903_EARLY, RevisionRef.pickThen(index, BOT_0903.editSeconds() - 1L));
 	}
 
 	/**
-	 * With no bot revision on the date at all, the newest revision of that date is still better than walking
-	 * back a whole day: its table is at worst one Jagex day stale, which the {@code %LAST_UPDATE%} check
-	 * downstream (L5) then notices.
+	 * A body's own {@code %LAST_UPDATE%} replaces the save time once it is known: a table stamped ten minutes before
+	 * its save qualifies ten minutes sooner, and one stamped after the target - the five minutes of lead the client
+	 * allows - is too new however early it was saved.
 	 */
 	@Test
-	public void aDateWithOnlyAHumanEditAnswersTheHumanEdit()
+	public void aKnownTableTimeStandsInForTheSaveTime()
 	{
-		final List<RevisionRef> onlyHuman = Arrays.asList(BOT_0904, HUMAN_0903, BOT_0906);
+		final long target = BOT_0907.editSeconds() - 300L;
+		final Map<Long, Long> earlier = Collections.singletonMap(BOT_0907.revId(), BOT_0907.editSeconds() - 600L);
+		final Map<Long, Long> later = Collections.singletonMap(BOT_0907.revId(), BOT_0907.editSeconds() + 200L);
 
-		assertSame(HUMAN_0903, RevisionRef.pickThen(onlyHuman, SEP_3));
+		assertSame("by its save time 19:55 is after 19:50", BOT_0906, RevisionRef.pickThen(HISTORY, target));
+		assertSame("its table was stamped 19:45", BOT_0907, RevisionRef.pickThen(HISTORY, target, earlier, 0L));
+		assertSame(BOT_0907, RevisionRef.pickThen(HISTORY, BOT_0907.editSeconds()));
+		assertSame("stamped after the target: too new", BOT_0906,
+			RevisionRef.pickThen(HISTORY, BOT_0907.editSeconds(), later, 0L));
+
+		assertEquals(BOT_0907.editSeconds() - 600L, BOT_0907.timeIn(earlier));
+		assertEquals("no map", BOT_0907.editSeconds(), BOT_0907.timeIn(null));
+		assertEquals("another revision's time", BOT_0906.editSeconds(), BOT_0906.timeIn(earlier));
+		assertEquals("a refused body (null) teaches nothing", BOT_0907.editSeconds(),
+			BOT_0907.timeIn(Collections.singletonMap(BOT_0907.revId(), (Long) null)));
+		assertEquals(BOT_0907.editSeconds(), BOT_0907.timeIn(Collections.singletonMap(BOT_0907.revId(), 0L)));
 	}
 
-	/**
-	 * The "walk back a date at a time" step of L5. No revision was saved on 2026-08-20, so a 30d window landing
-	 * there takes the newest date that does have one - and the caller labels the row with the day it really got.
-	 */
+	/** The service's one retry past a body the client refused: the same rule with that revision left out. */
 	@Test
-	public void aDateWithNoRevisionWalksBackToTheNewestOlderDate()
+	public void theSkippedRevisionIsLeftOut()
 	{
-		assertSame(BOT_0809, RevisionRef.pickThen(HISTORY, LocalDate.of(2026, 8, 20)));
-		assertSame("walking back must never step FORWARD to a newer date",
-			BOT_0312, RevisionRef.pickThen(HISTORY, LocalDate.of(2026, 6, 1)));
+		assertSame(BOT_0906, RevisionRef.pickThen(HISTORY, endOf(SEP_7), null, BOT_0907.revId()));
+		assertSame(BOT_0907, RevisionRef.pickThen(HISTORY, endOf(SEP_7), null, 0L));
 	}
 
 	/**
@@ -224,8 +254,9 @@ public class RevisionRefTest
 	@Test
 	public void aTargetOlderThanTheWholeIndexAnswersNothing()
 	{
-		assertNull(RevisionRef.pickThen(HISTORY, LocalDate.of(2026, 3, 11)));
-		assertNull(RevisionRef.pickThen(HISTORY, LocalDate.of(2020, 1, 1)));
+		assertNull(RevisionRef.pickThen(HISTORY, BOT_0312.editSeconds() - 1L));
+		assertNull(RevisionRef.pickThen(HISTORY, 0L));
+		assertSame(BOT_0312, RevisionRef.pickThen(HISTORY, BOT_0312.editSeconds()));
 	}
 
 	@Test
@@ -235,19 +266,17 @@ public class RevisionRefTest
 		Collections.reverse(shuffled);
 		Collections.swap(shuffled, 0, 4);
 
-		assertSame(BOT_0907, RevisionRef.pickThen(shuffled, SEP_7));
-		assertSame(BOT_0903, RevisionRef.pickThen(shuffled, SEP_3));
-		assertSame(BOT_0809, RevisionRef.pickThen(shuffled, LocalDate.of(2026, 8, 20)));
+		assertSame(BOT_0907, RevisionRef.pickThen(shuffled, endOf(SEP_7)));
+		assertSame(BOT_0903, RevisionRef.pickThen(shuffled, endOf(SEP_3)));
+		assertSame(BOT_0809, RevisionRef.pickThen(shuffled, endOf(LocalDate.of(2026, 8, 20))));
 	}
 
 	@Test
 	public void nothingToPickFromAnswersNullRatherThanThrowing()
 	{
-		assertNull(RevisionRef.pickThen(null, SEP_7));
-		assertNull(RevisionRef.pickThen(Collections.emptyList(), SEP_7));
-		assertNull("no anchor day yet means no target date and so no baseline",
-			RevisionRef.pickThen(HISTORY, null));
-		assertNull(RevisionRef.pickThen(Collections.singletonList(null), SEP_7));
+		assertNull(RevisionRef.pickThen(null, endOf(SEP_7)));
+		assertNull(RevisionRef.pickThen(Collections.emptyList(), endOf(SEP_7)));
+		assertNull(RevisionRef.pickThen(Collections.singletonList(null), endOf(SEP_7)));
 	}
 
 	@Test
@@ -255,55 +284,108 @@ public class RevisionRefTest
 	{
 		final List<RevisionRef> holed = Arrays.asList(null, BOT_0908, null, BOT_0907, null);
 
-		assertSame(BOT_0907, RevisionRef.pickThen(holed, SEP_7));
+		assertSame(BOT_0907, RevisionRef.pickThen(holed, endOf(SEP_7)));
 	}
 
-	// ---------------------------------------------------------------- the L5 retry candidates
+	// ---------------------------------------------------------------- pruned (contract 1.1.2, T2)
 
 	/**
-	 * When the body that came back carries an older {@code %LAST_UPDATE%} than the date asked for, L5 retries
-	 * ONCE with the revision underneath it on the same date.
+	 * Eight bot runs a day for thirty days, plus a human edit saved after the last run of an old day: the last
+	 * {@link RevisionRef#FULL_DAYS} days before the newest revision are kept whole, and every older day keeps ONE - its
+	 * last bot run, never the human edit after it.
 	 */
 	@Test
-	public void thePreviousRevisionOnTheSameDateIsTheFirstRetryCandidate()
+	public void theIndexKeepsEveryRevisionOfTheLastEightDaysAndOneADayBefore()
 	{
-		assertSame(HUMAN_0903, RevisionRef.previousOn(HISTORY, BOT_0903));
-		assertNull("Riblet15's edit is the first of its date - there is nothing under it",
-			RevisionRef.previousOn(HISTORY, HUMAN_0903));
-		assertNull("a date with one revision has no previous one", RevisionRef.previousOn(HISTORY, BOT_0907));
-	}
+		final long start = endOf(LocalDate.of(2026, 9, 7)) + 1L;
+		final List<RevisionRef> index = eightADay(start, 30);
+		final RevisionRef lateHuman = new RevisionRef(99L, start + 5L * 86_400L + 23L * 3_600L, "Riblet15", "names");
+		index.add(lateHuman);
 
-	@Test
-	public void thePreviousRevisionNeverCrossesADateBoundary()
-	{
-		// 15330300 is the first revision of 2026-09-03 once Riblet15's edit is taken out of the index.
-		final List<RevisionRef> withoutHuman = Arrays.asList(BOT_0904, BOT_0903, BOT_0809);
+		final List<RevisionRef> kept = RevisionRef.pruned(index);
 
-		assertNull(RevisionRef.previousOn(withoutHuman, BOT_0903));
-	}
-
-	@Test
-	public void previousOnToleratesNothingToLookIn()
-	{
-		assertNull(RevisionRef.previousOn(null, BOT_0903));
-		assertNull(RevisionRef.previousOn(HISTORY, null));
-		assertNull(RevisionRef.previousOn(Arrays.asList((RevisionRef) null), BOT_0903));
+		final long newest = kept.get(0).editSeconds();
+		final long fullFrom = newest - RevisionRef.FULL_DAYS * 86_400L;
+		final Map<LocalDate, RevisionRef> lastBotOfDay = new HashMap<>();
+		for (final RevisionRef ref : index)
+		{
+			final RevisionRef held = lastBotOfDay.get(ref.editDay());
+			// The day the eight days begin in counts only its runs before them: the rest are kept whole.
+			if (ref.isBot() && ref.editSeconds() < fullFrom && (held == null || ref.editSeconds() > held.editSeconds()))
+			{
+				lastBotOfDay.put(ref.editDay(), ref);
+			}
+		}
+		int full = 0;
+		for (final RevisionRef ref : index)
+		{
+			if (ref.editSeconds() >= fullFrom)
+			{
+				full++;
+				assertTrue("every revision of the last eight days stays: " + ref, kept.contains(ref));
+			}
+		}
+		final Set<LocalDate> oldDays = new HashSet<>();
+		for (final RevisionRef ref : kept)
+		{
+			if (ref.editSeconds() < fullFrom)
+			{
+				assertTrue("one per older day: " + ref, oldDays.add(ref.editDay()));
+				assertSame("the day's LAST bot run", lastBotOfDay.get(ref.editDay()), ref);
+			}
+		}
+		assertFalse("the human edit after the day's last run is not the day's keeper", kept.contains(lateHuman));
+		assertEquals(full + oldDays.size(), kept.size());
+		assertTrue("thirty days at eight a day keep about eight days whole and a line a day before: " + kept.size(),
+			kept.size() < 100);
+		for (int i = 1; i < kept.size(); i++)
+		{
+			assertTrue("newest first", RevisionRef.NEWEST_FIRST.compare(kept.get(i - 1), kept.get(i)) < 0);
+		}
 	}
 
 	/**
-	 * The second retry candidate: when the target date's only revision was a human edit carrying the previous
-	 * day's table, the day AFTER it is where that date's prices were finally published.
+	 * The index the 1.1.1 build stored - its cap was 400 LINES, which at eight a day reaches fifty days - prunes to the
+	 * rule, and a day with no bot run at all keeps its last revision of any kind. Nothing past
+	 * {@link RevisionRef#KEPT_DAYS} days is kept, and pruning twice changes nothing.
 	 */
 	@Test
-	public void theNewestBotRevisionOfADateIsTheSecondRetryCandidate()
+	public void aFourHundredLineIndexPrunesToTheRuleAndNothingOlderThanFourHundredDaysStays()
 	{
-		assertSame(BOT_0903, RevisionRef.newestBotOn(withExtra(BOT_0903_EARLY), SEP_3));
-		assertSame(BOT_0904, RevisionRef.newestBotOn(withExtra(HUMAN_AFTER_BOT_0904), SEP_4));
-		assertNull("2026-09-02 has no revision at all in this history",
-			RevisionRef.newestBotOn(HISTORY, SEP_2));
-		assertNull(RevisionRef.newestBotOn(Arrays.asList(HUMAN_0903), SEP_3));
-		assertNull(RevisionRef.newestBotOn(null, SEP_3));
-		assertNull(RevisionRef.newestBotOn(HISTORY, null));
+		final long start = endOf(LocalDate.of(2026, 8, 18)) + 1L;
+		final List<RevisionRef> index = eightADay(start, 50);
+		assertEquals("the old cap's worth", 400, index.size());
+		final RevisionRef humanOnlyDay = new RevisionRef(7L, start - 3L * 86_400L, "Coopermor", "items");
+		final RevisionRef ancient = bot(6L, start - 500L * 86_400L);
+		index.add(humanOnlyDay);
+		index.add(ancient);
+
+		final List<RevisionRef> kept = RevisionRef.pruned(index);
+
+		assertTrue("a day with no bot run keeps its human edit", kept.contains(humanOnlyDay));
+		assertFalse("500 days back is past the 400 kept", kept.contains(ancient));
+		assertEquals("eight days back whole - 64 runs, and 21:10 of the day the eight days start in - one for each of the"
+			+ " 42 days before (that day's 18:10 among them), and the human-only day", 8 * 8 + 1 + 42 + 1, kept.size());
+		assertEquals(kept, RevisionRef.pruned(kept));
+		assertTrue(RevisionRef.pruned(null).isEmpty());
+		assertTrue(RevisionRef.pruned(Arrays.asList(null, null)).isEmpty());
+		assertEquals("a duplicate id is kept once", 1,
+			RevisionRef.pruned(Arrays.asList(BOT_0907, BOT_0907, null)).size());
+	}
+
+	/** Eight bot runs a day from {@code start} for {@code days} days, three hours apart, revision ids rising with time. */
+	private static List<RevisionRef> eightADay(final long start, final int days)
+	{
+		final List<RevisionRef> index = new ArrayList<>();
+		long revId = 15_000_000L;
+		for (int d = 0; d < days; d++)
+		{
+			for (int k = 0; k < 8; k++)
+			{
+				index.add(bot(revId++, start + d * 86_400L + k * 3L * 3_600L + 600L));
+			}
+		}
+		return index;
 	}
 
 	// ---------------------------------------------------------------- ordering and value semantics

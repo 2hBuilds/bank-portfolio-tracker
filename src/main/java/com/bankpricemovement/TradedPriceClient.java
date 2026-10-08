@@ -23,10 +23,10 @@ import org.slf4j.LoggerFactory;
 
 /**
  * The TRADED price feeds of addendum T line T2 - the OSRS Wiki's real-time prices, which is a different series
- * from the Jagex guide table {@link GuidePriceClient} reads and is only ever used for a stack that passes the
- * liquidity checks of T3 (three at addendum T, five since addendum V).
+ * from the Jagex guide table {@link GuidePriceClient} reads. Since contract 1.2.0 every stack the feeds name is graded
+ * from them ({@link GradeMath}): today's prints and the last closed hour against the days' side averages.
  *
- * <p>Two endpoints, and nothing else:
+ * <p>Three endpoints, and nothing else:
  * <ul>
  * <li>{@value #LATEST_URL} - the newest instant-buy and instant-sell per item, each with the second it was
  * traded at: {@code {"data":{"4151":{"high":1700000,"highTime":1788859512,"low":1690000,"lowTime":1788859480}}}}.
@@ -39,7 +39,14 @@ import org.slf4j.LoggerFactory;
  * the side saw no trade. Fetched once per UTC day per window, for the day that window counts back to from the
  * live snapshot's own date ({@code liveDay - N}, addendum U line U1), and never for TODAY - the running day
  * answers an empty bucket, and every window is at least one day back. An EMPTY answer for a past day means the
- * wiki has not closed that day yet, and {@code PriceService} then asks once for the day before it (U2).</li>
+ * wiki has not closed that day yet, and {@code PriceService} then asks once for the day before it (U2);</li>
+ * <li>{@value #HOUR_URL}{@code ?timestamp=<the hour's start in UTC seconds>} - one CLOSED hour's bucket, the same
+ * shape as a day's with the hour's start in {@code timestamp} (contract 1.2.0, line L1). The hour is always named:
+ * the same URL WITHOUT a timestamp is a CDN object regenerated at hh:00:10 that holds the hour starting two hours
+ * back (live-checked 2026-10-07), so it is never the latest closed hour. An hour the wiki has not cut yet answers
+ * {@code {"data":{},"timestamp":<the one asked for>}} - read as "not yet", not as a failure. Fetched once per closed
+ * hour while the sidebar shows (and retried a few minutes later while that answer is empty), and never while it is
+ * hidden or the switch is off.</li>
  * </ul>
  *
  * <p><b>Why this is a second client and not three more methods on {@link GuidePriceClient}.</b> That class is
@@ -80,6 +87,9 @@ public class TradedPriceClient
 
 	/** The bulk daily bucket (T2 b); one {@code timestamp} parameter names the UTC day. */
 	public static final String DAILY_URL = "https://prices.runescape.wiki/api/v1/osrs/24h";
+
+	/** One closed hour's bucket (contract 1.2.0, L1); one {@code timestamp} parameter names the hour's start. */
+	public static final String HOUR_URL = "https://prices.runescape.wiki/api/v1/osrs/1h";
 
 	/** The same descriptive User-Agent the guide client sends - one plugin, one string. */
 	public static final String USER_AGENT = GuidePriceClient.USER_AGENT;
@@ -164,6 +174,26 @@ public class TradedPriceClient
 	}
 
 	/**
+	 * One CLOSED hour's traded bucket (contract 1.2.0, L1): {@value #HOUR_URL}{@code ?timestamp=<startSeconds>}. The hour
+	 * is named because the URL without a timestamp answers the hour two back, not the latest closed one. An hour the wiki
+	 * has not cut yet answers an EMPTY {@link PriceStore.TradedHour} (its start, no items) - the caller reads that as "not
+	 * yet" and asks again a few minutes later - while a transport or HTTP failure is a failed future.
+	 *
+	 * @param startSeconds the hour's start, UTC unix seconds; must be positive
+	 * @param nowMillis    stamped onto the answer as its fetch time; not part of the request
+	 * @return a future completing with the hour (possibly empty), or exceptionally with {@link WikiPriceException}
+	 */
+	public CompletableFuture<PriceStore.TradedHour> fetchHour(final long startSeconds, final long nowMillis)
+	{
+		if (startSeconds <= 0L)
+		{
+			return failed(new WikiPriceException("no hour to fetch a traded bucket for"));
+		}
+		log.debug("bank-portfolio-tracker: fetching the traded /1h bucket of {} at {}", startSeconds, nowMillis);
+		return request(hourUrl(startSeconds), body -> parseHour(body, nowMillis));
+	}
+
+	/**
 	 * Developer-mode kill switch, the twin of {@link GuidePriceClient#setEnabled(boolean)}; true is the shipped
 	 * state. User-facing behaviour must never depend on this (workspace rule: no user feature may need a dev hook).
 	 */
@@ -204,6 +234,15 @@ public class TradedPriceClient
 	static String latestUrl()
 	{
 		return LATEST_URL;
+	}
+
+	/**
+	 * {@value #HOUR_URL}{@code ?timestamp=<the hour's start, in unix seconds>} (contract 1.2.0, L1) - a number the plugin
+	 * derived from its own clock, like {@link #dayUrl}'s, and nothing about the player.
+	 */
+	static String hourUrl(final long startSeconds)
+	{
+		return HOUR_URL + "?timestamp=" + startSeconds;
 	}
 
 	/**
@@ -286,7 +325,39 @@ public class TradedPriceClient
 	 */
 	Map<Integer, Bucket> parseDay(final String json) throws WikiPriceException
 	{
-		final JsonObject data = dataOf(readObject(json), "24h");
+		final Map<Integer, Bucket> buckets = bucketsOf(dataOf(readObject(json), "24h"));
+		if (buckets.isEmpty())
+		{
+			throw new WikiPriceException("the wiki traded daily bucket carried no entries");
+		}
+		return buckets;
+	}
+
+	/**
+	 * A {@code /1h?timestamp=} body as the hour it is (contract 1.2.0, L1): the same shape as a day's -
+	 * {@code {"data":{"2":{"avgHighPrice":190,...}},"timestamp":1615766400}} - with the hour's START in
+	 * {@code timestamp}, which this answer needs and a day's does not. An hour the wiki has not cut yet answers
+	 * {@code {"data":{},"timestamp":<the one asked for>}}: that is an EMPTY {@link PriceStore.TradedHour} here, not a
+	 * failure, because it means "ask again in a few minutes".
+	 *
+	 * @param fetchedAtMillis stamped onto the hour as its fetch time
+	 * @throws WikiPriceException on a non-object body, a missing {@code data} object, or no usable {@code timestamp}
+	 */
+	PriceStore.TradedHour parseHour(final String json, final long fetchedAtMillis) throws WikiPriceException
+	{
+		final JsonObject root = readObject(json);
+		final Map<Integer, Bucket> buckets = bucketsOf(dataOf(root, "1h"));
+		final Long start = optLong(root, "timestamp");
+		if (start == null || start <= 0L)
+		{
+			throw new WikiPriceException("the wiki traded hourly bucket names no hour");
+		}
+		return new PriceStore.TradedHour(start, buckets, fetchedAtMillis);
+	}
+
+	/** The {@code data} object of a day's or an hour's body as item id to {@link Bucket} - the two share a shape. */
+	private static Map<Integer, Bucket> bucketsOf(final JsonObject data)
+	{
 		final Map<Integer, Bucket> buckets = new LinkedHashMap<>();
 		for (final Map.Entry<String, JsonElement> entry : data.entrySet())
 		{
@@ -305,10 +376,6 @@ public class TradedPriceClient
 				continue;
 			}
 			buckets.put(id, new Bucket(avgHigh, highVolume, avgLow, lowVolume));
-		}
-		if (buckets.isEmpty())
-		{
-			throw new WikiPriceException("the wiki traded daily bucket carried no entries");
 		}
 		return buckets;
 	}
@@ -403,23 +470,6 @@ public class TradedPriceClient
 			return hasBothSides() ? Long.valueOf(Math.abs(buy - sell)) : null;
 		}
 
-		/**
-		 * Whether BOTH sides were traded inside the last {@code maxAgeSeconds} - T3's "each with a time inside the
-		 * last 24 h". A time in the FUTURE passes: that is clock skew between the viewer's machine and the wiki,
-		 * not a stale quote, and refusing it would make the feature depend on an unsynchronised clock.
-		 *
-		 * @param nowSeconds     the caller's clock in unix seconds
-		 * @param maxAgeSeconds  how old a side may be
-		 */
-		public boolean tradedWithin(final long nowSeconds, final long maxAgeSeconds)
-		{
-			if (!hasBothSides() || buySeconds <= 0L || sellSeconds <= 0L)
-			{
-				return false;
-			}
-			return nowSeconds - buySeconds <= maxAgeSeconds && nowSeconds - sellSeconds <= maxAgeSeconds;
-		}
-
 		@Override
 		public boolean equals(final Object o)
 		{
@@ -500,87 +550,10 @@ public class TradedPriceClient
 			return lowVolume;
 		}
 
-		/** Units traded that day, both sides - T3's volume check and the tooltip's "517 traded yesterday". */
+		/** Units traded that day, both sides - the tooltip's "517 traded yesterday". */
 		public long volume()
 		{
 			return PortfolioMath.clampedAdd(highVolume, lowVolume);
-		}
-
-		/**
-		 * The day's one price: {@code (avgHigh x hv + avgLow x lv) / (hv + lv)}, rounded half up (T4). Null when
-		 * the bucket carries no price at all.
-		 *
-		 * <p>Three shapes, exactly as T4 words them:
-		 * <ul>
-		 * <li>one side absent: the side that IS present, whatever the volumes say - an average of one number is
-		 * that number;</li>
-		 * <li>both sides present with volume: the volume-weighted mean;</li>
-		 * <li>both sides present with NO volume on either (a bucket the feed carried prices for and zero counts):
-		 * the plain mean, because a weighted mean of zero weights is not a number.</li>
-		 * </ul>
-		 * The weighted arithmetic is exact in {@code long} and falls back to {@code double} only if a product
-		 * overflows, which needs a price and a volume no exchange has ever seen.
-		 */
-		public Long weightedAverage()
-		{
-			if (avgHigh == null)
-			{
-				return avgLow;
-			}
-			if (avgLow == null)
-			{
-				return avgHigh;
-			}
-			final long weight = highVolume + lowVolume;
-			if (weight <= 0L)
-			{
-				return new Quote(avgHigh, 0L, avgLow, 0L).mid();
-			}
-			try
-			{
-				final long total = Math.addExact(Math.multiplyExact(avgHigh, highVolume),
-					Math.multiplyExact(avgLow, lowVolume));
-				// Half up, the same rounding the mid uses; both operands are non-negative here.
-				return (total + weight / 2L) / weight;
-			}
-			catch (final ArithmeticException overflow)
-			{
-				return Math.round((avgHigh * (double) highVolume + avgLow * (double) lowVolume) / (double) weight);
-			}
-		}
-
-		/**
-		 * The middle of the day's two averages, {@code (avgHigh + avgLow + 1) / 2} - addendum V line V3's gap
-		 * denominator. Integer arithmetic rounded HALF UP, the same shape {@link Quote#mid()} gives the live pair,
-		 * so the bucket's gap is judged by exactly the rule and the rounding check 2 judges the quote's by.
-		 *
-		 * <p>Null when either side is absent: a bucket with one side has no middle, only that side - and V3 reads
-		 * that null as "no gap to measure", never as a failure.
-		 *
-		 * <p>The halves are added separately for {@link Quote#mid()}'s reason: a pair near {@link Long#MAX_VALUE}
-		 * must not overflow on its way to being refused.
-		 */
-		public Long bucketMid()
-		{
-			if (avgHigh == null || avgLow == null)
-			{
-				return null;
-			}
-			final long half = avgHigh / 2L + avgLow / 2L;
-			final long remainder = (avgHigh % 2L) + (avgLow % 2L);
-			return half + (remainder + 1L) / 2L;
-		}
-
-		/**
-		 * How far the day's two averages sit apart, absolute - addendum V line V3's gap numerator, and the figure
-		 * the refusal "buy/sell gap 100 % yesterday" names as a percentage of {@link #bucketMid()}.
-		 *
-		 * <p>Null when either side is absent, and ABSOLUTE for {@link Quote#spread()}'s reason: nothing guarantees
-		 * which side of a day's book averaged higher, and a negative gap would sail through the check.
-		 */
-		public Long gap()
-		{
-			return avgHigh == null || avgLow == null ? null : Long.valueOf(Math.abs(avgHigh - avgLow));
 		}
 
 		@Override

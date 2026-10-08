@@ -4,7 +4,7 @@
 > version, with pictures, is the plugin's page on the Plugin Hub (the repository's README).
 
 Your whole bank, priced, with what each item's Grand Exchange price has done over the last day, week, month,
-quarter or half year - live traded prices for the items the market is actually trading, the daily guide price
+quarter or half year - a figure from the last 24 hours' trades for every item that has traded, the guide price
 for the rest, and your inventory, worn gear and Grand Exchange offers counted in. It also has a **Net Worth History**: your bank's own
 total, one reading a day.
 
@@ -22,28 +22,29 @@ total, one reading a day.
 - the **window chips** `1d | 7d | 30d | 90d | 180d` - click one and the whole panel follows it;
 - a **provenance footnote** ("1d vs 08 Sep - bank 09:00") saying which day the figures are measured against and
   when the bank was last read;
-- **hover the card** - once you have turned on *Show hover text*, see below - and you get one thing: the total
-  written out to the last gp, commas and all - *"446,901,681 gp"* - which is the one figure the rounding on the
-  card takes away. Everything else is already on the card or one chip away, so the hover does not repeat it;
-- a last line reading **"Item prices update every 24hrs"**, because Jagex publishes the guide price once a day
-  and that is how often any of these figures can move - with *Show hover text* on, hover it for why, and for
-  when the plugin last checked;
+- **hover the card** and you get the total written out to the last gp, commas and all - *"446,901,681 gp"* -
+  which is the one figure the rounding on the card takes away, and under it which guide table the window is
+  measured against, by its time: *"1d vs 06 Oct 21:32 UTC (table)"* (the footnote has room for the day only, and
+  the wiki now saves several tables a day). With *Use live prices* on, when some of the rows are soft (see *Live
+  prices*) the hover also says how many are solid - *"412 of 497 rows solid"*. Everything else is already on the
+  card or one chip away, so the hover does not repeat it;
+- a last line reading **"Guide prices update every few hours"**, because Jagex publishes the guide price several times a day
+  and that is how often any of these figures can move - hover it for why, and for when the plugin last checked;
 - a **Refresh** link, and one click refreshes everything: **your items at once** - your bank as it is now if it
   is open (see *While you bank*, below), and what you are carrying and wearing - and **the prices in the
   background**. The prices are re-checked at most once every 30 seconds, so a click sooner than that updates only
   your items: with the bank open it does so quietly, and with the bank closed a line under the controls says
   *"Refreshed n s ago - wait"* - that line, like any other problem, prints there rather than interrupting
-  anything. Guide prices only move once a day, so a refresh usually brings the same figures back - with *Show
-  hover text* on, hovering the line above tells you when the prices on screen were last read, so you can tell
-  "nothing changed" from "nothing happened". A click is answered in two words: *Refreshing...*, then **Up to
+  anything. Guide prices only move several times a day, so a refresh usually brings the same figures back -
+  hovering the line above tells you when the prices on screen were last read, so you can tell "nothing changed"
+  from "nothing happened". A click is answered in two words: *Refreshing...*, then **Up to
   date**, which fades back to *Refresh* on its own a minute later;
 - a small **settings icon**, in the top-right corner of the card, with a **Discord mark** beside it on every card
   that opens the 2hBuilds Discord, which opens the panel's **Options** menu: *Refresh
   prices now* (the prices alone, whether your bank is open or not), the three switches for the card's own
   figures, the four that decide what the panel counts and which stacks get a row (see *Settings* - they are the
   same switches as RuneLite's settings page, so either place works), then the three **Preset price ranges**
-  boxes, and last in the list **Show hover text**, with a small box beside it - empty when it is off, ticked
-  when it is on. Along the bottom sit two buttons: **Reset to default** on the left, which puts *100k / 1m /
+  boxes. Along the bottom sit two buttons: **Reset to default** on the left, which puts *100k / 1m /
   10m* back into the preset boxes, and **OK** on the right, which closes the menu - it takes the boxes with it
   on the way out, which closing the menu does anyway, since everything in here saves itself as you set it.
   Clicking the settings icon again while the menu is open closes it too: the icon is a switch, not just a way
@@ -80,6 +81,13 @@ should not ask you to choose between them on every line. A flat row prints no gp
 `0.0%`. A move of 100 % or more is written in whole percents (`+157%`), and from 10,000 % in thousands
 (`+12k%`), so it always fits its column; the block the row opens into keeps the exact figure.
 
+**A word under the percentage** (1.2.0). With *Use live prices* on, a figure built on thin trading looks exactly
+like any other - the same bold percentage, the same colour, the same gp figures, the same rail - and a small grey
+word sits under the percentage to say why you might lean on it less: `last 1d ago`, `low vol 3` or `spread 55%`. A row
+with no word is solid. An item with nothing to measure prints a dash where the
+percentage would be, and `no trades` under it. *Live prices*, below, says what each word means. *Hide amounts* leaves
+the words alone, since they are not amounts.
+
 **The gp figures on the row are rounded** the way every other figure here is: a change of 3,432 gp reads `+3.4k`.
 Click the row for the exact number.
 
@@ -88,16 +96,35 @@ Click the row for the exact number.
 
   ```
   Worth now    4,618 gp each
-  Was          4,190 gp  (19 Sep)
+  Was          4,190 gp  (19 Sep 21:32 UTC)
   You have     7  =  32,326 gp
   Change 1d    +428 each  +10.2%
   ```
 
+  The time on the *Was* line is the guide table's own, in UTC like the date beside it: the wiki saves several
+  tables a day, so the date alone no longer says which one the row was compared against. A row measured from
+  the last 24 hours' trades compares against a whole day's trading and shows that day alone.
+
   **Change** always names the window you are on - *Change 1d*, *Change 7d*, *Change 30d* - so the figure says
   what it is measuring without you looking back up at the chips. Under those four sit only the lines that have
   something to add: that the item is untradeable and priced at its parts or its alch value, where the stack is
-  split between your bank, your inventory and what you are wearing, whether the price is live and how many
-  traded yesterday, or which test a live price failed. An untradeable held at its alch value has no *Was* and no
+  split between your bank, your inventory and what you are wearing, and - for a row measured from the last 24 hours'
+  trades - one sentence on what the figure was made from, then the last price each side printed and when (*"last
+  sold 1,250 at 14:02"*). The sentence is one of five:
+
+  - *"Buyers paid 1,338 in the last 24 hours vs 2,280 on average yesterday (-41 %); sellers got 1,250 vs 2,176 (-43 %).
+    Both sides agree."* - a figure reported on both sides;
+  - the same, ending *"... the sides disagree, so the move is uncertain."* - which does not make a figure soft; it
+    only says the buyers' and the sellers' moves are more than 10 percentage points apart;
+  - *"Buyers paid 1,338 in the last 24 hours vs 2,280 on average yesterday (-41 %); no sells in the last 24 hours."* -
+    a figure reported on one side only, which the row is priced at (and the same with the sides the other way round);
+  - *"No trades in the last 24 hours; this is yesterday's move (06 Oct vs 05 Oct)."* - the `last 1d ago` figure;
+  - *"No trades in the last 24 hours or yesterday; valued at the guide price."* - the `no trades` row.
+
+  A `spread 30%` row adds one more sentence at the end of the first two: *"The buy and sell prices are 30% apart."* -
+  what the number in the word means, the latest buy and sell prices (both from the last 24 hours) against their middle.
+
+  An untradeable held at its alch value has no *Was* and no
   *Change* at all - there is no earlier price for it, so the lines are simply not there rather than showing a
   dash. The item's full name is printed in bold at the top **when the row was too narrow to show it whole**, and
   left off when you can already read it on the row.
@@ -129,8 +156,9 @@ Click the row for the exact number.
   is worth (price x quantity), so a hundred robin hood hats climb above one item that costs more each. *gp
   change* is what the whole **stack** made or lost - the figure on the row's second line - so a big pile of a
   small mover beats a single item that moved further. Every one of those figures is printed on the row, so
-  whichever you pick, the list agrees with something you can read. Rows with nothing to sort on come last in
-  either direction.
+  whichever you pick, the list agrees with something you can read. A soft figure (one with a word under its
+  percentage) sorts by its figure like any other - the word is there to tell you how much to lean on it. Rows with
+  nothing to sort on come last in either direction.
 
 Rows come in pages of 250 with a "Show *n* more" button under them, so an 800-item bank does not freeze the
 sidebar. If a band matches nothing, the panel says so and offers *Clear price range* in one click.
@@ -167,7 +195,7 @@ your own local dates, and nothing is recorded while you sit at the login screen.
 total you actually had: *30d vs your 27 Aug total*. If there is no reading on that exact day, it uses the one
 before it and says how far back that is: *1d vs your 25 Sep total (3 days)*. A window your record is not long
 enough for yet is greyed, its move reads a dash, and the footnote says when it fills - *30d from 17 Oct* -
-though you can still click it. Instead of *Item prices update every 24hrs*, the last line says how long your
+though you can still click it. Instead of *Guide prices update every few hours*, the last line says how long your
 record is: *37 days recorded since 18 Aug*.
 
 **The chart** starts with the change over its range and the days it spans (*27 Aug - 26 Sep +24.2m +3.4%*), then
@@ -246,18 +274,18 @@ different - it is simply part of why the list redraws quickly.
 
 ## Hover text
 
-**Hover text is off until you ask for it.** Turn on **Show hover text** - in the Options menu, behind the
-settings icon, under the preset price ranges - and the panel starts explaining itself when you rest the pointer on
-something: the bank value gives you the exact total to the last gp, and the sort button, the band button, the
-Refresh link, the *"Item prices update every 24hrs"* line and every item in the Options menu say what they do.
-The Refresh link's hover reads *"Re-read your items and re-check the prices. Jagex publishes guide prices once a
-day."* - the same wherever you are, because a click does the same thing everywhere. Leave the switch off and
-nothing opens anywhere. It is off when you install the plugin, and it remembers whichever way you set it.
+**Hover text is always on.** Rest the pointer on something and the panel explains itself: the bank value gives you
+the exact total to the last gp, and the sort button, the band button, the Refresh link, the *"Guide prices update
+every few hours"* line and every item in the Options menu say what they do. Each one is a single short line. The
+Refresh link's hover reads *"Re-read your items and re-check the prices. Jagex publishes guide prices several times
+a day."* - the same wherever you are, because a click does the same thing everywhere.
 
-**An item row never opens a hover, at either setting.** Its detail is not a tooltip - you **click the row** and it
-opens on the page, under the row's own line, and stays there until you close it. That is also where you read an
-item's name when it is too long to fit on the row. So this switch changes nothing about the rows: click one and it
-opens whether the hover text is on or off.
+Version 1.2.0 took away the **Show hover text** switch that used to sit in the Options menu, off by default: every
+hover is one short line, so a setting to hide them was one more than the panel needs.
+
+**An item row never opens a hover.** Its detail is not a tooltip - you **click the row** and it opens on the page,
+under the row's own line, and stays there until you close it. That is also where you read an item's name when it is
+too long to fit on the row.
 
 The rows you leave open are remembered while you use the panel.
 
@@ -265,13 +293,22 @@ The rows you leave open are remembered while you use the panel.
 
 **"Now" is the Jagex GUIDE price** - the number the in-game Grand Exchange, the GE web site and RuneLite's own
 tooltips show. It comes out of RuneLite's price table, which the client already keeps up to date, so it costs
-no request at all.
+no request at all. With *Use live prices* on, the items that have traded in the last 24 hours are the exception - see
+*Live prices*, below.
 
-**"Then" is the same table on an earlier CALENDAR DAY.** The OSRS wiki republishes Jagex's guide prices as the
-page `Module:GEPrices/data.json`, roughly once a day; the plugin reads the revision history of that page once
-(one request), picks the revision whose own `%LAST_UPDATE%` stamp falls on the day the window asks for, and
-fetches the tables it needs in a single batched request. That is about **two requests a day whatever your bank
-holds** - there is no per-item lookup, ever. Item names are joined to item ids through the wiki's
+**"Then" is the same table as it stood a whole window earlier.** The OSRS wiki republishes Jagex's guide prices
+as the page `Module:GEPrices/data.json` - once a day until the end of September 2026, and about eight times a day
+since, each time Jagex moves its prices. The plugin keeps the list of those saves (the page's revision history:
+every save of the last eight days and one a day before that, back more than a year) and works out **which of them
+RuneLite's prices are** - "now" is that table's own time stamp. Each window then compares against the **newest
+table at least that many days older**: 1d against the table that stood 24 hours before, 7d against the one 7 x 24
+hours before, and so on. So a 1d move is always a day's move, never the hour or two between two of the wiki's
+saves. When RuneLite already has a table the wiki has not listed yet, "now" is the current time instead, and the
+plugin checks the wiki's list again on its next half-hourly check rather than waiting the usual six hours; when
+RuneLite is a step behind the wiki, the windows count back from the table RuneLite holds. The labels show the
+date of the table each window uses ("1d vs 06 Oct"); the card's hover and an opened row add its time. The plugin
+fetches the tables it needs in a single batched request - **a few small requests a day whatever your bank
+holds**, and there is no per-item lookup, ever. Item names are joined to item ids through the wiki's
 `prices.runescape.wiki/api/v1/osrs/mapping` table, fetched at most weekly.
 
 **Percentages truncate toward zero**, exactly as the GE site's do, and take their sign from the gp change: a
@@ -292,6 +329,7 @@ cash sits in the denominator and does not move. If you would rather read your ba
 is **always counted**, at what its **tradeable parts** are worth - crystal armour at its crystal armour seeds
 (three of them for a body), a slayer helmet at its black mask, a Bow of Faerdhinen at its inactive form - and
 such a row carries a real gp and percentage move, because the part it is made of has a guide price that moves.
+With *Use live prices* on, its figure is its parts' figures added up, and it wears the word of its weakest part.
 If one of its parts has no price on a given day, it is treated as alch-only for that day. The rest - graceful,
 void, barrows gloves, your fire cape - have only a **High Alchemy** value, so they are left out of the Bank value
 by default. Turn on *Include alch-only untradeables* and each of those is counted in the Bank value, at its alch
@@ -334,54 +372,84 @@ their movement; the status line says so in grey, and nothing is red about it.
 
 ## Live prices
 
-The guide price above is Jagex's, and Jagex publishes it **once a day**. That is the right number for most of a
-bank, but it means a Refresh usually changes nothing - and for the handful of items that really are being
-bought and sold all day, it is a day out of date. So there is a switch, **Use live prices**, and it is **on by
-default**.
+The guide price above is Jagex's, and Jagex publishes it **several times a day**. That is the right number for most of a
+bank, but it means a Refresh usually changes nothing - and for the items that really are being bought and sold
+all day, it can be hours out of date. So there is a switch, **Use live prices**, and it is **on by default**.
 
-With it on, an item that is *actively traded* is priced from the wiki's live traded series instead: the unit
-price you see is the midpoint of what people are paying and asking right now, the 1d figure compares it against
-that item's traded average for the day before, and a Refresh really does move it. Every window works the same
-way - **each one compares against that many calendar days before today**, so 1d is yesterday, 7d is a week ago
-to the day, and clicking the row names the day it used. Everything else in your bank
-carries on exactly as it did.
+With it on, **every item that has traded in the last 24 hours gets a figure from those trades** - the wiki's live
+traded series - and a Refresh really does move it. The figure is the item's move since the day your window points at: 1d
+is yesterday, and 7d, 30d, 90d and 180d use the day that many days back (clicking a row names the day it used).
+An item that has not traded keeps the guide price. Nothing is hidden: a figure built on thin
+trading says so, in one word, under its percentage.
 
-**"Actively traded" is five tests, and an item has to pass all of them:**
+**How a figure is made.** Three rules:
 
-- **At least 100 of it changed hands yesterday.** Below that there is not enough trade for a price to mean
-  anything - one person selling one item at a silly number *is* the whole day's market.
-- **The buy and sell prices are within 10 % of each other.** A wide gap means nobody agrees what the thing is
-  worth, and the midpoint between them is a guess rather than a price.
-- **The live price is within 50 % of the guide price.** This is the backstop: anything further out is a
-  manipulation, a mistake or a dead market, and the guide price is the safer number.
-- **Yesterday's buying and selling were within 10 % of each other too.** The same test, one day back, on the
-  day the 1d figure is measured against. A tinderbox bought at 37 gp and sold at 12 gp all day has a daily
-  "average" struck between two numbers a hundred percent apart: there is no yesterday's price there to compare
-  today with, whatever today looks like.
-- **The live price is within 50 % of yesterday's average.** An item that has apparently trebled since
-  yesterday almost certainly has not - it is a thin market, a coincidence of who happened to trade, or
-  somebody pushing a 1 gp item to 2 gp. This is your own rule about ignoring live changes over 50 %, applied
-  to yesterday as well as to the guide.
+- **Side with side.** Every trade has a buyer and a seller, and their prices sit a little apart. Compare the
+  latest price with a day's average of both and you read that gap as a move, and it flips every time the last
+  trade changes side. So the last 24 hours' buys are compared with yesterday's buy average, the last 24 hours' sells
+  with yesterday's sell average, and the figure is the mean of the two moves (or the one, when only one side has
+  traded).
+- **The middle of the last 24 hours.** "Today" is the last 24 hours and not the calendar day. Each side's "now" is
+  the middle price (the median) of what the plugin has seen of that side in those 24 hours - the latest price, the
+  prices it saw on its earlier checks (kept in memory only, and forgotten once they are a day old) and the last closed
+  hour's average - so one odd trade cannot carry it.
+- **Stray prices are dropped.** A price more than three times, or less than a third of, the item's usual price
+  (the middle of its guide price and yesterday's two averages) is ignored - a 1 gp print on a 1m item, say.
 
-Anything that fails a test keeps the daily guide price, and clicking the row says which test
-it failed first - *"Guide price - live not used: 12 traded yesterday"*, or *"buy/sell gap 100 % yesterday"*,
-or *"live price 181 % from yesterday's average"*. Nothing is hidden and nothing is estimated; every row is one
-series or the other, and the row tells you which.
+**The price on the row** is yesterday's average, the middle of its buy and sell averages, moved by the move. So a
+row's worth, its gp figure and its percentage always agree with one another; the price follows the last 24 hours'
+trades, but it cannot jump by the gap between buyers and sellers when the last trade changes side; and on a busy item
+it lands within a hair of the live middle price. The Bank value and the Net Worth History add up these prices. A
+row's price is the same whichever window is lit - the window changes what it is compared with. An item with no figure
+is priced at the guide.
 
-This matters more than it sounds. On a real 500-stack bank, pricing *everything* live moved 87 rows by over
-20 % on the 1d window against 1 row under the guide price - and almost all of those 87 were junk nobody buys,
-where a single odd trade is the entire day's evidence. The five tests are what keep those out while letting
-the items you actually watch move in real time. The last two were added after the first three let a tinderbox
-read **+181 %**: it really was traded, hundreds of times, and the buy and sell prices really were close
-together today - yesterday's were 12 gp and 37 gp, which is not a price to measure anything against. On that
-bank the two extra tests sent about seventy stacks back to the daily guide price, and every one of them reads
-about 0 % there.
+**Reported on one side only.** If only buyers (or only sellers) have traded in the last 24 hours, the row is priced at
+that side's own price - if all the trades were buyers paying that, that is the current price - and compared with that
+side's own average on the day it is compared with, so its worth, its was and its change still agree. It is no weaker
+for it and carries no word of its own - it never says `spread 55%`, since the other side's last price is a day old or
+more - and the open block says that the other side was silent. When the other side's first trade is reported the row
+moves to the middle of the two - once.
+
+**Solid or soft.** A figure is **solid** when it rests on real trading: a row with no word rests on trades from the
+last 24 hours, at least 10 traded on the day it is compared with, and a buy/sell spread under 10 %.
+
+A figure is **soft** in exactly three cases, and the small grey **word under the percentage** names the first that
+applies. A soft figure is drawn **exactly like a solid one**; you still see the figure, and you see how much to lean on
+it.
+
+| Word | What it means |
+|---|---|
+| `last 1d ago` | Nothing has traded in the last 24 hours, so the figure is yesterday's move: yesterday's average against the day before's (on a longer window, against that window's day). Always soft. The word is how long it has been since the item last traded - whole hours under a day (`last 5h ago`), whole days from a day on (`last 1d ago`, `last 2d ago`). The words from `last 10h ago` to `last 23h ago` are drawn a little smaller to fit. When the plugin has no time for the item's last trade, the plain word `yday` stands in. |
+| `low vol 7` | Fewer than ten of the item changed hands on the thinner side on the day it is compared with - the number is that count. |
+| `spread 55%` | The latest buy and sell prices - both from the last 24 hours - are more than 10 % of their middle apart, and the number is how far (55 % here). A side that has been silent for a day makes the pair no spread, so an item reported on one side only never says it. The word is drawn a little smaller to fit. Click the row for the sentence that explains it. |
+| `no trades` | There is no figure - nothing traded in the last 24 hours, and nothing from yesterday to fall back on, or no earlier price on the day to compare the last 24 hours' trades with. The row prints a dash and no gp figures, is valued at the guide price, and sorts last. This is a label, not a warning. |
+
+Everything else is solid: the money traded, the quiet of the last hour, how many prices the plugin has seen, the
+price of the item and whether the buyers' and the sellers' moves agree no longer matter.
+
+A row on `last 1d ago` is priced at yesterday's average, since that is all there is to price it from.
+
+**Sorting.** One list: a soft figure sorts by its figure like any other, in either direction, and only the rows with
+no figure (the dash) come last. The word under the percentage is what says how much to lean on a figure; the order
+does not.
+
+**The card.** It looks the same. Hovering it adds how many rows are solid (*"412 of 497
+rows solid"*) when some are soft, so you can tell a bank whose move rests on solid rows from one that does not.
+
+**If the traded prices are out of date.** When the plugin cannot reach the wiki and its latest traded snapshot is
+more than six hours old, nothing is graded and every row is on the guide price, as with the switch off. A window
+whose daily figures the wiki has not delivered yet shows a dash until they arrive.
+
+**Why it is built this way.** Pricing everything by its latest print put cheap, thinly traded items at the top of
+*Percent change* on the strength of a single odd trade, and sending those items back to the guide left them on a
+number that could be hours old. Here every item that traded gets a figure, the side-with-side rule stops the gap
+between buyers and sellers passing for a move, and a figure that is thin says so in one word.
 
 **Turn it off** (the Options menu behind the settings icon, or RuneLite's settings) and the plugin is exactly
 the guide-price plugin it was before: one series for everything, no traded requests made at all, and every
 figure matching the Grand Exchange website. That last point is the reason to turn it off - **the GE website
 shows the guide price, so the two only agree with this switch off**. With it on, the line at the foot of the
-card says so: *"Live prices on - thin items daily"*.
+card says so: *"Live prices on - others from the guide"*.
 
 ## Settings
 
@@ -405,8 +473,7 @@ follows.
 | Show alch-only items | Lists untradeables with no tradeable parts, at alch value, after the other rows. Off by default. Searching finds them either way. The tick is in the *List options* menu at the end of the search box. |
 | Include inventory and worn gear | Items in your inventory and worn gear count in the bank value and are listed with the bank's stacks. They are read when you open or close the bank, or press Refresh. On by default. |
 | Include Grand Exchange offers | Items in your Grand Exchange offers, and the coins committed to them or waiting to be collected, count in the bank value and are listed with the bank's stacks. They are read when you close the bank or press Refresh. On by default. |
-| Show hover text | The bank value and the panel's controls explain themselves when you rest the pointer on them. Off by default. Item rows never use hover text either way - click a row to open its detail. |
-| Use live prices | Actively traded items use the wiki's live traded prices for every figure; thin items keep the daily guide price. On by default. |
+| Use live prices | Every item that has traded in the last 24 hours gets a figure from the wiki's live traded prices, solid or soft with a word under the percentage when it is soft; items with no trades keep the guide price. On by default. |
 | Up colour | The colour of a rise, on both tabs: the figures, the rows, the card's edge and the chart. Green by default. |
 | Down colour | The colour of a fall, on both tabs. Red by default. |
 | Single chart colour | Draws the Net Worth History chart in one colour instead of the up and down colours. On by default. |
@@ -416,7 +483,7 @@ follows.
 Most of them are also controls in the panel's own **Options** menu, behind the settings icon in the card's
 top-right corner: the three that decide what the card draws, a line, and the *Up colour* and *Down colour* swatches,
 then *Colour presets* (see below), then *Use live prices* and the four that decide what the card counts and which stacks
-get a row, then *Preset price ranges* as three boxes and *Show hover text*, then a *Net worth chart* section with
+get a row, then *Preset price ranges* as three boxes, then a *Net worth chart* section with
 *Single chart colour* and, if you have hidden days, *Include days before v1.0.9* (or *v1.1.1*, whichever applies to you). A swatch opens
 RuneLite's colour picker beside the sidebar, and the panel changes as you drag. *Reset to default* puts the preset
 ranges and the colours back (not Slot 1), and *OK* closes the menu. *Show preset price ranges* has no entry of its own: the band button in the sidebar is
@@ -449,14 +516,17 @@ Everything is under `~/.runelite/plugin-data/bank-portfolio-tracker/`:
 | `revindex.json` | the guide page's revision history (refreshed every six hours) |
 | `baseline-D1.json` … `baseline-D180.json` | one guide table per window |
 | `traded-latest.json` | the newest live traded snapshot (only while *Use live prices* is on) |
+| `traded-H1.json` | the last closed hour's traded averages, fetched once an hour while the panel is on screen (only while *Use live prices* is on); asked for again a few minutes later, up to twice, while the wiki has not cut the hour yet |
 | `traded-D1.json` … `traded-D180.json` | one day's traded averages per window (only while *Use live prices* is on) |
+| `traded-D2.json` | yesterday's traded averages, kept as the day before's when the day rolls over at midnight UTC - no request (only while *Use live prices* is on) |
 
 If you ran an earlier build, these files sat in `~/.runelite/bank-portfolio-tracker/`; RuneLite moves that folder
 to the new place for you the first time the plugin runs, and nothing is lost.
 
 Settings live in RuneLite's config group `bankpricemovement`. **Nothing about your bank ever leaves the
 machine**: the only outbound requests are the wiki GETs above - and, while *Use live prices* is on, the wiki's own
-whole-game traded endpoints, which are asked for every item in the game at once rather than for yours. None of
+whole-game traded endpoints (the latest prices, each day's averages and the last hour's), which are asked for every
+item in the game at once rather than for yours. None of
 them carries anything about you or what you own.
 
 ## Getting started
@@ -468,9 +538,9 @@ there the moment you open the sidebar.
 
 ## Caveats worth knowing
 
-- The guide price moves at Jagex's pace, roughly once a day, and everything *Use live prices* leaves on it is a
-  day-over-day comparison rather than a ticker: refreshing more often than that changes nothing for those rows.
-  The line at the foot of the card says why when you hover it - with *Show hover text* on - along with the time
+- The guide price moves at Jagex's pace, several times a day, and an item with no trades stays on it: for
+  those rows, refreshing more often than that changes nothing.
+  The line at the foot of the card says why when you hover it, along with the time
   the prices on screen were last checked. The guide price is the one shown on the Grand Exchange website, so
   **the plugin agrees with that site only with *Use live prices* off**. RuneLite's own item hover uses the
   wiki's traded price by default, which differs most on thinly traded items - so a guide row here can sit a long
@@ -478,7 +548,10 @@ there the moment you open the sidebar.
   guide price by at most about 5% a day, so a large move shows over several days.
 - A percentage here can differ from the GE site's by a tenth: the site prints whole percents of the same
   truncated figure.
-- An item with no baseline on the chosen day shows "-" and sorts last under every ordering.
+- An item with no baseline on the chosen day shows "-" and sorts last under every ordering. With *Use live prices*
+  on, an item with nothing to measure says `no trades` under its dash.
+- A soft figure is a real measurement from thin trading, not a guess, but it can swing on a few trades: the word
+  under its percentage is there so you can see that at a glance.
 - Bank value counts every stack that has a price, plus your coins and platinum tokens unless you switch
   them off. Untradeables RuneLite can take apart are always in it, at what their parts are worth, which is what
   anyone would pay you for those parts. The ones it cannot are in it only when you ask for them, and then at
@@ -494,7 +567,7 @@ Tell us in the 2hBuilds Discord - the mark beside the settings icon opens it. Th
 
 - **Which version you run.** The settings menu's header shows it.
 - **What the sidebar shows.** A screenshot of the card and the list. When prices could not be fetched, the card's
-  status line says so, and its hover (with *Show hover text* on) says why.
+  status line says so, and its hover says why.
 - **The plugin's log lines.** RuneLite keeps one log for the whole client. To find it, right-click the camera icon
   at the top of the RuneLite window, click *Open screenshot folder...*, go up one folder and open `logs`. The file
   is `client.log` (Windows may show it as just `client`). Search it for `bank-portfolio-tracker` and for

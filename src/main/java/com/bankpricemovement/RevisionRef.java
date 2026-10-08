@@ -3,37 +3,53 @@ package com.bankpricemovement;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * One line of the guide table's revision history - who published it, when, and under what edit comment
- * (addendum L, contract line L4) - plus the pure selection rule that turns a history into the ONE revision a
- * window's baseline must be read from (L5, {@link #pickThen}).
+ * (addendum L, contract line L4) - plus the pure rules that turn a history into the ONE revision a window's
+ * baseline must be read from ({@link #pickThen}, contract 1.1.2 T1) and keep that history small enough to hold
+ * ({@link #pruned}, T2).
  *
  * <p><b>Why the history is indexed at all.</b> Addendum K asked the wiki for "the newest revision at or before
- * now minus the window" and used it directly. Six analysts measured that selector against live data and it is a
- * coin flip: the bot writes day D's table at a RANDOM hour of day D (02:11-22:20 UTC over 247 days, median about
- * 12:00), so "24 hours ago" lands on day D-1's table only 50-56 % of clock hours (L-C). On the user's 524-item
- * bank a wrong day changes the printed percent on 40-60 % of rows and flips its sign on 3-5 %; a 1d window spans
- * ZERO guide steps 14 % of the time and TWO steps 14-43 % of the time. The fix is to stop asking about instants
- * altogether: one cheap call brings back about 232 days of history ({@code rvlimit=250}, ~3.6 KB gzipped), and
- * the baseline is chosen by CALENDAR DAY from that list, locally, whenever the anchor day or the window changes
- * (L4, L10).
+ * now minus the window" and used it directly, one request per window. One cheap call instead brings back 250
+ * revisions ({@code rvlimit=250}, a few KB gzipped), and the baseline is chosen from that list LOCALLY whenever the
+ * "now" or the window changes (L4, L10).
  *
- * <p><b>Why a bot revision is preferred over a human one on the same date.</b> The revision timestamp is not the
- * data day (L-E): human maintenance edits - Riblet15, Spineweilder, Coopermor, 24 of 194 in-window revisions -
- * save the page with the PREVIOUS day's prices still in it, under the next day's timestamp. Lead check:
- * revision 15329323 (Riblet15, 2026-09-03T06:46Z, "new items with initial ge prices") carries a
- * {@code %LAST_UPDATE_F%} of "02 September 2026 07:21:23". Bot revisions all carry the comment
- * {@value #BOT_COMMENT} (200/200) and human ones never do (0/24), so the comment - or the bot's user name -
- * separates them cleanly. The preference is only the FIRST guess: {@code PriceService} still checks the
- * {@code %LAST_UPDATE%} day of the body it gets back (L5), so a misjudged edit costs one retry, never a wrong
- * number on a row.
+ * <p><b>Why the choice is by TIME again</b> (contract 1.1.2, T1). Addendum L chose by CALENDAR DAY because the
+ * wiki's price bot saved Jagex's table exactly once a day (247 of 247 days, L-C), so "the table of day D - N" was one
+ * well-defined revision. Since 30 Sep 2026 the bot saves it about EIGHT times a day, each save moving 5-20 % of all
+ * items, and "the newest revision of a date" became the last of eight: with the anchor rule's "+1 day" on top, the 1d
+ * window compared RuneLite's price with a table about two and a half hours old and 368 of 499 of the user's rows
+ * read 0.0 %. So "then" for window N is now the newest revision whose time is at least N x 24 h before the "now"
+ * table's time - which in the once-a-day regime of September is still the previous day's table whenever that day's
+ * run came earlier in the day.
+ *
+ * <p><b>A revision's time.</b> The table's own {@code %LAST_UPDATE%} when its body has been read (a baseline file
+ * carries it as {@code bucketSeconds}, a fetched body as {@code dataSeconds}), and the save time {@link #editSeconds()}
+ * until then: the bot saves about ten minutes after Jagex publishes (measured on the stored baselines, 5-10 min, in
+ * both regimes), so the save time errs on the late side and a window chosen by it is never SHORTER than N x 24 h.
+ * The service hands the known table times in ({@link #pickThen(List, long, Map, long)}); this class holds none.
+ *
+ * <p><b>Why a bot revision is preferred over a human one.</b> The revision timestamp is not the data time (L-E):
+ * human maintenance edits - Riblet15, Spineweilder, Coopermor, 24 of 194 in-window revisions in 2026 - save the page
+ * with an OLDER table still in it under a later timestamp. Lead check: revision 15329323 (Riblet15,
+ * 2026-09-03T06:46Z, "new items with initial ge prices") carries a {@code %LAST_UPDATE_F%} of "02 September 2026
+ * 07:21:23". Bot revisions all carry the comment {@value #BOT_COMMENT} (200/200) and human ones never do (0/24), so
+ * the comment - or the bot's user name - separates them cleanly, and a human edit is chosen only where its day has no
+ * bot revision old enough.
  *
  * <p>Immutable and safe to share: built on an OkHttp dispatcher thread by
- * {@code GuidePriceClient.parseRevisionIndex}, kept by the service, read while rows are computed, and written to
+ * {@code GuidePriceClient.parseRevisionPage}, kept by the service, read while rows are computed, and written to
  * {@code revindex.json} by {@code PriceStore}.
  */
 public final class RevisionRef
@@ -88,8 +104,9 @@ public final class RevisionRef
 	}
 
 	/**
-	 * When the revision was saved, unix seconds. Cache identity and nothing else (L7): the day the prices in it
-	 * belong to is {@code GuideSnapshot.dataDay()}, read from the body's {@code %LAST_UPDATE%}.
+	 * When the revision was saved, unix seconds. The revision's time for {@link #pickThen} until its body has been
+	 * read; from then on the body's own {@code %LAST_UPDATE%} ({@code GuideSnapshot.dataSeconds()}) is, because a
+	 * human edit can carry an older table under a later save time (L-E).
 	 */
 	public long editSeconds()
 	{
@@ -113,8 +130,8 @@ public final class RevisionRef
 	 * {@value #BOT_USER} account, or the {@value #BOT_COMMENT} comment.
 	 *
 	 * <p>Both are matched on the trimmed text and case-sensitively, which is deliberately strict: a bot revision
-	 * mistaken for a human one only loses the preference (the newest revision of the date is then taken), and
-	 * the {@code %LAST_UPDATE%} check downstream (L5) catches a stale body either way.
+	 * mistaken for a human one only loses the preference (the newest revision old enough is then taken whoever
+	 * made it), and the body's own {@code %LAST_UPDATE%} is what the rows are labelled with either way.
 	 */
 	public boolean isBot()
 	{
@@ -122,155 +139,207 @@ public final class RevisionRef
 	}
 
 	/**
-	 * The UTC calendar date this revision was saved on. UTC and never {@code ZoneId.systemDefault()} (L9): the
-	 * Jagex guide price steps once a day near the top of the UTC day (rollover observed 00:47-02:06 UTC, L-A) and
-	 * the wiki's bot publishes that step later the same UTC day (02:11-22:20, L-C), so every date in this plugin's
-	 * selection maths is a UTC date; using the machine's zone would move a user in Sydney a whole day off.
+	 * The UTC calendar date this revision was saved on - the day {@link #pruned} files it under. UTC and never
+	 * {@code ZoneId.systemDefault()} (L9): every date this plugin prints beside a guide table is a UTC date, and
+	 * the machine's zone would move a user in Sydney a whole day off.
 	 */
 	public LocalDate editDay()
 	{
 		return dayOf(editSeconds);
 	}
 
-	// ---------------------------------------------------------------- L5: the pure selection rule
+	// ---------------------------------------------------------------- T1: the pure selection rule
 
 	/**
-	 * The revision whose body holds the guide prices of the calendar day {@code target} - the "then" side of a
-	 * window (L5).
+	 * This revision's time as {@link #pickThen} reads it (contract 1.1.2, T1): the table's own {@code %LAST_UPDATE%}
+	 * when {@code tableSeconds} knows it (a positive value under this revision's id), and the save time otherwise.
 	 *
-	 * <p>The rule, in order:
-	 * <ol>
-	 * <li>consider only revisions saved on {@code target} or earlier;</li>
-	 * <li>take the NEWEST such date that has any revision at all - normally {@code target} itself (465 of 465
-	 * dates sampled had one), otherwise this is the "walk back a date at a time" step of L5, and the caller
-	 * reports the date it actually landed on rather than the one it asked for;</li>
-	 * <li>within that date, prefer the newest BOT revision; with none, take the newest revision of the date
-	 * whoever made it.</li>
-	 * </ol>
-	 *
-	 * <p>Answering null is a real outcome, not a failure: it means the whole index is NEWER than the target,
-	 * which is what a 180d window looks like on a page whose history does not reach back that far. The panel
-	 * shows "No 180d history" for it and the service treats it as data, not as an error (L11).
-	 *
-	 * <p>Pure and order-independent - the list is scanned, not assumed sorted - so it can be tested on its own
-	 * and called from the service's executor, the dev bridge, or a test, with no clock and no network.
-	 *
-	 * @param index  the revision history, newest first by convention; null, empty and null entries are tolerated
-	 * @param target the UTC calendar day whose prices are wanted, {@code MovementWindow.targetDate(anchorDay)};
-	 *               null (no anchor day yet) answers null
-	 * @return the revision to fetch, or null when nothing in the index is that old
+	 * @param tableSeconds revision id to the table time read off its body; null, a missing id, a null value (a body
+	 *                     the client refused) and a value of 0 or less all read as "not known"
 	 */
-	public static RevisionRef pickThen(final List<RevisionRef> index, final LocalDate target)
+	public long timeIn(final Map<Long, Long> tableSeconds)
 	{
-		if (index == null || index.isEmpty() || target == null)
+		final Long known = tableSeconds == null ? null : tableSeconds.get(revId);
+		return known != null && known > 0L ? known : editSeconds;
+	}
+
+	/**
+	 * {@link #pickThen(List, long, Map, long)} with no table time known and nothing skipped: every revision is at its
+	 * save time.
+	 */
+	public static RevisionRef pickThen(final List<RevisionRef> index, final long targetSeconds)
+	{
+		return pickThen(index, targetSeconds, null, 0L);
+	}
+
+	/**
+	 * The revision whose body holds the guide table a window's "then" side must be read from (contract 1.1.2, T1):
+	 * the NEWEST revision whose time ({@link #timeIn}) is at or before {@code targetSeconds} - and when that one is a
+	 * human edit, the newest BOT revision of the same UTC day at or before the target instead, if the day has one.
+	 * Newest by that same time, the revision id breaking a tie.
+	 *
+	 * <p>{@code targetSeconds} is the "now" table's time minus N x 24 h ({@code MovementWindow.targetSeconds}), so the
+	 * revision answered is never the one RuneLite's prices match, never one newer than it, and its table is at least
+	 * N x 24 h older than the "now" table - which is what makes a 1d move a day's move rather than one Jagex step's.
+	 *
+	 * <p>Why the bot is preferred within its day and not across days: a human edit's body is the table it was saved
+	 * over, never a newer one, so the bot run just before it on the same day carries the same prices without the
+	 * edit's doubts (L-E); across a day there is no such bot, and walking back to an older day's run would trade a
+	 * table at worst a step stale for one a day or more older. The bot saves eight times a day, so in practice the
+	 * answer is the newest bot revision old enough.
+	 *
+	 * <p>Answering null is a real outcome, not a failure: it means the whole index is NEWER than the target, which is
+	 * what a 180d window looks like on a history that does not reach back that far. The panel shows "No 180d history"
+	 * for it and the service treats it as data, not as an error (L11).
+	 *
+	 * <p>Pure and order-independent - the list is scanned, not assumed sorted - so it can be tested on its own and
+	 * called from the service's executor, the dev bridge, or a test, with no clock and no network.
+	 *
+	 * @param index         the revision history, newest first by convention; null, empty and null entries are tolerated
+	 * @param targetSeconds the latest time, unix seconds, the "then" table may carry
+	 * @param tableSeconds  the table times known so far, by revision id ({@link #timeIn}); may be null
+	 * @param skipRevId     a revision to leave out - the service's one retry past a body the client refused; 0 skips
+	 *                      nothing
+	 * @return the revision to read, or null when nothing in the index is that old
+	 */
+	public static RevisionRef pickThen(final List<RevisionRef> index, final long targetSeconds,
+		final Map<Long, Long> tableSeconds, final long skipRevId)
+	{
+		if (index == null || index.isEmpty())
 		{
 			return null;
 		}
 
-		LocalDate day = null;
-		RevisionRef bot = null;
 		RevisionRef any = null;
-
+		long anyTime = 0L;
 		for (final RevisionRef ref : index)
 		{
-			if (ref == null)
+			if (ref == null || (skipRevId != 0L && ref.revId == skipRevId))
 			{
 				continue;
 			}
-
-			final LocalDate refDay = ref.editDay();
-			if (refDay.isAfter(target))
+			final long time = ref.timeIn(tableSeconds);
+			if (time <= targetSeconds && later(time, ref, anyTime, any))
 			{
-				continue;
-			}
-
-			final int against = day == null ? 1 : refDay.compareTo(day);
-			if (against > 0)
-			{
-				// A newer date than anything seen so far: it wins outright, so both candidates restart on it.
-				day = refDay;
 				any = ref;
-				bot = ref.isBot() ? ref : null;
-			}
-			else if (against == 0)
-			{
-				if (isNewer(ref, any))
-				{
-					any = ref;
-				}
-				if (ref.isBot() && isNewer(ref, bot))
-				{
-					bot = ref;
-				}
+				anyTime = time;
 			}
 		}
+		if (any == null || any.isBot())
+		{
+			return any;
+		}
 
+		final LocalDate day = dayOf(anyTime);
+		RevisionRef bot = null;
+		long botTime = 0L;
+		for (final RevisionRef ref : index)
+		{
+			if (ref == null || !ref.isBot() || (skipRevId != 0L && ref.revId == skipRevId))
+			{
+				continue;
+			}
+			final long time = ref.timeIn(tableSeconds);
+			if (time <= targetSeconds && day.equals(dayOf(time)) && later(time, ref, botTime, bot))
+			{
+				bot = ref;
+				botTime = time;
+			}
+		}
 		return bot != null ? bot : any;
 	}
 
-	/**
-	 * The first retry candidate of L5: the revision saved just BEFORE {@code chosen} on the same date, or null
-	 * when {@code chosen} was the first of its date.
-	 *
-	 * <p>Wanted when the body that came back carries an OLDER {@code %LAST_UPDATE%} than the date asked for -
-	 * a name-only edit saved after the bot's run, which republishes the previous table under a later timestamp
-	 * (L-E). The revision underneath it on the same date is then the one holding that date's prices.
-	 *
-	 * @param index  the revision history; null, empty and null entries are tolerated
-	 * @param chosen the revision that came back stale; null answers null
-	 * @return the next revision down on that date, or null when there is none
-	 */
-	public static RevisionRef previousOn(final List<RevisionRef> index, final RevisionRef chosen)
+	/** True when {@code candidate} at {@code time} is newer than {@code incumbent} at {@code incumbentTime}; a null incumbent loses. */
+	private static boolean later(final long time, final RevisionRef candidate, final long incumbentTime,
+		final RevisionRef incumbent)
 	{
-		if (index == null || chosen == null)
+		if (incumbent == null)
 		{
-			return null;
+			return true;
 		}
-
-		final LocalDate day = chosen.editDay();
-		RevisionRef best = null;
-		for (final RevisionRef ref : index)
-		{
-			if (ref == null || ref.revId == chosen.revId || !day.equals(ref.editDay()) || !isNewer(chosen, ref))
-			{
-				continue;
-			}
-			if (isNewer(ref, best))
-			{
-				best = ref;
-			}
-		}
-		return best;
+		return time != incumbentTime ? time > incumbentTime : candidate.revId > incumbent.revId;
 	}
 
-	/**
-	 * The second retry candidate of L5: the newest BOT revision of one date, used with the day AFTER the target
-	 * when the target's only revision turned out to be a human edit carrying the wrong day's prices.
-	 *
-	 * @param index the revision history; null, empty and null entries are tolerated
-	 * @param day   the UTC date to look on; null answers null
-	 * @return that date's newest bot revision, or null when it has none
-	 */
-	public static RevisionRef newestBotOn(final List<RevisionRef> index, final LocalDate day)
-	{
-		if (index == null || day == null)
-		{
-			return null;
-		}
+	// ---------------------------------------------------------------- T2: what the index keeps
 
-		RevisionRef best = null;
-		for (final RevisionRef ref : index)
+	/** Seconds in a day, the unit both keeping rules are counted in. */
+	static final long DAY_SECONDS = 24L * 60L * 60L;
+
+	/**
+	 * How many days back from the newest revision EVERY revision is kept: {@value} (contract 1.1.2, T2). The 1d and 7d
+	 * windows choose among the day's eight tables, so every one of them must be there; one day of margin past the 7d
+	 * window covers a "now" a few hours older than the newest revision (RuneLite behind the index).
+	 */
+	public static final int FULL_DAYS = 8;
+
+	/**
+	 * How many days back from the newest revision the index reaches at all: {@value}. Past {@link #FULL_DAYS} it keeps
+	 * ONE revision per UTC day, which is all the 30d, 90d and 180d windows can tell apart, and 400 days is the 180d
+	 * window with more than a year's margin - a few hundred lines, about 30 KB on disk.
+	 */
+	public static final int KEPT_DAYS = 400;
+
+	/**
+	 * The index as it is kept (contract 1.1.2, T2): every revision from the last {@link #FULL_DAYS} days before the
+	 * newest one, and before that ONE per UTC day - the day's LAST bot revision, or its last revision of any kind when
+	 * the day has no bot run - back to {@link #KEPT_DAYS} days; nothing older. Newest first, one entry per revision id
+	 * (the first met wins), unmodifiable.
+	 *
+	 * <p>Why a rule and not a line count: the old cap of 400 lines was sized for the 1.1 revisions a day of the
+	 * once-a-day era, and at eight a day it covered about ten days - the 180d window would have read "No 180d history"
+	 * from late October. Counted from the NEWEST revision rather than the clock, so a stale clock cannot empty the
+	 * index, and the rule is the same on every machine.
+	 *
+	 * @param refs any history, in any order; null and null entries are tolerated
+	 */
+	public static List<RevisionRef> pruned(final Collection<RevisionRef> refs)
+	{
+		final List<RevisionRef> sorted = new ArrayList<>();
+		final Set<Long> seen = new HashSet<>();
+		if (refs != null)
 		{
-			if (ref == null || !ref.isBot() || !day.equals(ref.editDay()))
+			for (final RevisionRef ref : refs)
+			{
+				if (ref != null && seen.add(ref.revId))
+				{
+					sorted.add(ref);
+				}
+			}
+		}
+		if (sorted.isEmpty())
+		{
+			return Collections.emptyList();
+		}
+		sorted.sort(NEWEST_FIRST);
+
+		final long newest = sorted.get(0).editSeconds;
+		final long fullFrom = newest - FULL_DAYS * DAY_SECONDS;
+		final long keptFrom = newest - KEPT_DAYS * DAY_SECONDS;
+		final List<RevisionRef> kept = new ArrayList<>();
+		final Map<LocalDate, RevisionRef> daily = new LinkedHashMap<>();
+		for (final RevisionRef ref : sorted)
+		{
+			if (ref.editSeconds >= fullFrom)
+			{
+				kept.add(ref);
+				continue;
+			}
+			if (ref.editSeconds < keptFrom)
 			{
 				continue;
 			}
-			if (isNewer(ref, best))
+			// Newest first, so the first revision met on a day is that day's last; a bot run met later on the
+			// same day still beats a human edit kept before it.
+			final LocalDate day = ref.editDay();
+			final RevisionRef held = daily.get(day);
+			if (held == null || (!held.isBot() && ref.isBot()))
 			{
-				best = ref;
+				daily.put(day, ref);
 			}
 		}
-		return best;
+		kept.addAll(daily.values());
+		kept.sort(NEWEST_FIRST);
+		return Collections.unmodifiableList(kept);
 	}
 
 	/**
@@ -280,16 +349,6 @@ public final class RevisionRef
 	static LocalDate dayOf(final long seconds)
 	{
 		return Instant.ofEpochSecond(seconds).atOffset(ZoneOffset.UTC).toLocalDate();
-	}
-
-	/** True when {@code candidate} was saved after {@code incumbent} (a null incumbent loses). */
-	private static boolean isNewer(final RevisionRef candidate, final RevisionRef incumbent)
-	{
-		if (incumbent == null)
-		{
-			return true;
-		}
-		return NEWEST_FIRST.compare(candidate, incumbent) < 0;
 	}
 
 	@Override

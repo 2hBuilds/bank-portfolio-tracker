@@ -391,22 +391,26 @@ public class WidgetsTest
 				assertTrue("the caption row saying \"" + word + "\" asks for " + row + " px of " + inner, row <= inner);
 			}
 
-			// S3: the update line is a CONSTANT sentence in the footnote's 12 px face, so it is never fitted - it
-			// has to fit outright, or the card's last line reads "Item prices update every 24h..." (a JLabel too
+			// S3: the update line is a CONSTANT sentence in the footnote's face, so it is never fitted - it
+			// has to fit outright, or the card's last line reads "Guide prices update every f..." (a JLabel too
 			// narrow for its text ellipsises it itself, so the failure is a shortened SENTENCE and never a broken
-			// row - which is why this line may go unfitted where a figure may not). It is measured at 11 px as
-			// well, the size addendum S line S1 names, so the rule holds at either of the card's small faces; the
-			// 12 px face leaves about a tenth of the card spare for a wider physical Dialog than this machine's.
-			assertFits(BankPriceMovementPanel.UPDATE_TEXT, Widgets.sans(12), inner);
-			assertFits(BankPriceMovementPanel.UPDATE_TEXT, Widgets.sans(11), inner);
+			// row - which is why this line may go unfitted where a figure may not). Since 1.1.2 T4 the line is drawn at
+			// 11 px (UPDATE_SIZE, the size addendum S line S1 names): the user's two wordings measure 199 and 203 px at
+			// 12, over the card's 191, and 182 and 181 at 11, so the rule is held at the size the line is drawn at.
+			// 1.1.2 T4: the user's two lines, word for word - a constant compared with itself pins nothing.
+			assertEquals("Guide prices update every few hours", BankPriceMovementPanel.UPDATE_TEXT);
+			assertEquals("Live prices on - others from the guide", BankPriceMovementPanel.UPDATE_LIVE_TEXT);
+			assertEquals(11, BankPriceMovementPanel.UPDATE_SIZE);
+			assertFits(BankPriceMovementPanel.UPDATE_TEXT, Widgets.sans(BankPriceMovementPanel.UPDATE_SIZE), inner);
 			// T5: the same line has a second sentence since addendum T, and it is the LONGER of the two. The rule is
-			// the rule - the line is still never fitted, so "Live prices on - thin items dail..." is the failure this
+			// the rule - the line is still never fitted, so "Live prices on - others from the g..." is the failure this
 			// measurement exists to catch, and it would be the card's own answer to "why did my figures just move?"
 			// that came out cut.
-			assertFits(BankPriceMovementPanel.UPDATE_LIVE_TEXT, Widgets.sans(12), inner);
-			assertFits(BankPriceMovementPanel.UPDATE_LIVE_TEXT, Widgets.sans(11), inner);
-			System.out.println("the update line, live: " + width(BankPriceMovementPanel.UPDATE_LIVE_TEXT, Widgets.sans(12))
-				+ " px of " + inner + " (guide: " + width(BankPriceMovementPanel.UPDATE_TEXT, Widgets.sans(12)) + ")");
+			assertFits(BankPriceMovementPanel.UPDATE_LIVE_TEXT, Widgets.sans(BankPriceMovementPanel.UPDATE_SIZE), inner);
+			System.out.println("the update line, live: "
+				+ width(BankPriceMovementPanel.UPDATE_LIVE_TEXT, Widgets.sans(BankPriceMovementPanel.UPDATE_SIZE))
+				+ " px of " + inner + " (guide: "
+				+ width(BankPriceMovementPanel.UPDATE_TEXT, Widgets.sans(BankPriceMovementPanel.UPDATE_SIZE)) + ")");
 
 			// Sentences go through the fitter with the whole text on the tooltip (N 4.2, 3.6).
 			assertFitted("180d vs 31 Dec - logged out", Widgets.sans(12), inner);
@@ -504,14 +508,15 @@ public class WidgetsTest
 	}
 
 	/**
-	 * What {@link Widgets#setFitted} leaves on a label, pinned in one place because addendum AH3 now READS it
-	 * back: the panel's {@code adoptFittedHover} takes whatever tooltip the fitter hung on a label and registers
-	 * it as that label's hover, so the "Show hover text" switch can silence it with the rest.
+	 * What {@link Widgets#setFitted} leaves on a label, pinned in one place because the sidebar depends on it: the panel
+	 * lets whatever tooltip the fitter hung on its total, footnote, band target and problem line stand as that label's
+	 * hover (addendum AH3 once registered each one under the "Show hover text" switch, which release 1.2.0 deleted - the
+	 * hovers are always on now, and the fitter's tooltip is the hover).
 	 *
 	 * <p>The rule is UNCONDITIONAL, and that is the half nothing pinned before: the whole text goes on the
 	 * tooltip whether the label had to be CUT or fitted whole, and only an empty (or null) text leaves a label
 	 * with none - which also CLEARS one already there. So a label a reader can read in full still carries a
-	 * hover, which is why the panel has to adopt every fitted label rather than the ones it expects to be cut,
+	 * hover, which is why the panel need not tell the labels it expects to be cut from the others,
 	 * and why {@code MovementRowPanel} clears the tooltip on its price label even though the fit order keeps a
 	 * price whole.
 	 */
@@ -942,19 +947,6 @@ public class WidgetsTest
 		assertEquals(3, Widgets.triangle(true, 0, ColorScheme.BRAND_ORANGE).getIconWidth());
 		assertEquals(3, Widgets.triangle(false, -5, ColorScheme.BRAND_ORANGE).getIconHeight());
 	}
-
-	// ---------------------------------------------------------------- the check box (addendum AH)
-
-	/**
-	 * AH: the switch's glyph is an empty SQUARE when the switch is off and the same square with a tick through
-	 * it when it is on - so the two states have to be visibly different, and the empty one has to read as a box
-	 * with nothing in it rather than as a mark of its own.
-	 *
-	 * <p>Why the difference is asserted and not assumed. "Show hover text" ships OFF, so its box is the first
-	 * one a reader ever sees, and it is read with no ticked box beside it to compare against: if the two states
-	 * drew the same ink the menu would say nothing about what is on and what is off, which is the whole reason
-	 * addendum AH draws a box at all instead of leaving RuneLite's look and feel to paint blank space.
-	 */
 
 	/** Every glyph paints headless, has the size the addendum gives it, and actually puts ink down. */
 	@Test

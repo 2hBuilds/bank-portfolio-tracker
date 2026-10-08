@@ -60,12 +60,6 @@ public class BankPriceMovementConfigTest
 		// 1.0.9 part 3: the Grand Exchange switch, the sixth field of the same ViewOptions and the seventeenth key
 		// - the player's offers counted and listed beside the bank's stacks. On by default, like the carried one.
 		"countGrandExchange",
-		// Addendum AH: it landed as the sixteenth key and the sixth field of the same ViewOptions, and is the
-		// fifteenth and the fifth since addendum AO - whether the sidebar shows hover text at all. OFF by default,
-		// alone on this page in showing LESS than the build before it. It was deleted for one day by addendum AI
-		// and restored by AJ, which is why a stored value under this spelling may have been swept once: the key
-		// never changed, so a profile that kept it still reads back.
-		"showHoverText",
 		// Addendum AU: the sixteenth key and the last on the page - the tab the sidebar opens on (Items unless the
 		// player chose Net Worth History). The player's choice, never the last tab used.
 		"startTab",
@@ -134,13 +128,13 @@ public class BankPriceMovementConfigTest
 	 * setting on every user's profile. A key ADDED must be added to the list deliberately - which is the whole of
 	 * the ceremony, and the reason it is cheap enough to keep.
 	 *
-	 * <p>Fifteen since addendum AO, which took one away and put nothing in its place: {@code holdingOnRows} went
-	 * (AO1) because addendum AN's three-line row prints the stack and the item both, so the switch reached
-	 * nothing drawn. It went sixteen at addendum AH ({@code showHoverText}), fifteen when addendum AI deleted that
-	 * one, sixteen again when AJ restored it under the same spelling - a key that goes and comes back with its name
-	 * and its type intact reads its old stored value straight off the profile, so no migration was owed there - and
-	 * fifteen at AO. The deleted key is swept off old profiles rather than migrated
-	 * ({@link BankPriceMovementPlugin#unstickHolding()}), because nothing survives it to migrate INTO.
+	 * <p>Twenty-five since release 1.2.0, which took one away and put nothing in its place: {@code showHoverText}
+	 * (addendum AH) went because every hover left in the sidebar is one short line, so the hovers are always on and a
+	 * switch to hide them was one setting more than the plugin needs (the user, 2026-10-08). Before it, addendum AO
+	 * took {@code holdingOnRows} away (AO1) because addendum AN's three-line row prints the stack and the item both,
+	 * so that switch reached nothing drawn. Both deleted keys are swept off old profiles rather than migrated
+	 * ({@link BankPriceMovementPlugin#unstickHolding()}, {@link BankPriceMovementPlugin#unstickShowHoverText()}),
+	 * because nothing survives them to migrate INTO.
 	 */
 	@Test
 	public void declaresExactlyTheExpectedItems()
@@ -152,13 +146,13 @@ public class BankPriceMovementConfigTest
 			keys.add(m.getAnnotation(ConfigItem.class).keyName());
 		}
 		assertEquals("unexpected set of config keys", new TreeSet<>(EXPECTED_KEYS), keys);
-		// Twenty-two: addendum AU's "view" (the last tab used) was deleted before it shipped and "startTab" (the
-		// player's choice) took the sixteenth place; 1.0.9 part 3's "countGrandExchange" is the seventeenth and
-		// 1.0.9 part 5's hidden "includeLegacyHistory" the eighteenth; 1.1.0 part B's "upColour" and "downColour"
-		// the nineteenth and the twentieth, part C's "singleChartColour" and "chartColour" the twenty-first and the
-		// twenty-second, part E's "hideAmounts" the twenty-third, part G's "showAlchRows" the twenty-fourth, part J's
-		// "slotUpColour" and "slotDownColour" the twenty-fifth and the twenty-sixth.
-		assertEquals("unexpected number of config items", 26, methods.size());
+		// Twenty-five: addendum AU's "view" (the last tab used) was deleted before it shipped and "startTab" (the
+		// player's choice) took its place; 1.0.9 part 3's "countGrandExchange" sits at position 13, 1.0.9 part 5's
+		// hidden "includeLegacyHistory" at 16, 1.1.0 part B's "upColour" and "downColour" at 17 and 18, part C's
+		// "singleChartColour" and "chartColour" at 19 and 20, part E's "hideAmounts" at 21, part G's "showAlchRows" at 22
+		// and part J's "slotUpColour" and "slotDownColour" at 23 and 24. Release 1.2.0 took "showHoverText" out from
+		// between the Grand Exchange switch and "livePrices", and everything from "livePrices" down moved up by one.
+		assertEquals("unexpected number of config items", 25, methods.size());
 	}
 
 	/**
@@ -227,8 +221,9 @@ public class BankPriceMovementConfigTest
 		assertEquals(0, config.gpMax());
 		assertEquals(SortMode.PERCENT_MOVE, config.sortMode());
 		assertTrue("biggest first is the default direction", config.sortDescending());
-		// Addendum K4: one DAY, not the old 24h trade bucket. The guide table is republished about once a day,
-		// so anything shorter would put both ends of the window on the same revision and read 0 % everywhere.
+		// Addendum K4: one DAY, not the old 24h trade bucket. The guide table was republished about once a day then
+		// (several times a day since 30 Sep 2026), so anything shorter would put both ends of the window on the same
+		// revision and read 0 % everywhere.
 		assertEquals(MovementWindow.DEFAULT, config.window());
 		assertEquals(MovementWindow.D1, config.window());
 
@@ -384,9 +379,8 @@ public class BankPriceMovementConfigTest
 			+ " or press Refresh.", offers.description());
 		assertEquals(13, offers.position());
 		assertEquals(12, item("countInventory").position());
-		assertEquals(14, item("showHoverText").position());
-		assertEquals(15, item("livePrices").position());
-		assertEquals(16, item("startTab").position());
+		assertEquals(14, item("livePrices").position());
+		assertEquals(15, item("startTab").position());
 		final BankPriceMovementConfig config = new BankPriceMovementConfig() {};
 		assertTrue("on for a fresh profile", config.countGrandExchange());
 		assertTrue("and DEFAULT carries it", ViewOptions.DEFAULT.countGrandExchange());
@@ -399,17 +393,18 @@ public class BankPriceMovementConfigTest
 	 * "more layman names" and agreed these, so they are pinned in one place as well as beside their own items - a
 	 * rename here is a user-visible change and has to be a deliberate one.
 	 *
-	 * <p>Addendum AH added the last, in the same plain voice: "Show hover text". Addendum AI deleted it
-	 * with the row hover it used to silence, and addendum AJ put it back a wave later because the card's hover
-	 * and every control's were still on and still had no switch. It is drawn in the row ABOVE the bottom
-	 * [Reset to default][OK] row, which is where the user pointed.
+	 * <p>Addendum AH added an eighth, in the same plain voice: "Show hover text", drawn in the row above the bottom
+	 * [Reset to default][OK] row. Release 1.2.0 deleted it (the user, 2026-10-08): every hover left in the sidebar is
+	 * one short line, so the hovers are always on and there is no switch for them - the guard that keeps it gone is
+	 * {@link #theHoverTextSwitchIsGoneFromTheConfig()}.
 	 *
-	 * <p>Nine became EIGHT with addendum AO line AO1: "Show stack value on rows" is gone from the menu and from
-	 * the settings page both, so the list here is one shorter and the menu's view group now ends on "Include
-	 * inventory and worn gear".
+	 * <p>Nine became EIGHT with addendum AO line AO1 - "Show stack value on rows" is gone from the menu and from the
+	 * settings page both - and EIGHT became SEVEN with release 1.2.0, so the list here is one shorter again and the
+	 * menu's view group ends on "Include inventory and worn gear" (and the Grand Exchange switch after it, which this
+	 * list does not carry).
 	 */
 	@Test
-	public void theGearMenusEightConfigItemsReadInTheWordsOfAddendumY()
+	public void theGearMenusSevenConfigItemsReadInTheWordsOfAddendumY()
 	{
 		assertEquals("Show bank value", item("showBankValue").name());
 		assertEquals("Show change in gp", item("showBankMoveGp").name());
@@ -418,14 +413,13 @@ public class BankPriceMovementConfigTest
 		assertEquals("Include coins and platinum tokens", item("countCash").name());
 		assertEquals("Include alch-only untradeables", item("countUntradeables").name());
 		assertEquals("Include inventory and worn gear", item("countInventory").name());
-		assertEquals("Show hover text", item("showHoverText").name());
 	}
 
 	/**
 	 * Addendum T line T1: the item it added is ON for a fresh profile, because the user chose that - "for the
 	 * current 24 hour window if its accurate we should use live prices" - and because the switch only ever
 	 * REPLACES a guide price where an item passed all three liquidity checks, so a default-on profile still shows
-	 * the daily guide figure for everything thin. It is the THIRD field of {@link ViewOptions} since addendum AO
+	 * the guide figure for everything thin. It is the THIRD field of {@link ViewOptions} since addendum AO
 	 * line AO1 took {@code holdingOnRows} out from above it (it landed as the fourth), and not a
 	 * {@link RowFilter} field: it changes what a figure IS, never which rows the band and the ordering select.
 	 */
@@ -446,28 +440,28 @@ public class BankPriceMovementConfigTest
 	 * T1's exact words. The gear menu's first check item in its last group and RuneLite's settings page are the
 	 * same switch, so they are read in the same sentence, and the sentence is pinned here because it is the whole
 	 * of what a user has to go on when deciding whether to leave it on: it says what qualifies ("actively traded")
-	 * and what happens to everything else ("thin items keep the daily guide price"), with no jargon in between.
+	 * and what happens to everything else ("thin items keep the guide price"), with no jargon in between.
 	 * The name is the one addendum Y line Y4 gave it ("Live prices" read as a heading rather than as a switch).
 	 *
 	 * <p><b>Its position is 14.</b> It was the LAST item on the settings page from addendum T until addendum AU
 	 * appended {@code view} under it (amendment 9.15) - addendum AH inserted {@code showHoverText} above it and
 	 * pushed it down, exactly as Z and AA renumbered the items below them; addendum AI took that item away and AJ put
-	 * it back in the same slot; addendum AO deleted {@code holdingOnRows} from above both and moved this one back up
-	 * from 15 to 14. Positions are not frozen and keys are, so this assertion is about the ORDER a reader meets the
-	 * page in and about nothing stored: it pins this item at 14 and last (addendum AU's view item, once the 15th, was
-	 * deleted before it shipped).
+	 * it back in the same slot; addendum AO deleted {@code holdingOnRows} from above both and moved this one back up;
+	 * 1.0.9 part 3 put the Grand Exchange switch above it and moved it down to 15; release 1.2.0 deleted
+	 * {@code showHoverText} for good, and it is 14 again, directly after the Grand Exchange switch. Positions are not
+	 * frozen and keys are, so this assertion is about the ORDER a reader meets the page in and about nothing stored.
 	 */
 	@Test
 	public void theLivePricesSwitchIsNamedAsTheGearMenuNamesIt()
 	{
 		final ConfigItem live = item("livePrices");
 		assertEquals("Use live prices", live.name());
-		assertEquals("Actively traded items use the wiki's live traded prices for every figure;"
-			+ " thin items keep the daily guide price", live.description());
-		assertEquals(15, live.position());
-		// Only addendum AU's startTab (16), 1.0.9 part 5's hidden includeLegacyHistory (17), 1.1.0 part B's two colours
-		// (18 and 19), part C's chart switch and colour (20 and 21), part E's hideAmounts (22), part G's showAlchRows (23)
-		// and part J's two hidden slot colours (24 and 25) sit below it.
+		assertEquals("Actively traded items are priced from the last 24 hours of trades; a word under the percentage says"
+			+ " why a figure is uncertain. Items with no trades keep the guide price", live.description());
+		assertEquals(14, live.position());
+		// Only addendum AU's startTab (15), 1.0.9 part 5's hidden includeLegacyHistory (16), 1.1.0 part B's two colours
+		// (17 and 18), part C's chart switch and colour (19 and 20), part E's hideAmounts (21), part G's showAlchRows (22)
+		// and part J's two hidden slot colours (23 and 24) sit below it.
 		for (Method m : itemMethods())
 		{
 			final ConfigItem other = m.getAnnotation(ConfigItem.class);
@@ -481,16 +475,16 @@ public class BankPriceMovementConfigTest
 					|| other.keyName().equals("showAlchRows") || other.keyName().equals("slotUpColour")
 					|| other.keyName().equals("slotDownColour"));
 		}
-		assertEquals(16, item("startTab").position());
-		assertEquals(17, item("includeLegacyHistory").position());
-		assertEquals(18, item("upColour").position());
-		assertEquals(19, item("downColour").position());
-		assertEquals(20, item("singleChartColour").position());
-		assertEquals(21, item("chartColour").position());
-		assertEquals(22, item("hideAmounts").position());
-		assertEquals(23, item("showAlchRows").position());
-		assertEquals(24, item("slotUpColour").position());
-		assertEquals(25, item("slotDownColour").position());
+		assertEquals(15, item("startTab").position());
+		assertEquals(16, item("includeLegacyHistory").position());
+		assertEquals(17, item("upColour").position());
+		assertEquals(18, item("downColour").position());
+		assertEquals(19, item("singleChartColour").position());
+		assertEquals(20, item("chartColour").position());
+		assertEquals(21, item("hideAmounts").position());
+		assertEquals(22, item("showAlchRows").position());
+		assertEquals(23, item("slotUpColour").position());
+		assertEquals(24, item("slotDownColour").position());
 	}
 
 	/**
@@ -512,70 +506,33 @@ public class BankPriceMovementConfigTest
 	}
 
 	/**
-	 * Addendum AH, restored by addendum AJ: the key it added is OFF for a fresh profile, and it is the only item
-	 * on this page whose default shows LESS than the build before it did. The user asked for exactly that - "i
-	 * would like it to be default 'off' and only display hover text if turned on" (2026-09-20) - after addenda AF
-	 * and AG had already cut both data hovers down, and asked for the switch BACK when addendum AI deleted it
-	 * ("where is the show hover text box and wording and default 'off' setting?").
+	 * Release 1.2.0: addendum AH's "Show hover text" is GONE from the config. The user (2026-10-08) retired the switch
+	 * because every hover left in the sidebar is one short line, so the hovers are always on. The guard has three legs,
+	 * because each is a way the item could come back by a careless merge: the key is not declared, no item on the page
+	 * is called by the old name, and no method of the interface is.
 	 *
-	 * <p>It is the FIFTH and last field of {@link ViewOptions} since addendum AO line AO1 took
-	 * {@code holdingOnRows} out from above it (it landed as the sixth), and not a {@link RowFilter} field: it
-	 * changes whether a figure is EXPLAINED, never what the figure is or which rows the band and the ordering
-	 * select, so a fresh profile's filter is untouched by its arrival and flipping it refetches nothing.
+	 * <p>The stored key is not forgotten by the plugin: {@link BankPriceMovementPlugin#unstickShowHoverText()} sweeps a
+	 * profile's old value at start-up, and the wiring tests pin that.
 	 */
 	@Test
-	public void theHoverTextSwitchDefaultsToOffAndIsTheFifthViewOption()
+	public void theHoverTextSwitchIsGoneFromTheConfig()
 	{
-		final BankPriceMovementConfig config = new BankPriceMovementConfig()
+		assertFalse("the key is not one of the frozen list", EXPECTED_KEYS.contains("showHoverText"));
+		for (Method m : itemMethods())
 		{
-		};
-		assertFalse("the hover text is off until the user asks for it (AH)", config.showHoverText());
-		assertFalse("and DEFAULT carries the same answer", ViewOptions.DEFAULT.showHoverText());
-		assertEquals(ViewOptions.DEFAULT, optionsOf(config));
-		assertEquals(RowFilter.DEFAULT, new RowFilter(config.gpMin(), config.gpMax(), config.sortMode(),
-			config.sortDescending(), config.window()));
-	}
-
-	/**
-	 * AH's exact words as addendum AJ narrowed them. The gear menu's last check item and RuneLite's settings page
-	 * are the same switch, so they are read in the same sentence - the menu item IS this {@code name}, and its own
-	 * hover IS this {@code description} (pinned against {@link BankPriceMovementPanel#SHOW_HOVER_TEXT_TEXT} and
-	 * {@link BankPriceMovementPanel#SHOW_HOVER_TEXT_TIP}, because the words are written in two files and only a
-	 * test can see both).
-	 *
-	 * <p>The description names the TWO places the switch reaches, and the list has moved twice. AH's first cut
-	 * spared every tooltip that explains a control and said so here ("The buttons keep their own labels"); the
-	 * user turned the switch off, was still met with hover text, and overruled it - "make sure there is no hover
-	 * text at all unless it is on" - so AH3 widened it to three places, the item ROWS among them. Addendum AI
-	 * then moved a row's description out of its hover and into the cell it opens, so a row carries no tooltip at
-	 * ANY setting and is silent whether this is on or off. Naming the rows here would now be a promise the
-	 * sidebar cannot keep in either direction, which is why the sentence is pinned WITH a guard against that word
-	 * rather than only as a literal.
-	 *
-	 * <p>Position 13 - it was 14 until addendum AO deleted the item above it - puts it second to last on the
-	 * settings page, directly above "Use live prices". In the gear menu it is drawn LAST of the switches, in the
-	 * row ABOVE the bottom [Reset to default][OK] row - which is where the user pointed ("it should be the row
-	 * above OK") - so this is one of the few items whose two homes do not list it in the same place, and the
-	 * position pins the settings page's.
-	 */
-	@Test
-	public void theHoverTextSwitchIsNamedAsTheGearMenuNamesIt()
-	{
-		final ConfigItem hover = item("showHoverText");
-		assertEquals("Show hover text", hover.name());
-		assertEquals("the settings page and the gear menu name it with one string (AH)",
-			BankPriceMovementPanel.SHOW_HOVER_TEXT_TEXT, hover.name());
-		assertEquals("Show hover text anywhere in the sidebar: the bank value and the controls",
-			hover.description());
-		assertEquals("and the menu item's own hover is that same sentence",
-			BankPriceMovementPanel.SHOW_HOVER_TEXT_TIP, hover.description());
-		assertFalse("the description must not promise the controls keep talking - AH3 silenced them too",
-			hover.description().contains("keep their own labels"));
-		assertFalse("...nor claim the item rows, which carry no hover at any setting since addendum AI",
-			hover.description().contains("row"));
-		assertEquals(14, hover.position());
-		// Directly above the item that is second to last on the page.
-		assertEquals(15, item("livePrices").position());
+			final ConfigItem item = m.getAnnotation(ConfigItem.class);
+			assertFalse("no item is keyed showHoverText", item.keyName().equals("showHoverText"));
+			assertFalse("no item carries the old name", item.name().equals("Show hover text"));
+			assertFalse("nor its description", item.description().startsWith("Show hover text"));
+		}
+		for (Method m : BankPriceMovementConfig.class.getMethods())
+		{
+			assertFalse("no method of the interface is called showHoverText", m.getName().equals("showHoverText"));
+		}
+		assertEquals("the swept key keeps its old spelling as a constant for the sweep alone", "showHoverText",
+			BankPriceMovementPlugin.LEGACY_SHOW_HOVER_TEXT_KEY);
+		assertFalse("and it is no longer one of the option road's keys",
+			BankPriceMovementPlugin.isOptionKey(BankPriceMovementPlugin.LEGACY_SHOW_HOVER_TEXT_KEY));
 	}
 
 	/**
@@ -680,21 +637,21 @@ public class BankPriceMovementConfigTest
 	}
 
 	/**
-	 * The six view switches read off a config, in the order and arity
+	 * The five view switches read off a config, in the order and arity
 	 * {@code BankPriceMovementPlugin.optionsFromConfig()} reads them - which is the point of doing it here rather
-	 * than writing the constructor out in each test: six booleans in a row are six chances to pin the wrong
+	 * than writing the constructor out in each test: five booleans in a row are five chances to pin the wrong
 	 * round trip, and addendum AO line AO1 removed a field from the MIDDLE of that list, where a stale call
 	 * would still have compiled.
 	 */
 	private static ViewOptions optionsOf(BankPriceMovementConfig config)
 	{
 		return new ViewOptions(config.countCash(), config.countUntradeables(), config.livePrices(),
-			config.countInventory(), config.countGrandExchange(), config.showHoverText());
+			config.countInventory(), config.countGrandExchange());
 	}
 
 	/** The {@code @ConfigItem} of one stored key, by name; fails rather than returning null when it is gone. */
 	/**
-	 * 1.0.9 part 5: the eighteenth item - its key, its words, its position (17, the last on the page), its default
+	 * 1.0.9 part 5: the eighteenth item - its key, its words, its position (16, the last on the page), its default
 	 * (off: the days before 1.0.9 stay hidden until the reader asks) and the one thing no other item here is: HIDDEN,
 	 * which is RuneLite's {@code ConfigItem.hidden}, so the settings page does not list it and the check item in the
 	 * sidebar's settings menu (the History tab's check box until 1.1.0 part A) is the only control. Only
@@ -708,7 +665,7 @@ public class BankPriceMovementConfigTest
 		assertEquals(BankPriceMovementPanel.LEGACY_TEXT, legacy.name());
 		assertEquals("Show net worth readings recorded before v1.0.9 on the Net Worth History tab."
 			+ " They did not count Grand Exchange offers.", legacy.description());
-		assertEquals(17, legacy.position());
+		assertEquals(16, legacy.position());
 		assertTrue("hidden from the settings page", legacy.hidden());
 		assertFalse("off for a fresh profile", new BankPriceMovementConfig() {}.includeLegacyHistory());
 		assertEquals("the key the plugin's road and prefs name", BankPriceMovementPlugin.INCLUDE_LEGACY_KEY,
@@ -735,8 +692,8 @@ public class BankPriceMovementConfigTest
 
 	/**
 	 * C1 (1.1.0 part C, default changed by part D): the two chart keys - {@code singleChartColour} (boolean, ON since part D,
-	 * position 20, "Single chart colour")
-	 * and {@code chartColour} (a colour, the logo gold - the 2h coin's face, 196 / 156 / 58 - position 21, "Chart colour"),
+	 * position 19, "Single chart colour")
+	 * and {@code chartColour} (a colour, the logo gold - the 2h coin's face, 196 / 156 / 58 - position 20, "Chart colour"),
 	 * both VISIBLE on the settings page, with the words the contract gives and the keys the plugin's road names.
 	 */
 	@Test
@@ -748,7 +705,7 @@ public class BankPriceMovementConfigTest
 		assertEquals("Draw the net worth chart in one colour instead of the up and down colours.",
 			single.description());
 		assertEquals(BankPriceMovementPanel.SINGLE_CHART_COLOUR_TIP, single.description());
-		assertEquals(20, single.position());
+		assertEquals(19, single.position());
 		assertFalse("listed on the settings page", single.hidden());
 		assertTrue("on for a fresh profile (part D)", new BankPriceMovementConfig() {}.singleChartColour());
 		assertEquals(BankPriceMovementPlugin.SINGLE_CHART_KEY, single.keyName());
@@ -757,7 +714,7 @@ public class BankPriceMovementConfigTest
 		assertEquals("Chart colour", colour.name());
 		assertEquals(BankPriceMovementPanel.CHART_COLOUR_TEXT, colour.name());
 		assertEquals("The net worth chart's colour while Single chart colour is on.", colour.description());
-		assertEquals(21, colour.position());
+		assertEquals(20, colour.position());
 		assertFalse("listed on the settings page", colour.hidden());
 		assertEquals("the logo gold, the face of the 2h coin", new java.awt.Color(196, 156, 58),
 			new BankPriceMovementConfig() {}.chartColour());
@@ -779,7 +736,7 @@ public class BankPriceMovementConfigTest
 		assertEquals("Single chart colour", single.name());
 		assertEquals("Draw the net worth chart in one colour instead of the up and down colours.",
 			single.description());
-		assertEquals(20, single.position());
+		assertEquals(19, single.position());
 		assertFalse(single.hidden());
 		assertEquals("and the colour it draws in is the logo gold", new java.awt.Color(196, 156, 58),
 			new BankPriceMovementConfig() {}.chartColour());
@@ -787,7 +744,7 @@ public class BankPriceMovementConfigTest
 
 	/**
 	 * E1 (1.1.0 part E): the key {@code hideAmounts} - boolean, OFF for a fresh profile, VISIBLE on the settings page, position
-	 * 22, named "Hide amounts" with the words the contract gives - and the key the plugin's road and prefs name.
+	 * 21, named "Hide amounts" with the words the contract gives - and the key the plugin's road and prefs name.
 	 */
 	@Test
 	public void e1_theHideAmountsKeyIsNamedDefaultedAndPositionedAsTheContractSays()
@@ -797,7 +754,7 @@ public class BankPriceMovementConfigTest
 		assertEquals("Hide amounts", hide.name());
 		assertEquals("Hide every gp amount and item quantity in the sidebar, keeping item names and percentages."
 			+ " For streaming.", hide.description());
-		assertEquals(22, hide.position());
+		assertEquals(21, hide.position());
 		assertFalse("listed on the settings page", hide.hidden());
 		assertFalse("off for a fresh profile", new BankPriceMovementConfig() {}.hideAmounts());
 		assertEquals(Boolean.TYPE, itemMethod("hideAmounts").getReturnType());
@@ -807,7 +764,7 @@ public class BankPriceMovementConfigTest
 
 	/**
 	 * G1 (1.1.0 part G): the key {@code showAlchRows} - boolean, OFF for a fresh profile, VISIBLE on the settings page, position
-	 * 23, named "Show alch-only items" with the words the contract gives - and the key the plugin's road and prefs name.
+	 * 22, named "Show alch-only items" with the words the contract gives - and the key the plugin's road and prefs name.
 	 */
 	@Test
 	public void g1_theShowAlchRowsKeyIsNamedDefaultedAndPositionedAsTheContractSays()
@@ -819,7 +776,7 @@ public class BankPriceMovementConfigTest
 		assertEquals("Lists untradeables with no tradeable parts, at alch value. Searching finds them either way.",
 			alch.description());
 		assertEquals(BankPriceMovementPanel.SHOW_ALCH_TIP, alch.description());
-		assertEquals(23, alch.position());
+		assertEquals(22, alch.position());
 		assertFalse("listed on the settings page", alch.hidden());
 		assertFalse("off for a fresh profile", new BankPriceMovementConfig() {}.showAlchRows());
 		assertEquals(Boolean.TYPE, itemMethod("showAlchRows").getReturnType());
@@ -830,17 +787,17 @@ public class BankPriceMovementConfigTest
 
 	/**
 	 * J4 (1.1.0 part J): the two keys {@code slotUpColour} and {@code slotDownColour} - colours, defaulting to Classic's pair
-	 * (the built-in green and the lifted red), HIDDEN from the settings page, at positions 24 and 25 - and the keys the
+	 * (the built-in green and the lifted red), HIDDEN from the settings page, at positions 23 and 24 - and the keys the
 	 * plugin's road and prefs name.
 	 */
 	@Test
-	public void j4_theTwoSlotKeysAreHiddenColoursAtTwentyFourAndTwentyFiveDefaultingToClassic()
+	public void j4_theTwoSlotKeysAreHiddenColoursAtTwentyThreeAndTwentyFourDefaultingToClassic()
 	{
 		final ConfigItem up = item("slotUpColour");
 		assertEquals("slotUpColour", up.keyName());
 		assertEquals("Slot 1 up colour", up.name());
 		assertEquals("The colour of a rise saved in the colour presets' Slot 1.", up.description());
-		assertEquals(24, up.position());
+		assertEquals(23, up.position());
 		assertTrue("hidden from the settings page", up.hidden());
 		assertEquals(java.awt.Color.class, itemMethod("slotUpColour").getReturnType());
 		assertEquals("Classic's rise", Widgets.MOVE_UP_DEFAULT, new BankPriceMovementConfig() {}.slotUpColour());
@@ -850,7 +807,7 @@ public class BankPriceMovementConfigTest
 		assertEquals("slotDownColour", down.keyName());
 		assertEquals("Slot 1 down colour", down.name());
 		assertEquals("The colour of a fall saved in the colour presets' Slot 1.", down.description());
-		assertEquals(25, down.position());
+		assertEquals(24, down.position());
 		assertTrue("hidden from the settings page", down.hidden());
 		assertEquals(java.awt.Color.class, itemMethod("slotDownColour").getReturnType());
 		assertEquals("Classic's fall", Widgets.MOVE_DOWN_TEXT, new BankPriceMovementConfig() {}.slotDownColour());

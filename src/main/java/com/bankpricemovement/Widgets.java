@@ -20,7 +20,6 @@ import java.awt.event.MouseEvent;
 import java.awt.geom.Ellipse2D;
 import java.awt.geom.Line2D;
 import java.awt.geom.Path2D;
-import java.awt.geom.Rectangle2D;
 import java.awt.image.BufferedImage;
 import java.util.function.IntConsumer;
 import javax.annotation.Nullable;
@@ -158,10 +157,6 @@ final class Widgets
 	static final int GEAR_TEETH = 8;
 	/** The smallest gear that keeps its hole; a smaller {@code size} is raised to it rather than drawn shut. */
 	static final int GEAR_MIN = 7;
-	/** The side of {@link #checkBox(boolean)}, in px: the cap height of the 12 px menu face it stands beside. */
-	static final int CHECKBOX_SIZE = 11;
-	/** Below this the outline's own stroke would fill the square and the tick would have nowhere to go. */
-	static final int CHECKBOX_MIN = 7;
 
 	/** Where {@link #chip} records whether a chip is lit, so {@link #isLit} and the hover can read it back. */
 	private static final String KEY_LIT = "bpm.chip.lit";
@@ -1069,58 +1064,6 @@ final class Widgets
 			g.setColor(ColorScheme.LIGHT_GRAY_COLOR);
 			g.setStroke(new BasicStroke(1f));
 			g.draw(new Ellipse2D.Double(1.5, 1.5, s - 3.0, s - 3.0));
-		});
-	}
-
-	/**
-	 * A code-drawn check box (addendum AH): an empty square when off, a square with a tick through it when on.
-	 *
-	 * <p><b>Why a drawn box rather than a {@link javax.swing.JCheckBoxMenuItem}.</b> RuneLite's look and feel
-	 * paints a selected check item with a tick and an UNSELECTED one with nothing at all, which is right for a
-	 * switch that ships on - the reader has seen it ticked and knows what the blank means. A switch that ships
-	 * OFF is read for the first time in its unticked state, where blank space beside a label is
-	 * indistinguishable from an ordinary command: nothing on screen says it is a switch, or that it has a state
-	 * to change. The empty square says both. The bitmap RuneScape faces have no box or tick glyph either
-	 * (playbook 7.5), which is the same reason {@link #triangle(boolean)} is drawn rather than typed.
-	 *
-	 * @param ticked whether the switch is on
-	 */
-	static ImageIcon checkBox(boolean ticked)
-	{
-		return checkBox(ticked, CHECKBOX_SIZE, ColorScheme.LIGHT_GRAY_COLOR, ColorScheme.BRAND_ORANGE);
-	}
-
-	/**
-	 * {@link #checkBox(boolean)} at a chosen size and colours - the geometry is one square and one three-point
-	 * path, both in fractions of the side, so the glyph is the same shape at every size.
-	 *
-	 * @param ticked whether to draw the tick inside the square
-	 * @param size   the square icon's side in px; anything under {@value #CHECKBOX_MIN} is raised to it
-	 * @param box    the outline
-	 * @param tick   the mark inside it
-	 */
-	static ImageIcon checkBox(boolean ticked, int size, Color box, Color tick)
-	{
-		final int s = Math.max(CHECKBOX_MIN, size);
-		return icon(s, s, g ->
-		{
-			// Half the stroke sits outside the path, so the rectangle is inset by half a line and shortened by a
-			// whole one - without that the right and bottom edges paint into the icon's last pixel and blur.
-			final float line = (float) Math.max(1.0, s * 0.1);
-			g.setColor(box);
-			g.setStroke(new BasicStroke(line));
-			g.draw(new Rectangle2D.Double(line / 2.0, line / 2.0, s - line, s - line));
-			if (ticked)
-			{
-				g.setColor(tick);
-				g.setStroke(new BasicStroke((float) Math.max(1.5, s * 0.17),
-					BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-				final Path2D p = new Path2D.Double();
-				p.moveTo(s * 0.24, s * 0.53);
-				p.lineTo(s * 0.43, s * 0.73);
-				p.lineTo(s * 0.78, s * 0.27);
-				g.draw(p);
-			}
 		});
 	}
 

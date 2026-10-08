@@ -161,7 +161,8 @@ public final class GuideSnapshot
 	 * about five minutes between the latest observed rollover and the earliest observed bot run. A body whose
 	 * marker falls outside the window its own save time allows is already refused upstream
 	 * ({@code GuidePriceClient}, L7); a bot run that slipped in front of a late rollover would not be, and would
-	 * date its table one day late. Nothing detects that case today - see {@code PriceService.deriveAnchorDay}.
+	 * date its table one day late. Since contract 1.1.2 nothing selects by this date any more - the service picks by
+	 * {@link #dataSeconds()} - so the case costs at most a label one day out, never a wrong table.
 	 */
 	public LocalDate dataDay()
 	{
