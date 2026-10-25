@@ -819,9 +819,7 @@ public class HideAmountsTest
 	@Test
 	public void e4_theSplitNoteKeepsItsPlacesAndMasksItsCounts() throws Exception
 	{
-		assertEquals("3 in bank, 4 in inventory", MovementRowPanel.splitLine(SPLIT));
-		assertEquals("the one-argument form is the shown one", MovementRowPanel.splitLine(SPLIT),
-			MovementRowPanel.splitLine(SPLIT, false));
+		assertEquals("3 in bank, 4 in inventory", MovementRowPanel.splitLine(SPLIT, false));
 		assertEquals(AmountMask.SHORT + " in bank, " + AmountMask.SHORT + " in inventory",
 			MovementRowPanel.splitLine(SPLIT, true));
 		final String shown = MovementRowPanel.detail(SPLIT, MovementWindow.D1, TODAY, 0L, ViewOptions.DEFAULT, false);

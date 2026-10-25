@@ -203,7 +203,7 @@ public class BankItem
 
 	/**
 	 * This same stack with another quantity (addendum Y, line Y3): what {@code PriceService} folds a banked stack
-	 * and a carried one into while "Include inventory and worn gear" is on - three in the bank and one in the
+	 * and a carried one into while "Include inventory and worn items" is on - three in the bank and one in the
 	 * inventory become one stack of four.
 	 *
 	 * <p>A COPY, and that is the whole point: the stacks it merges belong to the persisted snapshot, which the

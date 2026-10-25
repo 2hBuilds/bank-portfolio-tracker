@@ -9,7 +9,7 @@ import net.runelite.client.config.ConfigItem;
  * The plugin's single config (contract C39; items 7-9 are addendum O line O2, items 10-11 addendum Q line Q3,
  * item 12 addendum Y line Y1, item 13 1.0.9 part 3, item 14 addendum T line T1, item 15 addendum AU, item 16
  * 1.0.9 part 5, items 17 and 18 1.1.0 part B, items 19 and 20 1.1.0 part C, item 21 1.1.0 part E, item 22 1.1.0
- * part G, items 23 and 24 1.1.0 part J). Twenty-five items, and every one of them is also a widget in the sidebar: the
+ * part G, items 23 and 24 1.1.0 part J; positions 25 to 27 release 1.2.1's change size and opacity keys, positions 28 to 31 its part 2). Thirty-two items, and every one of them is also a widget in the sidebar: the
  * config panel and the sidebar are the same switch, so a
  * change in either place is written here and read back by the other through {@code ConfigChanged}. The exceptions
  * are the items the settings page does not list at all (see {@code startTab}, the tab used last since 1.1.0,
@@ -62,7 +62,7 @@ import net.runelite.client.config.ConfigItem;
  * labels - the menu item IS the config item's {@code name} - so both were re-read in plain words at once:
  * "Show change in gp" and "Show change in %" for the card's two move figures, "Use live prices", "Include coins
  * and platinum tokens", "Include untradeable items" (renamed "Include alch-only untradeables" by addendum AV),
- * "Include inventory and worn gear" and "Show stack value on rows". Every stored KEY is untouched by that, and
+ * "Include inventory and worn items" and "Show stack value on rows". Every stored KEY is untouched by that, and
  * must be: a rename discards the setting. Positions are not frozen and were renumbered to put the new item where
  * the menu lists it.
  *
@@ -373,8 +373,8 @@ public interface BankPriceMovementConfig extends Config
 	@ConfigItem(
 		position = 12,
 		keyName = "countInventory",
-		name = "Include inventory and worn gear",
-		description = "Items in your inventory and worn gear count in the bank value and are listed with the bank's"
+		name = "Include inventory and worn items",
+		description = "Items in your inventory and worn items count in the bank value and are listed with the bank's"
 			+ " stacks. They are read when you close the bank or press Refresh."
 	)
 	default boolean countInventory()
@@ -665,5 +665,124 @@ public interface BankPriceMovementConfig extends Config
 	default Color slotDownColour()
 	{
 		return Widgets.MOVE_DOWN_TEXT;
+	}
+
+	/**
+	 * Release 1.2.1, the first of three change settings: how big the gp change is drawn on an Items row - Small, Normal (what every release
+	 * drew before), Large or Largest ({@link ChangeSize}). A bar of the sidebar's List options menu (the two gears beside the
+	 * search box) is the control (a player asked for it, 2026-10-20: the gp change was hard to read).
+	 *
+	 * <p>HIDDEN from the settings page, like {@code slotUpColour}: the menu is the one place the three change settings live, so
+	 * RuneLite's page does not list them. It takes a road of its own ({@link BankPriceMovementPlugin#isChangeTextKey}) of the
+	 * colours' shape - the panel is told and the service never is, because what is drawn changes and no figure does.
+	 */
+	@ConfigItem(
+		position = 25,
+		keyName = "gpChangeSize",
+		name = "GP change size",
+		description = "How big the gp change is on each Items row.",
+		hidden = true
+	)
+	default ChangeSize gpChangeSize()
+	{
+		return ChangeSize.NORMAL;
+	}
+
+	/** Release 1.2.1, the second: {@link #gpChangeSize}'s twin for the percentage change. Hidden for the same reason. */
+	@ConfigItem(
+		position = 26,
+		keyName = "pctChangeSize",
+		name = "Percent change size",
+		description = "How big the percent change is on each Items row.",
+		hidden = true
+	)
+	default ChangeSize pctChangeSize()
+	{
+		return ChangeSize.NORMAL;
+	}
+
+	/**
+	 * Release 1.2.1, the third: how solid the gp change is, as a percentage of the way from the card's own grey to
+	 * the percentage's colour - 100 is the percentage's colour exactly, and the default, 55, is a little brighter than the 45
+	 * every release drew it at. Whole numbers 20 to 100 ({@link ChangeText}); a stored value outside that reads as 55. Hidden
+	 * for the reason {@link #gpChangeSize} is, and on the same road. It is called "Opacity" wherever the player reads it (part 2);
+	 * the key keeps its first spelling.
+	 */
+	@ConfigItem(
+		position = 27,
+		keyName = "gpBrightness",
+		name = "GP change opacity",
+		description = "How solid the gp change is, from 20 to 100. 100 is the same colour as the percent change.",
+		hidden = true
+	)
+	default int gpBrightness()
+	{
+		return ChangeText.DEFAULT_BRIGHTNESS;
+	}
+
+	/**
+	 * Release 1.2.1 part 2, position 28: {@link #gpChangeSize}'s twin for the Net Worth History tab's day rows - Small,
+	 * Normal (what the tab always drew), Large or Largest, a gp figure of 8, 10, 12 or 13 px. The tab's options menu holds the bar;
+	 * the key is hidden for the reason the Items one is and takes the same road ({@link BankPriceMovementPlugin#isHistoryKey}). The
+	 * History tab's three are INDEPENDENT of the Items tab's: a size chosen on one tab never moves the other.
+	 */
+	@ConfigItem(
+		position = 28,
+		keyName = "historyGpChangeSize",
+		name = "History GP change size",
+		description = "How big the gp change is on each Net Worth History day.",
+		hidden = true
+	)
+	default ChangeSize historyGpChangeSize()
+	{
+		return ChangeSize.NORMAL;
+	}
+
+	/** Release 1.2.1 part 2, position 29: the History day rows' percentage, 11, 14, 16 or 17 px bold ({@link ChangeSize#historyPctPx}). */
+	@ConfigItem(
+		position = 29,
+		keyName = "historyPctChangeSize",
+		name = "History percent change size",
+		description = "How big the percent change is on each Net Worth History day.",
+		hidden = true
+	)
+	default ChangeSize historyPctChangeSize()
+	{
+		return ChangeSize.NORMAL;
+	}
+
+	/**
+	 * Release 1.2.1 part 2, position 30: {@link #gpBrightness}'s twin for the History tab, 20 to 100, and the default is 55 here
+	 * as there - the tab's gp figures were drawn at 45 until this release.
+	 */
+	@ConfigItem(
+		position = 30,
+		keyName = "historyGpOpacity",
+		name = "History GP change opacity",
+		description = "How solid the gp change is on the Net Worth History tab, from 20 to 100.",
+		hidden = true
+	)
+	default int historyGpOpacity()
+	{
+		return ChangeText.DEFAULT_BRIGHTNESS;
+	}
+
+	/**
+	 * Release 1.2.1 part 2, position 31: the range the Net Worth History chart was left on - "7d", "30d", "90d" or "all"
+	 * ({@link BankHistoryRange#label}). Empty is "nothing stored": the card's window picks the range, as it did before, and the first
+	 * change of the range (the chart's own bar, the card's window chip or the bridge) stores the new one. A String and not the enum
+	 * because an enum item cannot say "nothing stored" - RuneLite writes the interface's default over a fresh profile - and a
+	 * stored word that is not one of the four reads as nothing. Hidden: the chart's bar is the control.
+	 */
+	@ConfigItem(
+		position = 31,
+		keyName = "historyRange",
+		name = "History chart range",
+		description = "The range the Net Worth History chart was left on: 7d, 30d, 90d or all.",
+		hidden = true
+	)
+	default String historyRange()
+	{
+		return "";
 	}
 }

@@ -47,7 +47,7 @@ import net.runelite.client.util.LinkBrowser;
  * <p><b>Which line says what.</b> Line 1 is the name, the row's headline. Line 2 is the STACK: what the whole
  * holding is worth, then what the holding moved and the percentage. Line 3 is ONE item: the working behind
  * line 2 - "7 x 4,618" - and what one item moved. The two gp figures stand in one right-aligned
- * {@code GP_COLUMN}, the stack's directly over the item's, which is the whole point of the arrangement: a
+ * {@link Fit#gpColumn}, the stack's directly over the item's, which is the whole point of the arrangement: a
  * reader who wants the per-item number never has to divide.
  *
  * <p>The user rejected every single-line version of this for exactly that reason - a row printing a per-ITEM
@@ -82,8 +82,8 @@ import net.runelite.client.util.LinkBrowser;
  * painted rectangle, so it survives every hover repaint without a custom {@code paintComponent}.
  *
  * <p><b>Width.</b> The row is pinned to {@link #ROW_WIDTH} x {@link #ROW_HEIGHT} and the text block gets
- * {@link #TEXT_WIDTH}. The right-hand figures are no longer FITTED, they are COLUMNS: {@code GP_COLUMN} and
- * {@code PCT_COLUMN} are pinned widths, so the two lines' figures line up whatever they say, and the left of
+ * {@link #TEXT_WIDTH}. The right-hand figures are no longer FITTED, they are COLUMNS: {@link Fit#gpColumn} and
+ * {@link Fit#pctColumn} are pinned widths, so the two lines' figures line up whatever they say, and the left of
  * each line is fitted into what the columns leave. That is what replaced the M4 count idiom - under it the
  * stack text was added only when it happened to fit, and a figure that comes and goes down a list reads as a
  * bug. (That rule is about the COLUMNS and still holds; the word addendum AN argued the same way about is a
@@ -122,7 +122,7 @@ import net.runelite.client.util.LinkBrowser;
  *
  * <p>The block the row opens stays load-bearing, for a narrower reason than before. Its figures are EXACT and
  * the face's are not: {@code signedGp} prints "+3.4k" where the block prints "+3,432", because a gp column
- * wide enough for five digits and a comma does not fit beside a {@code PCT_COLUMN}. Every figure on the face
+ * wide enough for five digits and a comma does not fit beside a {@link Fit#pctColumn}. Every figure on the face
  * was already compact - the prices, the stack total - so the loss is one step further in the same direction,
  * but it IS a loss of precision on the face and the block is where the reader gets it back.
  *
@@ -138,8 +138,7 @@ import net.runelite.client.util.LinkBrowser;
  * is built - and what waits is the TEXT. {@link #applyExpansion()} writes it on the first opening, before it
  * measures the block, so the cell still grows in one beat and to the height it always grew to. A row rebuilt
  * from a seam that says it is open writes it as it is built; shutting the block keeps it; a second opening
- * reuses it. The long description no sidebar draws ({@link #tooltipHtml()}) was written for every row too,
- * and now waits for a caller that asks.
+ * reuses it. (The long hover description no sidebar drew was written for every row too, until it was deleted.)
  *
  * <p>The change is signed by the gp figure, not by the percentage (L2): a fall too small to survive
  * truncation still reads "-0.0%" and still paints red, exactly as the GE site's own row does. A GRADED row
@@ -168,8 +167,8 @@ import net.runelite.client.util.LinkBrowser;
  * nothing can take it apart the row is its High Alchemy value ({@link MovementRow.PriceSource#ALCH}), which is
  * a constant and not a series: line 2 prints that price exactly as it prints a guide price and, where the two
  * move figures would be, a small grey "alch" tag instead of a pair of dashes - because the dash means "not
- * known yet" everywhere else on this panel and this figure is never coming - and the tooltip says the whole of
- * it in a sentence ({@link #untradeableLine}) rather than stamping a baseline day and a change that cannot
+ * known yet" everywhere else on this panel and this figure is never coming - and the open block says the whole of
+ * it in a sentence ({@link #ALCH_NOTE}) rather than stamping a baseline day and a change that cannot
  * exist.</li>
  * <li><b>Live prices</b> (addendum T, line T6; {@code docs/bank-price-movement-addendum-T-2026-09-12.md}; contract
  * 1.2.0, line L5). A row the service priced from today's trades paints exactly as a guide row does - same price line,
@@ -182,7 +181,7 @@ import net.runelite.client.util.LinkBrowser;
  * the ROW compared against ({@link #stampedDay}) rather than the guide's baseline day, because the two are
  * different days whenever Jagex has not yet published today's table.</li>
  * <li><b>Inventory and worn gear</b> (addendum Y, line Y3). Nothing on the FACE moves: a merged stack is one row
- * with the combined quantity, which is what the row would have drawn had the bank held them all. The tooltip is
+ * with the combined quantity, which is what the row would have drawn had the bank held them all. The open block is
  * where the merge is explained, in one line under the holding ({@link #splitLine}), and only on a row that is not
  * entirely in the bank. Since 1.0.9 part 3 the line can end with the items in the player's Grand Exchange offers
  * ("2 in the Grand Exchange"), under "Include Grand Exchange offers".</li>
@@ -259,37 +258,10 @@ public class MovementRowPanel extends JPanel
 	 */
 	public static final String ALCH_TAG = "alch";
 	/**
-	 * How a parts row's tooltip line opens (R4), before the parts themselves: the same "Untradeable - " the alch
+	 * How a parts row's line in the open block opens (R4), before the parts themselves: the same "Untradeable - " the alch
 	 * sentence opens with, because the two are the same fact told about two different valuations.
 	 */
 	public static final String PARTS_PREFIX = "Untradeable - valued as its parts: ";
-	/**
-	 * How a graded row's tooltip opens instead of "Guide price: " (addendum T, line T6, as contract 1.2.0 rewords it): the
-	 * price is built from today's trades - yesterday's average moved by the same-side move today ({@link GradedMove}) -
-	 * and not read off the guide table, and the tooltip is the one place that says so, exactly as it is the one place
-	 * that names a parts valuation. The row's FACE is the same as a guide row's: a price is a price, and how far its
-	 * move can be trusted is the word under the percentage ({@link #slotWord}).
-	 */
-	public static final String LIVE_PRICE_PREFIX = "Price from today's trades: ";
-	/**
-	 * What a graded window's baseline figure is (T4, contract 1.2.0): the average of that calendar day's trades, side
-	 * by side, and not a guide table's entry. Said on the line so a reader comparing the row against the Grand
-	 * Exchange site knows why the two differ.
-	 */
-	public static final String TRADED_AVERAGE_NOTE = " (average of that day's trades)";
-	/**
-	 * What a graded row's window line says when that window has no figure at all (contract 1.2.0): nothing traded that
-	 * day, or nothing today to set against it, so the line is a dash and the note says why. Before 1.2.0 a window like
-	 * that fell back to the guide's own two ends and this line named the five liquidity checks that refused it.
-	 */
-	public static final String WINDOW_NO_FIGURE_NOTE = " (no trades to compare with that day)";
-	/**
-	 * How the one line a row priced at the GUIDE gains while the live switch is on opens (T6, contract 1.2.0), before
-	 * the 1d grade's word ({@link MovementRow.LiveFacts#reason()}) - "Valued at the guide price: no trades". Without it a
-	 * reader who switched live prices on has no way to tell a row the trades priced from one they left alone: the two
-	 * paint identically.
-	 */
-	public static final String GUIDE_VALUED_PREFIX = "Valued at the guide price: ";
 	/**
 	 * The places a merged stack can be, as the split line names them (addendum Y, line Y3;
 	 * {@code docs/bank-price-movement-addendum-Y-2026-09-13.md}). Each is a suffix on its own figure, so the line
@@ -345,7 +317,7 @@ public class MovementRowPanel extends JPanel
 		- PICTURE_WIDTH - GAP;
 	/**
 	 * Between the stack's value on the left of line 2 and the figures on the right. Six again, as it was before
-	 * the Q4 format: it was cut to three only to buy the four px {@link #GP_COLUMN} needed once line 2 carried a
+	 * the Q4 format: it was cut to three only to buy the four px {@code GP_COLUMN} (now {@link Fit#gpColumn}) needed once line 2 carried a
 	 * five-character stack value, a word, a five-character gp figure and a percentage all at once, and addendum
 	 * AO took the word away. Line 2 has 31 px back, so the gap is the one the rest of the panel uses rather than
 	 * the narrowest one that fitted.
@@ -354,27 +326,37 @@ public class MovementRowPanel extends JPanel
 	/** Between a gp figure and whatever stands to its right - the percentage on line 2, the spacer on line 3. */
 	private static final int FIGURE_GAP = 6;
 	/**
-	 * The pinned width of the gp figure's box on BOTH figure lines, {@link #FIGURE_GAP} included. It is a column
-	 * and not a fitted label because the point of the Q4 format is that the stack's move stands directly over
-	 * one item's: two right-aligned labels of the same width do that on every row of the list, and two fitted
-	 * ones would wander by a few px per row and read as a wobble.
+	 * The widest gp figures {@link #signedGp} can print, as shapes: the gp figure's box on BOTH figure lines is the widest of
+	 * these measured at the size the player chose, plus {@link #FIGURE_GAP} ({@link Fit#gpColumn}; release 1.2.1 - it was a
+	 * typed 42 until then). It is a column and not a fitted label because the point of the Q4 format is that the stack's move
+	 * stands directly over one item's: two right-aligned labels of the same width do that on every row of the list, and two
+	 * fitted ones would wander by a few px per row and read as a wobble.
 	 *
-	 * <p>42 = the 36 px {@link #signedGp}'s widest output measures at {@link #GP_SIZE}, plus {@link #FIGURE_GAP}.
-	 * The widest is not the obvious one: {@code QuantityFormatter} caps a compact amount at five characters, so
-	 * "+1,00m" (what 999,999,999 comes out as) and "+1.66m" both measure 36 and nothing measures more. It was
-	 * 38 when this format was first drawn, which held every figure in the fixture and clipped a real bank's
-	 * millions to "-1.6...". That is why {@link #signedGp} is compact in the thousands as well: without it the
-	 * column wants 48 and there is not 48 to give.
+	 * <p>At Normal it measures 42: the 36 px {@link #signedGp}'s widest output is at 10 px, plus {@link #FIGURE_GAP}. The
+	 * widest is not the obvious one: {@code QuantityFormatter} caps a compact amount at five characters, so "+1.00m" (what
+	 * 999,999,999 comes out as) and "+1.66m" both measure 36 and nothing measures more. It was 38 when this format was first
+	 * drawn, which held every figure in the fixture and clipped a real bank's millions to "-1.6...". That is why
+	 * {@link #signedGp} is compact in the thousands as well: without it the column wants 48 and there is not 48 to give. The
+	 * shapes use the widest digit, so a face whose digits differ in width is held too.
 	 */
-	private static final int GP_COLUMN = 42;
+	private static final String[] GP_WIDEST = {"+8.88m", "+88.8m", "+888m", "+8.88b", "+88.8b", "+888k", "+8.8k", "+888"};
 	/**
-	 * The pinned width of the percentage's box, the outermost column on line 2 and an empty spacer on line 3.
-	 * Wider than {@link #GP_COLUMN} because {@link #PCT_SIZE} is the biggest face on the row. Its worst cases are
-	 * "-100.0%", "+1000%" and "+9999%", each exactly 54 at this face; a plus is 4 px wider than a minus, so
-	 * "+100.0%" is 58 and did NOT fit - every rise of a hundred percent or more was cut to "+157..." until
-	 * addendum AT made the face's percentage compact past a hundred ({@link MovementMath#formatPctCompact}).
+	 * The widest percentages {@link #changeText} can print, as shapes: the percentage's box, the outermost column on line 2,
+	 * is the widest of these measured in the bold face at the size the player chose ({@link Fit#pctColumn}). At Normal it
+	 * measures 54: the worst cases are "-100.0%", "+1000%" and "+9999%", each exactly 54 at 15 px bold; a plus is 4 px wider
+	 * than a minus, so "+100.0%" is 58 and did NOT fit - every rise of a hundred percent or more was cut to "+157..." until
+	 * addendum AT made the face's percentage compact past a hundred ({@link MovementMath#formatPctCompact}), whose longest
+	 * forms the first three are (the fourth is the one the column was first sized by, which a fall of a hundred percent does not
+	 * print - it reads "-100%" - and which is a pixel wider than the rest at 17 px).
 	 */
-	private static final int PCT_COLUMN = 54;
+	private static final String[] PCT_WIDEST = {"+88.8%", "+8888%", "+888k%", "-100.0%"};
+	/**
+	 * The least room the word under the percentage is given, right-aligned under it ({@link #slotWord}): the 54 px the slot
+	 * was before release 1.2.1. A Small percentage's own column is narrower than that (44), so the right-hand columns of BOTH
+	 * lines are at least this wide ({@link Fit#rightBlock}) with the percentage at their right end: the gp figures of line 2
+	 * and line 3 stay one over the other, and a long word keeps its room, whatever the percentage's size.
+	 */
+	static final int WORD_SLOT = 54;
 	/**
 	 * The multiplication sign of line 3's working. A lower-case ASCII "x" and deliberately not "&times;": these
 	 * faces are bitmap at these sizes and their glyph for it is unreliable, and a row is the wrong place to
@@ -394,35 +376,30 @@ public class MovementRowPanel extends JPanel
 	private static final int PRICE_SIZE = 13;
 	/** T7: line 3's working, and the {@value #ALCH_TAG} tag standing in for an untradeable row's figures. */
 	private static final int SMALL_SIZE = 11;
-	/**
-	 * The percentage. The biggest face on the row and the one the eye is meant to land on first - the user tried
-	 * this against a same-sized gp figure and asked for the two to "be more isolated from each other", and SIZE
-	 * is what separated them: 15 px bold against {@link #GP_SIZE}.
+	/*
+	 * The percentage and the gp figures have no size of their own here since release 1.2.1: the player chooses one of four
+	 * ({@link ChangeSize}), 15 px bold and 10 px at Normal. The percentage is the biggest face on the row and the one the eye
+	 * is meant to land on first - the user tried it against a same-sized gp figure and asked for the two to "be more isolated
+	 * from each other", and SIZE is what separated them - and the gp figures were 12 (N section 4) and then, once there were
+	 * two of them stacked in one column beside a 15 px percentage, 10.
 	 */
-	private static final int PCT_SIZE = 15;
-	/**
-	 * The gp figures, on both lines. It was 12 (N section 4) and then, once there were two of them stacked in
-	 * one column beside a 15 px percentage, 10: small enough that {@link #GP_COLUMN} fits beside
-	 * {@link #PCT_COLUMN}, and quiet enough that the percentage wins the line.
-	 */
-	private static final int GP_SIZE = 10;
 	/** T6: the two right-click entries, the same face the sort menu one control row away is drawn in. */
 	private static final int MENU_SIZE = 12;
 
 	/**
-	 * The row's six faces, derived ONCE. A page is up to {@link BankPriceMovementPanel#ROWS_PER_PAGE} rows and a
-	 * rebuild happens on every bank change, so deriving six fonts per row was 1,500 {@code Font.deriveFont}
-	 * calls per deposit; a {@link Font} is immutable and shared by design.
+	 * The row's four fixed faces, derived ONCE. A page is up to {@link BankPriceMovementPanel#ROWS_PER_PAGE} rows and a
+	 * rebuild happens on every bank change, so deriving fonts per row was 1,500 {@code Font.deriveFont} calls per
+	 * deposit; a {@link Font} is immutable and shared by design. The two sized faces are derived once per size, in
+	 * {@link Fit}.
 	 */
 	private static final Font NAME_FONT = Widgets.sansBold(NAME_SIZE);
 	private static final Font PRICE_FONT = Widgets.sans(PRICE_SIZE);
 	private static final Font SMALL_FONT = Widgets.sans(SMALL_SIZE);
-	private static final Font PCT_FONT = Widgets.sansBold(PCT_SIZE);
-	private static final Font GP_FONT = Widgets.sans(GP_SIZE);
 	private static final Font MENU_FONT = Widgets.sans(MENU_SIZE);
 	/**
 	 * The faces a grade word is tried at, largest first (contract 1.2.0, L5): the 11 px of line 3's working, then 10 and 9. A
-	 * word is drawn at the first that holds it whole in the slot under the percentage ({@link #PCT_COLUMN} px), which is the
+	 * word is drawn at the first that holds it whole in the slot under the percentage ({@link Fit#rightBlock}, 54 px at the
+	 * sizes before release 1.2.1), which is the
 	 * 11 px of every word but the longest - "last 10h ago" to "last 23h ago" measure 59 at 11 px in the Swing sans this
 	 * plugin draws in and 58 at 10, so they step on to 9 - because the face is the platform's logical one and no table of
 	 * widths measured on one machine holds on another (the 10 px step is there for a face a pixel wider than this one;
@@ -432,16 +409,129 @@ public class MovementRowPanel extends JPanel
 	private static final Font[] WORD_FONTS = {SMALL_FONT, Widgets.sans(10), Widgets.sans(9)};
 
 	/**
-	 * How many times {@link #detail} and the four-argument {@link #tooltip} have run in this JVM - the evidence
-	 * addendum AS is judged on. Only the tests read them: a page of rows built and thrown away must leave both
-	 * where they were, and opening one row must move the first by exactly one. A count rather than a look at the
-	 * label, because a text that was built and then thrown away costs just as much and leaves no label behind.
+	 * What one pair of sizes - the gp figures', the percentage's - means for the row's geometry (release 1.2.1), measured ONCE
+	 * from the real faces and kept: the two faces, the two columns, and the heights of the three lines and of the row. None of
+	 * it depends on what a row says, only on the sizes, so every row of a list is the same height and the same columns
+	 * whatever it holds - a row with no gp move to print is as tall as one with a seven-character move.
 	 *
-	 * <p>Atomic because the two builders are public statics a test may call from any thread. The cost is one
-	 * increment per text written, and a row writes at most one of each.
+	 * <p>The row is {@link #ROW_HEIGHT} at Normal / Normal and grows by exactly what the bigger faces need beyond what Normal
+	 * needs ({@link #stacked}): the name, line 2 (the tallest of the stack value, the gp figure and the percentage, each lifted
+	 * onto the line's baseline as {@link #alignBaselines} lifts it) and line 3 (the working or the gp figure, the taller)
+	 * stacked. At Normal / Normal that is no growth by construction, on any face, so the row is the one every earlier release
+	 * drew.
+	 */
+	static final class Fit
+	{
+		/** The gp figures' face, plain, at the gp size. */
+		final Font gpFont;
+		/** The percentage's face, bold, at the percentage size. */
+		final Font pctFont;
+		/** The gp figure's box on both figure lines: its widest text, with {@link #FIGURE_GAP} of air to its right. */
+		final int gpColumn;
+		/** The percentage's box on line 2: its widest text. */
+		final int pctColumn;
+		/** The width both lines give what stands right of the gp column: {@link #pctColumn}, or {@link #WORD_SLOT} if more. */
+		final int rightBlock;
+		/** Line 2's height: the tallest of its three figures. */
+		final int line2;
+		/** Line 3's height: the taller of the working and the gp figure. */
+		final int line3;
+		/** The face's height, in px: {@link #FACE_HEIGHT} at Normal / Normal, more when the faces need it. */
+		final int faceHeight;
+
+		private Fit(ChangeSize gp, ChangeSize pct)
+		{
+			gpFont = Widgets.sans(gp.gpPx());
+			pctFont = Widgets.sansBold(pct.pctPx());
+			gpColumn = widest(gpFont, GP_WIDEST) + FIGURE_GAP;
+			pctColumn = widest(pctFont, PCT_WIDEST);
+			rightBlock = Math.max(pctColumn, WORD_SLOT);
+			final int[] lines = lines(gpFont, pctFont);
+			line2 = lines[0];
+			line3 = lines[1];
+			faceHeight = FACE_HEIGHT + Math.max(0, stacked(lines) - stacked(lines(Widgets.sans(ChangeSize.NORMAL.gpPx()),
+				Widgets.sansBold(ChangeSize.NORMAL.pctPx()))));
+		}
+
+		/**
+		 * Lines 2 and 3's heights for a pair of faces. Line 2 is the tallest of its three labels as {@link #alignBaselines}
+		 * leaves them - each lifted by the deepest descent on the line less its own - and line 3 the taller of the working's
+		 * 11 px and the gp figure.
+		 */
+		private static int[] lines(Font gpFont, Font pctFont)
+		{
+			final FontMetrics price = metrics(PRICE_FONT);
+			final FontMetrics gpm = metrics(gpFont);
+			final FontMetrics pctm = metrics(pctFont);
+			final int deepest = Math.max(price.getDescent(), Math.max(gpm.getDescent(), pctm.getDescent()));
+			return new int[]{
+				Math.max(price.getHeight() + deepest - price.getDescent(),
+					Math.max(gpm.getHeight() + deepest - gpm.getDescent(), pctm.getHeight())),
+				Math.max(metrics(SMALL_FONT).getHeight(), gpm.getHeight())};
+		}
+
+		/** The name, line 2 and line 3 stacked: what the face needs, its own air not counted. */
+		private static int stacked(int[] lines)
+		{
+			return metrics(NAME_FONT).getHeight() + lines[0] + lines[1];
+		}
+
+		private static int widest(Font face, String[] shapes)
+		{
+			final FontMetrics fm = metrics(face);
+			int widest = 0;
+			for (String shape : shapes)
+			{
+				widest = Math.max(widest, fm.stringWidth(shape));
+			}
+			return widest;
+		}
+	}
+
+	/** The faces' metrics are asked of one label that is never shown, which is how every fit in this panel measures. */
+	private static JLabel measuring;
+	/** One {@link Fit} per pair of sizes, made when first asked for. */
+	private static final Fit[] FITS = new Fit[ChangeSize.values().length * ChangeSize.values().length];
+
+	static synchronized FontMetrics metrics(Font face)
+	{
+		if (measuring == null)
+		{
+			measuring = new JLabel();
+		}
+		return measuring.getFontMetrics(face);
+	}
+
+	/** The {@link Fit} of one pair of sizes, measured the first time and kept. */
+	static synchronized Fit fit(ChangeSize gp, ChangeSize pct)
+	{
+		final int slot = gp.ordinal() * ChangeSize.values().length + pct.ordinal();
+		if (FITS[slot] == null)
+		{
+			FITS[slot] = new Fit(gp, pct);
+		}
+		return FITS[slot];
+	}
+
+	/**
+	 * How tall every row is at these sizes, in px, closed: {@link #ROW_HEIGHT} at Normal / Normal and a little more when the
+	 * bigger faces need it. Asked by the panel for its own estimate of how tall a list is.
+	 */
+	public static int rowHeight(@Nullable ChangeText style)
+	{
+		final ChangeText s = style == null ? ChangeText.DEFAULT : style;
+		return fit(s.gp(), s.pct()).faceHeight + PADDING.top + PADDING.bottom;
+	}
+
+	/**
+	 * How many times {@link #detail} has run in this JVM - the evidence addendum AS is judged on. Only the tests read it: a page
+	 * of rows built and thrown away must leave it where it was, and opening one row must move it by exactly one. A count rather
+	 * than a look at the label, because a text that was built and then thrown away costs just as much and leaves no label behind.
+	 *
+	 * <p>Atomic because the builder is a public static a test may call from any thread. The cost is one increment per text
+	 * written, and a row writes at most one.
 	 */
 	private static final AtomicLong DETAIL_BUILDS = new AtomicLong();
-	private static final AtomicLong TOOLTIP_BUILDS = new AtomicLong();
 
 	private final MovementRow row;
 	/** Kept so the sprite stays referenced while the row is on screen (see the class comment). */
@@ -471,14 +561,10 @@ public class MovementRowPanel extends JPanel
 	private final ViewOptions view;
 	/** 1.1.0 part E: whether this row prints its masks in place of every amount and quantity ({@link AmountMask}). */
 	private final boolean hide;
-	/**
-	 * The long description of addendum K8, which no sidebar has drawn since addendum AK moved the open cell to
-	 * {@link #detail}: written on the first call to {@link #tooltipHtml()} and kept, null until then. Every build
-	 * from AI to AR wrote it in the constructor, for every row of every page, and it was garbage the moment the
-	 * constructor returned (addendum AS).
-	 */
-	@Nullable
-	private String tooltip;
+	/** Release 1.2.1: how big the gp figures and the percentage are drawn on this row, and how bright the gp figures are. */
+	private final ChangeText style;
+	/** This row's height closed, in px: {@link #rowHeight(ChangeText)} for {@link #style}, the same for every row of a list. */
+	private final int closedHeight;
 	/** The {@link #ROW_HEIGHT} px cell every build before AI called the row: the picture, the name, the figures. */
 	private final JPanel face;
 
@@ -529,13 +615,8 @@ public class MovementRowPanel extends JPanel
 	 *                NOTHING on the face reads them since the Q4 format - whether an untradeable stack is LISTED
 	 *                at all is the service's decision (Q5), and the three-line face prints both the stack and
 	 *                the item reading, which is what left {@code holdingOnRows} with nothing to choose and is
-	 *                why addendum AO could delete that key outright. Since addendum T
-	 *                {@code livePrices} reaches the TOOLTIP
-	 *                ({@link #tooltip(MovementRow, MovementWindow, LocalDate, ViewOptions)}): a live row paints
-	 *                exactly as a guide row does (T6), so the face still reads only the one switch. Addendum Y's
-	 *                {@code countInventory} is the third that reaches the tooltip alone (Y3), and since 1.0.9 part 3
-	 *                {@code countGrandExchange} the fourth - a merged stack is drawn as the one stack it is, and
-	 *                only the hover says where it is
+	 *                why addendum AO could delete that key outright. A live row paints exactly as a guide row does
+	 *                (T6), and a merged stack is drawn as the one stack it is, so the face still reads only the one switch
 	 */
 	public MovementRowPanel(MovementRow row, @Nullable AsyncBufferedImage icon, MovementWindow window,
 		@Nullable LocalDate thenDay, @Nullable ViewOptions options)
@@ -602,8 +683,25 @@ public class MovementRowPanel extends JPanel
 		@Nullable LocalDate thenDay, long thenSeconds, @Nullable ViewOptions options, Consumer<String> browser,
 		@Nullable Expansion expansion, boolean hideAmounts)
 	{
+		this(row, icon, window, thenDay, thenSeconds, options, browser, expansion, hideAmounts, ChangeText.DEFAULT);
+	}
+
+	/**
+	 * The list builder's constructor since release 1.2.1.
+	 *
+	 * @param style how big the gp figures and the percentage are drawn and how bright the gp figures are (the List options
+	 *              menu's three settings); null reads as {@link ChangeText#DEFAULT}, which draws every row as it was drawn
+	 *              before they existed - but for the gp figures' colour, which is a little brighter by default
+	 */
+	MovementRowPanel(MovementRow row, @Nullable AsyncBufferedImage icon, MovementWindow window,
+		@Nullable LocalDate thenDay, long thenSeconds, @Nullable ViewOptions options, Consumer<String> browser,
+		@Nullable Expansion expansion, boolean hideAmounts, @Nullable ChangeText style)
+	{
 		this.row = Objects.requireNonNull(row, "row");
 		this.hide = hideAmounts;
+		this.style = style == null ? ChangeText.DEFAULT : style;
+		final Fit fit = fit(this.style.gp(), this.style.pct());
+		this.closedHeight = fit.faceHeight + PADDING.top + PADDING.bottom;
 		this.icon = icon;
 		this.browser = Objects.requireNonNull(browser, "browser");
 		this.expansion = expansion == null ? new OwnExpansion() : expansion;
@@ -623,7 +721,7 @@ public class MovementRowPanel extends JPanel
 		setBackground(ColorScheme.DARKER_GRAY_COLOR);
 
 		face = transparent(new BorderLayout(GAP, 0));
-		Widgets.fixed(face, INNER_WIDTH, FACE_HEIGHT);
+		Widgets.fixed(face, INNER_WIDTH, fit.faceHeight);
 		add(face, BorderLayout.NORTH);
 
 		// AI: the detail, under the face and inside the same border - created here, EMPTY and hidden, and given
@@ -639,7 +737,7 @@ public class MovementRowPanel extends JPanel
 		detailLabel.setBorder(new EmptyBorder(DETAIL_GAP, DETAIL_LEFT, 0, 0));
 		detailLabel.setVisible(false);
 		add(detailLabel, BorderLayout.CENTER);
-		Widgets.fixed(this, ROW_WIDTH, ROW_HEIGHT);
+		Widgets.fixed(this, ROW_WIDTH, closedHeight);
 
 		iconLabel = new JLabel();
 		// RIGHT, in a cell ART_NUDGE wider than the sprite: the whole sprite is drawn (AP) and the air goes on
@@ -665,11 +763,13 @@ public class MovementRowPanel extends JPanel
 		final Color moveColour = textChangeColor(row);
 		changeLabel = isAlch(row)
 			? Widgets.label(ALCH_TAG, SMALL_FONT, ColorScheme.LIGHT_GRAY_COLOR)
-			: Widgets.label(changeText(row), PCT_FONT, moveColour);
+			: Widgets.label(changeText(row), fit.pctFont, moveColour);
 		// AL: the gp figure takes the QUIET role - the same green or red, mixed toward the row's background - so
 		// the percentage beside it is the one the eye lands on. The user, looking at a full list: "the change in
-		// gp ... and the percent change ... be more isolated from each other".
-		gpLabel = Widgets.label(AmountMask.change(hide, stackGp(row)), GP_FONT, quietChangeColor(row));
+		// gp ... and the percent change ... be more isolated from each other". Since release 1.2.1 how far toward it
+		// is the player's to choose (the brightness setting).
+		gpLabel = Widgets.label(AmountMask.change(hide, stackGp(row)), fit.gpFont,
+			quietChangeColor(row, this.style.brightness()));
 		// Every gap on this line is an inset and never a layout hgap: BorderLayout charges its hgap for the WEST
 		// and the EAST child alike, so a 6 px hgap here would quietly cost 12 px and the fit would hand the
 		// price 6 px it does not have (measured, 2026-09-09, when the block was 156 px wide: the widest gp row
@@ -678,11 +778,18 @@ public class MovementRowPanel extends JPanel
 		figures.setBorder(new EmptyBorder(0, LINE2_GAP, 0, 0));
 		gpLabel.setHorizontalAlignment(SwingConstants.RIGHT);
 		gpLabel.setBorder(new EmptyBorder(0, 0, 0, FIGURE_GAP));
-		Widgets.fixed(gpLabel, GP_COLUMN, gpLabel.getPreferredSize().height);
+		Widgets.fixed(gpLabel, fit.gpColumn, gpLabel.getPreferredSize().height);
 		figures.add(gpLabel, BorderLayout.WEST);
 		changeLabel.setHorizontalAlignment(SwingConstants.RIGHT);
-		Widgets.fixed(changeLabel, PCT_COLUMN, changeLabel.getPreferredSize().height);
+		Widgets.fixed(changeLabel, fit.pctColumn, changeLabel.getPreferredSize().height);
 		figures.add(changeLabel, BorderLayout.EAST);
+		if (fit.rightBlock > fit.pctColumn)
+		{
+			// A percentage narrower than the word slot under it (Small): the air goes between the two figures, so the
+			// percentage keeps the right edge and line 3's gp figure still stands under line 2's.
+			figures.add(Widgets.fixed(transparent(new BorderLayout(0, 0)), fit.rightBlock - fit.pctColumn, 1),
+				BorderLayout.CENTER);
+		}
 
 		// ...then the stack's value into what the columns left. AO2 took the word "Total" off this line, so the
 		// price is fitted to the whole of the rest of it; the fit stays because the columns are pinned and the
@@ -696,7 +803,7 @@ public class MovementRowPanel extends JPanel
 		line2.add(priceLabel, BorderLayout.WEST);
 		line2.add(figures, BorderLayout.EAST);
 
-		final JPanel line3 = itemLine(row, hide);
+		final JPanel line3 = itemLine(row, hide, fit, this.style.brightness());
 		// Line 2's three labels only: line 3 is a line of its own, below them, and has nothing to sit level with.
 		alignBaselines(priceLabel, gpLabel, changeLabel);
 
@@ -793,8 +900,7 @@ public class MovementRowPanel extends JPanel
 	public static final String L_CHANGE = "Change ";
 	/**
 	 * What an untradeable stack's cell says under its figures (AK). It does NOT repeat the value - "Worth now"
-	 * is two lines above it, and {@link #untradeableLine} spells the same number out again because it was
-	 * written for a hover that had no such line.
+	 * is two lines above it.
 	 */
 	public static final String ALCH_NOTE = "Untradeable - High Alchemy value, not in the movement figures";
 
@@ -1038,6 +1144,12 @@ public class MovementRowPanel extends JPanel
 		final GradedMove.Side sell = graded.sell();
 		final boolean buyToday = buy.now() != null;
 		final boolean sellToday = sell.now() != null;
+		if (!buyToday && !sellToday)
+		{
+			// A figure with no side of its own: an untradeable's, summed from its parts' (GradeMath.combineParts). The parts
+			// line says what it is made of and it has no prints to tell, so no sentence (it used to throw here, 1.2.0).
+			return "";
+		}
 		final StringBuilder sb = new StringBuilder(160);
 		if (buyToday && sellToday)
 		{
@@ -1157,7 +1269,7 @@ public class MovementRowPanel extends JPanel
 			detailBuilt = true;
 		}
 		detailLabel.setVisible(open);
-		Widgets.fixed(this, ROW_WIDTH, open ? ROW_HEIGHT + detailHeight() : ROW_HEIGHT);
+		Widgets.fixed(this, ROW_WIDTH, open ? closedHeight + detailHeight() : closedHeight);
 		revalidate();
 		repaint();
 		final Container parent = getParent();
@@ -1252,47 +1364,61 @@ public class MovementRowPanel extends JPanel
 
 	/**
 	 * Line 3, the ITEM line: the working behind line 2's stack value on the left - "7 x 4,618" - and what ONE
-	 * item moved on the right, in the same {@link #GP_COLUMN} the stack's figure above it stands in.
+	 * item moved on the right, in the same {@link Fit#gpColumn} the stack's figure above it stands in.
 	 *
 	 * <p>It repeats the SHAPE of line 2 on every row, so the list has one format throughout and the two gp
-	 * figures are always in one column. That is what the empty {@link #PCT_COLUMN} spacer on the far right is
+	 * figures are always in one column. That is what the empty spacer of {@link Fit#rightBlock} on the far right is
 	 * for: without it {@link BorderLayout} would push the gp figure out to the edge of the block and it would no
 	 * longer sit under the stack's.
 	 *
 	 * <p>Neither label is kept in a field, because nothing reads line 3 after it is built - it never changes,
-	 * and a row is thrown away and rebuilt on every publish.
+	 * and a row is thrown away and rebuilt on every publish. The line is {@link Fit#line3} tall on every row, whatever it
+	 * prints, so a list never has two heights.
 	 *
-	 * @param row the row being drawn; a stack of ONE prints its working but no gp figure (Q4.7)
+	 * @param row        the row being drawn; a stack of ONE prints its working but no gp figure (Q4.7)
+	 * @param fit        the sizes the player chose, measured
+	 * @param brightness how bright the gp figure is ({@link ChangeText#brightness()})
 	 */
-	private static JPanel itemLine(MovementRow row, boolean hide)
+	private static JPanel itemLine(MovementRow row, boolean hide, Fit fit, int brightness)
 	{
 		final JLabel workingLabel = Widgets.label("", SMALL_FONT, ColorScheme.LIGHT_GRAY_COLOR);
+		// Q4.7: a stack of one IS the item, so its move is already printed on the line above. The working still
+		// shows ("1 x 10.7k", so every row reads the same way), but the figure beside it does not repeat itself
+		// - the user, on a render that did: "if there's only 1 item then only show the Total rows gp move".
+		final String gpText = AmountMask.change(hide, row.quantity() > 1 ? itemGp(row) : "");
+		final String word = slotWord(row);
 		// Fitted, like line 2's price, since addendum AP gave the picture back its 4 px: the widest working a
-		// real bank makes ("9,999 x 9,999", 66 px) now fills the room the two columns leave EXACTLY, and an
+		// real bank makes ("9,999 x 9,999", 66 px) fills the room the two columns leave at Normal EXACTLY, and an
 		// unfitted WEST label one character wider would be painted under the gp figure rather than cut. The
 		// hover setFitted hangs on a cut label is taken off again by clearHovers(), with every other one.
 		// 1.1.0 part E: the whole working is a quantity - how many, at what price - so while the amounts are hidden the
 		// line is the quantity's mask and nothing else.
+		// Release 1.2.1: the working also takes the room nothing is drawn in - the gp column when this line prints no gp
+		// figure, and the slot under the percentage too when it prints no word - so a bigger percentage no longer cuts
+		// "1 x 14.9m" to "1 x 14..." (the user, 2026-10-25). A line that prints a figure keeps its columns.
+		final int room = !gpText.isEmpty() ? TEXT_WIDTH - fit.gpColumn - fit.rightBlock
+			: !word.isEmpty() ? TEXT_WIDTH - fit.rightBlock - FIGURE_GAP : TEXT_WIDTH;
 		Widgets.setFitted(workingLabel,
-			AmountMask.quantity(hide, MovementMath.formatGp(row.quantity()) + " " + TIMES + " " + unitText(row)),
-			TEXT_WIDTH - GP_COLUMN - PCT_COLUMN);
-		// Q4.7: a stack of one IS the item, so its move is already printed on the line above. The working still
-		// shows ("1 x 10.7k", so every row reads the same way), but the figure beside it does not repeat itself
-		// - the user, on a render that did: "if there's only 1 item then only show the Total rows gp move".
-		final JLabel itemGpLabel = Widgets.label(AmountMask.change(hide, row.quantity() > 1 ? itemGp(row) : ""),
-			GP_FONT, quietChangeColor(row));
+			AmountMask.quantity(hide, MovementMath.formatGp(row.quantity()) + " " + TIMES + " " + unitText(row)), room);
+		final JLabel itemGpLabel = Widgets.label(gpText, fit.gpFont, quietChangeColor(row, brightness));
 		itemGpLabel.setHorizontalAlignment(SwingConstants.RIGHT);
 		itemGpLabel.setBorder(new EmptyBorder(0, 0, 0, FIGURE_GAP));
-		Widgets.fixed(itemGpLabel, GP_COLUMN, itemGpLabel.getPreferredSize().height);
+		Widgets.fixed(itemGpLabel, fit.gpColumn, itemGpLabel.getPreferredSize().height);
 		final JPanel figures = transparent(new BorderLayout(0, 0));
-		figures.add(itemGpLabel, BorderLayout.WEST);
+		if (!gpText.isEmpty())
+		{
+			figures.add(itemGpLabel, BorderLayout.WEST);
+		}
 		// The slot under the percentage (contract 1.2.0, L5). A solid row, an ungraded row and an alch row leave it empty -
 		// 1 px tall, because it is holding a width open and a taller spacer would fight line 3's own height - which is
 		// what keeps every row of a guide-only list byte for byte what it was. A soft or a none row prints its word there.
-		final String word = slotWord(row);
+		// A line with neither a gp figure nor a word holds nothing open: its working has the whole width.
 		if (word.isEmpty())
 		{
-			figures.add(Widgets.fixed(transparent(new BorderLayout(0, 0)), PCT_COLUMN, 1), BorderLayout.EAST);
+			if (!gpText.isEmpty())
+			{
+				figures.add(Widgets.fixed(transparent(new BorderLayout(0, 0)), fit.rightBlock, 1), BorderLayout.EAST);
+			}
 		}
 		else
 		{
@@ -1301,37 +1427,45 @@ public class MovementRowPanel extends JPanel
 			// every word the grade can say against the slot.
 			final JLabel wordLabel = Widgets.label("", SMALL_FONT, ColorScheme.LIGHT_GRAY_COLOR);
 			wordLabel.setHorizontalAlignment(SwingConstants.RIGHT);
-			wordLabel.setFont(wordFont(wordLabel, word));
-			sitOnTheWorkingsBaseline(wordLabel);
-			Widgets.setFitted(wordLabel, word, PCT_COLUMN);
-			Widgets.fixed(wordLabel, PCT_COLUMN, wordLabel.getPreferredSize().height);
+			wordLabel.setFont(wordFont(wordLabel, word, fit.rightBlock));
+			sitOnTheWorkingsBaseline(wordLabel, fit.line3);
+			Widgets.setFitted(wordLabel, word, fit.rightBlock);
+			Widgets.fixed(wordLabel, fit.rightBlock, wordLabel.getPreferredSize().height);
 			figures.add(wordLabel, BorderLayout.EAST);
 		}
 		final JPanel line = transparent(new BorderLayout(0, 0));
 		line.add(workingLabel, BorderLayout.WEST);
-		line.add(figures, BorderLayout.EAST);
-		return line;
+		if (figures.getComponentCount() > 0)
+		{
+			line.add(figures, BorderLayout.EAST);
+		}
+		// The same height on every row: with a gp figure taller than the working (Large, Largest) a row that prints none
+		// would otherwise be a line shorter, and line 2 above it a line lower.
+		return Widgets.fixed(line, TEXT_WIDTH, fit.line3);
 	}
 
 	/**
 	 * Puts the grade word of line 3 on the baseline of the working beside it ("5 x 4,618", {@link #SMALL_FONT}). A label
 	 * centres its text vertically in the cell it is stretched to, which is the line's whole height, so a word stepped down
 	 * to 10 or 9 px by {@link #wordFont} sat a pixel or two ABOVE the working's baseline - its own height is smaller, the
-	 * centre is the same. The word is bottom-aligned instead, lifted by the difference between what the working's face and
-	 * its own leave BELOW the baseline in Swing's text box - the descent plus the leading, {@code height - ascent}: at 9 px
-	 * this platform's face has a leading of 1 that sits under the baseline, so the descent alone would leave the word a pixel
-	 * high. It is the {@link #alignBaselines} idiom; at the working's own size the difference is 0 and the label is what it
-	 * was, so the row is unchanged.
+	 * centre is the same. The word is top-aligned instead, with an inset that puts its baseline exactly where the working's
+	 * is: the working is centred in a line {@code lineHeight} tall - Swing puts its top at half the line's height less half its own,
+	 * each rounded down - so its baseline is that plus its ascent, and the word's ascent comes off that. The line is as tall as the working at Normal (and when the gp
+	 * figure is Small), where this is the old bottom-aligned lift of the difference between what the two faces leave BELOW
+	 * the baseline - the descent plus the leading, {@code height - ascent}: at 9 px this platform's face has a leading of 1
+	 * that sits under the baseline, so the descent alone would leave the word a pixel high - to the pixel; it is taller
+	 * when the gp figure is Large or Largest, where the working sits lower in it and the word must follow. It is the
+	 * {@link #alignBaselines} idiom, measured from {@link FontMetrics} at build time.
 	 */
-	private static void sitOnTheWorkingsBaseline(JLabel wordLabel)
+	private static void sitOnTheWorkingsBaseline(JLabel wordLabel, int lineHeight)
 	{
-		wordLabel.setVerticalAlignment(SwingConstants.BOTTOM);
+		wordLabel.setVerticalAlignment(SwingConstants.TOP);
 		final FontMetrics working = wordLabel.getFontMetrics(SMALL_FONT);
 		final FontMetrics word = wordLabel.getFontMetrics(wordLabel.getFont());
-		final int lift = (working.getHeight() - working.getAscent()) - (word.getHeight() - word.getAscent());
-		if (lift > 0)
+		final int top = lineHeight / 2 - working.getHeight() / 2 + working.getAscent() - word.getAscent();
+		if (top > 0)
 		{
-			wordLabel.setBorder(new EmptyBorder(0, 0, lift, 0));
+			wordLabel.setBorder(new EmptyBorder(top, 0, 0, 0));
 		}
 	}
 
@@ -1387,11 +1521,11 @@ public class MovementRowPanel extends JPanel
 	}
 
 	/**
-	 * A signed gp move narrow enough for {@link #GP_COLUMN} - and that is the whole reason it exists.
+	 * A signed gp move narrow enough for {@link Fit#gpColumn} - and that is the whole reason it exists.
 	 *
 	 * <p><b>It is compact in the thousands where the rest of the panel is not:</b> "+3.4k" where the sidebar
 	 * printed "+3,432". {@link MovementMath#formatDelta} keeps four digits and a comma between 1,000 and 9,999,
-	 * which wants about 48 px at {@link #GP_SIZE} - and 48 plus a {@link #PCT_COLUMN} does not fit in
+	 * which wants about 48 px at 10 px - and 48 plus a {@link Fit#pctColumn} does not fit in
 	 * {@link #TEXT_WIDTH} beside a price. So this is a deliberate trade: ONE step of precision on the face,
 	 * bought to keep the percentage at the size the user asked for. It is a real loss and it is the only
 	 * rounding on the row that the exact figure does not appear anywhere beside - the block the cell opens is
@@ -1418,7 +1552,7 @@ public class MovementRowPanel extends JPanel
 	 * printing the dash, the tag or "0.0%", and a row that says "0" three times says nothing three times.
 	 *
 	 * <p>That blank-zero rule came from {@code gpText}, the figure addendum N drew here, and outlived it
-	 * (addendum N, addendum AL, addendum AO): it costs the column nothing, because {@link #GP_COLUMN} is a fixed
+	 * (addendum N, addendum AL, addendum AO): it costs the column nothing, because {@link Fit#gpColumn} is a fixed
 	 * box that an empty label holds open exactly as a filled one does. A flat stack is flat per item too
 	 * ({@code holdingDeltaGp} is {@code deltaGp} times a quantity of at least one), so both lines blank together
 	 * and the item's figure is never left standing alone under a gap.
@@ -1467,9 +1601,9 @@ public class MovementRowPanel extends JPanel
 	 * exact figure.
 	 *
 	 * <p>Addendum N moved the gp half of the old "+12.3k +0.8%" out of here into its own label, so the two
-	 * figures are sized separately - {@link #PCT_SIZE} bold against {@link #GP_SIZE} plain, a gap the Q4 format
+	 * figures are sized separately - {@link ChangeSize#pctPx} bold against {@link ChangeSize#gpPx} plain, a gap the Q4 format
 	 * widened - and since addendum AL they no longer share a colour either
-	 * ({@link #quietChangeColor(MovementRow)}).
+	 * ({@link #quietChangeColor(MovementRow, int)}).
 	 */
 	public static String changeText(MovementRow row)
 	{
@@ -1481,11 +1615,11 @@ public class MovementRowPanel extends JPanel
 	}
 
 	/** The largest of {@link #WORD_FONTS} that holds {@code word} whole in the slot, the smallest when none does. */
-	private static Font wordFont(JLabel label, String word)
+	private static Font wordFont(JLabel label, String word, int slot)
 	{
 		for (Font face : WORD_FONTS)
 		{
-			if (label.getFontMetrics(face).stringWidth(word) <= PCT_COLUMN)
+			if (label.getFontMetrics(face).stringWidth(word) <= slot)
 			{
 				return face;
 			}
@@ -1536,61 +1670,10 @@ public class MovementRowPanel extends JPanel
 	}
 
 	/**
-	 * Whether this row is an untradeable stack valued at what its tradeable PARTS are worth (addendum R, line
-	 * R2) - a Crystal body at three Crystal armour seeds rather than at its 900k alch value.
-	 *
-	 * <p>Nothing on the FACE turns on this: such a row has a guide-priced baseline and a real move, so it paints
-	 * as any other priced row does (R4), and the flag exists for the one tooltip line that says so. It is asked
-	 * of the row's SOURCE for the same reason {@link #isAlch} is: a sum of parts and a guide price are two
-	 * different answers that happen to be the same kind of number.
-	 */
-	public static boolean isParts(MovementRow row)
-	{
-		return row.source() == MovementRow.PriceSource.PARTS;
-	}
-
-	/**
-	 * The one line an untradeable row's tooltip says instead of a guide price, a baseline and a change (Q5):
-	 * "Untradeable - High Alchemy value 20,000 gp; not in the movement figures". Both halves are load-bearing -
-	 * WHICH price the row is showing, and why the movement columns are a tag instead of a figure.
-	 */
-	public static String untradeableLine(MovementRow row)
-	{
-		return "Untradeable - High Alchemy value "
-			+ (row.unitPrice() == null ? MovementMath.DASH : MovementMath.formatExact(row.unitPrice()))
-			+ " gp; not in the movement figures";
-	}
-
-	/**
-	 * The one line a CARRIED row's tooltip adds under its "Holding:" line (addendum Y, line Y3;
-	 * {@code docs/bank-price-movement-addendum-Y-2026-09-13.md}): "3 in bank, 1 in inventory, 1 worn, 2 in the Grand
-	 * Exchange" - where the quantity on the line above it actually is.
-	 *
-	 * <p>It exists because addendum Y merges the containers into ONE row: an item held in the bank and worn
-	 * is a single card with the quantities summed, which is the row a reader wants and also a row whose
-	 * quantity they cannot check against anything they can see. The parts are named in the order a player
-	 * would look for them - the bank the list is about, then what they are carrying, then what they have on, then
-	 * what is in their Grand Exchange offers (1.0.9 part 3) - and a part at zero is DROPPED rather than printed as
-	 * "0 worn", so a worn-only item reads "1 worn" and a stack split two ways reads "3 in bank, 1 in inventory".
-	 *
-	 * <p>"" whenever there is nothing to say: a row computed with the switch off (no split at all) and a row whose
-	 * whole stack is in the bank ({@link MovementRow#allInBank()}), because "3 in bank" under "Holding: 3" is the
-	 * same fact twice. So the line appears exactly on the rows addendum Y changed, and the tooltip of every other
-	 * row is the tooltip addenda K to X wrote, line for line.
-	 *
-	 * <p>Plain text; the caller appends it to the tooltip's HTML. The figures are
-	 * {@link MovementMath#formatExact} like the holding above them, so a stack of 28,000 scales split by a trip
-	 * reads "27,000 in bank, 1,000 in inventory".
-	 */
-	public static String splitLine(MovementRow row)
-	{
-		return splitLine(row, false);
-	}
-
-	/**
-	 * {@link #splitLine(MovementRow)} while the amounts may be HIDDEN (1.1.0 part E): each part's quantity reads its mask
-	 * ({@link AmountMask#SHORT}) - "(three dots) in bank, (three dots) worn" - and which parts there are, being
-	 * words, stays.
+	 * The one line a CARRIED row's open block adds (addendum Y, line Y3): "3 in bank, 1 in inventory, 1 worn, 2 in the Grand
+	 * Exchange" - where the quantity of the merged row actually is. "" when the whole stack is in the bank; a part at zero is
+	 * left out. While the amounts are HIDDEN (1.1.0 part E) each part's quantity reads its mask ({@link AmountMask#SHORT})
+	 * and which parts there are, being words, stays.
 	 */
 	public static String splitLine(MovementRow row, boolean hide)
 	{
@@ -1616,12 +1699,12 @@ public class MovementRowPanel extends JPanel
 	}
 
 	/**
-	 * The one line a PARTS row's tooltip adds under its price (R4): "Untradeable - valued as its parts: 3 x
+	 * The one line a PARTS row's open block adds (R4): "Untradeable - valued as its parts: 3 x
 	 * Crystal armour seed, Crystal shard". Each part is "&lt;n&gt; x &lt;name&gt;", the count left off at one
 	 * because "1 x Black mask" is a quantity nobody asked about, and the parts joined with ", " in the order
 	 * {@code ItemMapping} lists them.
 	 *
-	 * <p>Both halves are load-bearing, exactly as they are on an ALCH row's {@link #untradeableLine}: that the
+	 * <p>Both halves are load-bearing, exactly as they are on an ALCH row's {@link #ALCH_NOTE}: that the
 	 * item is untradeable at all, and WHICH tradeable thing the figure above it is the price of. Without the
 	 * second half a Crystal body simply reads 16.7m and a reader has no way to tell that from a guide price - and
 	 * the whole reason the row is worth 16.7m rather than 900k is the three seeds it reverts to.
@@ -1658,65 +1741,6 @@ public class MovementRowPanel extends JPanel
 		return first ? "" : sb.toString();
 	}
 
-	/**
-	 * The first line of a LIVE row's tooltip, under the name (T6, reworded by contract 1.2.0): "Price from today's trades:
-	 * 63,437,264 gp (last bought 63.6m, last sold 63.3m; 517 traded yesterday)".
-	 *
-	 * <p>Three figures, and each is there because a reader who has switched live prices on asks for it: the price this
-	 * row is actually valued at, the last print of each side of the book - so a wide spread is visible rather than
-	 * hidden inside one number - and how much of the item traded yesterday. The price is exact and the two prints are
-	 * in stack form, because they are context for the figure and not the figure.
-	 *
-	 * <p>"" when the row is not live ({@link MovementRow#isLive()}), so a caller can ask blind. A print the feed had
-	 * none of is simply left out rather than printed as a dash: the parenthetical is context, and half of it
-	 * still helps.
-	 */
-	public static String liveLine(MovementRow row)
-	{
-		final MovementRow.LiveFacts facts = row.liveFacts();
-		if (!row.isLive() || facts == null)
-		{
-			return "";
-		}
-		final StringBuilder sb = new StringBuilder(80).append(LIVE_PRICE_PREFIX);
-		sb.append(row.unitPrice() == null ? MovementMath.DASH : MovementMath.formatExact(row.unitPrice()) + " gp");
-		final StringBuilder inner = new StringBuilder(48);
-		if (facts.buy() != null)
-		{
-			inner.append("last bought ").append(MovementMath.formatGp(facts.buy()));
-		}
-		if (facts.sell() != null)
-		{
-			inner.append(inner.length() == 0 ? "" : ", ").append("last sold ").append(MovementMath.formatGp(facts.sell()));
-		}
-		if (facts.volumeYesterday() > 0L)
-		{
-			inner.append(inner.length() == 0 ? "" : "; ").append(MovementMath.formatExact(facts.volumeYesterday()))
-				.append(" traded yesterday");
-		}
-		if (inner.length() > 0)
-		{
-			sb.append(" (").append(inner).append(')');
-		}
-		return sb.toString();
-	}
-
-	/**
-	 * The one line a row priced at the guide gains while the live switch is on (T6, reworded by contract 1.2.0):
-	 * "Valued at the guide price: no trades". The phrase after the colon is the 1d grade's word, as
-	 * {@code PriceService} recorded it - this class states no rule of its own about liquidity, it prints the word the
-	 * service graded the row with (before 1.2.0 it was the first of addendum T's five checks that refused the row).
-	 *
-	 * <p>"" when the row is live, or when the traded feeds never looked at it - which is every row built while the
-	 * switch was off, and is what keeps a guide-only tooltip exactly what it was before addendum T.
-	 */
-	public static String liveRefusalLine(MovementRow row)
-	{
-		final MovementRow.LiveFacts facts = row.liveFacts();
-		final String reason = facts == null ? null : facts.reason();
-		return reason == null || reason.isEmpty() ? "" : GUIDE_VALUED_PREFIX + reason;
-	}
-
 	/** Green for a rise, red for a fall, the dim grey for a dash or a zero move (contract C31, L2). */
 	public static Color changeColor(MovementRow row)
 	{
@@ -1740,11 +1764,13 @@ public class MovementRowPanel extends JPanel
 	/**
 	 * The gp figure's colour since addendum AL: {@link #textChangeColor} pushed toward the row's background, so
 	 * two figures on one line stop competing. Same sign rule, same source, so it can never disagree with the
-	 * percentage beside it or with the rail.
+	 * percentage beside it or with the rail. Since release 1.2.1 how far is the player's to choose:
+	 * {@code brightness} is the percentage of the way from the card's own grey to the percentage's colour
+	 * ({@link ChangeText#brightness()}, {@link Widgets#quietAt}), so 100 is the colour of the percentage beside the figure.
 	 */
-	public static Color quietChangeColor(MovementRow row)
+	public static Color quietChangeColor(MovementRow row, int brightness)
 	{
-		return Widgets.move(signum(row), Widgets.Kind.QUIET);
+		return Widgets.quietAt(signum(row), brightness);
 	}
 
 	/**
@@ -1771,64 +1797,6 @@ public class MovementRowPanel extends JPanel
 	}
 
 	/**
-	 * The HTML tooltip, addendum K8's five lines with addendum L7's day stamp: the name, the exact guide price,
-	 * the baseline with the DAY it was read from, the holding, the change. Every figure exact
-	 * ({@link MovementMath#formatExact}), every text from the item escaped. UNCHANGED by addendum N - and now
-	 * load-bearing, because the holding value and the exact gp change both left the face of the row.
-	 *
-	 * <pre>
-	 * Green hat
-	 * Guide price: 1,086 gp
-	 * 1d ago (07 Sep): 1,124 gp
-	 * Holding: 3 = 3,258 gp
-	 * 2 in bank, 1 in inventory
-	 * Change per item: -38 gp (-3.4%)
-	 * </pre>
-	 *
-	 * <p>The fifth line is addendum Y's and is there only when it has something to say ({@link #splitLine}): with
-	 * "Include inventory and worn gear" and "Include Grand Exchange offers" off, or with the whole stack in the bank,
-	 * the tooltip is the five lines addenda K and L wrote.
-	 *
-	 * <p><b>"per item" is load-bearing, not decoration</b> - and since addendum X (line X2;
-	 * {@code docs/bank-price-movement-addendum-X-2026-09-13.md}) took the words off the sort button's hover,
-	 * this line is the one place they are said. The change is the change in ONE item's guide
-	 * price, printed two lines under a "Holding:" line
-	 * that is the whole stack - so "Holding: 3 = 3,258 gp" over a bare "Change: -38 gp" invites the reading that
-	 * the holding lost 38 gp when it lost 114, and on a 28,000 stack of scales that misreading is out by four
-	 * orders of magnitude. The three words are the whole fix; the tooltip is HTML and has the room.
-	 *
-	 * <p>There is no "where the price came from" any more (the old "wiki HH:MM | RuneLite"): under addendum K
-	 * there is ONE number and one place it comes from, RuneLite's own guide-price table (K1), so naming it in
-	 * the line - "Guide price:" - says everything the parenthetical used to.
-	 *
-	 * <p>The stamp is a DAY and not a clock (L7). It is also the day the baseline table actually claims, which
-	 * on a maintenance edit is not the day the window asked for (L5) - so a reader comparing the row against the
-	 * GE site can see that the baseline came from the 2nd rather than the 3rd instead of guessing.
-	 *
-	 * <p><b>A merged row says where its quantity is</b> (addendum Y, line Y3;
-	 * {@code docs/bank-price-movement-addendum-Y-2026-09-13.md}). With "Include inventory and worn gear" or "Include
-	 * Grand Exchange offers" on, an item held in two places is ONE row with the quantities summed, so directly under
-	 * the Holding line - and only when something is carried, worn or in an offer - comes {@link #splitLine}: "3 in
-	 * bank, 1 in inventory, 1 worn, 2 in the Grand Exchange". It is the only place the split exists, exactly as the
-	 * holding value and the exact change are, and a row entirely in the bank prints nothing new.
-	 *
-	 * <p><b>An untradeable row says one more thing, or another thing.</b> A row valued at its tradeable parts
-	 * (R4) keeps all five lines - it has a price, a baseline and a change like any other - and gains a sixth
-	 * between the price and the baseline, naming the parts the price is a sum of ({@link #partsLine}). An ALCH
-	 * row (Q5) has no guide price, no baseline and no change at all, so the three lines that would all read "-"
-	 * give way to one sentence ({@link #untradeableLine}) over the holding, which is the only figure it does
-	 * have. It never varied with the view switches' choice of reading either - it carries the unit price AND
-	 * the holding, which is why the switch that chose between them (Q6) could be deleted outright by addendum
-	 * AO without this text changing a character.
-	 *
-	 * @param thenDay the baseline table's UTC day; null stamps {@link MovementMath#DASH}
-	 */
-	public static String tooltip(MovementRow row, @Nullable MovementWindow window, @Nullable LocalDate thenDay)
-	{
-		return tooltip(row, window, thenDay, ViewOptions.DEFAULT);
-	}
-
-	/**
 	 * Which rows are showing the long hover, remembered somewhere that OUTLIVES a row (addendum AG).
 	 *
 	 * <p>It has to live outside, because a {@link MovementRowPanel} is not long-lived: every publish -
@@ -1849,131 +1817,6 @@ public class MovementRowPanel extends JPanel
 	}
 
 	/**
-	 * {@link #tooltip(MovementRow, MovementWindow, LocalDate)} under the view switches (addendum T, line T6). Only
-	 * the live switch reaches it - the other three are answered by the row the service published - and it changes
-	 * three things, none of which a row built with the switch off can show, because such a row carries no
-	 * {@link MovementRow#liveFacts()} at all:
-	 *
-	 * <pre>
-	 * Twisted bow
-	 * Live traded price: 63,437,264 gp (buy 63.6m, sell 63.3m; 517 traded yesterday)
-	 * 1d ago (10 Sep): 62,100,000 gp (traded average)
-	 * Holding: 1 = 63,437,264 gp
-	 * Change per item: +1,337,264 gp (+2.1%)
-	 *
-	 * Green hat
-	 * Guide price: 1,086 gp
-	 * Guide price - live not used: 12 traded yesterday
-	 * 1d ago (07 Sep): 1,124 gp
-	 * ...
-	 * </pre>
-	 *
-	 * <p>The window line's own note is the third: a live row whose traded bucket for THAT day was missing, too thin
-	 * or too scattered (V3) compares guide against guide for it (T4), and says so - "(guide - too few or too
-	 * scattered trades that day)" - because a live price over a guide baseline is exactly the comparison addendum
-	 * T's study refuted, and a reader looking at a row that did the right thing should be able to see that it did.
-	 *
-	 * <p><b>And the window line's DAY is the row's own</b> (addendum U, line U3, {@link #stampedDay}): "1d ago
-	 * (11 Sep)" is the day the traded bucket behind that figure belongs to, which on a live row is {@code liveDay -
-	 * N} and not the guide's anchor day. The live look that produced addendum U found a Partyhat set reading +30 %
-	 * for "1d" because the two had drifted apart, so the day a line prints is now taken from the same place its
-	 * number is.
-	 *
-	 * <p>Since addendum AS a row writes this only when {@link #tooltipHtml()} is first asked for it - which only
-	 * the tests do - and every call is counted ({@link #tooltipBuilds()}), which is how they prove that a page of
-	 * rows writes none.
-	 *
-	 * @param options the view switches the page was built under; null reads as {@link ViewOptions#DEFAULT}. With
-	 *                {@code livePrices} off no live line is printed whatever the row carries - so the page built
-	 *                after a switch is thrown never explains a series the panel is no longer on, and a row list
-	 *                recorded while the switch was on cannot bleed a live line into a guide-only sidebar. The rows
-	 *                already on screen keep the tooltips they were built with until the service's own recompute
-	 *                publishes the new figures, which is the same beat their FACES change on. {@code countInventory}
-	 *                and {@code countGrandExchange} reach it the same way (Y3): with both off no split line is
-	 *                printed whatever the row carries, so a list recorded while one was on cannot bleed one into a
-	 *                bank-only sidebar
-	 */
-	public static String tooltip(MovementRow row, @Nullable MovementWindow window, @Nullable LocalDate thenDay,
-		@Nullable ViewOptions options)
-	{
-		TOOLTIP_BUILDS.incrementAndGet();
-		final ViewOptions view = options == null ? ViewOptions.DEFAULT : options;
-		final boolean live = view.livePrices();
-		// Y3: where the quantity is, said under the Holding line it qualifies - on every kind of row, because a
-		// worn slayer helmet is an alch row and a worn Crystal body a parts row. "" while the switch is off and
-		// "" while the whole stack is in the bank, so the line appears exactly where it has something to add.
-		final String split = view.countInventory() || view.countGrandExchange() ? splitLine(row) : "";
-		final StringBuilder sb = new StringBuilder(180);
-		sb.append("<html><b>").append(Widgets.escapeHtml(row.name())).append("</b>");
-		if (isAlch(row))
-		{
-			sb.append("<br>").append(untradeableLine(row));
-			sb.append("<br>Holding: ").append(MovementMath.formatExact(row.quantity())).append(" = ");
-			sb.append(row.unitPrice() == null ? MovementMath.DASH : MovementMath.formatExact(row.holdingValue()) + " gp");
-			if (!split.isEmpty())
-			{
-				sb.append("<br>").append(split);
-			}
-			return sb.append("</html>").toString();
-		}
-		// T6: the price line names its series. A live row says so and shows the two sides and the volume behind
-		// it; every other row is the guide line this tooltip has carried since addendum K.
-		final String liveLine = live ? liveLine(row) : "";
-		if (!liveLine.isEmpty())
-		{
-			sb.append("<br>").append(liveLine);
-		}
-		else
-		{
-			sb.append("<br>Guide price: ");
-			sb.append(row.unitPrice() == null
-				? MovementMath.DASH + " (no price)" : MovementMath.formatExact(row.unitPrice()) + " gp");
-		}
-		// R4: on a parts row, ONE line under the price saying what that price is the sum of - and then the
-		// ordinary then / holding / change lines, because a parts row has all three. Escaped: the part names come
-		// from the game, like the item name above them.
-		final String parts = partsLine(row);
-		if (!parts.isEmpty())
-		{
-			sb.append("<br>").append(Widgets.escapeHtml(parts));
-		}
-		// T6: and under the price it qualifies, the check that kept this row on the guide series.
-		final String refusal = live ? liveRefusalLine(row) : "";
-		if (!refusal.isEmpty())
-		{
-			sb.append("<br>").append(Widgets.escapeHtml(refusal));
-		}
-		sb.append("<br>").append(window == null ? MovementWindow.DEFAULT.label() : window.label());
-		sb.append(" ago (").append(MovementMath.formatDay(stampedDay(row, window, thenDay, live))).append("): ");
-		sb.append(row.thenPrice() == null ? MovementMath.DASH : MovementMath.formatExact(row.thenPrice()) + " gp");
-		// T4, as contract 1.2.0 leaves it: which series THIS window compared, said only on a row the traded feeds actually
-		// touched - a guide-only row's window line is what it always was. A window with no figure is a dash, and says why.
-		if (live && !liveLine.isEmpty())
-		{
-			sb.append(row.windowSource(window) == MovementRow.PriceSource.LIVE
-				? TRADED_AVERAGE_NOTE : WINDOW_NO_FIGURE_NOTE);
-		}
-		sb.append("<br>Holding: ").append(MovementMath.formatExact(row.quantity())).append(" = ");
-		sb.append(row.unitPrice() == null ? MovementMath.DASH : MovementMath.formatExact(row.holdingValue()) + " gp");
-		if (!split.isEmpty())
-		{
-			sb.append("<br>").append(split);
-		}
-		sb.append("<br>Change per item: ");
-		if (row.hasMovement())
-		{
-			sb.append(signedExact(row.deltaGp())).append(" gp (")
-				.append(MovementMath.formatPct(row.deltaPct(), signSource(row))).append(')');
-		}
-		else
-		{
-			sb.append(MovementMath.DASH);
-		}
-		sb.append("</html>");
-		return sb.toString();
-	}
-
-	/**
 	 * The calendar day ONE window line stamps (addendum U, line U3;
 	 * {@code docs/bank-price-movement-addendum-U-2026-09-12.md}): the day this ROW actually compared against
 	 * ({@link MovementRow#windowDay(MovementWindow)}) whenever it recorded one, and the status's own baseline day
@@ -1987,7 +1830,7 @@ public class MovementRowPanel extends JPanel
 	 * number on one line can never disagree.
 	 *
 	 * <p>{@code live} is the SWITCH, not the row: with live prices off this answers {@code thenDay} whatever the row
-	 * carries, so a row list recorded while the switch was on cannot bleed a traded day into the guide-only tooltip
+	 * carries, so a row list recorded while the switch was on cannot bleed a traded day into the guide-only block
 	 * addenda K to S wrote (T8). {@code thenDay} is the fallback everywhere else too - a window with no traded
 	 * bucket, a guide row while the switch is on, and a null window - so a row that recorded nothing stamps exactly
 	 * what it stamped before addendum U.
@@ -2028,7 +1871,7 @@ public class MovementRowPanel extends JPanel
 	}
 
 	/**
-	 * The exact change with its sign - "+20,000", "-4,100", "0" - for the tooltip, where every figure is exact;
+	 * The exact change with its sign - "+20,000", "-4,100", "0" - for the open block, where every figure is exact;
 	 * the row itself shows the stack-style {@link MovementMath#formatDelta} ("+20k").
 	 */
 	private static String signedExact(@Nullable Long gp)
@@ -2088,31 +1931,10 @@ public class MovementRowPanel extends JPanel
 		return icon;
 	}
 
-	/**
-	 * The long description ({@link #tooltip(MovementRow, MovementWindow, LocalDate, ViewOptions)}) of this row,
-	 * written on the first call and kept (addendum AS). Nothing in the sidebar draws it - the open cell has shown
-	 * {@link #detail} since addendum AK - so only the tests ask, and a row nobody asks writes none. EDT only, like
-	 * the rest of the row; a call from another thread could at worst write it twice, and a String is safe to share.
-	 */
-	String tooltipHtml()
-	{
-		if (tooltip == null)
-		{
-			tooltip = tooltip(row, window, thenDay, view);
-		}
-		return tooltip;
-	}
-
 	/** {@link #DETAIL_BUILDS}: how many open blocks {@link #detail} has written in this JVM, for the tests. */
 	static long detailBuilds()
 	{
 		return DETAIL_BUILDS.get();
-	}
-
-	/** {@link #TOOLTIP_BUILDS}: how many long descriptions the four-argument {@link #tooltip} has written. */
-	static long tooltipBuilds()
-	{
-		return TOOLTIP_BUILDS.get();
 	}
 
 	String nameText()

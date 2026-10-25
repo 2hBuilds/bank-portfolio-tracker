@@ -420,7 +420,7 @@ public class BankHistoryViewTest
 			assertEquals(MovementRowPanel.signedGp(v - prev), text(sep23, 5));
 			final int sign = Long.signum(v - prev);
 			assertEquals(Widgets.move(sign, Widgets.Kind.FIGURE), ((JLabel) sep23.getComponent(4)).getForeground());
-			assertEquals(Widgets.move(sign, Widgets.Kind.QUIET), ((JLabel) sep23.getComponent(5)).getForeground());
+			assertEquals(Widgets.quietAt(sign, ChangeText.DEFAULT_BRIGHTNESS), ((JLabel) sep23.getComponent(5)).getForeground());
 			assertEquals("no clock on a row: six labels and nothing else", 6, sep23.getComponentCount());
 			for (Component c : sep23.getComponents())
 			{
@@ -645,7 +645,7 @@ public class BankHistoryViewTest
 			assertEquals(ColorScheme.PROGRESS_COMPLETE_COLOR, pct.getForeground());
 			final JLabel gp = label(view, MovementRowPanel.signedGp(c.deltaGp()));
 			assertNotNull(gp);
-			assertEquals(Widgets.move(1, Widgets.Kind.QUIET), gp.getForeground());
+			assertEquals(Widgets.quietAt(1, ChangeText.DEFAULT_BRIGHTNESS), gp.getForeground());
 
 			// "all": from the first reading (amendment 9.5); a fall is the rows' red.
 			final BankHistorySeries falling = BankHistorySeries.of(Arrays.asList(point(TODAY.minusDays(3), 900L),

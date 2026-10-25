@@ -78,13 +78,11 @@ import static org.junit.Assert.fail;
  * hover, its named AG6 form and the text a toggle handed to Swing went with {@code briefTooltip} and
  * {@code MORE_INFO}. What AI did NOT change is the COLLAPSED geometry, which the four pinned renders depend on.
  *
- * <p><b>Addendum AK rewrote what that cell SAYS</b>, and the tooltip tests below stopped describing it. The cell
- * is now the label column {@link MovementRowPanel#detail(MovementRow, MovementWindow, java.time.LocalDate,
- * ViewOptions, boolean)} writes - "Worth now / Was / You have / Change 1d", and under it only the notes that say
- * something - which is pinned under "addendum AK" near the end of this file. The long builder
- * ({@link MovementRowPanel#tooltip(MovementRow, MovementWindow, java.time.LocalDate, ViewOptions)}) is UNCHANGED
- * and still exists, so the tooltip tests below still describe it exactly; nothing in the sidebar draws it any
- * more, and if it is ever deleted they go with it.
+ * <p><b>Addendum AK rewrote what that cell SAYS</b>. The cell is now the label column
+ * {@link MovementRowPanel#detail(MovementRow, MovementWindow, java.time.LocalDate, ViewOptions, boolean)} writes -
+ * "Worth now / Was / You have / Change 1d", and under it only the notes that say something - which is pinned under
+ * "addendum AK" near the end of this file. The long hover builder it replaced, which nothing in the sidebar drew,
+ * was deleted in release 1.2.1 with the tests that described it.
  *
  * <p><b>Addendum AL quietened the gp figure on the FACE</b>: it takes
  * {@link MovementRowPanel#quietChangeColor} - the percentage's colour mixed toward the card - while the
@@ -379,11 +377,11 @@ public class MovementRowPanelTest
 
 	/**
 	 * A name that does not fit is cut with three ASCII dots (never U+2026 - the bitmap faces box a glyph they
-	 * lack) and the whole name goes in the tooltip; a name that fits is left alone. The name now has the WHOLE
+	 * lack) and the whole name goes in the open block; a name that fits is left alone. The name now has the WHOLE
 	 * text block, which is what buys "Confliction gauntlets" its last two letters back.
 	 */
 	@Test
-	public void aLongNameIsCutToTheTextBlockAndKeptWholeInTheDescription() throws Exception
+	public void aLongNameIsCutToTheTextBlockAndKeptWholeInTheOpenBlock() throws Exception
 	{
 		onEdt(() ->
 		{
@@ -393,9 +391,9 @@ public class MovementRowPanelTest
 			assertTrue(p.nameText(), p.nameText().endsWith(Widgets.ELLIPSIS));
 			assertNotEquals(monster, p.nameText());
 			assertFits("the cut name", nameLabel(p));
-			// AI: the whole name is one click away, in the block the row opens - the long description has bolded
-			// it at the top since K8, which is why AG6's named short hover could go.
-			assertTrue("the whole name is in the description", p.tooltipHtml().contains(monster));
+			// AI: the whole name is one click away, in the block the row opens.
+			leftClick(p);
+			assertTrue("the whole name is in the open block", detail(p).getText().contains(monster));
 
 			final MovementRowPanel short0 = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY);
 			assertEquals("a name that fits is not touched", "Abyssal whip", short0.nameText());
@@ -444,7 +442,7 @@ public class MovementRowPanelTest
 			final MovementRow none = row("Coal", 150L, null, null, null);
 			final MovementRowPanel p = new MovementRowPanel(none, null, MovementWindow.D7, null);
 			assertEquals("gp", "", p.gpText());
-			assertEquals("...and the item's line says nothing either", "", itemGpLabel(p).getText());
+			assertNull("...and the item's line says nothing either", itemGpLabel(p));
 			assertEquals("pct", MovementMath.DASH, p.changeText());
 			assertEquals("colour", ColorScheme.LIGHT_GRAY_COLOR, p.changeColor());
 		});
@@ -518,7 +516,7 @@ public class MovementRowPanelTest
 			assertEquals("the stack's move", "+240k", gpLabel(p).getText());
 			assertEquals(Widgets.sans(10), gpLabel(p).getFont());
 			assertEquals("AL's quiet colour, so the percentage is the one the eye lands on",
-				MovementRowPanel.quietChangeColor(r), gpLabel(p).getForeground());
+				MovementRowPanel.quietChangeColor(r, ChangeText.DEFAULT_BRIGHTNESS), gpLabel(p).getForeground());
 			assertEquals("+1.3%", label(p, "+1.3%").getText());
 			assertEquals("the biggest figure on the row", Widgets.sansBold(15), label(p, "+1.3%").getFont());
 			assertEquals(MovementRowPanel.textChangeColor(r), label(p, "+1.3%").getForeground());
@@ -532,7 +530,7 @@ public class MovementRowPanelTest
 			assertEquals(ColorScheme.LIGHT_GRAY_COLOR, workingLabel(p).getForeground());
 			assertEquals("one item's move", "+20k", itemGpLabel(p).getText());
 			assertEquals("the same face as the figure above it", Widgets.sans(10), itemGpLabel(p).getFont());
-			assertEquals(MovementRowPanel.quietChangeColor(r), itemGpLabel(p).getForeground());
+			assertEquals(MovementRowPanel.quietChangeColor(r, ChangeText.DEFAULT_BRIGHTNESS), itemGpLabel(p).getForeground());
 
 			// The two lines are different numbers, which is the whole reason there are two of them.
 			assertNotEquals(priceLabel(p).getText(), workingLabel(p).getText());
@@ -613,8 +611,7 @@ public class MovementRowPanelTest
 				-58_000_000L, -3.4), null, MovementWindow.D1, THEN_DAY);
 			assertEquals("the working still prints", "1 x 1.63b", workingLabel(one).getText());
 			assertEquals("the stack's own move is the only one", "-58m", one.gpText());
-			assertEquals("...and the item's would be the same figure directly under it", "",
-				itemGpLabel(one).getText());
+			assertNull("...and the item's would be the same figure directly under it", itemGpLabel(one));
 
 			// A stack of many: both figures, and they are different numbers.
 			final MovementRowPanel many = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY);
@@ -623,9 +620,9 @@ public class MovementRowPanelTest
 			assertEquals("+20k", itemGpLabel(many).getText());
 			assertNotEquals("the two lines say different things", many.gpText(), itemGpLabel(many).getText());
 
-			// The empty column is still a column, or a page of single items would lose its right edge.
-			assertEquals(itemGpLabel(many).getPreferredSize().width,
-				itemGpLabel(one).getPreferredSize().width);
+			// Release 1.2.1: a line that prints a figure keeps its column; one that prints none holds none open, so its working
+			// has the room (the gp column of line 2 above it is untouched either way).
+			assertEquals(MovementRowPanel.fit(ChangeSize.NORMAL, ChangeSize.NORMAL).gpColumn, itemGpLabel(many).getPreferredSize().width);
 		});
 	}
 
@@ -894,114 +891,6 @@ public class MovementRowPanelTest
 		});
 	}
 
-	// ---- tooltip (K8, day stamp L7) - UNCHANGED by addendum N, and now load-bearing
-
-	/**
-	 * K8's five lines with L7's stamp. The baseline line carries the DAY the "then" table belongs to, because
-	 * the guide series steps once per UTC day and a reader checking an odd move needs to know whether the
-	 * baseline is yesterday's or last Tuesday's. A day and not a clock: the wiki's bot republishes at a random
-	 * hour (02:11-22:20 UTC, L-C), so the publication time addendum K printed here named nothing usable.
-	 *
-	 * <p>Addendum N makes "Holding:" and "Change:" the ONLY place the holding value and the exact gp change
-	 * exist - both left the face of the row - so this assertion is now the whole of their coverage.
-	 */
-	@Test
-	public void tooltipIsTheGuidePriceAndTheStampedBaselineDay()
-	{
-		final String tip = MovementRowPanel.tooltip(whip(), MovementWindow.D1, THEN_DAY);
-		assertTrue(tip, tip.startsWith("<html><b>Abyssal whip</b>"));
-		assertTrue(tip, tip.contains("Guide price: 1,520,000 gp"));
-		assertTrue(tip, tip.contains("1d ago (07 Sep): 1,500,000 gp"));
-		assertTrue(tip, tip.contains("Holding: 12 = 18,240,000 gp"));
-		// "per item" is load-bearing (B048): this figure is the change in ONE item's guide price, printed two
-		// lines under a "Holding:" line that is the whole stack.
-		assertTrue(tip, tip.contains("Change per item: +20,000 gp (+1.3%)"));
-		assertFalse("a bare \"Change:\" reads as the holding's change", tip.contains("<br>Change: "));
-		assertTrue(tip, tip.endsWith("</html>"));
-		// The old wording is gone: there is no second source to distinguish any more (K6).
-		assertFalse(tip, tip.contains("Unit:"));
-		assertFalse(tip, tip.contains("wiki "));
-		assertFalse(tip, tip.contains("RuneLite"));
-		// ...and so is the K-era clock beside the day (L7).
-		assertFalse("no publication clock any more", tip.contains("07 Sep 19:"));
-	}
-
-	/** The two figures that left the face are on the tooltip of the built row. */
-	@Test
-	public void theHoldingAndTheExactChangeAreOnEveryBuiltRow() throws Exception
-	{
-		onEdt(() ->
-		{
-			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY);
-			assertTrue(p.tooltipHtml(), p.tooltipHtml().contains("Holding: 12 = 18,240,000 gp"));
-			assertTrue(p.tooltipHtml(), p.tooltipHtml().contains("Change per item: +20,000 gp (+1.3%)"));
-		});
-	}
-
-	/** Every window labels its own line, and each of the five is one a chip can select. */
-	@Test
-	public void everyWindowLabelsItsOwnBaselineLine()
-	{
-		for (MovementWindow w : MovementWindow.values())
-		{
-			final String tip = MovementRowPanel.tooltip(whip(), w, THEN_DAY);
-			assertTrue(tip, tip.contains(w.label() + " ago (07 Sep):"));
-		}
-	}
-
-	/**
-	 * The day is printed as it stands, in no zone: it was derived in UTC from the table's own
-	 * {@code %LAST_UPDATE%} (L9), so this literal holds wherever the suite runs - which is the whole point of
-	 * carrying a {@link LocalDate} down here instead of an instant.
-	 */
-	@Test
-	public void theBaselineDayIsTheUtcDateInEveryTimeZone()
-	{
-		assertTrue(MovementRowPanel.tooltip(whip(), MovementWindow.D180, LocalDate.of(2026, 3, 12))
-			.contains("180d ago (12 Mar):"));
-		assertTrue(MovementRowPanel.tooltip(whip(), MovementWindow.D1, LocalDate.of(2026, 1, 1))
-			.contains("1d ago (01 Jan):"));
-	}
-
-	/**
-	 * L5's "accept and label" case: the window asked for the 3rd, the only revision of that date was a
-	 * maintenance edit carrying the 2nd's prices, so the row stamps the day the table really claims rather than
-	 * the day that was wanted. Nothing here computes that - it is what the service hands down - but the row must
-	 * print what it is given.
-	 */
-	@Test
-	public void tooltipStampsTheDayItIsGivenNotTheDayTheWindowAskedFor()
-	{
-		assertTrue(MovementRowPanel.tooltip(whip(), MovementWindow.D1, LocalDate.of(2026, 9, 2))
-			.contains("1d ago (02 Sep):"));
-	}
-
-	/** Nothing known yet: no baseline stamp, no baseline price, no holding, no change - dashes, not zeroes. */
-	@Test
-	public void tooltipDashesEveryFigureItDoesNotHave()
-	{
-		final MovementRow noBaseline = row("Coal", 150L, null, null, null);
-		final String tip = MovementRowPanel.tooltip(noBaseline, MovementWindow.D7, null);
-		assertTrue(tip, tip.contains("Guide price: 150 gp"));
-		assertTrue("no baseline day yet stamps a dash, never 1970", tip.contains("7d ago (-): -"));
-		assertTrue(tip, tip.contains("Holding: 5 = 750 gp"));
-		assertTrue(tip, tip.contains("Change per item: -"));
-
-		final MovementRow none = row("Mystery box", null, null, null, null);
-		final String noneTip = MovementRowPanel.tooltip(none, null, null);
-		assertTrue(noneTip, noneTip.contains("Guide price: - (no price)"));
-		assertTrue("a null window reads as the default", noneTip.contains("1d ago (-): -"));
-		assertTrue(noneTip, noneTip.contains("Holding: 5 = -"));
-	}
-
-	@Test
-	public void tooltipEscapesTheName()
-	{
-		final MovementRow odd = row("Zulrah's <scales> & co", 100L, null, null, null);
-		final String tip = MovementRowPanel.tooltip(odd, MovementWindow.D1, null);
-		assertTrue(tip, tip.contains("<b>Zulrah&#39;s &lt;scales&gt; &amp; co</b>"));
-	}
-
 	// ---- addendum T: the live traded price, on the tooltip and nowhere else (T6)
 
 	/** The 1 d baseline's day in the live fixtures - the day the traded bucket belongs to. */
@@ -1046,79 +935,6 @@ public class MovementRowPanelTest
 	}
 
 	/**
-	 * T6, as contract 1.2.0 words it: a live row's tooltip names the series and shows the three figures behind the
-	 * price - the last print of each side of the book, and how much traded yesterday - and its window line says the
-	 * baseline is that day's average of the trades and not a guide table's entry.
-	 */
-	@Test
-	public void aLiveRowsTooltipNamesTheTradesAndShowsTheLastPrintOfEachSideAndTheVolume()
-	{
-		final String tip = MovementRowPanel.tooltip(liveBow(MovementRow.PriceSource.LIVE), MovementWindow.D1, TRADED_DAY);
-		System.out.println("the live tooltip: " + tip);
-		assertTrue(tip, tip.startsWith("<html><b>Twisted bow</b>"));
-		assertTrue(tip, tip.contains("<br>Price from today's trades: 63,437,264 gp (last bought 63.6m, last sold 63.3m;"
-			+ " 517 traded yesterday)"));
-		assertFalse("a live price is not a guide price, and the line says which it is", tip.contains("Guide price"));
-		assertTrue(tip, tip.contains("<br>1d ago (10 Sep): 62,100,000 gp (average of that day's trades)"));
-		assertTrue("the holding and the change are the ordinary ones", tip.contains("<br>Holding: 1 = 63,437,264 gp"));
-		assertTrue(tip, tip.contains("<br>Change per item: +1,337,264 gp (+2.1%)"));
-		assertTrue(tip, tip.endsWith("</html>"));
-		assertEquals("Price from today's trades: ", MovementRowPanel.LIVE_PRICE_PREFIX);
-		assertEquals(" (average of that day's trades)", MovementRowPanel.TRADED_AVERAGE_NOTE);
-	}
-
-	/**
-	 * T4 / T6, as contract 1.2.0 leaves them: a row whose price is live but whose window has no figure - nothing
-	 * traded that day, or nothing today to set against it - prints a dash for that window, and the window line says
-	 * why. Never a live "now" over a guide "then" - that is the hybrid the live study refuted - so the note is the only
-	 * way a reader can see that the window was not compared at all. (Before 1.2.0 such a window fell back to the guide's
-	 * own two ends and the note named the five liquidity checks that refused it.)
-	 */
-	@Test
-	public void aLiveRowWhoseWindowHasNoFigureSaysSoOnThatLine()
-	{
-		assertEquals("the wording contract 1.2.0 asks for, pinned", " (no trades to compare with that day)",
-			MovementRowPanel.WINDOW_NO_FIGURE_NOTE);
-		final String tip = MovementRowPanel.tooltip(liveBow(MovementRow.PriceSource.GUIDE), MovementWindow.D1, TRADED_DAY);
-		assertTrue(tip, tip.contains("<br>Price from today's trades: 63,437,264 gp (last bought 63.6m"));
-		assertTrue(tip, tip.contains("<br>1d ago (10 Sep): 62,100,000 gp (no trades to compare with that day)"));
-		assertFalse(tip, tip.contains("(average of that day's trades)"));
-		// A window nothing was recorded for reads the same way rather than claiming a comparison (T4).
-		final MovementRow noRecord = guideBow().asLive(null, null, new MovementRow.LiveFacts(63_600_000L, 63_300_000L, 517L, null));
-		assertTrue(MovementRowPanel.tooltip(noRecord, MovementWindow.D30, TRADED_DAY).contains(
-			"<br>30d ago (10 Sep): 62,100,000 gp" + MovementRowPanel.WINDOW_NO_FIGURE_NOTE));
-	}
-
-	/**
-	 * T6, as contract 1.2.0 leaves it: a row priced at the guide price, while the switch is on, gains exactly one line -
-	 * the 1d grade's word, as the service recorded it - directly under the price it explains. Everything else on the
-	 * tooltip is untouched, and with the switch off the same row's tooltip is the pre-T one to the character (T8).
-	 */
-	@Test
-	public void aGuideRowSaysWhyTheTradesDidNotPriceIt()
-	{
-		final MovementRow thin = whip().withLiveRefusal(
-			new MovementRow.LiveFacts(1_540_000L, 1_200_000L, 12L, GradeWords.NO_TRADES));
-		final String tip = MovementRowPanel.tooltip(thin, MovementWindow.D1, THEN_DAY);
-		assertTrue(tip, tip.contains("<br>Guide price: 1,520,000 gp"
-			+ "<br>Valued at the guide price: no trades"
-			+ "<br>1d ago (07 Sep): 1,500,000 gp"));
-		assertFalse("both ends are the guide's, so the window line says nothing new", tip.contains("average of that day"));
-		assertFalse(tip, tip.contains(MovementRowPanel.WINDOW_NO_FIGURE_NOTE));
-		assertEquals("Valued at the guide price: ", MovementRowPanel.GUIDE_VALUED_PREFIX);
-		assertEquals("the reason is the service's word, printed and not composed here",
-			"Valued at the guide price: no trades", MovementRowPanel.liveRefusalLine(thin));
-		assertEquals("", MovementRowPanel.liveRefusalLine(whip()));
-		assertEquals("", MovementRowPanel.liveLine(thin));
-
-		// T8: the switch off is the tooltip addenda K to S wrote, character for character, whatever the row carries.
-		assertEquals(MovementRowPanel.tooltip(whip(), MovementWindow.D1, THEN_DAY),
-			MovementRowPanel.tooltip(thin, MovementWindow.D1, THEN_DAY, LIVE_OFF));
-		assertEquals(MovementRowPanel.tooltip(guideBow(), MovementWindow.D1, TRADED_DAY),
-			MovementRowPanel.tooltip(liveBow(MovementRow.PriceSource.LIVE), MovementWindow.D1, TRADED_DAY, LIVE_OFF));
-	}
-
-	/**
 	 * U3: the window line stamps the day the ROW compared against, not the guide baseline day the status handed
 	 * down. On a live row those are different days for every hour before Jagex publishes the day's table - the live
 	 * series counts back from its own snapshot's UTC date (U1) - and printing the guide's day over a traded figure
@@ -1130,21 +946,11 @@ public class MovementRowPanelTest
 	 * row printed before addendum U.
 	 */
 	@Test
-	public void aLiveRowsWindowLineStampsTheDayTheRowComparedAgainst() throws Exception
+	public void aLiveRowsWindowLineStampsTheDayTheRowComparedAgainst()
 	{
 		final LocalDate liveDay = LocalDate.of(2026, 9, 11);
 		final MovementRow row = liveBow(MovementRow.PriceSource.LIVE, liveDay);
 		// TRADED_DAY here is the GUIDE's baseline day, a day behind the traded bucket this row really used.
-		final String tip = MovementRowPanel.tooltip(row, MovementWindow.D1, TRADED_DAY, ViewOptions.DEFAULT);
-		assertTrue(tip, tip.contains("<br>1d ago (11 Sep): 62,100,000 gp" + MovementRowPanel.TRADED_AVERAGE_NOTE));
-		assertFalse("the guide's day is not where this figure came from", tip.contains("10 Sep"));
-
-		final String back = MovementRowPanel.tooltip(liveBow(MovementRow.PriceSource.GUIDE, TRADED_DAY),
-			MovementWindow.D1, TRADED_DAY, ViewOptions.DEFAULT);
-		assertTrue("a window with no figure stamps the guide's day, and says so",
-			back.contains("<br>1d ago (10 Sep): 62,100,000 gp" + MovementRowPanel.WINDOW_NO_FIGURE_NOTE));
-
-		// The rule itself: the row's day when it has one, the status's day in every other state.
 		assertEquals(liveDay, MovementRowPanel.stampedDay(row, MovementWindow.D1, TRADED_DAY, true));
 		assertEquals("a window this row recorded nothing for", TRADED_DAY,
 			MovementRowPanel.stampedDay(row, MovementWindow.D30, TRADED_DAY, true));
@@ -1152,25 +958,21 @@ public class MovementRowPanelTest
 			MovementRowPanel.stampedDay(row, MovementWindow.D1, TRADED_DAY, false));
 		assertEquals("a guide row carries no days at all", TRADED_DAY,
 			MovementRowPanel.stampedDay(guideBow(), MovementWindow.D1, TRADED_DAY, true));
+		assertEquals("a window that fell back to the guide stamps the guide's day", TRADED_DAY,
+			MovementRowPanel.stampedDay(liveBow(MovementRow.PriceSource.GUIDE, TRADED_DAY), MovementWindow.D1, TRADED_DAY, true));
 		assertNull("no day anywhere stamps a dash, never 1970",
 			MovementRowPanel.stampedDay(row, null, null, true));
-		assertTrue(MovementRowPanel.tooltip(row, null, null, ViewOptions.DEFAULT).contains("1d ago (-): "));
 
-		// T8: with the switch off this row's tooltip is the guide-only one, character for character - the day
-		// included, so a page recorded while the switch was on cannot bleed a traded day into a guide sidebar.
-		assertEquals(MovementRowPanel.tooltip(guideBow(), MovementWindow.D1, TRADED_DAY),
-			MovementRowPanel.tooltip(row, MovementWindow.D1, TRADED_DAY, LIVE_OFF));
-
-		// ...and the built row prints what the pure helper says, so nothing on screen can disagree with it.
-		onEdt(() -> assertEquals(tip,
-			new MovementRowPanel(row, null, MovementWindow.D1, TRADED_DAY, ViewOptions.DEFAULT).tooltipHtml()));
+		// ...and the open block prints what the pure helper says, so nothing on screen can disagree with it.
+		final String block = MovementRowPanel.detail(row, MovementWindow.D1, TRADED_DAY, 0L, ViewOptions.DEFAULT, false);
+		assertTrue(block, block.contains("11 Sep"));
+		assertFalse("the guide's day is not where this figure came from", block.contains("10 Sep"));
 	}
 
 	/**
 	 * T6: a LIVE row paints EXACTLY as a guide row with the same figures does - same name, same stack value, same
 	 * working, same gp figure, same percentage, same rail, same size. No tag, no colour of its own: a live price is a
-	 * price, and a badge on every liquid row would be a badge on most of the list. The tooltip is the one thing
-	 * that differs.
+	 * price, and a badge on every liquid row would be a badge on most of the list.
 	 */
 	@Test
 	public void aLiveRowPaintsExactlyLikeAGuideRow() throws Exception
@@ -1190,12 +992,9 @@ public class MovementRowPanelTest
 			assertEquals(MovementRowPanel.textChangeColor(guideBow()), MovementRowPanel.textChangeColor(live));
 			assertFalse("no tag where the move goes", a.changeText().contains(MovementRowPanel.ALCH_TAG));
 			assertFalse(MovementRowPanel.isAlch(live));
-			assertNotEquals("...and the tooltip is the one place the series is named", b.tooltipHtml(), a.tooltipHtml());
-			assertTrue(a.tooltipHtml(), a.tooltipHtml().contains(MovementRowPanel.LIVE_PRICE_PREFIX));
 
-			// The row the panel builds under the switch OFF carries the pre-T tooltip (T8).
+			// The row the panel builds under the switch OFF paints the same (T8).
 			final MovementRowPanel off = new MovementRowPanel(live, null, MovementWindow.D1, TRADED_DAY, LIVE_OFF);
-			assertEquals(b.tooltipHtml(), off.tooltipHtml());
 			assertEquals(b.priceText(), off.priceText());
 		});
 	}
@@ -1476,8 +1275,7 @@ public class MovementRowPanelTest
 	/**
 	 * The row keeps the {@link MovementRow} behind it, which is what the panel and the bridge ask it for - and
 	 * that is now the whole of what it remembers: the ordering the page was built under is the PANEL's business
-	 * (nothing on a row's face has varied with it since addendum O), and the baseline day it is given is not
-	 * kept as a field but spent on the tooltip.
+	 * (nothing on a row's face has varied with it since addendum O).
 	 */
 	@Test
 	public void theRowKeepsTheRowItWasBuiltFrom() throws Exception
@@ -1488,10 +1286,6 @@ public class MovementRowPanelTest
 			final MovementRowPanel p = new MovementRowPanel(r, null, MovementWindow.D1);
 			assertSame(r, p.row());
 			assertSame(r, new MovementRowPanel(r, null, MovementWindow.D1, THEN_DAY).row());
-			assertTrue("the day it was given is on the tooltip",
-				new MovementRowPanel(r, null, MovementWindow.D1, THEN_DAY).tooltipHtml().contains("(07 Sep)"));
-			assertTrue("...and without one, a dash",
-				new MovementRowPanel(r, null, MovementWindow.D1).tooltipHtml().contains("(-)"));
 		});
 	}
 
@@ -1521,7 +1315,6 @@ public class MovementRowPanelTest
 					11_800L, 200L, 1.7), null, MovementWindow.D1, THEN_DAY);
 				assertTrue(p.nameText(), p.nameText().endsWith("(" + dose + ")"));
 				assertFits("dose " + dose, nameLabel(p));
-				assertTrue("the whole name is still on the tooltip", p.tooltipHtml().contains("Super combat potion(" + dose + ")"));
 				shown.add(p.nameText());
 			}
 			assertEquals("four rows, four different headlines", 4, new java.util.HashSet<>(shown).size());
@@ -1598,7 +1391,7 @@ public class MovementRowPanelTest
 			final MovementRowPanel p = new MovementRowPanel(row("Coal", 150L, 150L, 0L, 0.0), null,
 				MovementWindow.D1, THEN_DAY);
 			assertEquals("", p.gpText());
-			assertEquals("...and the item's move is nothing to print either", "", itemGpLabel(p).getText());
+			assertNull("...and the item's move is nothing to print either", itemGpLabel(p));
 			assertEquals("0.0%", p.changeText());
 			assertEquals("no rail either: a quiet day is a quiet list", ColorScheme.DARKER_GRAY_COLOR, p.railColor());
 			assertFits("line 2", line2(p));
@@ -1653,27 +1446,6 @@ public class MovementRowPanelTest
 			assertEquals("11 px: a label on the price, not a figure", 11f, tag(p).getFont().getSize2D(), 0f);
 			assertEquals("no rail: an untradeable stack never moved", ColorScheme.DARKER_GRAY_COLOR, p.railColor());
 			assertFits("line 2", line2(p));
-		});
-	}
-
-	/**
-	 * Q5: its tooltip says the whole of it in one sentence over the holding, instead of stamping a guide price,
-	 * a baseline day and a change that cannot exist - three lines that would all read "-".
-	 */
-	@Test
-	public void anUntradeableRowsTooltipNamesTheAlchValueAndSaysItHasNoMovement() throws Exception
-	{
-		onEdt(() ->
-		{
-			final MovementRow defender = alch("Avernic defender", 3, 42_000L);
-			final String line = "Untradeable - High Alchemy value 42,000 gp; not in the movement figures";
-			assertEquals(line, MovementRowPanel.untradeableLine(defender));
-
-			final String tip = new MovementRowPanel(defender, null, MovementWindow.D30, THEN_DAY).tooltipHtml();
-			assertEquals("<html><b>Avernic defender</b><br>" + line + "<br>Holding: 3 = 126,000 gp</html>", tip);
-			assertFalse("no guide price is claimed", tip.contains("Guide price"));
-			assertFalse("no baseline day is stamped", tip.contains("30d ago"));
-			assertFalse("and no change", tip.contains("Change per item"));
 		});
 	}
 
@@ -1757,9 +1529,7 @@ public class MovementRowPanelTest
 		{
 			final MovementRow body = body("Crystal body", seeds());
 			final MovementRow twin = body("Crystal body", null);
-			assertTrue(MovementRowPanel.isParts(body));
 			assertFalse("a parts row is not an alch row", MovementRowPanel.isAlch(body));
-			assertFalse("and a guide row is neither", MovementRowPanel.isParts(twin));
 
 			final MovementRowPanel p = new MovementRowPanel(body, null, MovementWindow.D1, THEN_DAY);
 			final MovementRowPanel guide = new MovementRowPanel(twin, null, MovementWindow.D1, THEN_DAY);
@@ -1777,36 +1547,9 @@ public class MovementRowPanelTest
 	}
 
 	/**
-	 * R4: the tooltip gains ONE line, under the price and above the baseline, naming the parts that price is a
-	 * sum of - and keeps every other line, because a parts row has a baseline, a holding and a change like any
-	 * other row. Remove that one line and it is a guide row's tooltip, word for word.
-	 */
-	@Test
-	public void aPartsRowsTooltipNamesThePartsUnderThePrice() throws Exception
-	{
-		onEdt(() ->
-		{
-			final MovementRow body = body("Crystal body", seeds());
-			final String line = "Untradeable - valued as its parts: 3 x Crystal armour seed";
-			assertEquals(line, MovementRowPanel.partsLine(body));
-
-			final String tip = new MovementRowPanel(body, null, MovementWindow.D1, THEN_DAY).tooltipHtml();
-			assertEquals("<html><b>Crystal body</b>"
-				+ "<br>Guide price: 16,694,766 gp"
-				+ "<br>" + line
-				+ "<br>1d ago (07 Sep): 18,300,000 gp"
-				+ "<br>Holding: 1 = 16,694,766 gp"
-				+ "<br>Change per item: -1,605,234 gp (-8.7%)</html>", tip);
-			assertEquals("one line added, and it is the parts line",
-				MovementRowPanel.tooltip(body("Crystal body", null), MovementWindow.D1, THEN_DAY),
-				tip.replace("<br>" + line, ""));
-		});
-	}
-
-	/**
 	 * R4's two rules for that line: a quantity of ONE is left off - "1 x Black mask" is a quantity nobody asked
 	 * about - and several parts are joined with ", ". Every row that is not a parts row has no line at all, so a
-	 * caller can ask blind and a guide row's tooltip is untouched by addendum R.
+	 * caller can ask blind.
 	 */
 	@Test
 	public void thePartsLineOmitsAQuantityOfOneAndJoinsTheRestWithCommas() throws Exception
@@ -1824,131 +1567,46 @@ public class MovementRowPanelTest
 			assertEquals("a guide row has no parts line", "", MovementRowPanel.partsLine(whip()));
 			assertEquals("and neither has an alch row", "",
 				MovementRowPanel.partsLine(alch("Graceful hood", 1, 20_000L)));
-			assertEquals("so a guide row's tooltip is the one addendum N left",
-				MovementRowPanel.tooltip(whip(), MovementWindow.D1, THEN_DAY),
-				new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY).tooltipHtml());
 		});
 	}
 
 	// ---- addendum Y: where a merged stack is (Y3)
 
 	/**
-	 * Y3: with "Include inventory and worn gear" on, a stack held in more than one place is ONE row with the
-	 * quantities summed - so its tooltip gains one line under the Holding line naming the non-zero parts, in the
-	 * order a player looks for them, and the three shapes that line can take.
+	 * Y3: with "Include inventory and worn items" on, a stack held in more than one place is ONE row with the
+	 * quantities summed - so its open block gains one line naming the non-zero parts, in the order a player looks
+	 * for them, and the shapes that line can take.
 	 */
 	@Test
-	public void aCarriedRowsTooltipNamesWhereTheStackIs() throws Exception
+	public void theSplitLineNamesWhereTheStackIs() throws Exception
 	{
 		onEdt(() ->
 		{
 			// The whole split: the wording of Y3, to the character.
-			assertEquals("3 in bank, 1 in inventory, 1 worn", MovementRowPanel.splitLine(carried(3, 1, 1)));
+			assertEquals("3 in bank, 1 in inventory, 1 worn", MovementRowPanel.splitLine(carried(3, 1, 1), false));
 			// Two of the three: the zero part is DROPPED, not printed as "0 worn".
-			assertEquals("2 in bank, 1 in inventory", MovementRowPanel.splitLine(carried(2, 1, 0)));
-			assertEquals("3 in bank, 1 worn", MovementRowPanel.splitLine(carried(3, 0, 1)));
+			assertEquals("2 in bank, 1 in inventory", MovementRowPanel.splitLine(carried(2, 1, 0), false));
+			assertEquals("3 in bank, 1 worn", MovementRowPanel.splitLine(carried(3, 0, 1), false));
 			// And a stack that is only worn, which is every piece of gear a player is standing in.
-			assertEquals("1 worn", MovementRowPanel.splitLine(carried(0, 0, 1)));
-			assertEquals("1 in inventory", MovementRowPanel.splitLine(carried(0, 1, 0)));
+			assertEquals("1 worn", MovementRowPanel.splitLine(carried(0, 0, 1), false));
+			assertEquals("1 in inventory", MovementRowPanel.splitLine(carried(0, 1, 0), false));
 			// The figures are the exact ones the Holding line above them uses, so a trip's worth of scales reads
 			// in the same shape as the line it qualifies.
-			assertEquals("27,000 in bank, 1,000 in inventory", MovementRowPanel.splitLine(carried(27_000, 1_000, 0)));
+			assertEquals("27,000 in bank, 1,000 in inventory", MovementRowPanel.splitLine(carried(27_000, 1_000, 0), false));
 
 			// 1.0.9 part 3: the Grand Exchange is the fourth place, named last, in full.
 			assertEquals("3 in bank, 1 in inventory, 1 worn, 2 in the Grand Exchange",
-				MovementRowPanel.splitLine(carried(3, 1, 1, 2)));
+				MovementRowPanel.splitLine(carried(3, 1, 1, 2), false));
 			assertEquals("a bank-and-offer stack", "3 in bank, 2 in the Grand Exchange",
-				MovementRowPanel.splitLine(carried(3, 0, 0, 2)));
+				MovementRowPanel.splitLine(carried(3, 0, 0, 2), false));
 			assertEquals("an offer-only stack", "2 in the Grand Exchange",
-				MovementRowPanel.splitLine(carried(0, 0, 0, 2)));
-			assertEquals("1,200 in the Grand Exchange", MovementRowPanel.splitLine(carried(0, 0, 0, 1_200)).trim());
-			assertEquals("", MovementRowPanel.splitLine(carried(5, 0, 0, 0)));
+				MovementRowPanel.splitLine(carried(0, 0, 0, 2), false));
+			assertEquals("1,200 in the Grand Exchange", MovementRowPanel.splitLine(carried(0, 0, 0, 1_200), false).trim());
+			assertEquals("", MovementRowPanel.splitLine(carried(5, 0, 0, 0), false));
 			assertEquals(" in the Grand Exchange", MovementRowPanel.IN_EXCHANGE);
 
-			// In the tooltip: directly under the Holding line and above the change.
-			final String tip = new MovementRowPanel(carried(3, 1, 1), null, MovementWindow.D1, THEN_DAY,
-				ViewOptions.DEFAULT).tooltipHtml();
-			assertTrue(tip, tip.contains("<br>Holding: 5 = 7,600,000 gp<br>3 in bank, 1 in inventory, 1 worn"
-				+ "<br>Change per item: +20,000 gp (+1.3%)"));
-
-			// ...and with an offer in it, the fourth part ends the same line.
-			final String withOffer = new MovementRowPanel(carried(3, 1, 1, 2), null, MovementWindow.D1, THEN_DAY,
-				ViewOptions.DEFAULT).tooltipHtml();
-			assertTrue(withOffer, withOffer.contains("<br>Holding: 7 = 10,640,000 gp<br>3 in bank, 1 in inventory,"
-				+ " 1 worn, 2 in the Grand Exchange<br>Change per item: +20,000 gp (+1.3%)"));
-		});
-	}
-
-	/**
-	 * Y3: the line is there exactly when it has something to add - never with the switch off, never on a row the
-	 * bank holds whole, and never on a row built before addendum Y, which carries no split at all. So every
-	 * tooltip but a merged stack's is the tooltip addenda K to X wrote, line for line.
-	 */
-	@Test
-	public void theSplitLineIsAbsentWithTheSwitchOffAndOnABankOnlyRow() throws Exception
-	{
-		onEdt(() ->
-		{
-			// The switches off: the same row, the pre-Y tooltip - both of them, since 1.0.9 part 3 (the Grand Exchange
-			// switch alone is reason enough to print the line, as the carried one is).
-			final ViewOptions off = ViewOptions.DEFAULT.withCountInventory(false).withCountGrandExchange(false);
-			final String offTip = new MovementRowPanel(carried(3, 1, 1), null, MovementWindow.D1, THEN_DAY, off)
-				.tooltipHtml();
-			assertFalse(offTip, offTip.contains("in bank"));
-			assertFalse(offTip, offTip.contains("worn"));
-			assertTrue(offTip, offTip.contains("<br>Holding: 5 = 7,600,000 gp<br>Change per item: "));
-			final String offOffers = new MovementRowPanel(carried(3, 0, 0, 2), null, MovementWindow.D1, THEN_DAY, off)
-				.tooltipHtml();
-			assertFalse(offOffers, offOffers.contains("Grand Exchange"));
-			assertFalse(offOffers, offOffers.contains("in bank"));
-
-			// 1.0.9 part 3: either switch alone keeps the line - inventory off and Grand Exchange on names the
-			// offer; Grand Exchange off and inventory on names the carried half.
-			final String offersOnly = new MovementRowPanel(carried(3, 0, 0, 2), null, MovementWindow.D1, THEN_DAY,
-				ViewOptions.DEFAULT.withCountInventory(false)).tooltipHtml();
-			assertTrue(offersOnly, offersOnly.contains("<br>3 in bank, 2 in the Grand Exchange<br>"));
-			final String carriedOnly = new MovementRowPanel(carried(3, 1, 1), null, MovementWindow.D1, THEN_DAY,
-				ViewOptions.DEFAULT.withCountGrandExchange(false)).tooltipHtml();
-			assertTrue(carriedOnly, carriedOnly.contains("<br>3 in bank, 1 in inventory, 1 worn<br>"));
-
-			// The switch on, the whole stack in the bank: "3 in bank" under "Holding: 3" is the same fact twice.
-			assertEquals("", MovementRowPanel.splitLine(carried(5, 0, 0)));
-			final String bankOnly = new MovementRowPanel(carried(5, 0, 0), null, MovementWindow.D1, THEN_DAY,
-				ViewOptions.DEFAULT).tooltipHtml();
-			assertFalse(bankOnly, bankOnly.contains("in bank"));
-
-			// A row that knows nothing of the split - every row of addenda K to X - asks blind and gets "".
-			assertEquals("", MovementRowPanel.splitLine(whip()));
-			assertEquals(MovementRowPanel.tooltip(whip(), MovementWindow.D1, THEN_DAY),
-				new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY, ViewOptions.DEFAULT).tooltipHtml());
-		});
-	}
-
-	/**
-	 * Y3: an untradeable stack is worn as often as any other - a slayer helmet, a graceful cape - and its tooltip
-	 * has no price, no baseline and no change to hang the line under, only the holding. So the line goes there,
-	 * last, and the alch sentence above it is untouched.
-	 */
-	@Test
-	public void aWornAlchRowSaysWhereItIsToo() throws Exception
-	{
-		onEdt(() ->
-		{
-			final MovementRow hood = new MovementRow(7, "Graceful hood", 1, false, 20_000L, null, null, null,
-				20_000L, MovementRow.PriceSource.ALCH, null, null, null, null, 0, 0, 1);
-			final String tip = new MovementRowPanel(hood, null, MovementWindow.D30, THEN_DAY, ViewOptions.DEFAULT)
-				.tooltipHtml();
-			assertEquals("<html><b>Graceful hood</b>"
-				+ "<br>Untradeable - High Alchemy value 20,000 gp; not in the movement figures"
-				+ "<br>Holding: 1 = 20,000 gp"
-				+ "<br>1 worn</html>", tip);
-
-			// The same stack in the bank, and with the switches off: the Q5 tooltip, word for word.
-			assertEquals("<html><b>Graceful hood</b>"
-				+ "<br>Untradeable - High Alchemy value 20,000 gp; not in the movement figures"
-				+ "<br>Holding: 1 = 20,000 gp</html>",
-				new MovementRowPanel(hood, null, MovementWindow.D30, THEN_DAY,
-					ViewOptions.DEFAULT.withCountInventory(false).withCountGrandExchange(false)).tooltipHtml());
+			// A row that knows nothing of the split asks blind and gets "".
+			assertEquals("", MovementRowPanel.splitLine(whip(), false));
 		});
 	}
 
@@ -2061,7 +1719,6 @@ public class MovementRowPanelTest
 			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY);
 			leftClick(p);
 			final String block = detail(p).getText();
-			assertNotEquals("the cell is no longer the long description", p.tooltipHtml(), block);
 			assertFalse(block, block.contains("Holding: 12 = 18,240,000 gp"));
 			assertFalse(block, block.contains("Change per item:"));
 			assertFalse(block, block.contains("Guide price:"));
@@ -2696,14 +2353,14 @@ public class MovementRowPanelTest
 		assertFalse("no volume note: " + html, html.contains("traded yesterday"));
 		assertFalse(html, html.contains("63.6m"));
 		assertFalse(html, html.contains("63.3m"));
-		assertFalse("and the old prose line is nowhere", html.contains(MovementRowPanel.LIVE_PRICE_PREFIX));
+		assertFalse("and the old prose line is nowhere", html.contains("Price from today's trades"));
 
 		// A guide row has no traded note, and neither has the same live row with the switch off.
 		assertFalse(block(guideBow(), MovementWindow.D1).contains("traded yesterday"));
 		assertFalse(MovementRowPanel.detail(live, MovementWindow.D1, TRADED_DAY, 0L, LIVE_OFF, false)
 			.contains("traded yesterday"));
 
-		// A row the service priced at the guide carries its reason on the long description only; the cell stays four lines.
+		// A row the service priced at the guide carries its reason nowhere on the cell; it stays four lines.
 		final MovementRow thin = whip().withLiveRefusal(
 			new MovementRow.LiveFacts(1_540_000L, 1_200_000L, 12L, GradeWords.NO_TRADES));
 		assertTrue(block(thin, MovementWindow.D1), block(thin, MovementWindow.D1).endsWith("</table></div></html>"));
@@ -2824,27 +2481,27 @@ public class MovementRowPanelTest
 		{
 			final MovementRow rise = whip();
 			final MovementRowPanel up = new MovementRowPanel(rise, null, MovementWindow.D1, THEN_DAY);
-			assertEquals("the gp figure", MovementRowPanel.quietChangeColor(rise), gpLabel(up).getForeground());
+			assertEquals("the gp figure", MovementRowPanel.quietChangeColor(rise, ChangeText.DEFAULT_BRIGHTNESS), gpLabel(up).getForeground());
 			assertEquals("the percentage", MovementRowPanel.textChangeColor(rise), up.changeColor());
 			assertNotEquals("...and on a riser the two differ, which is the whole of AL",
-				MovementRowPanel.textChangeColor(rise), MovementRowPanel.quietChangeColor(rise));
+				MovementRowPanel.textChangeColor(rise), MovementRowPanel.quietChangeColor(rise, ChangeText.DEFAULT_BRIGHTNESS));
 
 			final MovementRow fall = row("Rune scimitar", 15_000L, 19_100L, -4_100L, -21.47);
 			final MovementRowPanel down = new MovementRowPanel(fall, null, MovementWindow.D1, THEN_DAY);
-			assertEquals(MovementRowPanel.quietChangeColor(fall), gpLabel(down).getForeground());
+			assertEquals(MovementRowPanel.quietChangeColor(fall, ChangeText.DEFAULT_BRIGHTNESS), gpLabel(down).getForeground());
 			assertEquals("the lifted red is still the percentage's (B045)", Widgets.MOVE_DOWN_TEXT,
 				down.changeColor());
-			assertNotEquals(MovementRowPanel.textChangeColor(fall), MovementRowPanel.quietChangeColor(fall));
+			assertNotEquals(MovementRowPanel.textChangeColor(fall), MovementRowPanel.quietChangeColor(fall, ChangeText.DEFAULT_BRIGHTNESS));
 			assertEquals("the rail is untouched by AL", ColorScheme.PROGRESS_ERROR_COLOR.darker(),
 				down.railColor());
 
 			final MovementRow flat = row("Coal", 150L, 150L, 0L, 0.0);
 			assertEquals("a flat move is not dimmed: there is nothing to out-shout",
-				MovementRowPanel.textChangeColor(flat), MovementRowPanel.quietChangeColor(flat));
-			assertEquals(ColorScheme.LIGHT_GRAY_COLOR, MovementRowPanel.quietChangeColor(flat));
+				MovementRowPanel.textChangeColor(flat), MovementRowPanel.quietChangeColor(flat, ChangeText.DEFAULT_BRIGHTNESS));
+			assertEquals(ColorScheme.LIGHT_GRAY_COLOR, MovementRowPanel.quietChangeColor(flat, ChangeText.DEFAULT_BRIGHTNESS));
 			final MovementRow noBaseline = row("Coal", 150L, null, null, null);
 			assertEquals("...and neither is a row with nothing to compare",
-				MovementRowPanel.textChangeColor(noBaseline), MovementRowPanel.quietChangeColor(noBaseline));
+				MovementRowPanel.textChangeColor(noBaseline), MovementRowPanel.quietChangeColor(noBaseline, ChangeText.DEFAULT_BRIGHTNESS));
 		});
 	}
 
@@ -2862,7 +2519,7 @@ public class MovementRowPanelTest
 		for (MovementRow r : new MovementRow[]{whip(), row("Rune scimitar", 15_000L, 19_100L, -4_100L, -21.47)})
 		{
 			final Color full = MovementRowPanel.textChangeColor(r);
-			final Color quiet = MovementRowPanel.quietChangeColor(r);
+			final Color quiet = MovementRowPanel.quietChangeColor(r, ChangeText.DEFAULT_BRIGHTNESS);
 			final double toQuiet = distance(quiet, ColorScheme.DARKER_GRAY_COLOR);
 			final double toFull = distance(full, ColorScheme.DARKER_GRAY_COLOR);
 			assertTrue(r.name() + ": quiet " + quiet + " is " + toQuiet + " from the card while full " + full
@@ -2877,29 +2534,26 @@ public class MovementRowPanelTest
 
 	/**
 	 * THE proof of addendum AS: fifty rows built the way a page builds them - through the constructor
-	 * {@code addPage} calls, with a seam of the panel's kind - and thrown away, and not one open block or long
-	 * description written. Before AS every one of them wrote both in its constructor, and the block is the dear
-	 * one: a label turns its HTML into a view tree the moment it is handed it, about 1 MB and 1 ms a row by the
+	 * {@code addPage} calls, with a seam of the panel's kind - and thrown away, and not one open block written.
+	 * Before AS every one of them wrote it in its constructor, and the block is the dear one: a label turns its HTML into a view tree the moment it is handed it, about 1 MB and 1 ms a row by the
 	 * lag investigation's measure, so a 250-row page paid for 250 blocks nobody had opened on every bank change.
 	 *
-	 * <p>Counted at the BUILDERS ({@code MovementRowPanel.detailBuilds()} and {@code tooltipBuilds()}), not read
-	 * off the labels: a constructor that wrote a block and threw it away would leave every label empty and still
+	 * <p>Counted at the BUILDER ({@code MovementRowPanel.detailBuilds()}), not read off the labels: a constructor that wrote a block and threw it away would leave every label empty and still
 	 * pay in full, and only a count sees that. The rows are of every kind the service publishes
 	 * ({@link #pageRow}), so no kind is the one that still writes early.
 	 *
 	 * <p>Two controls keep the zero honest. The page is built a second time with ONE of its items open in the
 	 * seam, as the panel's rebuild after a publish would be under a reader with a row open, and that writes
 	 * exactly one block: a page costs one block per row the reader has open, and none for the rest. And a
-	 * counter that could not count would pass all of this on nothing, so the last legs open a row and ask it for
-	 * its description and see each count move by exactly one.
+	 * counter that could not count would pass all of this on nothing, so the last leg opens a row and sees the count
+	 * move by exactly one.
 	 */
 	@Test
-	public void aPageOfRowsBuiltAndThrownAwayWritesNoBlockAndNoDescription() throws Exception
+	public void aPageOfRowsBuiltAndThrownAwayWritesNoBlock() throws Exception
 	{
 		onEdt(() ->
 		{
 			final long details = MovementRowPanel.detailBuilds();
-			final long tips = MovementRowPanel.tooltipBuilds();
 			final RecordingExpansion shut = new RecordingExpansion();
 			for (int i = 0; i < 50; i++)
 			{
@@ -2910,7 +2564,6 @@ public class MovementRowPanelTest
 			}
 			assertEquals("fifty rows built and thrown away, and not one block written", details,
 				MovementRowPanel.detailBuilds());
-			assertEquals("...nor one long description", tips, MovementRowPanel.tooltipBuilds());
 			assertEquals("building only reads the seam", 0, shut.writes);
 
 			// The same page rebuilt with ONE item open in the seam, as a publish rebuilds the page under a reader
@@ -2924,15 +2577,12 @@ public class MovementRowPanelTest
 				assertEquals(p.row().name() + ": open exactly when the seam says so", i == 17, p.expanded());
 			}
 			assertEquals("one row open, one block written", details + 1, MovementRowPanel.detailBuilds());
-			assertEquals("and still no description", tips, MovementRowPanel.tooltipBuilds());
 
-			// The counters can count, or the zeros above prove nothing.
+			// The counter can count, or the zeros above prove nothing.
 			final MovementRowPanel opened = new MovementRowPanel(pageRow(3), null, MovementWindow.D7, THEN_DAY,
 				ViewOptions.DEFAULT, new RecordingExpansion());
 			leftClick(opened);
 			assertEquals("an opening writes one block", details + 2, MovementRowPanel.detailBuilds());
-			opened.tooltipHtml();
-			assertEquals("an ask writes one description", tips + 1, MovementRowPanel.tooltipBuilds());
 		});
 	}
 
@@ -3221,44 +2871,6 @@ public class MovementRowPanelTest
 			assertTrue(block, block.contains("(12 Aug)"));
 			assertNotEquals("the defaults write another block, or this proves nothing", block,
 				MovementRowPanel.detail(live, MovementWindow.DEFAULT, THEN_DAY, 0L, ViewOptions.DEFAULT, false));
-
-			final String tip = MovementRowPanel.tooltip(live, MovementWindow.D30, day, LIVE_OFF);
-			assertEquals("the long description, likewise", tip, p.tooltipHtml());
-			assertNotEquals("...and likewise not the defaults'", tip,
-				MovementRowPanel.tooltip(live, MovementWindow.DEFAULT, THEN_DAY, ViewOptions.DEFAULT));
-		});
-	}
-
-	/**
-	 * The long description is written on the first ask and kept - and never by building a row. No sidebar has
-	 * drawn it since addendum AK, yet every build from AI to AR wrote it in the constructor for every row of
-	 * every page; only the tests read it, through {@code tooltipHtml()}.
-	 *
-	 * <p>Counted and compared by identity: building writes none, the first ask writes one, the second ask writes
-	 * nothing and answers the very same String - and that String is what the pure builder writes for the row's
-	 * own arguments, so every test in this file that reads it describes exactly what it always did.
-	 */
-	@Test
-	public void theLongDescriptionIsWrittenOnTheFirstAskAndKept() throws Exception
-	{
-		onEdt(() ->
-		{
-			final long before = MovementRowPanel.tooltipBuilds();
-			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY);
-			assertEquals("building a row writes no description", before, MovementRowPanel.tooltipBuilds());
-
-			final String first = p.tooltipHtml();
-			assertEquals("the first ask writes one", before + 1, MovementRowPanel.tooltipBuilds());
-			assertSame("the second answers the same String, kept rather than written again", first,
-				p.tooltipHtml());
-			assertEquals(before + 1, MovementRowPanel.tooltipBuilds());
-			assertEquals("and it is what the pure builder writes for this row",
-				MovementRowPanel.tooltip(whip(), MovementWindow.D1, THEN_DAY, ViewOptions.DEFAULT), first);
-
-			// Opening and shutting the cell has nothing to do with it.
-			leftClick(p);
-			leftClick(p);
-			assertSame(first, p.tooltipHtml());
 		});
 	}
 
@@ -3555,7 +3167,9 @@ public class MovementRowPanelTest
 	 */
 	private static JLabel itemGpLabel(MovementRowPanel p)
 	{
-		return (JLabel) ((BorderLayout) line3Figures(p).getLayout()).getLayoutComponent(BorderLayout.WEST);
+		// Release 1.2.1: a line 3 that prints no gp figure holds no column for one (its working takes the room), so null.
+		final JComponent figures = line3Figures(p);
+		return figures == null ? null : (JLabel) ((BorderLayout) figures.getLayout()).getLayoutComponent(BorderLayout.WEST);
 	}
 
 	/** Line 3's empty stand-in for the percentage column, which is what keeps the gp column above it true. */

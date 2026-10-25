@@ -296,6 +296,11 @@ public class BpmCommands implements Function<String, String>
 	 * quoted back as typed.
 	 */
 	static final String VIEW_REFUSAL = "view= wants items or history, not '";
+	/**
+	 * What {@code change=} answers when it reads no part of {@code gp:<size>,pct:<size>,opacity:<percent>} (release 1.2.1), up to the
+	 * text itself; {@code hchange=} answers the same with an {@code h} in front.
+	 */
+	static final String CHANGE_REFUSAL = "change= wants gp:<size>, pct:<size> and opacity:<20-100>, comma separated, not '";
 	/** What {@code starttab=} answers for a word that names neither tab (addendum AU), up to the word itself. */
 	static final String START_TAB_REFUSAL = "starttab= wants items or history, not '";
 	/**
@@ -474,6 +479,10 @@ public class BpmCommands implements Function<String, String>
 				return fold(value);
 			case "legacy":
 				return legacy(value);
+			case "change":
+				return change(value, false);
+			case "hchange":
+				return change(value, true);
 			case "search":
 				return search(value);
 			case "view":
@@ -494,7 +503,7 @@ public class BpmCommands implements Function<String, String>
 				return shot(value);
 			default:
 				return error("unknown command '" + key + "' (state, window=, sort=, dir=, min=, max=, presets=,"
-					+ " fold=, legacy=, search=, view=, starttab=, range=, hero=, opt=, refresh, more, bank=, wiki=,"
+					+ " fold=, legacy=, change=, hchange=, search=, view=, starttab=, range=, hero=, opt=, refresh, more, bank=, wiki=,"
 					+ " shot[=])");
 		}
 	}
@@ -1021,6 +1030,68 @@ public class BpmCommands implements Function<String, String>
 	}
 
 	/**
+	 * Release 1.2.1's {@code change=} verb: the List options menu's three change settings - how big the gp change and the
+	 * percentage change are drawn on an Items row, and how solid the gp change is - set from a terminal by pressing the menu's
+	 * own road, {@link BankPriceMovementPanel#pressChangeText}, which redraws the rows at once and stores the choice, so a
+	 * {@code /bpm} session leaves the same state behind as a hand session. Part 2's {@code hchange=} is the same verb for the
+	 * History options menu's own three, through {@link BankPriceMovementPanel#pressHistoryText}.
+	 *
+	 * <p>The value is any subset of {@code gp:<size>}, {@code pct:<size>} and {@code opacity:<percent>}, comma separated -
+	 * {@code change=gp:large,pct:normal,opacity:70} - the sizes being the bars' words (small, normal, large, largest) and the
+	 * opacity a whole number from 20 to 100. A part the verb cannot read is refused with a one-line reason, naming it, and
+	 * NOTHING is changed (the parts are read before any is applied); a part missing leaves that setting as it was. The
+	 * echoes are {@code state.panel.changeText} and {@code state.panel.historyChangeText}.
+	 */
+	private Map<String, Object> change(@Nullable String value, boolean history)
+	{
+		final String raw = value == null ? "" : value.trim();
+		if (raw.isEmpty())
+		{
+			return error((history ? "h" : "") + CHANGE_REFUSAL + raw + "'");
+		}
+		ChangeText next = history ? panel.historyText() : panel.changeText();
+		for (final String part : raw.split(","))
+		{
+			final String p = part.trim();
+			final int colon = p.indexOf(':');
+			final String key = (colon < 0 ? p : p.substring(0, colon)).trim().toLowerCase(Locale.ROOT);
+			final String word = colon < 0 ? "" : p.substring(colon + 1).trim();
+			switch (key)
+			{
+				case "gp":
+				case "pct":
+				case "percent":
+					final ChangeSize size = ChangeSize.parse(word);
+					if (size == null)
+					{
+						return error(key + ": wants small, normal, large or largest, not '" + word + "'");
+					}
+					next = "gp".equals(key) ? next.withGp(size) : next.withPct(size);
+					break;
+				case "opacity":
+					if (!word.matches("[0-9]{1,3}") || !ChangeText.isBrightness(Integer.parseInt(word)))
+					{
+						return error(key + ": wants a whole number from " + ChangeText.MIN_BRIGHTNESS + " to "
+							+ ChangeText.MAX_BRIGHTNESS + ", not '" + word + "'");
+					}
+					next = next.withBrightness(Integer.parseInt(word));
+					break;
+				default:
+					return error((history ? "h" : "") + CHANGE_REFUSAL + raw + "'");
+			}
+		}
+		if (history)
+		{
+			panel.pressHistoryText(next);
+		}
+		else
+		{
+			panel.pressChangeText(next);
+		}
+		return state();
+	}
+
+	/**
 	 * The tab the sidebar opens on next time (addendum AU's "Tab to open on startup", the tab used last since 1.1.0
 	 * part A), set without switching the tab that is showing: through
 	 * {@link BankPriceMovementPanel#pressStartTab}, so the choice is WRITTEN to the same stored value the toggle's
@@ -1072,21 +1143,19 @@ public class BpmCommands implements Function<String, String>
 
 	/**
 	 * The History chart's range (amendment 9.11): one of {@link BankHistoryRange}'s labels, matched without regard to
-	 * case, moving the chart alone - as the chart's own chips do: unsaved, never sent to the service, and overruled by
-	 * the card's next window. The echo is {@code state.bankHistory.range}.
+	 * case, moving the chart alone - as the chart's own chips do: never sent to the service, stored since release 1.2.1 part 2
+	 * like every change of the range, and overruled by the card's next window. The echo is {@code state.bankHistory.range}.
 	 */
 	private Map<String, Object> range(@Nullable String value)
 	{
 		final String raw = value == null ? "" : value.trim();
-		for (BankHistoryRange r : BankHistoryRange.values())
+		final BankHistoryRange r = BankHistoryRange.parse(raw);
+		if (r == null)
 		{
-			if (r.label().equalsIgnoreCase(raw))
-			{
-				panel.setHistoryRange(r);
-				return state();
-			}
+			return error(RANGE_REFUSAL + raw + "'");
 		}
-		return error(RANGE_REFUSAL + raw + "'");
+		panel.setHistoryRange(r);
+		return state();
 	}
 
 	// ---------------------------------------------------------------- the other verbs

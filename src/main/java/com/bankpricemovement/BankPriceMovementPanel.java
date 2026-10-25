@@ -148,7 +148,7 @@ import org.slf4j.LoggerFactory;
  *
  * <p><b>The gear, and the menu behind it</b> (addendum Q, lines Q1-Q2;
  * {@code docs/bank-price-movement-addendum-Q-2026-09-11.md}). A 12 px gear drawn in code
- * ({@link Widgets#gearIcon}) sits at the right end of the total's line, directly under the "Refresh" link, and
+ * ({@link GearGlyph#icon}) sits at the right end of the total's line, directly under the "Refresh" link, and
  * opens the panel's one settings menu on a LEFT click: the card's three show / hide items (1.1.0 part A took
  * "Refresh prices now" out of the menu - the card's Refresh link does it and more), then
  * the four view check items of {@link ViewOptions} - use live prices (addendum T, line T1), include coins and
@@ -569,6 +569,46 @@ public class BankPriceMovementPanel extends PluginPanel
 		default void saveShowAlchRows(boolean show)
 		{
 		}
+
+		/**
+		 * How the Items rows draw their two change figures - the config's {@code gpChangeSize}, {@code pctChangeSize} and
+		 * {@code gpBrightness} (release 1.2.1). Null reads as {@link ChangeText#DEFAULT}: nothing stored is the shipped default,
+		 * both sizes Normal and the brightness 55, and the answer for the headless renderer and a throwaway test seam.
+		 */
+		@Nullable
+		default ChangeText loadChangeText()
+		{
+			return null;
+		}
+
+		/** Writes the three settings the List options menu's bars and box (or "Reset to default") left, so the stored config follows (release 1.2.1). */
+		default void saveChangeText(ChangeText text)
+		{
+		}
+
+		/** The Net Worth History tab's own three settings (release 1.2.1 part 2), {@link #loadChangeText}'s twin: null reads as {@link ChangeText#DEFAULT}. */
+		@Nullable
+		default ChangeText loadHistoryText()
+		{
+			return null;
+		}
+
+		/** Writes the History options menu's three settings (or "Reset to default"), {@link #saveChangeText}'s twin. */
+		default void saveHistoryText(ChangeText text)
+		{
+		}
+
+		/** The range the History chart was left on (release 1.2.1 part 2); null is "nothing stored", and the card's window picks it. */
+		@Nullable
+		default BankHistoryRange loadHistoryRange()
+		{
+			return null;
+		}
+
+		/** Writes the range the History chart now shows - whichever road moved it. */
+		default void saveHistoryRange(BankHistoryRange range)
+		{
+		}
 	}
 
 	/**
@@ -767,7 +807,7 @@ public class BankPriceMovementPanel extends PluginPanel
 	 * and it is the LAST of the view check items since addendum AO deleted the row switch that used to follow it.
 	 * Its own words are the user's: "an option that is on by default (Include inventory and gear equipped)".
 	 */
-	public static final String COUNT_INVENTORY_TEXT = "Include inventory and worn gear";
+	public static final String COUNT_INVENTORY_TEXT = "Include inventory and worn items";
 	/**
 	 * The group's fifth item since 1.0.9 part 3, directly after the inventory's: whether what the player has in the
 	 * Grand Exchange's eight offers - items unsold, items bought and not collected, and the coins committed to or
@@ -799,7 +839,7 @@ public class BankPriceMovementPanel extends PluginPanel
 	 * bank open and reads it once, at the close or at a Refresh click - word for word the config item's description,
 	 * whose javadoc says what the one sentence leaves out.
 	 */
-	public static final String COUNT_INVENTORY_TIP = "Items in your inventory and worn gear count in the bank value "
+	public static final String COUNT_INVENTORY_TIP = "Items in your inventory and worn items count in the bank value "
 		+ "and are listed with the bank's stacks. They are read when you close the bank or press Refresh.";
 	/**
 	 * The Grand Exchange item's hover (1.0.9 part 3): one sentence, like the other check items'. It says what is
@@ -944,6 +984,21 @@ public class BankPriceMovementPanel extends PluginPanel
 	public static final String SHOW_ALCH_TEXT = "Show alch-only items";
 	public static final String SHOW_ALCH_TIP =
 		"Lists untradeables with no tradeable parts, at alch value. Searching finds them either way.";
+	/**
+	 * The five rows of a change-settings menu (release 1.2.1; the List options menu's, directly under "Down colour", and since part 2
+	 * the History options menu's, under "Single chart colour" - both built by {@link ChangeSettings}): two grey captions of the
+	 * colour presets' look, a bar of four cells under each ({@link SizeBar}), and between the first bar and the second caption a
+	 * row "Opacity [box] %" (the word was "Brightness" before part 2; the stored key is still {@code gpBrightness}). The gp bar's
+	 * words are "GP change size" and the percentage's "Percent change size"; the box takes a whole number from
+	 * {@link ChangeText#MIN_BRIGHTNESS} to {@link ChangeText#MAX_BRIGHTNESS}. Each control has a one-line hover, always on: what
+	 * the bar sizes, and what the opacity means in the percentage's colour.
+	 */
+	public static final String GP_SIZE_TEXT = "GP change size";
+	public static final String PCT_SIZE_TEXT = "Percent change size";
+	public static final String OPACITY_TEXT = "Opacity";
+	public static final String GP_SIZE_TIP = "Size of the gp change on each row";
+	public static final String OPACITY_TIP = "How solid the gp change is - 100 is the same colour as the %";
+	public static final String PCT_SIZE_TIP = "Size of the % change on each row";
 	/** The gap between the search box and the List options icon, in px (1.1.0 part G). */
 	static final int LIST_OPTIONS_GAP = 6;
 	/**
@@ -1264,6 +1319,14 @@ public class BankPriceMovementPanel extends PluginPanel
 	private JCheckBoxMenuItem showAlchItem;
 	private SwatchRow listUpColourRow;
 	private SwatchRow listDownColourRow;
+	/**
+	 * Release 1.2.1: how each tab draws the gp change and the percentage change, and how solid the gp change is - the Items rows'
+	 * settings and (part 2) the Net Worth History day rows' own, each held with the two {@link SizeBar}s and the opacity box of its
+	 * options menu, never null. The rows are built from them ({@link #addPage}, {@link BankHistoryView}); {@link #applyChangeText}
+	 * and {@link #applyHistoryText} are the roads that move them, and never ask the service for anything.
+	 */
+	private final ChangeSettings itemsSettings;
+	private final ChangeSettings historySettings;
 	/** When the List options menu last became invisible, by {@link #clock}: {@link #menuClosedAtMillis}'s twin. */
 	private long listMenuClosedAtMillis = MENU_NEVER_CLOSED;
 	/**
@@ -1608,6 +1671,12 @@ public class BankPriceMovementPanel extends PluginPanel
 		// stored": the alch rows left out of the list.
 		final Boolean savedAlch = prefs.loadShowAlchRows();
 		showAlchRows = savedAlch != null && savedAlch;
+		// Release 1.2.1, for the same reason: the menus' bars and boxes are built from them, and so is the first page of rows. Null is
+		// "nothing stored": both sizes Normal and the opacity at its default. The History tab's are its own (part 2).
+		itemsSettings = new ChangeSettings(orDefault(prefs.loadChangeText()), this::pressChangeText,
+			t -> MovementRowPanel.rowHeight(t) + ROWS_GAP);
+		historySettings = new ChangeSettings(orDefault(prefs.loadHistoryText()), this::pressHistoryText,
+			t -> BankHistoryDayRow.rowHeight(t) + BankHistoryView.ROW_GAP);
 
 		// The two gp fields: applied on Enter and on focus lost; a text that does not parse turns the field red
 		// and changes nothing.
@@ -1715,8 +1784,19 @@ public class BankPriceMovementPanel extends PluginPanel
 		// list's margins, anchored north, in a scroll pane with the list pane's settings. Its clock is a lambda
 		// reading the FIELD, so a later setClock reaches it too; it reads no clock and starts no timer as it builds.
 		historyView = new BankHistoryView(() -> clock.getAsLong(), ZoneId.systemDefault());
-		// 9.10: once here, after the prefs are read, and again wherever the window changes by any road.
-		historyView.setRange(BankHistoryRange.forWindow(filter.window()));
+		// 9.10: once here, after the prefs are read, and again wherever the window changes by any road. Release 1.2.1 part 2: the range
+		// the reader last left the chart on wins over the window's, when one is stored; every change of it from here on is stored.
+		final BankHistoryRange savedRange = prefs.loadHistoryRange();
+		historyView.setRange(savedRange == null ? BankHistoryRange.forWindow(filter.window()) : savedRange);
+		historyView.setRangeListener(range ->
+		{
+			if (!stopped)
+			{
+				prefs.saveHistoryRange(range);
+			}
+		});
+		// Release 1.2.1 part 2: the day rows in the sizes and the opacity the reader left (nothing is drawn yet, so this only stores them).
+		historyView.setChangeText(historySettings.text());
 		// 1.1.0 part C: the chart in the one colour the reader chose, if they chose one (seeded above, before the menu).
 		historyView.setChartColour(singleChartColour ? chartColour : null);
 		// 1.1.0 part E: and in the mask the reader left it in (nothing is drawn yet, so this only stores it).
@@ -2077,7 +2157,7 @@ public class BankPriceMovementPanel extends PluginPanel
 	 * A group caption of the menu (the start-tab group's of AU, the net worth chart's since 1.1.0 part A):
 	 * {@link #PRESETS_TEXT}'s look - grey 12 px, the same inset. No hover: the words are the whole of it.
 	 */
-	private JPanel buildMenuCaption(String text)
+	static JPanel buildMenuCaption(String text)
 	{
 		final JPanel row = Widgets.column(0);
 		row.setOpaque(false);
@@ -2530,12 +2610,19 @@ public class BankPriceMovementPanel extends PluginPanel
 		{
 			return;
 		}
+		// Release 1.2.1: and both tabs' change figures' two sizes and their opacity, with the colours they are drawn in - taken in
+		// first, so the colours' one rebuild of each tab draws them in the default sizes too and each list is built once.
+		itemsSettings.adopt(ChangeText.DEFAULT);
+		historySettings.adopt(ChangeText.DEFAULT);
+		historyView.setChangeText(ChangeText.DEFAULT);
 		applyMoveColours(null, null);
 		prefs.saveUpColour(upColour);
 		prefs.saveDownColour(downColour);
 		applyChartColour(true, null);
 		prefs.saveSingleChartColour(singleChartColour);
 		prefs.saveChartColour(chartColour);
+		prefs.saveChangeText(ChangeText.DEFAULT);
+		prefs.saveHistoryText(ChangeText.DEFAULT);
 	}
 
 	/**
@@ -2886,7 +2973,10 @@ public class BankPriceMovementPanel extends PluginPanel
 	 * under it - both IN the menu only while the record holds hidden days ({@link #syncLegacyItem}, as for the settings
 	 * menu's item);</li>
 	 * <li>"Single chart colour" ({@link #historyChartRow}), the settings menu's {@link SwatchRow} again: its tick runs
-	 * {@link #pressSingleChartColour} and its swatch {@link #pressChartColour}.</li>
+	 * {@link #pressSingleChartColour} and its swatch {@link #pressChartColour};</li>
+	 * <li>and, since release 1.2.1 part 2, a rule and then this tab's own change settings - the five rows the List options menu
+	 * has under its colours, built by the same {@link ChangeSettings} over the tab's own {@link #historySettings}: "GP change
+	 * size", its bar, "Opacity [box] %", "Percent change size", its bar.</li>
 	 * </ol>
 	 */
 	private JPopupMenu buildHistoryMenu()
@@ -2904,20 +2994,28 @@ public class BankPriceMovementPanel extends PluginPanel
 		historyChartRow.setSelected(singleChartColour);
 		historyChartRow.addActionListener(e -> pressSingleChartColour(historyChartRow.isSelected()));
 		menu.add(historyChartRow);
+		menu.addSeparator();
+		historySettings.addTo(menu);
+		historySettings.wireDrop(menu);
 		menu.addPopupMenuListener(new PopupMenuListener()
 		{
 			@Override
 			public void popupMenuWillBecomeVisible(PopupMenuEvent e)
 			{
 				// The menu is laid out only after this event, so it opens on the record it holds now (the settings menu's rule)
-				// and on the tick the panel believes.
+				// and on the tick the panel believes - and, as the List options menu does, on the settings in force with the
+				// keyboard parked on the opacity row (Z6) and not in its box.
 				syncLegacyItem();
 				historyChartRow.setSelected(singleChartColour);
+				historySettings.render();
+				SwingUtilities.invokeLater(() -> historyMenuFocusTarget().requestFocusInWindow());
 			}
 
 			@Override
 			public void popupMenuWillBecomeInvisible(PopupMenuEvent e)
 			{
+				// What was typed in the opacity box is committed when the menu goes (the List options menu's rule).
+				historySettings.commit();
 				// The settings menu's rule (AB1): the grabber's cancel arrives here BEFORE the icon's own press listener
 				// runs, which is what lets the icon read that press as the close half of a toggle.
 				historyMenuClosedAtMillis = clock.getAsLong();
@@ -3343,9 +3441,10 @@ public class BankPriceMovementPanel extends PluginPanel
 	 * The List options menu (1.1.0 part G): "Show alch-only items" - a check item in the settings menu's look, ticking
 	 * {@code showAlchRows} - the settings menu's rule, and the same two colour rows the settings menu has ("Up colour" and
 	 * "Down colour"), which open the same picker and change the one palette, each row's swatch drawn from the colour in force
-	 * as it paints - and, since parts H and J, the settings menu's "Colour presets" caption and its preset rows (Classic, 2h,
-	 * Colour-blind, Slot 1) and the "Save current colours to Slot 1" row directly under them, with the tick on the preset in
-	 * use. The menu keeps the settings menu's border and fonts, and nothing else of it: no header, no OK row.
+	 * as it paints - then, since release 1.2.1, the change settings' five rows ({@link #addChangeRows}: two size bars and the
+	 * brightness box, each under its caption) - and, since parts H and J, the settings menu's "Colour presets" caption and its
+	 * preset rows (Classic, 2h, Colour-blind, Slot 1) and the "Save current colours to Slot 1" row directly under them, with the
+	 * tick on the preset in use. The menu keeps the settings menu's border and fonts, and nothing else of it: no header, no OK row.
 	 */
 	private JPopupMenu buildListMenu()
 	{
@@ -3363,19 +3462,33 @@ public class BankPriceMovementPanel extends PluginPanel
 		listDownColourRow.addActionListener(e -> pressColour(false));
 		menu.add(listUpColourRow);
 		menu.add(listDownColourRow);
+		// Release 1.2.1: the change figures' two sizes and their opacity, directly under the colours they are drawn in.
+		itemsSettings.addTo(menu);
 		// 1.1.0 parts H and J: the settings menu's colour presets, the same caption and rows, directly under the colour rows.
 		listPresetRows.clear();
 		addColourPresets(menu, listPresetRows);
+		itemsSettings.wireDrop(menu);
 		menu.addPopupMenuListener(new PopupMenuListener()
 		{
 			@Override
 			public void popupMenuWillBecomeVisible(PopupMenuEvent e)
 			{
+				// The menu always opens on the settings in force: a box left red by a refused edit is a question that was
+				// answered ("not saved"), exactly as the settings menu's preset boxes are re-printed (Z2).
+				itemsSettings.render();
+				// Z6, for the one box this menu has: the ROW takes the keyboard, so nothing is targeted until the box is clicked.
+				// invokeLater for the settings menu's reason: the first focus is assigned after this event, and a request made now
+				// would be overruled.
+				SwingUtilities.invokeLater(() -> listMenuFocusTarget().requestFocusInWindow());
 			}
 
 			@Override
 			public void popupMenuWillBecomeInvisible(PopupMenuEvent e)
 			{
+				// The settings menu's third way to commit (Z2): a reader who types an opacity and clicks away has finished
+				// editing - and a press OUTSIDE this menu ends it, the popup's own grabber cancelling it before the press
+				// goes anywhere else, so this is also where that click lands.
+				itemsSettings.commit();
 				// The settings menu's rule (AB1): the grabber's cancel arrives here BEFORE the icon's own press listener
 				// runs, which is what lets the icon read that press as the close half of a toggle.
 				listMenuClosedAtMillis = clock.getAsLong();
@@ -3387,6 +3500,155 @@ public class BankPriceMovementPanel extends PluginPanel
 			}
 		});
 		return menu;
+	}
+
+	/**
+	 * Where the keyboard goes when the List options menu opens (Z6's rule, as {@link #menuFocusTarget()} is the settings menu's):
+	 * the opacity {@link ChangeSettings#focusTarget row}, and never the box in it. Named for the reason that one is: the rule is a
+	 * promise to the reader - no caret blinks until the box is clicked - and what can be seen from outside is WHICH component the
+	 * open event asks for, since focus itself belongs to a shown window.
+	 */
+	Component listMenuFocusTarget()
+	{
+		return itemsSettings.focusTarget();
+	}
+
+	/** {@link #listMenuFocusTarget()}'s twin for the History options menu (release 1.2.1 part 2). */
+	Component historyMenuFocusTarget()
+	{
+		return historySettings.focusTarget();
+	}
+
+	/**
+	 * A bar's cell or the opacity box's commit in the List options menu (release 1.2.1): the rows are drawn in the new sizes and
+	 * opacity at once, and the choice is stored through {@link Prefs#saveChangeText} (the plugin's seam guards that write, so the
+	 * {@code ConfigChanged} it posts is not echoed back at the panel). Nothing is written when nothing changed, and a stopped
+	 * panel writes nothing (contract C33). The service is never asked for anything: what is drawn changes and no figure does.
+	 */
+	public void pressChangeText(@Nullable ChangeText next)
+	{
+		press(itemsSettings, next);
+	}
+
+	/** {@link #pressChangeText}'s twin for the History options menu (release 1.2.1 part 2): the day rows, stored through {@link Prefs#saveHistoryText}. */
+	public void pressHistoryText(@Nullable ChangeText next)
+	{
+		press(historySettings, next);
+	}
+
+	private void press(ChangeSettings tab, @Nullable ChangeText next)
+	{
+		if (stopped)
+		{
+			return;
+		}
+		final ChangeText want = orDefault(next);
+		if (want.equals(tab.text()))
+		{
+			tab.render();
+			return;
+		}
+		final boolean forItems = tab == itemsSettings;
+		if (forItems)
+		{
+			applyChangeText(want);
+		}
+		else
+		{
+			applyHistoryText(want);
+		}
+		if (!updating)
+		{
+			if (forItems)
+			{
+				prefs.saveChangeText(want);
+			}
+			else
+			{
+				prefs.saveHistoryText(want);
+			}
+		}
+	}
+
+	private static ChangeText orDefault(@Nullable ChangeText text)
+	{
+		return text == null ? ChangeText.DEFAULT : text;
+	}
+
+	/**
+	 * The Items change settings are what {@code next} says - the menu's press, the plugin's {@code ConfigChanged} for any of the
+	 * three keys, "Reset to default" and the bridge's {@code change=} all come here - so the sidebar is drawn that way: the menu's
+	 * two bars and its box, then the Items rows built again from the rows the panel already holds ({@link #rebuildRows}), the tab
+	 * on screen at once and the other flagged {@link #itemsStale} for when the reader switches to it. The History tab has settings
+	 * of its own ({@link #applyHistoryText}), so nothing there moves. Nothing is saved back and the service is never asked for
+	 * anything. The same settings again redraw nothing. A change of size also owes the list's scroll place a scale, so the reader
+	 * stays on about the same row.
+	 */
+	public void applyChangeText(@Nullable ChangeText next)
+	{
+		if (stopped || !itemsSettings.adopt(orDefault(next)))
+		{
+			return;
+		}
+		if (view == SidebarView.ITEMS)
+		{
+			rebuildRows(false);
+		}
+		else
+		{
+			itemsStale = true;
+		}
+	}
+
+	/**
+	 * {@link #applyChangeText}'s twin for the Net Worth History tab (release 1.2.1 part 2): its day rows' two sizes and the
+	 * opacity of its gp figures - the rows and the summary line over the chart - are what {@code next} says, from the menu's press,
+	 * the plugin's {@code ConfigChanged}, "Reset to default" or the bridge's {@code hchange=}. The tab on screen is drawn again at
+	 * once from what it holds ({@link #redrawHistory}), the other flagged {@link #historyStale}; the Items rows keep their own.
+	 */
+	public void applyHistoryText(@Nullable ChangeText next)
+	{
+		if (stopped || !historySettings.adopt(orDefault(next)))
+		{
+			return;
+		}
+		historyView.setChangeText(historySettings.text());
+		redrawHistory();
+	}
+
+	/**
+	 * Draws the History tab again from what it holds - when it is on screen, now, and keeping the reader's place in the list of days
+	 * (a size change makes every day row taller or shorter: the place is scaled about the list's top by the rows' new pitch over
+	 * the old, {@link ChangeSettings#takeScale}, and put back once the layout has run) - and otherwise flagged
+	 * ({@link #historyStale}) for when the reader switches to it ({@link #setView}). Every road that changes what a day row or the
+	 * chart is built from ends here.
+	 */
+	private void redrawHistory()
+	{
+		if (view != SidebarView.HISTORY)
+		{
+			historyStale = true;
+			return;
+		}
+		final JScrollBar bar = historyScroll.getVerticalScrollBar();
+		final int was = bar.getValue();
+		final int top = historyView.getY() + historyView.listTop();
+		// Taken every time, not only when the place is below the list's top: a scale left owed would be spent by a later redraw
+		// (the eye, a colour) on a place it was never meant for.
+		final double scale = historySettings.takeScale();
+		final int keep = was <= top ? was : top + (int) Math.round((was - top) * scale);
+		historyView.recolour();
+		historyStale = false;
+		if (keep != was)
+		{
+			SwingUtilities.invokeLater(() ->
+			{
+				if (!stopped)
+				{
+					bar.setValue(keep);
+				}
+			});
+		}
 	}
 
 	/**
@@ -3459,8 +3721,8 @@ public class BankPriceMovementPanel extends PluginPanel
 	{
 		// The press needs the label it belongs to, which does not exist until SupportLinks.namedIconButton has returned it.
 		final JLabel[] self = new JLabel[1];
-		self[0] = SupportLinks.namedIconButton(Widgets.gearIcon(Widgets.GEAR_SIZE, ColorScheme.LIGHT_GRAY_COLOR),
-			Widgets.gearIcon(Widgets.GEAR_SIZE, ColorScheme.BRAND_ORANGE), SupportLinks.SETTINGS_TIP,
+		self[0] = SupportLinks.namedIconButton(GearGlyph.icon(Widgets.GEAR_SIZE, ColorScheme.LIGHT_GRAY_COLOR),
+			GearGlyph.icon(Widgets.GEAR_SIZE, ColorScheme.BRAND_ORANGE), SupportLinks.SETTINGS_TIP,
 			() -> openGearMenu(self[0]));
 		self[0].setBorder(SupportLinks.iconBorder());
 		return self[0];
@@ -3787,7 +4049,7 @@ public class BankPriceMovementPanel extends PluginPanel
 			// More than a page is some 16,000 px and its "Show n more" row: no window is that tall.
 			return true;
 		}
-		return count * MovementRowPanel.ROW_HEIGHT + (count - 1) * ROWS_GAP + MARGIN > window;
+		return count * MovementRowPanel.rowHeight(itemsSettings.text()) + (count - 1) * ROWS_GAP + MARGIN > window;
 	}
 
 	/** The gutter the header reserves for the list's scrollbar right now, in px (0 while there is no bar). */
@@ -4172,6 +4434,25 @@ public class BankPriceMovementPanel extends PluginPanel
 		return presets;
 	}
 
+	/** The Items change settings in force (release 1.2.1): the bridge's {@code change=} starts from them, so a part it leaves out stays as it was. */
+	public ChangeText changeText()
+	{
+		return itemsSettings.text();
+	}
+
+	/** The History tab's own (part 2): {@link #changeText()}'s twin, for {@code hchange=}. */
+	public ChangeText historyText()
+	{
+		return historySettings.text();
+	}
+
+	/** One tab's change settings as the dev bridge echoes them: {@code {gpSize, pctSize, gpOpacity}}. */
+	private static String textJson(ChangeText text)
+	{
+		return "{\"gpSize\":\"" + text.gp().name() + "\",\"pctSize\":\"" + text.pct().name() + "\",\"gpOpacity\":"
+			+ text.brightness() + "}";
+	}
+
 	// ---------------------------------------------------------------- the rise and fall colours (EDT, 1.1.0 part B)
 
 	/**
@@ -4296,15 +4577,7 @@ public class BankPriceMovementPanel extends PluginPanel
 			itemsStale = true;
 		}
 		historyView.setAmountsHidden(hide);
-		if (view == SidebarView.HISTORY)
-		{
-			historyView.recolour();
-			historyStale = false;
-		}
-		else
-		{
-			historyStale = true;
-		}
+		redrawHistory();
 	}
 
 	// ---------------------------------------------------------------- the List options menu (EDT, 1.1.0 part G)
@@ -4426,15 +4699,7 @@ public class BankPriceMovementPanel extends PluginPanel
 		{
 			itemsStale = true;
 		}
-		if (view == SidebarView.HISTORY)
-		{
-			historyView.recolour();
-			historyStale = false;
-		}
-		else
-		{
-			historyStale = true;
-		}
+		redrawHistory();
 	}
 
 	/**
@@ -6095,8 +6360,7 @@ public class BankPriceMovementPanel extends PluginPanel
 		}
 		if (view == SidebarView.HISTORY && historyStale)
 		{
-			historyView.recolour();
-			historyStale = false;
+			redrawHistory();
 		}
 		showCard(chooseCard());
 	}
@@ -6318,8 +6582,9 @@ public class BankPriceMovementPanel extends PluginPanel
 	}
 
 	/**
-	 * The bridge's {@code range=}: moves the History CHART alone, as its own range chips do - unsaved, and never sent
-	 * to the service (plan 7.2 item 6). The card's window keeps whatever it is, and its next change overrules this.
+	 * The bridge's {@code range=}: moves the History CHART alone, as its own range chips do - never sent to the service
+	 * (plan 7.2 item 6), and stored like every change of the chart's range since release 1.2.1 part 2. The card's window keeps
+	 * whatever it is, and its next change overrules this.
 	 */
 	public void setHistoryRange(@Nullable BankHistoryRange range)
 	{
@@ -6695,7 +6960,8 @@ public class BankPriceMovementPanel extends PluginPanel
 		// Pages, not rows: shown is only ever off a page boundary when it reached the end of the list, and a page
 		// count is what "Show n more" sold the reader.
 		final int keepPages = newList ? 1 : Math.max(1, (shown + ROWS_PER_PAGE - 1) / ROWS_PER_PAGE);
-		final int keepScroll = newList ? 0 : bar.getValue();
+		final double scale = itemsSettings.takeScale();
+		final int keepScroll = newList ? 0 : (int) Math.round(bar.getValue() * scale);
 		// 1.1.1 part S: before the pages are built, so the bar is decided by the rows the panel holds and never by the
 		// ones the search left.
 		syncBarPolicy();
@@ -6773,7 +7039,7 @@ public class BankPriceMovementPanel extends PluginPanel
 			final MovementRow row = matching.get(i);
 			// 1.1.0 part E: every row is built in the mask the reader chose - its texts and its picture both.
 			rowsColumn.add(new MovementRowPanel(row, image(row), list.window, list.thenDay, list.thenSeconds, options,
-				LinkBrowser::browse, expandedRows, hideAmounts));
+				LinkBrowser::browse, expandedRows, hideAmounts, itemsSettings.text()));
 		}
 		shown = end;
 	}
@@ -7531,6 +7797,8 @@ public class BankPriceMovementPanel extends PluginPanel
 			+ ",\"legacyDays\":" + legacyDaysPresent()
 			+ ",\"presets\":" + numbers(presets.mins())
 			+ ",\"presetLabels\":" + texts(presetLabels())
+			+ ",\"changeText\":" + textJson(itemsSettings.text())
+			+ ",\"historyChangeText\":" + textJson(historySettings.text())
 			+ ",\"problemText\":" + json(problemText())
 			+ ",\"problemRed\":" + isErrorStatus()
 			+ ",\"showMoreText\":" + json(showMoreVisible() ? showMoreLabel.getText() : "")
@@ -7811,7 +8079,7 @@ public class BankPriceMovementPanel extends PluginPanel
 		return countUntradeablesItem;
 	}
 
-	/** The menu's "Include inventory and worn gear" check item (Y1). */
+	/** The menu's "Include inventory and worn items" check item (Y1). */
 	JCheckBoxMenuItem countInventoryItem()
 	{
 		return countInventoryItem;

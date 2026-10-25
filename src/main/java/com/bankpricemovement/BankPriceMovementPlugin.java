@@ -84,7 +84,7 @@ import org.slf4j.LoggerFactory;
  */
 @PluginDescriptor(
 	name = "2h Bank Portfolio Tracker",
-	description = "Your bank's value and price movement over 1 to 180 days: live prices, your inventory and worn gear, gp filters, and sorting by percent, gp, item or stack price"
+	description = "Your bank's value and price movement over 1 to 180 days: live prices, your inventory and worn items, gp filters, and sorting by percent, gp, item or stack price"
 		// The version, appended as a constant expression (an annotation takes nothing else): the Hub page and the
 		// client's plugin list then say which build a player is reading about. Version.CURRENT is bumped by hand.
 		+ " (v" + Version.CURRENT + ")",
@@ -214,6 +214,25 @@ public class BankPriceMovementPlugin extends Plugin
 	 */
 	static final String SLOT_UP_KEY = "slotUpColour";
 	static final String SLOT_DOWN_KEY = "slotDownColour";
+	/**
+	 * Release 1.2.1's three HIDDEN keys: how big the gp change and the percentage change are drawn on an Items row and how bright
+	 * the gp change is (the List options menu's two bars and its box). They take a road of their own
+	 * ({@link #isChangeTextKey(String)}) of the colours' shape - the panel is told and the service never is, because what is
+	 * drawn changes and no figure does.
+	 */
+	static final String GP_SIZE_KEY = "gpChangeSize";
+	static final String PCT_SIZE_KEY = "pctChangeSize";
+	static final String GP_BRIGHTNESS_KEY = "gpBrightness";
+	/**
+	 * Release 1.2.1 part 2's four HIDDEN keys: the Net Worth History tab's own twins of the three above (day rows' gp size,
+	 * percentage size and the gp figures' opacity, independent of the Items tab's) and the range its chart was left on. They take
+	 * the same road ({@link #isHistoryKey(String)}) - the panel is told and the service never is, because what is drawn changes and
+	 * no figure does.
+	 */
+	static final String HISTORY_GP_SIZE_KEY = "historyGpChangeSize";
+	static final String HISTORY_PCT_SIZE_KEY = "historyPctChangeSize";
+	static final String HISTORY_GP_OPACITY_KEY = "historyGpOpacity";
+	static final String HISTORY_RANGE_KEY = "historyRange";
 	/**
 	 * Addendum N's look switch, which addendum O deleted (O1). The key survives only as something to SWEEP:
 	 * see {@link #unstickLook()}.
@@ -2133,6 +2152,28 @@ public class BankPriceMovementPlugin extends Plugin
 			}
 			return;
 		}
+		if (isChangeTextKey(event.getKey()) || isHistoryKey(event.getKey()))
+		{
+			// Release 1.2.1's road, the colours' twin: how the change figures are drawn is the sidebar's look, so the panel
+			// is told and nobody else - no figure is recomputed, so the service never is. Part 2's four History keys ride it:
+			// every setting of both tabs and the chart's range are read whichever key changed, and each is applied whole - the
+			// ones that did not change come back as they were, which the panel treats as nothing to redraw.
+			final ChangeText text = changeTextFromConfig();
+			final ChangeText historyText = historyTextFromConfig();
+			final BankHistoryRange range = historyRangeFromConfig();
+			final BankPriceMovementPanel look = panel;
+			if (look != null)
+			{
+				// apply* and not the menus' own presses: this IS the config, so writing it back would say nothing.
+				SwingUtilities.invokeLater(() ->
+				{
+					look.applyChangeText(text);
+					look.applyHistoryText(historyText);
+					look.setHistoryRange(range);
+				});
+			}
+			return;
+		}
 		if (isChartKey(event.getKey()))
 		{
 			// 1.1.0 part C's road, the colours' twin: the chart's colour is the sidebar's look, so the panel is told and
@@ -2439,6 +2480,53 @@ public class BankPriceMovementPlugin extends Plugin
 	static boolean isSlotKey(@Nullable String key)
 	{
 		return SLOT_UP_KEY.equals(key) || SLOT_DOWN_KEY.equals(key);
+	}
+
+	/**
+	 * Release 1.2.1's three hidden keys as the one value the sidebar is drawn from - the plugin's only reader of
+	 * {@code gpChangeSize}, {@code pctChangeSize} and {@code gpBrightness}: the panel's {@code Prefs.loadChangeText} and what
+	 * {@link #onConfigChanged} hands the panel when any of the three changes. A size a config answers none of (a mock) reads as
+	 * Normal and a brightness outside 20 to 100 as the default ({@link ChangeText#of}).
+	 */
+	ChangeText changeTextFromConfig()
+	{
+		return ChangeText.of(config.gpChangeSize(), config.pctChangeSize(), config.gpBrightness());
+	}
+
+	/**
+	 * Whether a {@code ConfigChanged} key is one of release 1.2.1's three change-text keys - a road of its own, the colours'
+	 * twin, reaching nothing but the panel. All three are hidden from the settings page, so a change here comes from the List
+	 * options menu (which the panel's own write guard keeps from echoing), "Reset to default", or a hand-edited profile.
+	 */
+	static boolean isChangeTextKey(@Nullable String key)
+	{
+		return GP_SIZE_KEY.equals(key) || PCT_SIZE_KEY.equals(key) || GP_BRIGHTNESS_KEY.equals(key);
+	}
+
+	/**
+	 * Release 1.2.1 part 2's four hidden keys as the Net Worth History tab's own change settings - {@link #changeTextFromConfig}'s
+	 * twin, read by the panel's {@code Prefs.loadHistoryText} and by {@link #onConfigChanged}.
+	 */
+	ChangeText historyTextFromConfig()
+	{
+		return ChangeText.of(config.historyGpChangeSize(), config.historyPctChangeSize(), config.historyGpOpacity());
+	}
+
+	/**
+	 * The range the History chart was left on, or null for "nothing stored" - an empty key, or a stored word that is not one of
+	 * the four labels - when the card's window picks it (the panel's {@code Prefs.loadHistoryRange}).
+	 */
+	@Nullable
+	BankHistoryRange historyRangeFromConfig()
+	{
+		return BankHistoryRange.parse(config.historyRange());
+	}
+
+	/** Whether a {@code ConfigChanged} key is one of part 2's four History keys: the change-text road's passengers, reaching nothing but the panel. */
+	static boolean isHistoryKey(@Nullable String key)
+	{
+		return HISTORY_GP_SIZE_KEY.equals(key) || HISTORY_PCT_SIZE_KEY.equals(key) || HISTORY_GP_OPACITY_KEY.equals(key)
+			|| HISTORY_RANGE_KEY.equals(key);
 	}
 
 	/**
@@ -2863,6 +2951,58 @@ public class BankPriceMovementPlugin extends Plugin
 			public void saveSlotDownColour(Color colour)
 			{
 				saveColour(SLOT_DOWN_KEY, colour);
+			}
+
+			@Override
+			public ChangeText loadChangeText()
+			{
+				return changeTextFromConfig();
+			}
+
+			@Override
+			public void saveChangeText(ChangeText text)
+			{
+				// Three keys and no service, guarded like the colours' pair: the menu's bar or box (or "Reset to default") that was
+				// pressed has already redrawn the rows itself (BankPriceMovementPanel.pressChangeText applies, then calls this).
+				if (text == null)
+				{
+					return;
+				}
+				saveColour(GP_SIZE_KEY, text.gp());
+				saveColour(PCT_SIZE_KEY, text.pct());
+				saveColour(GP_BRIGHTNESS_KEY, text.brightness());
+			}
+
+			@Override
+			public ChangeText loadHistoryText()
+			{
+				return historyTextFromConfig();
+			}
+
+			@Override
+			public void saveHistoryText(ChangeText text)
+			{
+				// The Items pair's twin: three keys and no service, guarded like the colours' pair.
+				if (text == null)
+				{
+					return;
+				}
+				saveColour(HISTORY_GP_SIZE_KEY, text.gp());
+				saveColour(HISTORY_PCT_SIZE_KEY, text.pct());
+				saveColour(HISTORY_GP_OPACITY_KEY, text.brightness());
+			}
+
+			@Override
+			public BankHistoryRange loadHistoryRange()
+			{
+				return historyRangeFromConfig();
+			}
+
+			@Override
+			public void saveHistoryRange(BankHistoryRange range)
+			{
+				// One key and no service, guarded like the rest: the chart is already on the range, and the label is what is stored.
+				saveColour(HISTORY_RANGE_KEY, range == null ? null : range.label());
 			}
 
 			@Override

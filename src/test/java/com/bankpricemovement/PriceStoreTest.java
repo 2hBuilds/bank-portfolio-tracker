@@ -603,7 +603,7 @@ public class PriceStoreTest
 	}
 
 	/**
-	 * Y2: the carried half rides in the same file, so "Include inventory and worn gear" can be flipped on the login
+	 * Y2: the carried half rides in the same file, so "Include inventory and worn items" can be flipped on the login
 	 * screen - or after a relaunch - without a bank visit, exactly as the cash of B097 and the untradeable marks of
 	 * Q5 can. The store needed no change for it: the snapshot is one Gson document.
 	 */

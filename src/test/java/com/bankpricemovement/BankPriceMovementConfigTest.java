@@ -14,6 +14,7 @@ import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 /**
@@ -83,7 +84,17 @@ public class BankPriceMovementConfigTest
 		// 1.1.0 part J: the twenty-fifth and twenty-sixth keys - the rise and the fall the colour presets' Slot 1
 		// holds. HIDDEN: the menu's "Save current colours to Slot 1" row writes them.
 		"slotUpColour",
-		"slotDownColour"
+		"slotDownColour",
+		// Release 1.2.1: the three HIDDEN change settings of the List options menu - how big the gp change and the percentage
+		// change are drawn on an Items row, and how bright the gp change is. The menu's two bars and its box are the controls.
+		"gpChangeSize",
+		"pctChangeSize",
+		"gpBrightness",
+		// Release 1.2.1 part 2: the Net Worth History tab's own twins of the three, and the range its chart was left on.
+		"historyGpChangeSize",
+		"historyPctChangeSize",
+		"historyGpOpacity",
+		"historyRange"
 	);
 
 	/** Every zero-argument {@code @ConfigItem} method visible on the interface, inherited ones included. */
@@ -146,13 +157,15 @@ public class BankPriceMovementConfigTest
 			keys.add(m.getAnnotation(ConfigItem.class).keyName());
 		}
 		assertEquals("unexpected set of config keys", new TreeSet<>(EXPECTED_KEYS), keys);
-		// Twenty-five: addendum AU's "view" (the last tab used) was deleted before it shipped and "startTab" (the
+		// Twenty-eight: addendum AU's "view" (the last tab used) was deleted before it shipped and "startTab" (the
 		// player's choice) took its place; 1.0.9 part 3's "countGrandExchange" sits at position 13, 1.0.9 part 5's
 		// hidden "includeLegacyHistory" at 16, 1.1.0 part B's "upColour" and "downColour" at 17 and 18, part C's
 		// "singleChartColour" and "chartColour" at 19 and 20, part E's "hideAmounts" at 21, part G's "showAlchRows" at 22
 		// and part J's "slotUpColour" and "slotDownColour" at 23 and 24. Release 1.2.0 took "showHoverText" out from
-		// between the Grand Exchange switch and "livePrices", and everything from "livePrices" down moved up by one.
-		assertEquals("unexpected number of config items", 25, methods.size());
+		// between the Grand Exchange switch and "livePrices", and everything from "livePrices" down moved up by one. Release
+		// 1.2.1 added the three hidden change settings "gpChangeSize", "pctChangeSize" and "gpBrightness" at 25 to 27.
+		// Release 1.2.1 part 2 added the History tab's three change settings and the chart's range at 28 to 31.
+		assertEquals("unexpected number of config items", 32, methods.size());
 	}
 
 	/**
@@ -356,15 +369,15 @@ public class BankPriceMovementConfigTest
 	public void theCarriedSwitchIsNamedAsTheGearMenuNamesIt()
 	{
 		final ConfigItem carried = item("countInventory");
-		assertEquals("Include inventory and worn gear", carried.name());
-		assertEquals("Items in your inventory and worn gear count in the bank value and are listed with the bank's"
+		assertEquals("Include inventory and worn items", carried.name());
+		assertEquals("Items in your inventory and worn items count in the bank value and are listed with the bank's"
 			+ " stacks. They are read when you close the bank or press Refresh.", carried.description());
 		assertEquals(12, carried.position());
 	}
 
 	/**
 	 * 1.0.9 part 3: the Grand Exchange switch - its key, its words, its default (ON, like the carried switch it sits
-	 * beside) and its position, directly after "Include inventory and worn gear" and pushing the three below it down
+	 * beside) and its position, directly after "Include inventory and worn items" and pushing the three below it down
 	 * by one. The description says WHEN the offers are read, because an offer that fills with the bank closed shows
 	 * at the next read and not at once.
 	 */
@@ -400,7 +413,7 @@ public class BankPriceMovementConfigTest
 	 *
 	 * <p>Nine became EIGHT with addendum AO line AO1 - "Show stack value on rows" is gone from the menu and from the
 	 * settings page both - and EIGHT became SEVEN with release 1.2.0, so the list here is one shorter again and the
-	 * menu's view group ends on "Include inventory and worn gear" (and the Grand Exchange switch after it, which this
+	 * menu's view group ends on "Include inventory and worn items" (and the Grand Exchange switch after it, which this
 	 * list does not carry).
 	 */
 	@Test
@@ -412,7 +425,7 @@ public class BankPriceMovementConfigTest
 		assertEquals("Use live prices", item("livePrices").name());
 		assertEquals("Include coins and platinum tokens", item("countCash").name());
 		assertEquals("Include alch-only untradeables", item("countUntradeables").name());
-		assertEquals("Include inventory and worn gear", item("countInventory").name());
+		assertEquals("Include inventory and worn items", item("countInventory").name());
 	}
 
 	/**
@@ -460,20 +473,20 @@ public class BankPriceMovementConfigTest
 			+ " why a figure is uncertain. Items with no trades keep the guide price", live.description());
 		assertEquals(14, live.position());
 		// Only addendum AU's startTab (15), 1.0.9 part 5's hidden includeLegacyHistory (16), 1.1.0 part B's two colours
-		// (17 and 18), part C's chart switch and colour (19 and 20), part E's hideAmounts (21), part G's showAlchRows (22)
-		// and part J's two hidden slot colours (23 and 24) sit below it.
+		// (17 and 18), part C's chart switch and colour (19 and 20), part E's hideAmounts (21), part G's showAlchRows (22),
+		// part J's two hidden slot colours (23 and 24) and release 1.2.1's three hidden change settings (25 to 27) sit below it.
 		for (Method m : itemMethods())
 		{
 			final ConfigItem other = m.getAnnotation(ConfigItem.class);
-			assertTrue("\"" + other.name() + "\" is drawn below the slot colours",
-				other.position() <= item("slotDownColour").position());
+			assertTrue("\"" + other.name() + "\" is drawn below the change settings",
+				other.position() <= item("historyRange").position());
 			assertTrue("\"" + other.name() + "\" is below livePrices but is not one of the last ten",
 				other.position() <= live.position() || other.keyName().equals("startTab")
 					|| other.keyName().equals("includeLegacyHistory") || other.keyName().equals("upColour")
 					|| other.keyName().equals("downColour") || other.keyName().equals("singleChartColour")
 					|| other.keyName().equals("chartColour") || other.keyName().equals("hideAmounts")
 					|| other.keyName().equals("showAlchRows") || other.keyName().equals("slotUpColour")
-					|| other.keyName().equals("slotDownColour"));
+					|| other.keyName().equals("slotDownColour") || isChangeKey(other.keyName()));
 		}
 		assertEquals(15, item("startTab").position());
 		assertEquals(16, item("includeLegacyHistory").position());
@@ -485,6 +498,13 @@ public class BankPriceMovementConfigTest
 		assertEquals(22, item("showAlchRows").position());
 		assertEquals(23, item("slotUpColour").position());
 		assertEquals(24, item("slotDownColour").position());
+		assertEquals(25, item("gpChangeSize").position());
+		assertEquals(26, item("pctChangeSize").position());
+		assertEquals(27, item("gpBrightness").position());
+		assertEquals(28, item("historyGpChangeSize").position());
+		assertEquals(29, item("historyPctChangeSize").position());
+		assertEquals(30, item("historyGpOpacity").position());
+		assertEquals(31, item("historyRange").position());
 	}
 
 	/**
@@ -677,15 +697,16 @@ public class BankPriceMovementConfigTest
 			{
 				// 1.1.0 part J: the two slot colours are hidden as well (the menu's save row is their only control).
 				assertEquals("\"" + other.name() + "\" is listed on the settings page exactly when it is not startTab"
-					+ " or a slot colour", other.keyName().equals("startTab") || other.keyName().equals("slotUpColour")
-					|| other.keyName().equals("slotDownColour"), other.hidden());
+					+ " or a slot colour or (release 1.2.1) a change setting", other.keyName().equals("startTab")
+					|| other.keyName().equals("slotUpColour") || other.keyName().equals("slotDownColour")
+					|| isChangeKey(other.keyName()), other.hidden());
 				// 1.1.0 parts B and C put the two colours, the chart switch and the chart colour after it: it is the last
 				// of the hidden items, not the last item.
 				assertTrue(other.keyName().equals("upColour") || other.keyName().equals("downColour")
 					|| other.keyName().equals("singleChartColour") || other.keyName().equals("chartColour")
 					|| other.keyName().equals("hideAmounts") || other.keyName().equals("showAlchRows")
 					|| other.keyName().equals("slotUpColour") || other.keyName().equals("slotDownColour")
-					|| other.position() < legacy.position());
+					|| isChangeKey(other.keyName()) || other.position() < legacy.position());
 			}
 		}
 	}
@@ -815,6 +836,105 @@ public class BankPriceMovementConfigTest
 		assertEquals("Classic's pair is the pair of up and down colours' own defaults",
 			new BankPriceMovementConfig() {}.upColour(), new BankPriceMovementConfig() {}.slotUpColour());
 		assertEquals(new BankPriceMovementConfig() {}.downColour(), new BankPriceMovementConfig() {}.slotDownColour());
+	}
+
+	/** Whether {@code key} is one of release 1.2.1's three change settings. */
+	private static boolean isChangeKey(String key)
+	{
+		return key.equals("gpChangeSize") || key.equals("pctChangeSize") || key.equals("gpBrightness")
+			|| BankPriceMovementPlugin.isHistoryKey(key);
+	}
+
+	/**
+	 * S1 (release 1.2.1): the three change settings - {@code gpChangeSize} and {@code pctChangeSize} (the enum
+	 * {@link ChangeSize}, default Normal) and {@code gpBrightness} (an int, default 55) - are HIDDEN from the settings page, at
+	 * positions 25 to 27, and the keys the plugin's road and prefs name; the value the sidebar is drawn from reads them whole
+	 * ({@link BankPriceMovementPlugin#changeTextFromConfig}), and a stored brightness outside 20 to 100 reads as the default.
+	 */
+	@Test
+	public void s1_theThreeChangeSettingsAreHiddenAndDefaultToNormalNormalAndFiftyFive()
+	{
+		final ConfigItem gp = item("gpChangeSize");
+		assertEquals("GP change size", gp.name());
+		assertEquals(25, gp.position());
+		assertTrue("hidden from the settings page", gp.hidden());
+		assertEquals(ChangeSize.class, itemMethod("gpChangeSize").getReturnType());
+		assertEquals(ChangeSize.NORMAL, new BankPriceMovementConfig() {}.gpChangeSize());
+		assertEquals(BankPriceMovementPlugin.GP_SIZE_KEY, gp.keyName());
+
+		final ConfigItem pct = item("pctChangeSize");
+		assertEquals("Percent change size", pct.name());
+		assertEquals(26, pct.position());
+		assertTrue("hidden from the settings page", pct.hidden());
+		assertEquals(ChangeSize.class, itemMethod("pctChangeSize").getReturnType());
+		assertEquals(ChangeSize.NORMAL, new BankPriceMovementConfig() {}.pctChangeSize());
+		assertEquals(BankPriceMovementPlugin.PCT_SIZE_KEY, pct.keyName());
+
+		final ConfigItem bright = item("gpBrightness");
+		assertEquals("GP change opacity", bright.name());
+		assertEquals(27, bright.position());
+		assertTrue("hidden from the settings page", bright.hidden());
+		assertEquals(Integer.TYPE, itemMethod("gpBrightness").getReturnType());
+		assertEquals(55, new BankPriceMovementConfig() {}.gpBrightness());
+		assertEquals(BankPriceMovementPlugin.GP_BRIGHTNESS_KEY, bright.keyName());
+
+		assertEquals("the defaults are the rows as they were drawn", ChangeText.DEFAULT,
+			ChangeText.of(new BankPriceMovementConfig() {}.gpChangeSize(), new BankPriceMovementConfig() {}.pctChangeSize(),
+				new BankPriceMovementConfig() {}.gpBrightness()));
+		// Each key has its own enum constants for RuneLite's config manager to parse a stored name back through.
+		assertEquals(Arrays.asList("SMALL", "NORMAL", "LARGE", "LARGEST"), Arrays.asList(
+			ChangeSize.SMALL.name(), ChangeSize.NORMAL.name(), ChangeSize.LARGE.name(), ChangeSize.LARGEST.name()));
+		assertTrue(BankPriceMovementPlugin.isChangeTextKey("gpChangeSize"));
+		assertTrue(BankPriceMovementPlugin.isChangeTextKey("pctChangeSize"));
+		assertTrue(BankPriceMovementPlugin.isChangeTextKey("gpBrightness"));
+		assertFalse(BankPriceMovementPlugin.isChangeTextKey("upColour"));
+	}
+
+	/**
+	 * P2 and P3 (release 1.2.1 part 2): the History tab's three change settings are the Items keys' twins - the same types and
+	 * defaults (Normal, Normal, 55), hidden, at positions 28 to 30 - and {@code historyRange} is a hidden String that is empty
+	 * ("nothing stored": the card's window picks the range) until the chart's range is stored as one of the four labels. The plugin's
+	 * road names all four keys, and reads a stored word that is not a label as nothing.
+	 */
+	@Test
+	public void p2_theHistoryChangeSettingsAndRangeAreHiddenTwinsWithTheirDefaults()
+	{
+		final ConfigItem gp = item("historyGpChangeSize");
+		assertEquals("History GP change size", gp.name());
+		assertTrue(gp.hidden());
+		assertEquals(ChangeSize.class, itemMethod("historyGpChangeSize").getReturnType());
+		assertEquals(ChangeSize.NORMAL, new BankPriceMovementConfig() {}.historyGpChangeSize());
+		final ConfigItem pct = item("historyPctChangeSize");
+		assertEquals("History percent change size", pct.name());
+		assertTrue(pct.hidden());
+		assertEquals(ChangeSize.class, itemMethod("historyPctChangeSize").getReturnType());
+		assertEquals(ChangeSize.NORMAL, new BankPriceMovementConfig() {}.historyPctChangeSize());
+		final ConfigItem opacity = item("historyGpOpacity");
+		assertEquals("History GP change opacity", opacity.name());
+		assertTrue(opacity.hidden());
+		assertEquals(Integer.TYPE, itemMethod("historyGpOpacity").getReturnType());
+		assertEquals("History starts at 55, as Items does now", 55, new BankPriceMovementConfig() {}.historyGpOpacity());
+		final ConfigItem range = item("historyRange");
+		assertEquals("History chart range", range.name());
+		assertTrue(range.hidden());
+		assertEquals(String.class, itemMethod("historyRange").getReturnType());
+		assertEquals("empty is nothing stored", "", new BankPriceMovementConfig() {}.historyRange());
+		assertEquals(BankPriceMovementPlugin.HISTORY_GP_SIZE_KEY, gp.keyName());
+		assertEquals(BankPriceMovementPlugin.HISTORY_PCT_SIZE_KEY, pct.keyName());
+		assertEquals(BankPriceMovementPlugin.HISTORY_GP_OPACITY_KEY, opacity.keyName());
+		assertEquals(BankPriceMovementPlugin.HISTORY_RANGE_KEY, range.keyName());
+		for (String key : new String[]{"historyGpChangeSize", "historyPctChangeSize", "historyGpOpacity", "historyRange"})
+		{
+			assertTrue(key, BankPriceMovementPlugin.isHistoryKey(key));
+			assertFalse("the Items road does not take " + key, BankPriceMovementPlugin.isChangeTextKey(key));
+		}
+		assertFalse(BankPriceMovementPlugin.isHistoryKey("gpChangeSize"));
+		assertFalse(BankPriceMovementPlugin.isHistoryKey("gpBrightness"));
+		assertEquals(BankHistoryRange.D30, BankHistoryRange.parse("30d"));
+		assertEquals(BankHistoryRange.ALL, BankHistoryRange.parse(" ALL "));
+		assertNull("nothing stored", BankHistoryRange.parse(""));
+		assertNull("a word that is no range", BankHistoryRange.parse("1y"));
+		assertNull(BankHistoryRange.parse(null));
 	}
 
 	private static Method itemMethod(String keyName)

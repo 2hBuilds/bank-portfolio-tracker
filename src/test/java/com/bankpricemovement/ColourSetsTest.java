@@ -321,12 +321,13 @@ public class ColourSetsTest
 		onEdt(() ->
 		{
 			final JPopupMenu menu = panel.listMenu();
-			assertEquals("the tick, a rule, two colour rows, the caption, four presets and the save row", 10,
+			// Release 1.2.1 put the change settings' five rows between the colour rows and the caption.
+			assertEquals("the tick, a rule, two colour rows, five change rows, the caption, four presets and the save row", 15,
 				menu.getComponentCount());
 			assertEquals(BankPriceMovementPanel.SHOW_ALCH_TEXT, ((JMenuItem) menu.getComponent(0)).getText());
 			assertTrue(menu.getComponent(1) instanceof JSeparator);
 			assertEquals(BankPriceMovementPanel.UP_COLOUR_TEXT, ((JMenuItem) menu.getComponent(2)).getText());
-			assertSetsGroup(after(menu, 3, 6));
+			assertSetsGroup(after(menu, 3, 11).subList(5, 11));
 		});
 	}
 

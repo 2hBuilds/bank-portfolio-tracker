@@ -25,7 +25,7 @@ import org.slf4j.LoggerFactory;
  *
  * <p>Since addendum Y line Y2 the same rules read two more containers: {@link #readContainers} turns the player's
  * INVENTORY and WORN gear into a {@link Carried}, which {@link BankSnapshot#withCarried(Carried)} hangs on the
- * snapshot so "Include inventory and worn gear" can count and list those stacks beside the bank's. Since 1.0.9
+ * snapshot so "Include inventory and worn items" can count and list those stacks beside the bank's. Since 1.0.9
  * part 3 it reads a third source through the same walk - the items in the player's Grand Exchange offers
  * ({@link ExchangeOffers}) - so "Include Grand Exchange offers" can do the same for them.
  *
@@ -724,7 +724,7 @@ public class BankReader
 	 * row is already at the game's own display ceiling.
 	 *
 	 * <p>Package-private rather than private since addendum Y: {@code PriceService} adds a carried stack's quantity
-	 * onto the banked one's when "Include inventory and worn gear" is on (Y3), and two callers of the same rule must
+	 * onto the banked one's when "Include inventory and worn items" is on (Y3), and two callers of the same rule must
 	 * not be two copies of it.
 	 *
 	 * @param a a non-negative quantity

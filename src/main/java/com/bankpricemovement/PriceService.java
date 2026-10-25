@@ -4,7 +4,6 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -83,7 +82,7 @@ import org.slf4j.LoggerFactory;
  * ({@link Inputs#everything}, {@link Lookups}), whatever the three counting switches say, by ONE per-stack rule
  * ({@link #priceStack}). The switches act only when the rows and the card choose what to add up.
  *
- * <p><b>What the player is carrying</b> (addendum Y lines Y2 and Y3). While "Include inventory and worn gear" is on,
+ * <p><b>What the player is carrying</b> (addendum Y lines Y2 and Y3). While "Include inventory and worn items" is on,
  * a computation is over the MERGED stacks: the bank's, the inventory's and the worn gear's folded onto canonical ids
  * with the quantities added ({@link #stacksOf}), so an item held in two places is ONE row that says where its
  * quantity is ({@link MovementRow#bankQuantity()} and its two twins), the carried coins join the bank's under the
@@ -121,8 +120,7 @@ import org.slf4j.LoggerFactory;
  * (RuneLite BEHIND the wiki), else the CLOCK, with the index marked stale so the next tick refetches it (RuneLite
  * AHEAD of the index). With fewer than {@value #AGREE_MIN_SAMPLES} comparable items nothing can be told, R0's time is
  * taken and R0 also stands in as "now" for the rows. Never a "+1 day";</li>
- * <li>picks every window's baseline revision LOCALLY from the index ({@link #pickBaseline}:
- * {@code RevisionRef.pickThen(index, now - N x 24 h)}, the newest revision at least the window's span older than the
+ * <li>picks every window's baseline revision LOCALLY from the index ({@code RevisionRef.pickThen(index, now - N x 24 h)}, the newest revision at least the window's span older than the
  * now time, a bot run of its day preferred - never the one RuneLite matches, never a newer one), fetches the bodies
  * it does not already hold in
  * ONE batched call ({@link GuidePriceClient#fetchTables}, L6), learns each body's own table time
@@ -1846,7 +1844,7 @@ public class PriceService
 
 		/**
 		 * Canonical id to {bank, inventory, worn, exchange} - the four figures a row's hover names. EMPTY while no
-		 * source beside the bank merges anything (both of "Include inventory and worn gear" and "Include Grand
+		 * source beside the bank merges anything (both of "Include inventory and worn items" and "Include Grand
 		 * Exchange offers" off, or nothing in either), which leaves every row's split at zeros and so byte-identical
 		 * to the pre-Y one.
 		 */
@@ -4861,23 +4859,6 @@ public class PriceService
 	}
 
 	/**
-	 * The revision a window's baseline should be read from with no table time known yet:
-	 * {@code RevisionRef.pickThen(index, window.targetSeconds(nowSeconds))} (contract 1.1.2, T1). Null when there is no
-	 * now time, no window, or nothing in the index is as old as the target (L11: "No 180d history"). Pure; the known
-	 * table times, the guard and the one retry are {@link #resolveLocked}'s.
-	 */
-	@Nullable
-	static RevisionRef pickBaseline(@Nullable final List<RevisionRef> index, final long nowSeconds,
-		@Nullable final MovementWindow window)
-	{
-		if (window == null || nowSeconds <= 0L)
-		{
-			return null;
-		}
-		return RevisionRef.pickThen(index, window.targetSeconds(nowSeconds));
-	}
-
-	/**
 	 * The join of L8: a name-keyed guide revision onto item ids. Every mapping entry whose wiki name the table
 	 * lists becomes a point (about 4,500 ids, so the persisted file serves ANY bank after a relaunch - L8 a),
 	 * and every bank item the mapping does not cover is tried by its own name - the composition's members name
@@ -7211,7 +7192,7 @@ public class PriceService
 	 * no switch can be half-applied.
 	 *
 	 * <ul>
-	 * <li>Neither "Include inventory and worn gear" nor "Include Grand Exchange offers" merging anything (a switch
+	 * <li>Neither "Include inventory and worn items" nor "Include Grand Exchange offers" merging anything (a switch
 	 * off, or nothing in that source): the bank's own stacks, and no split at all - which is the list the snapshot
 	 * used to hold at all, so the whole computation downstream is the pre-Y one, figure for figure.</li>
 	 * <li>Otherwise: the bank's stacks, then the inventory's and the worn gear's (while their switch is on), then the
@@ -7443,7 +7424,7 @@ public class PriceService
 
 	/**
 	 * The cash a computation may count (Q4, Y3): the bank's coins and platinum tokens, plus the ones in the
-	 * player's own pockets while "Include inventory and worn gear" is on, plus the coins the Grand Exchange offers
+	 * player's own pockets while "Include inventory and worn items" is on, plus the coins the Grand Exchange offers
 	 * hold while "Include Grand Exchange offers" is (1.0.9 part 3) - and 0 with the cash switch off.
 	 */
 	private static long cashOf(@Nullable final BankSnapshot snapshot, final ViewOptions options)

@@ -8,8 +8,9 @@ import javax.annotation.Nullable;
  *
  * <p>A range covers the calendar days {@code [today - days(), today]} inclusive, and
  * {@code [first reading, today]} for {@link #ALL} (contract amendment 9.5). The chart's own range chips move only
- * the chart - unsaved, never sent to the service - and the card's window chip overrules them through
- * {@link #forWindow(MovementWindow)}.
+ * the chart - never sent to the service - and the card's window chip overrules them through
+ * {@link #forWindow(MovementWindow)}. Since release 1.2.1 part 2 the range the chart was left on is stored (the hidden key
+ * {@code historyRange}, its {@link #label()}), and at start the stored one wins over the window's.
  */
 public enum BankHistoryRange
 {
@@ -61,6 +62,21 @@ public enum BankHistoryRange
 			default:
 				return D7;
 		}
+	}
+
+	/** The range whose {@link #label()} is {@code word}, matched without regard to case, or null for any other word - the stored key's and the bridge's reading. */
+	@Nullable
+	public static BankHistoryRange parse(@Nullable final String word)
+	{
+		final String w = word == null ? "" : word.trim();
+		for (final BankHistoryRange r : values())
+		{
+			if (r.label.equalsIgnoreCase(w))
+			{
+				return r;
+			}
+		}
+		return null;
 	}
 
 	@Override

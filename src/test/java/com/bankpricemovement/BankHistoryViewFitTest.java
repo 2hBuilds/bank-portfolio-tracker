@@ -54,7 +54,7 @@ public class BankHistoryViewFitTest
 			{
 				for (BankHistoryDayRow.Model model : worst)
 				{
-					final BankHistoryDayRow row = new BankHistoryDayRow(model);
+					final BankHistoryDayRow row = new BankHistoryDayRow(model, ChangeText.DEFAULT);
 					row.setSize(width, BankHistoryDayRow.HEIGHT);
 					row.doLayout();
 					assertFits(width + " " + model, row, labels(row));
@@ -71,7 +71,7 @@ public class BankHistoryViewFitTest
 			// Why the exact total is 9 px: at the sub-lines' 10 px, line 2 of the widest honest row wants more than the
 			// row has at 213 px.
 			final BankHistoryDayRow row = new BankHistoryDayRow(
-				row("Wed 28 May", "vs 28 May, 188 days", "12.3b", "12,345,678,901", "-100.0%", "+1.66m", 1));
+				row("Wed 28 May", "vs 28 May, 188 days", "12.3b", "12,345,678,901", "-100.0%", "+1.66m", 1), ChangeText.DEFAULT);
 			row.setSize(213, BankHistoryDayRow.HEIGHT);
 			row.doLayout();
 			final JLabel sub = (JLabel) row.getComponent(1);
@@ -102,7 +102,7 @@ public class BankHistoryViewFitTest
 				for (String words : Arrays.asList("Wed 30 Sep", "30 Sep 2025"))
 				{
 					final BankHistoryDayRow row = new BankHistoryDayRow(new BankHistoryDayRow.Model(TODAY, true, words,
-						"", "", "", "", "", 0, false));
+						"", "", "", "", "", 0, false), ChangeText.DEFAULT);
 					row.setSize(width, BankHistoryDayRow.CARRIED_HEIGHT);
 					row.doLayout();
 					assertFits(width + " " + words, row, labels(row));
@@ -122,7 +122,7 @@ public class BankHistoryViewFitTest
 				header.setSize(width, BankHistoryDayRow.HEADER_HEIGHT);
 				header.doLayout();
 				final BankHistoryDayRow row = new BankHistoryDayRow(
-					row("Wed 30 Sep", "vs 30 Aug, 123 days", "12.3b", "12,345,678,901", "-100.0%", "-1.23b", -1));
+					row("Wed 30 Sep", "vs 30 Aug, 123 days", "12.3b", "12,345,678,901", "-100.0%", "-1.23b", -1), ChangeText.DEFAULT);
 				row.setSize(width, BankHistoryDayRow.HEIGHT);
 				row.doLayout();
 				final List<JLabel> h = labels(header);

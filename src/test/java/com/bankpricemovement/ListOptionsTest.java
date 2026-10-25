@@ -403,7 +403,8 @@ public class ListOptionsTest
 			final Component[] items = panel.listMenu().getComponents();
 			// 1.1.0 part H: the "Colour sets" caption and its three rows stand under the colour rows - four more; part J
 			// renamed the caption "Colour presets" and added Slot 1 and its save row - two more (ColourPresetsTest pins them).
-			assertEquals("ten components", 10, items.length);
+			// Release 1.2.1: and the change settings' five rows between the colour rows and the presets (below).
+			assertEquals("fifteen components", 15, items.length);
 			assertTrue(items[0] instanceof JCheckBoxMenuItem);
 			assertEquals("Show alch-only items", ((JMenuItem) items[0]).getText());
 			assertEquals(BankPriceMovementPanel.SHOW_ALCH_TEXT, ((JMenuItem) items[0]).getText());
@@ -412,9 +413,9 @@ public class ListOptionsTest
 			assertEquals("Up colour", ((JMenuItem) items[2]).getText());
 			assertTrue(items[3] instanceof SwatchRow);
 			assertEquals("Down colour", ((JMenuItem) items[3]).getText());
-			assertEquals("Colour presets", ((JLabel) ((java.awt.Container) items[4]).getComponent(0)).getText());
-			assertTrue(items[5] instanceof SetRow && items[6] instanceof SetRow && items[7] instanceof SetRow
-				&& items[8] instanceof SetRow && items[9] instanceof SetRow);
+			assertEquals("Colour presets", ((JLabel) ((java.awt.Container) items[9]).getComponent(0)).getText());
+			assertTrue(items[10] instanceof SetRow && items[11] instanceof SetRow && items[12] instanceof SetRow
+				&& items[13] instanceof SetRow && items[14] instanceof SetRow);
 			assertEquals("the settings menu's face", Widgets.sans(12), items[0].getFont());
 			assertFalse("off for a fresh profile", tick().isSelected());
 			assertEquals("so the alch rows are out of the list", Arrays.asList("Dragon claws", "Penny"), shownNames());

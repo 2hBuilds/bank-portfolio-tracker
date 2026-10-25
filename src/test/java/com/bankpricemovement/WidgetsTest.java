@@ -886,9 +886,8 @@ public class WidgetsTest
 		assertHasColour(Widgets.clearIcon(ColorScheme.LIGHT_GRAY_COLOR), ColorScheme.LIGHT_GRAY_COLOR);
 		assertHasColour(Widgets.triangleDown(ColorScheme.TEXT_COLOR), ColorScheme.TEXT_COLOR);
 		assertHasColour(Widgets.triangleUp(ColorScheme.PROGRESS_COMPLETE_COLOR), ColorScheme.PROGRESS_COMPLETE_COLOR);
-		assertHasColour(Widgets.dotIcon(true), ColorScheme.BRAND_ORANGE);
-		assertHasColour(Widgets.gearIcon(Widgets.GEAR_SIZE, ColorScheme.LIGHT_GRAY_COLOR), ColorScheme.LIGHT_GRAY_COLOR);
-		assertHasColour(Widgets.gearIcon(Widgets.GEAR_SIZE, ColorScheme.BRAND_ORANGE), ColorScheme.BRAND_ORANGE);
+		assertHasColour(GearGlyph.icon(Widgets.GEAR_SIZE, ColorScheme.LIGHT_GRAY_COLOR), ColorScheme.LIGHT_GRAY_COLOR);
+		assertHasColour(GearGlyph.icon(Widgets.GEAR_SIZE, ColorScheme.BRAND_ORANGE), ColorScheme.BRAND_ORANGE);
 	}
 
 	// ---------------------------------------------------------------- the options gear (addendum Q, line Q1)
@@ -902,13 +901,13 @@ public class WidgetsTest
 	@Test
 	public void theGearIsARingWithEightTeethAndAHoleThroughTheMiddle()
 	{
-		final BufferedImage big = image(Widgets.gearIcon(48, ColorScheme.LIGHT_GRAY_COLOR));
-		assertEquals("the teeth, counted round the rim", Widgets.GEAR_TEETH, runsOfInk(big, 20.5));
-		assertEquals(8, Widgets.GEAR_TEETH);
+		final BufferedImage big = image(GearGlyph.icon(48, ColorScheme.LIGHT_GRAY_COLOR));
+		assertEquals("the teeth, counted round the rim", GearGlyph.TEETH, runsOfInk(big, 20.5));
+		assertEquals(8, GearGlyph.TEETH);
 
-		for (int size : new int[]{Widgets.GEAR_MIN, Widgets.GEAR_SIZE, 16, 48})
+		for (int size : new int[]{GearGlyph.MIN_SIZE, Widgets.GEAR_SIZE, 16, 48})
 		{
-			final BufferedImage img = image(Widgets.gearIcon(size, ColorScheme.LIGHT_GRAY_COLOR));
+			final BufferedImage img = image(GearGlyph.icon(size, ColorScheme.LIGHT_GRAY_COLOR));
 			assertEquals(size + " px", size, img.getWidth());
 			assertEquals(size + " px", size, img.getHeight());
 			assertEquals("the hole at " + size + " px", 0, alpha(img, size / 2, size / 2));
@@ -921,20 +920,12 @@ public class WidgetsTest
 	public void aGearTooSmallToHoldItsHoleIsClampedNotDrawnShut()
 	{
 		assertEquals(12, Widgets.GEAR_SIZE);
-		assertEquals(Widgets.GEAR_MIN, Widgets.gearIcon(0, ColorScheme.LIGHT_GRAY_COLOR).getIconWidth());
-		assertEquals(Widgets.GEAR_MIN, Widgets.gearIcon(-5, ColorScheme.LIGHT_GRAY_COLOR).getIconHeight());
-		assertTrue("bigger gear, more ink", ink(image(Widgets.gearIcon(24, ColorScheme.LIGHT_GRAY_COLOR)))
-			> ink(image(Widgets.gearIcon(Widgets.GEAR_SIZE, ColorScheme.LIGHT_GRAY_COLOR))));
+		assertEquals(GearGlyph.MIN_SIZE, GearGlyph.icon(0, ColorScheme.LIGHT_GRAY_COLOR).getIconWidth());
+		assertEquals(GearGlyph.MIN_SIZE, GearGlyph.icon(-5, ColorScheme.LIGHT_GRAY_COLOR).getIconHeight());
+		assertTrue("bigger gear, more ink", ink(image(GearGlyph.icon(24, ColorScheme.LIGHT_GRAY_COLOR)))
+			> ink(image(GearGlyph.icon(Widgets.GEAR_SIZE, ColorScheme.LIGHT_GRAY_COLOR))));
 		// A colour is not required of the caller: the sidebar's quiet grey is what a control rests in.
-		assertHasColour(Widgets.gearIcon(Widgets.GEAR_SIZE, null), ColorScheme.LIGHT_GRAY_COLOR);
-	}
-
-	/** N 3.4: the current ordering gets a filled dot, the other five a lighter ring - visibly different. */
-	@Test
-	public void theFilledDotCarriesMoreInkThanTheRing()
-	{
-		assertTrue("a filled dot must read louder than a ring",
-			ink(image(Widgets.dotIcon(true))) > ink(image(Widgets.dotIcon(false))));
+		assertHasColour(GearGlyph.icon(Widgets.GEAR_SIZE, null), ColorScheme.LIGHT_GRAY_COLOR);
 	}
 
 	/**
@@ -952,7 +943,7 @@ public class WidgetsTest
 	@Test
 	public void everyGlyphPaintsWithoutADisplayAndHasInk()
 	{
-		assertGlyph(Widgets.gearIcon(Widgets.GEAR_SIZE, ColorScheme.LIGHT_GRAY_COLOR), 12, 12);
+		assertGlyph(GearGlyph.icon(Widgets.GEAR_SIZE, ColorScheme.LIGHT_GRAY_COLOR), 12, 12);
 		assertGlyph(Widgets.triangle(true), 7, 7);
 		assertGlyph(Widgets.triangle(false), 7, 7);
 	}

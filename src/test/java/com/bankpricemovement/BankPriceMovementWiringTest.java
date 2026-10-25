@@ -183,7 +183,7 @@ public class BankPriceMovementWiringTest
 		// Addendum W made the sort four columns and addendum T added live prices; this is the wording that
 		// says so, and it is the line the client prints under the plugin's name in its list.
 		assertEquals("Your bank's value and price movement over 1 to 180 days: live prices, your inventory and"
-			+ " worn gear, gp filters, and sorting by percent, gp, item or stack price (v" + Version.CURRENT + ")",
+			+ " worn items, gp filters, and sorting by percent, gp, item or stack price (v" + Version.CURRENT + ")",
 			d.description());
 		assertTrue("the Hub search wants the obvious words", Arrays.asList(d.tags()).contains("bank"));
 		assertTrue(Arrays.asList(d.tags()).contains("grand exchange"));
@@ -2798,6 +2798,249 @@ public class BankPriceMovementWiringTest
 		plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, "slotUpColour"));
 	}
 
+	/**
+	 * Release 1.2.1: the three change settings are read straight off the stored config - and as ONE value, a brightness outside
+	 * 20 to 100 reading as 55 and a config that answers no size reading Normal - and round-trip through the pref seam: one
+	 * {@code setConfiguration} of each key per save (the two sizes as their enum constants, the brightness as a number), never
+	 * the service, a null is a no-op and no manager is a no-op rather than an NPE.
+	 */
+	@Test
+	public void theChangeSettingsAreReadAsOneValueAndRoundTripThroughThePrefs() throws Exception
+	{
+		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
+		final BankPriceMovementConfig config = mock(BankPriceMovementConfig.class);
+		final ConfigManager cm = mock(ConfigManager.class);
+		final PriceService service = mock(PriceService.class);
+		set(plugin, "config", config);
+		set(plugin, "configManager", cm);
+		set(plugin, "service", service);
+		assertEquals("gpChangeSize", BankPriceMovementPlugin.GP_SIZE_KEY);
+		assertEquals("pctChangeSize", BankPriceMovementPlugin.PCT_SIZE_KEY);
+		assertEquals("gpBrightness", BankPriceMovementPlugin.GP_BRIGHTNESS_KEY);
+
+		// A mock config answers null for a size and 0 for the number: Normal, Normal and the default brightness.
+		assertEquals(ChangeText.DEFAULT, plugin.changeTextFromConfig());
+		assertEquals(ChangeText.DEFAULT, plugin.configPrefs().loadChangeText());
+		when(config.gpChangeSize()).thenReturn(ChangeSize.LARGEST);
+		when(config.pctChangeSize()).thenReturn(ChangeSize.SMALL);
+		when(config.gpBrightness()).thenReturn(70);
+		assertEquals(ChangeText.of(ChangeSize.LARGEST, ChangeSize.SMALL, 70), plugin.changeTextFromConfig());
+		assertEquals(ChangeText.of(ChangeSize.LARGEST, ChangeSize.SMALL, 70), plugin.configPrefs().loadChangeText());
+		// What is stored outside 20..100 - a hand-edited profile - reads as the default, whichever way it is out.
+		when(config.gpBrightness()).thenReturn(5);
+		assertEquals(55, plugin.changeTextFromConfig().brightness());
+		when(config.gpBrightness()).thenReturn(150);
+		assertEquals(55, plugin.changeTextFromConfig().brightness());
+
+		final BankPriceMovementPanel.Prefs prefs = plugin.configPrefs();
+		prefs.saveChangeText(ChangeText.of(ChangeSize.LARGE, ChangeSize.NORMAL, 80));
+		verify(cm).setConfiguration(BankPriceMovementConfig.GROUP, "gpChangeSize", ChangeSize.LARGE);
+		verify(cm).setConfiguration(BankPriceMovementConfig.GROUP, "pctChangeSize", ChangeSize.NORMAL);
+		verify(cm).setConfiguration(BankPriceMovementConfig.GROUP, "gpBrightness", 80);
+		verify(cm, times(3)).setConfiguration(anyString(), anyString(), any(Object.class));
+		verify(service, never()).setOptions(any());
+		verify(service, never()).setFilter(any());
+
+		// Nothing to write, or nowhere to write it: a no-op.
+		prefs.saveChangeText(null);
+		set(plugin, "configManager", null);
+		plugin.configPrefs().saveChangeText(ChangeText.DEFAULT);
+		verify(cm, times(3)).setConfiguration(anyString(), anyString(), any(Object.class));
+	}
+
+	/**
+	 * Release 1.2.1: the three change keys take a road of their own - the panel's {@code applyChangeText} with the stored value
+	 * whole, whichever key moved - and nobody else. Never the service (no figure moves), never another look's road, and no
+	 * other key is mistaken for them nor they for another's.
+	 */
+	@Test
+	public void aChangeSettingFromOutsideRedrawsThePanelAndTellsNobodyElse() throws Exception
+	{
+		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
+		final PriceService service = mock(PriceService.class);
+		final BankPriceMovementPanel panel = mock(BankPriceMovementPanel.class);
+		final BankPriceMovementConfig config = mock(BankPriceMovementConfig.class);
+		set(plugin, "service", service);
+		set(plugin, "panel", panel);
+		set(plugin, "config", config);
+		when(config.gpChangeSize()).thenReturn(ChangeSize.LARGE);
+		when(config.pctChangeSize()).thenReturn(ChangeSize.LARGEST);
+		when(config.gpBrightness()).thenReturn(90);
+
+		for (final String key : new String[]{"gpChangeSize", "pctChangeSize", "gpBrightness"})
+		{
+			assertTrue(BankPriceMovementPlugin.isChangeTextKey(key));
+			plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, key));
+		}
+		onEdt(() ->
+		{
+		});
+		verify(panel, times(3)).applyChangeText(ChangeText.of(ChangeSize.LARGE, ChangeSize.LARGEST, 90));
+		verify(panel, never()).applyMoveColours(any(), any());
+		verify(panel, never()).applySlotColours(any(), any());
+		verify(panel, never()).applyChartColour(anyBoolean(), any());
+		verify(service, never()).setFilter(any());
+		verify(service, never()).setOptions(any());
+		verify(panel, never()).applyFilter(any());
+		verify(panel, never()).applyOptions(any());
+		verify(panel, never()).applyPresets(any());
+		verify(panel, never()).applyHeroVisibility(any());
+		verify(panel, never()).applyHideAmounts(anyBoolean());
+		verify(panel, never()).applyShowAlchRows(anyBoolean());
+
+		assertFalse(BankPriceMovementPlugin.isChangeTextKey("upColour"));
+		assertFalse(BankPriceMovementPlugin.isChangeTextKey("slotUpColour"));
+		assertFalse(BankPriceMovementPlugin.isChangeTextKey("gpMin"));
+		assertFalse(BankPriceMovementPlugin.isChangeTextKey(null));
+		for (final String key : new String[]{"gpChangeSize", "pctChangeSize", "gpBrightness"})
+		{
+			assertFalse(BankPriceMovementPlugin.isColourKey(key));
+			assertFalse(BankPriceMovementPlugin.isSlotKey(key));
+			assertFalse(BankPriceMovementPlugin.isChartKey(key));
+			assertFalse(BankPriceMovementPlugin.isOptionKey(key));
+			assertFalse(BankPriceMovementPlugin.isHeroKey(key));
+			assertFalse(BankPriceMovementPlugin.isFoldKey(key));
+			assertFalse(BankPriceMovementPlugin.isPresetKey(key));
+			assertFalse(BankPriceMovementPlugin.isStartTabKey(key));
+			assertFalse(BankPriceMovementPlugin.isLegacyKey(key));
+			assertFalse(BankPriceMovementPlugin.isHideKey(key));
+			assertFalse(BankPriceMovementPlugin.isAlchKey(key));
+		}
+
+		// After shutDown there is no sidebar, and the event must not throw.
+		set(plugin, "panel", null);
+		plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, "gpBrightness"));
+	}
+
+	/**
+	 * Release 1.2.1 part 2: the History tab's three change settings are read straight off the stored config as ONE value (an opacity
+	 * outside 20 to 100 reading as 55, a config that answers no size reading Normal) and round-trip through the pref seam on their own
+	 * three keys - never the Items ones, never the service - and the chart's range is stored as its label, an empty or foreign word
+	 * reading as "nothing stored". A null or a missing manager is a no-op.
+	 */
+	@Test
+	public void theHistorySettingsAndTheRangeAreReadAndRoundTripThroughThePrefs() throws Exception
+	{
+		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
+		final BankPriceMovementConfig config = mock(BankPriceMovementConfig.class);
+		final ConfigManager cm = mock(ConfigManager.class);
+		final PriceService service = mock(PriceService.class);
+		set(plugin, "config", config);
+		set(plugin, "configManager", cm);
+		set(plugin, "service", service);
+		assertEquals("historyGpChangeSize", BankPriceMovementPlugin.HISTORY_GP_SIZE_KEY);
+		assertEquals("historyPctChangeSize", BankPriceMovementPlugin.HISTORY_PCT_SIZE_KEY);
+		assertEquals("historyGpOpacity", BankPriceMovementPlugin.HISTORY_GP_OPACITY_KEY);
+		assertEquals("historyRange", BankPriceMovementPlugin.HISTORY_RANGE_KEY);
+
+		// A mock config answers null for a size, 0 for the number and null for the range: nothing stored.
+		assertEquals(ChangeText.DEFAULT, plugin.historyTextFromConfig());
+		assertEquals(ChangeText.DEFAULT, plugin.configPrefs().loadHistoryText());
+		assertEquals(null, plugin.historyRangeFromConfig());
+		when(config.historyGpChangeSize()).thenReturn(ChangeSize.LARGEST);
+		when(config.historyPctChangeSize()).thenReturn(ChangeSize.SMALL);
+		when(config.historyGpOpacity()).thenReturn(70);
+		assertEquals(ChangeText.of(ChangeSize.LARGEST, ChangeSize.SMALL, 70), plugin.historyTextFromConfig());
+		assertEquals(ChangeText.DEFAULT, plugin.changeTextFromConfig());
+		when(config.historyGpOpacity()).thenReturn(5);
+		assertEquals(55, plugin.historyTextFromConfig().brightness());
+		when(config.historyGpOpacity()).thenReturn(150);
+		assertEquals(55, plugin.historyTextFromConfig().brightness());
+		when(config.historyRange()).thenReturn("");
+		assertEquals(null, plugin.historyRangeFromConfig());
+		when(config.historyRange()).thenReturn("1y");
+		assertEquals(null, plugin.configPrefs().loadHistoryRange());
+		when(config.historyRange()).thenReturn("30d");
+		assertEquals(BankHistoryRange.D30, plugin.historyRangeFromConfig());
+		assertEquals(BankHistoryRange.D30, plugin.configPrefs().loadHistoryRange());
+
+		final BankPriceMovementPanel.Prefs prefs = plugin.configPrefs();
+		prefs.saveHistoryText(ChangeText.of(ChangeSize.LARGE, ChangeSize.NORMAL, 80));
+		verify(cm).setConfiguration(BankPriceMovementConfig.GROUP, "historyGpChangeSize", ChangeSize.LARGE);
+		verify(cm).setConfiguration(BankPriceMovementConfig.GROUP, "historyPctChangeSize", ChangeSize.NORMAL);
+		verify(cm).setConfiguration(BankPriceMovementConfig.GROUP, "historyGpOpacity", 80);
+		prefs.saveHistoryRange(BankHistoryRange.ALL);
+		verify(cm).setConfiguration(BankPriceMovementConfig.GROUP, "historyRange", (Object) "all");
+		verify(cm, times(4)).setConfiguration(anyString(), anyString(), any(Object.class));
+		verify(service, never()).setOptions(any());
+		verify(service, never()).setFilter(any());
+
+		// Nothing to write, or nowhere to write it: a no-op.
+		prefs.saveHistoryText(null);
+		prefs.saveHistoryRange(null);
+		set(plugin, "configManager", null);
+		plugin.configPrefs().saveHistoryText(ChangeText.DEFAULT);
+		plugin.configPrefs().saveHistoryRange(BankHistoryRange.D7);
+		verify(cm, times(4)).setConfiguration(anyString(), anyString(), any(Object.class));
+	}
+
+	/**
+	 * Release 1.2.1 part 2: the four History keys ride the change-text road - the panel's {@code applyHistoryText} with the stored
+	 * value whole, and the chart's stored range, whichever key moved - and nobody else. Never the service, never another look's road,
+	 * and the panel's own write is not echoed back.
+	 */
+	@Test
+	public void aHistoryKeyFromOutsideRedrawsThePanelAndTellsNobodyElse() throws Exception
+	{
+		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
+		final PriceService service = mock(PriceService.class);
+		final BankPriceMovementPanel panel = mock(BankPriceMovementPanel.class);
+		final BankPriceMovementConfig config = mock(BankPriceMovementConfig.class);
+		final ConfigManager cm = mock(ConfigManager.class);
+		set(plugin, "service", service);
+		set(plugin, "panel", panel);
+		set(plugin, "config", config);
+		set(plugin, "configManager", cm);
+		when(config.historyGpChangeSize()).thenReturn(ChangeSize.LARGE);
+		when(config.historyPctChangeSize()).thenReturn(ChangeSize.LARGEST);
+		when(config.historyGpOpacity()).thenReturn(90);
+		when(config.historyRange()).thenReturn("90d");
+
+		for (final String key : new String[]{"historyGpChangeSize", "historyPctChangeSize", "historyGpOpacity", "historyRange"})
+		{
+			assertTrue(BankPriceMovementPlugin.isHistoryKey(key));
+			plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, key));
+		}
+		onEdt(() ->
+		{
+		});
+		verify(panel, times(4)).applyHistoryText(ChangeText.of(ChangeSize.LARGE, ChangeSize.LARGEST, 90));
+		verify(panel, times(4)).setHistoryRange(BankHistoryRange.D90);
+		verify(service, never()).setFilter(any());
+		verify(service, never()).setOptions(any());
+		verify(panel, never()).applyFilter(any());
+		verify(panel, never()).applyOptions(any());
+		verify(panel, never()).applyMoveColours(any(), any());
+		for (final String key : new String[]{"historyGpChangeSize", "historyPctChangeSize", "historyGpOpacity", "historyRange"})
+		{
+			assertFalse(BankPriceMovementPlugin.isChangeTextKey(key));
+			assertFalse(BankPriceMovementPlugin.isColourKey(key));
+			assertFalse(BankPriceMovementPlugin.isSlotKey(key));
+			assertFalse(BankPriceMovementPlugin.isChartKey(key));
+			assertFalse(BankPriceMovementPlugin.isOptionKey(key));
+			assertFalse(BankPriceMovementPlugin.isHeroKey(key));
+			assertFalse(BankPriceMovementPlugin.isStartTabKey(key));
+		}
+		assertFalse(BankPriceMovementPlugin.isHistoryKey(null));
+
+		// The panel's own write comes back through the guard and is skipped: it has already drawn itself.
+		org.mockito.Mockito.doAnswer(invocation ->
+		{
+			plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, invocation.getArgument(1)));
+			return null;
+		}).when(cm).setConfiguration(anyString(), anyString(), any(Object.class));
+		plugin.configPrefs().saveHistoryRange(BankHistoryRange.D30);
+		plugin.configPrefs().saveHistoryText(ChangeText.of(ChangeSize.SMALL, ChangeSize.SMALL, 30));
+		onEdt(() ->
+		{
+		});
+		verify(panel, times(4)).applyHistoryText(any());
+
+		// After shutDown there is no sidebar, and the event must not throw.
+		set(plugin, "panel", null);
+		plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, "historyRange"));
+	}
+
 	/** Part J: the save row's own write is not echoed back at the panel ({@code prefsWriter}); a change from elsewhere lands. */
 	@Test
 	public void theSaveRowsOwnWriteDoesNotUpdateThePanelAgain() throws Exception
@@ -3399,7 +3642,7 @@ public class BankPriceMovementWiringTest
 
 	/**
 	 * Plan AS 7.4: the fingerprint covers the THREE containers a read folds in. The same bank beside a changed
-	 * inventory, or changed worn gear, is a change of what the sidebar shows ("Include inventory and worn gear" counts
+	 * inventory, or changed worn gear, is a change of what the sidebar shows ("Include inventory and worn items" counts
 	 * both), so it is read exactly as the pre-AS handler read every bank event - with the carried half as the client
 	 * holds it; the same three containers again are skipped, the inventory's slots rearranged included (BankReader
 	 * folds them by id, so the read would be identical). Played with the bank not known to be open, so every change is

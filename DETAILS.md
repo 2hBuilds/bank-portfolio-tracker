@@ -5,7 +5,7 @@
 
 Your whole bank, priced, with what each item's Grand Exchange price has done over the last day, week, month,
 quarter or half year - a figure from the last 24 hours' trades for every item that has traded, the guide price
-for the rest, and your inventory, worn gear and Grand Exchange offers counted in. It also has a **Net Worth History**: your bank's own
+for the rest, and your inventory, worn items and Grand Exchange offers counted in. It also has a **Net Worth History**: your bank's own
 total, one reading a day.
 
 ## What the sidebar shows
@@ -169,12 +169,25 @@ band and sort are set; the count under the card says how many matched. Empty the
 right end, which appears while it holds text, or press Escape in it) and the whole list is back. It is not
 remembered between sessions, and it works on the list the panel already has, so typing never touches the game.
 
-**List options** (1.1.0). At the right end of the search box sit two small gears. Press them for a menu with *Show
+**List options** (1.1.0). At the right end of the search box sits the options icon. Press it for a menu with *Show
 alch-only items* and the *Up colour* and *Down colour* swatches (the same two as in the settings menu). Alch-only
 untradeables never move, so by default they are not listed; tick the box to list them, always after every other
 row, whichever column you sort on. Searching finds an alch-only item either way. The tick changes the list and the
 count under the card and nothing else: what the Bank value and the Net Worth History count is still decided by
 *Include alch-only untradeables*.
+
+**Change size and opacity** (1.2.1). The same menu holds three settings for how a row draws its change, directly
+under *Down colour* and above *Colour presets*. *GP change size* and *Percent change size* are each a bar of four
+buttons - *Small*, *Normal*, *Large* and *Largest* - one for the gp figures on a row (the stack's change and one item's
+change) and one for the percentage; the lit button is the one in use, and pressing another applies it at once.
+*Normal* is the size every earlier release drew. The columns widen with the size so the figures still line up from
+row to row, and a row grows taller only when a bigger figure needs the room; the item's name, the stack value, the
+picture and the small word under the percentage keep their sizes. *Opacity* sets how solid the gp change is, from
+20 to 100: 100 is the same colour as the percentage, and lower numbers fade it toward the card's grey. It starts at 55,
+a little more solid than the 45 earlier releases used. Type a whole number and press Enter, or click anywhere else; a
+box holding anything else turns red and is not saved. The Net Worth History has its own three settings, set in its own
+options menu and independent of these (see *Net Worth History* below). These are in the menus only, not on RuneLite's
+settings page, and *Reset to default* in the settings menu puts all six back.
 
 ## Net Worth History
 
@@ -209,7 +222,7 @@ it; move away and it goes back to your latest reading. A day with no reading car
 drawn like any other day, so the line never breaks. Under the chart, a bar of four chips - *7d*, *30d*, *90d*
 and *all*, the one in use filled orange - picks its range. Picking a window on the card moves the chart with it
 (*1d* and *7d* show the last 7 days, *180d* shows everything); the chart's own chips move the chart and nothing
-else. A chip whose range reaches back before your first reading is drawn grey, and picking it shows the change
+else. The chart remembers the range it was left on, the next time you open it too. A chip whose range reaches back before your first reading is drawn grey, and picking it shows the change
 since your first reading. Over a long record the chart draws at most 120 points, each the last reading of its
 few days.
 
@@ -231,13 +244,26 @@ deleted. The same happens once more in 1.1.1 for players whose bank placeholders
 *What is left out of the list* below): if your first bank read on 1.1.1 finds any, the days before it read high
 and are hidden behind *Include days before v1.1.1*; if it finds none, nothing is hidden. Turn off
 *Include coins and platinum tokens* and the whole line redraws without coins, past days included; it never shows
-up as a one-day loss. The two small cogs at the right end of the *Bank net worth history* line open *History
+up as a one-day loss. The options icon at the right end of the *Bank net worth history* line opens *History
 options* - *Include days before ...* (only while such days exist) and *Single chart colour*, the same two items as in the
-settings menu - and while the days before v1.1.1 are hidden, a small *i* disc beside the cogs says on hover that they
+settings menu, then the tab's own *GP change size*, *Opacity* and *Percent change size* (below) - and while the days before
+v1.1.1 are hidden, a small *i* disc beside the icon says on hover that they
 might read high because of the bank placeholder bug and that you can restore them in settings; pressing it asks the same
 *Include* question as the menu item, and it goes away once you include them. A reading is priced the way the card priced it that day, and the guide-price figure is
 saved beside it, so turning *Use live prices* off redraws the line on guide prices alone. A day saved with live
 prices off has only its guide figure, so turning them on later can show a small step at the first live day.
+
+**Its own size and opacity** (1.2.1). The three settings of the *Items* tab's *List options* menu - *GP change size*,
+*Opacity* and *Percent change size*, with the same bars and the same box - are in *History options* too, under *Single chart
+colour*, and set the day list on their own: the percentage on each day's first line, bold, is 11, 14, 16 or 17 px at *Small*,
+*Normal*, *Large* and *Largest* and the gp change on its second line is 8, 10, 12 or 13 px. *Normal* is what the tab always
+drew and the row is as tall as it always was; a bigger size makes every day row taller by exactly what its figure needs, so the
+list stays even. The dates, the totals and the exact totals keep their sizes. *Opacity* colours the gp figure on every day and
+the gp figure over the chart (which keeps its size); it starts at 55, where this tab drew them at 45. Nothing you set here moves
+the *Items* tab, and nothing there moves this one.
+
+**The chart remembers its range.** Pick *7d*, *30d*, *90d* or *all* under the chart, or change the card's window, and the chart
+opens on that range the next time you start RuneLite. Until you have chosen one, the card's window picks it, as it always did.
 
 **Before your first reading** the view says *No readings yet - open your bank to load your first reading.* On
 your first day the chart shows that one point, and the list its one row.
@@ -251,7 +277,7 @@ is never uploaded.
 
 ## While you bank
 
-A quick gear swap should cost you nothing, so the panel keeps still while your bank is open:
+Swapping items at the bank won't lag your game. The panel waits until you close the bank to update.
 
 - **The list does not redraw while your bank is open.** Deposit and withdraw as much as you like - nothing is
   re-read and nothing is rebuilt until you are done. Anything you click in the panel itself - a window chip, the
@@ -338,8 +364,8 @@ above): off by default. A row at an alch value is tagged *alch* where the moveme
 every other row. The ones at an alch value never appear in a percentage or a gp move: there is no earlier price to
 compare an alch value with.
 
-**What you are carrying counts too.** *Include inventory and worn gear* is **on by default**: the items in your
-inventory and the gear you are wearing are valued and listed exactly like the bank's own stacks, by the same
+**What you are carrying counts too.** *Include inventory and worn items* is **on by default**: the items in your
+inventory and the items you are wearing are valued and listed exactly like the bank's own stacks, by the same
 rules - noted stacks fold onto the item they note, coins and platinum tokens in hand are worth face value and
 1,000 gp each, and an untradeable you are wearing is counted by the same rules as one in your bank.
 
@@ -471,7 +497,7 @@ follows.
 | Include coins and platinum tokens | Coins and platinum tokens (1,000 gp each) count in the bank value. On by default. |
 | Include alch-only untradeables | Counts untradeables with no tradeable parts, at alch value, in the Bank value and the Net Worth History. Off by default. It does not decide whether they are listed - see *Show alch-only items*. Untradeables made from tradeable items always count, at their parts' prices. |
 | Show alch-only items | Lists untradeables with no tradeable parts, at alch value, after the other rows. Off by default. Searching finds them either way. The tick is in the *List options* menu at the end of the search box. |
-| Include inventory and worn gear | Items in your inventory and worn gear count in the bank value and are listed with the bank's stacks. They are read when you open or close the bank, or press Refresh. On by default. |
+| Include inventory and worn items | Items in your inventory and worn items count in the bank value and are listed with the bank's stacks. They are read when you open or close the bank, or press Refresh. On by default. |
 | Include Grand Exchange offers | Items in your Grand Exchange offers, and the coins committed to them or waiting to be collected, count in the bank value and are listed with the bank's stacks. They are read when you close the bank or press Refresh. On by default. |
 | Use live prices | Every item that has traded in the last 24 hours gets a figure from the wiki's live traded prices, solid or soft with a word under the percentage when it is soft; items with no trades keep the guide price. On by default. |
 | Up colour | The colour of a rise, on both tabs: the figures, the rows, the card's edge and the chart. Green by default. |

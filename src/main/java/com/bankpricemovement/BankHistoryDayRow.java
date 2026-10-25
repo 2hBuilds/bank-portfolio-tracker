@@ -19,7 +19,7 @@ import net.runelite.client.ui.ColorScheme;
 /**
  * One row of the History view's list of days (addendum AU, plan 7.2 items 3, 4 and 11; contract section 6).
  *
- * <p>A day WITH a reading is a {@value #HEIGHT} px card with a coloured left edge - green for a rise, the rows' red
+ * <p>A day WITH a reading is a {@value #HEIGHT} px card (at the Normal sizes - see {@link Fit} for what the player's bigger ones add) with a coloured left edge - green for a rise, the rows' red
  * for a fall, grey for no change or the first reading - and three columns of two lines:
  * <pre>
  *   Sat 26 Sep            736m            +0.4%
@@ -83,8 +83,6 @@ final class BankHistoryDayRow extends JPanel
 	private static final int TOTAL_SIZE = 13;
 	/** A size below the other sub-lines: the one thing that makes the widest honest row fit at 213 px. */
 	private static final int EXACT_SIZE = 9;
-	private static final int PCT_SIZE = 14;
-	private static final int GP_SIZE = 10;
 	private static final int CARRIED_SIZE = 11;
 	private static final int HEADER_SIZE = 11;
 
@@ -92,17 +90,90 @@ final class BankHistoryDayRow extends JPanel
 	static final Font SUB_FONT = Widgets.sans(SUB_SIZE);
 	static final Font TOTAL_FONT = Widgets.sans(TOTAL_SIZE);
 	static final Font EXACT_FONT = Widgets.sans(EXACT_SIZE);
-	static final Font PCT_FONT = Widgets.sansBold(PCT_SIZE);
-	static final Font GP_FONT = Widgets.sans(GP_SIZE);
 	static final Font CARRIED_FONT = Widgets.sans(CARRIED_SIZE);
 	static final Font HEADER_FONT = Widgets.sans(HEADER_SIZE);
 
 	/**
-	 * Line 1's baseline and line 2's, from the row's top: far enough apart that no line-1 label's box (the 14 px
-	 * percentage's descent included) reaches into a line-2 label's.
+	 * Line 1's baseline and line 2's, from the row's top, at the Normal sizes: far enough apart that no line-1 label's box (the
+	 * 14 px percentage's descent included) reaches into a line-2 label's.
 	 */
 	private static final int LINE1_BASELINE = 16;
 	private static final int LINE2_BASELINE = 31;
+
+	/**
+	 * What the player's two sizes mean for the row's geometry (release 1.2.1 part 2), MEASURED once from the real faces and kept:
+	 * the percentage's and the gp figure's faces, the two baselines and the row's height. Nothing in it depends on what a row
+	 * says, only on the sizes, so every day row of a list is the same height.
+	 *
+	 * <p>At Normal / Normal the baselines are 16 and 31 and the row {@value #HEIGHT} px, on any face. Bigger faces move them by
+	 * exactly what they need beyond what Normal needs and nothing more: line 1's baseline drops by the extra ascent of its
+	 * tallest label, line 2's by the extra depth of line 1 and the extra ascent of line 2, and the row grows by that and by the
+	 * extra depth of line 2. A smaller face grows nothing - the row never shrinks below what the Normal sizes draw.
+	 */
+	static final class Fit
+	{
+		final Font pctFont;
+		final Font gpFont;
+		final int baseline1;
+		final int baseline2;
+		final int height;
+
+		private Fit(final ChangeSize gp, final ChangeSize pct)
+		{
+			pctFont = Widgets.sansBold(pct.historyPctPx());
+			gpFont = Widgets.sans(gp.gpPx());
+			final int[] now = bands(pctFont, gpFont);
+			final int[] was = bands(Widgets.sansBold(ChangeSize.NORMAL.historyPctPx()), Widgets.sans(ChangeSize.NORMAL.gpPx()));
+			baseline1 = LINE1_BASELINE + Math.max(0, now[0] - was[0]);
+			baseline2 = baseline1 + LINE2_BASELINE - LINE1_BASELINE + Math.max(0, now[1] - was[1]) + Math.max(0, now[2] - was[2]);
+			height = HEIGHT + baseline2 - LINE2_BASELINE + Math.max(0, now[3] - was[3]);
+		}
+
+		/**
+		 * Line 1's tallest ascent and depth, then line 2's: the date, total and percentage; the sub-line, exact total and gp figure. The
+		 * depth is what a label's box reaches below its baseline (descent and leading, the height less the ascent), so the gap between
+		 * the two lines' boxes at Normal is the gap at every size.
+		 */
+		private static int[] bands(final Font pct, final Font gp)
+		{
+			final FontMetrics[] one = {MovementRowPanel.metrics(DATE_FONT), MovementRowPanel.metrics(TOTAL_FONT),
+				MovementRowPanel.metrics(pct)};
+			final FontMetrics[] two = {MovementRowPanel.metrics(SUB_FONT), MovementRowPanel.metrics(EXACT_FONT),
+				MovementRowPanel.metrics(gp)};
+			final int[] out = new int[4];
+			for (final FontMetrics m : one)
+			{
+				out[0] = Math.max(out[0], m.getAscent());
+				out[1] = Math.max(out[1], m.getHeight() - m.getAscent());
+			}
+			for (final FontMetrics m : two)
+			{
+				out[2] = Math.max(out[2], m.getAscent());
+				out[3] = Math.max(out[3], m.getHeight() - m.getAscent());
+			}
+			return out;
+		}
+	}
+
+	/** One {@link Fit} per pair of sizes, made when first asked for. */
+	private static final Fit[] FITS = new Fit[ChangeSize.values().length * ChangeSize.values().length];
+
+	/** The {@link Fit} of one pair of sizes, measured the first time and kept. */
+	static synchronized Fit fit(final ChangeSize gp, final ChangeSize pct)
+	{
+		final int slot = gp.ordinal() * ChangeSize.values().length + pct.ordinal();
+		if (FITS[slot] == null)
+		{
+			FITS[slot] = new Fit(gp, pct);
+		}
+		return FITS[slot];
+	}
+
+	/** How tall a day row WITH a reading is at these settings, in px: {@link #HEIGHT} at Normal / Normal, more when the faces need it. */
+	static int rowHeight(final ChangeText text)
+	{
+		return fit(text.gp(), text.pct()).height;
+	}
 
 	/** The grey of a carried row's ground: between the card grey and the sidebar's, as mock 5 draws it. */
 	static final Color CARRIED_GROUND = ColorScheme.DARK_GRAY_HOVER_COLOR;
@@ -243,6 +314,7 @@ final class BankHistoryDayRow extends JPanel
 	}
 
 	private final Model model;
+	private final Fit fit;
 	private final JLabel dateLabel;
 	@Nullable
 	private final JLabel subLabel;
@@ -255,10 +327,15 @@ final class BankHistoryDayRow extends JPanel
 	@Nullable
 	private final JLabel gpLabel;
 
-	BankHistoryDayRow(final Model model)
+	/**
+	 * @param text the History tab's own change settings (release 1.2.1 part 2): the sizes of the percentage and the gp figure and
+	 *             the opacity of the gp figure. A carried day has none of them and is the same row whatever they say.
+	 */
+	BankHistoryDayRow(final Model model, final ChangeText text)
 	{
 		super(null);
 		this.model = Objects.requireNonNull(model, "model");
+		this.fit = fit(text.gp(), text.pct());
 		setOpaque(true);
 		if (model.carried)
 		{
@@ -280,9 +357,9 @@ final class BankHistoryDayRow extends JPanel
 		subLabel = add(Widgets.label(model.sub, SUB_FONT, ColorScheme.LIGHT_GRAY_COLOR));
 		totalLabel = add(Widgets.label(model.total, TOTAL_FONT, Color.WHITE));
 		exactLabel = add(Widgets.label(model.exact, EXACT_FONT, ColorScheme.LIGHT_GRAY_COLOR));
-		pctLabel = add(Widgets.label(model.pct, PCT_FONT, Widgets.move(model.signum, Widgets.Kind.FIGURE)));
-		gpLabel = add(Widgets.label(model.gp, GP_FONT, Widgets.move(model.signum, Widgets.Kind.QUIET)));
-		setPreferredSize(new Dimension(Widgets.CONTENT_WIDTH, HEIGHT));
+		pctLabel = add(Widgets.label(model.pct, fit.pctFont, Widgets.move(model.signum, Widgets.Kind.FIGURE)));
+		gpLabel = add(Widgets.label(model.gp, fit.gpFont, Widgets.quietAt(model.signum, text.brightness())));
+		setPreferredSize(new Dimension(Widgets.CONTENT_WIDTH, fit.height));
 	}
 
 	private JLabel add(final JLabel label)
@@ -311,12 +388,12 @@ final class BankHistoryDayRow extends JPanel
 		final int middle = left + LEFT_COLUMN + GAP;
 		final int pctX = right - width(pctLabel);
 		final int gpX = right - width(gpLabel);
-		place(pctLabel, pctX, width(pctLabel), top(pctLabel, LINE1_BASELINE));
-		place(gpLabel, gpX, width(gpLabel), top(gpLabel, LINE2_BASELINE));
-		place(totalLabel, middle, Math.min(width(totalLabel), pctX - GAP - middle), top(totalLabel, LINE1_BASELINE));
-		place(exactLabel, middle, Math.min(width(exactLabel), gpX - GAP - middle), top(exactLabel, LINE2_BASELINE));
-		place(dateLabel, left, Math.min(width(dateLabel), middle - GAP - left), top(dateLabel, LINE1_BASELINE));
-		place(subLabel, left, Math.min(width(subLabel), middle - GAP - left), top(subLabel, LINE2_BASELINE));
+		place(pctLabel, pctX, width(pctLabel), top(pctLabel, fit.baseline1));
+		place(gpLabel, gpX, width(gpLabel), top(gpLabel, fit.baseline2));
+		place(totalLabel, middle, Math.min(width(totalLabel), pctX - GAP - middle), top(totalLabel, fit.baseline1));
+		place(exactLabel, middle, Math.min(width(exactLabel), gpX - GAP - middle), top(exactLabel, fit.baseline2));
+		place(dateLabel, left, Math.min(width(dateLabel), middle - GAP - left), top(dateLabel, fit.baseline1));
+		place(subLabel, left, Math.min(width(subLabel), middle - GAP - left), top(subLabel, fit.baseline2));
 	}
 
 	private static int width(final JLabel label)

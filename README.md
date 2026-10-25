@@ -22,13 +22,14 @@
 5. **Sort.** By % change, gp change, item price or stack price. Click the lit one again to flip.
 6. **Filter.** Items over 100k, 1m or 10m, or your own min and max. Or type part of a name in the search box above the list.
 7. **Open an item.** Click any item to see its exact figures. Click it again to close.
-8. **Settings.** Click the settings icon to include or exclude your inventory, worn gear, Grand Exchange offers, coins and alch-only untradeables, to turn live prices on or off, and to pick your up, down and chart colours or a colour preset.
+8. **Settings.** Click the settings icon to include or exclude your inventory, worn items, Grand Exchange offers, coins and alch-only untradeables, to turn live prices on or off, and to pick your up, down and chart colours or a colour preset.
 
 ## Good to know
 
 - **Prices** are the Grand Exchange guide price, updated several times a day, plus the last 24 hours' trades for every item that has traded, with a small word under the % when a move is less certain.
 - **Untradeables** made from tradeable items, like a charged bow or crystal armour, count at their parts' prices.
-- **Alch-only items** stay out of the list. Tick *Show alch-only items* under the two gears beside the search box to see them. Searching finds them either way.
+- **Alch-only items** stay out of the list. Tick *Show alch-only items* under the options icon beside the search box to see them. Searching finds them either way.
+- **Change size and opacity.** The *List options* menu at the end of the search box also sets how big the gp change and the % change are on each row, and how solid the gp change is (*Opacity*). The Net Worth History has its own three, and its chart remembers the range you left it on.
 - **Grand Exchange offers** count too: unsold items, bought items waiting to be collected, and the coins committed or waiting in your offers.
 - **Privacy.** No account or bank data is ever uploaded. The plugin only fetches prices.
 - **Streaming?** Click the eye beside the Discord icon to hide every gp amount and item quantity. Names and percentages stay.

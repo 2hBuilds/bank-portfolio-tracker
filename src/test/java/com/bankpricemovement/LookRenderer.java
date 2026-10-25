@@ -82,7 +82,15 @@ import static org.mockito.Mockito.when;
  * {@code ticker-hidden-2026-09-20-AK.png} to the byte; without it, neither matches while the picture is the
  * same), so a comparison against them has to be taken the same way.
  *
- * <p><b>The current Items pins are {@code docs/handoff/lab/ticker-{,hidden-,options-,amounts-hidden-}2026-10-07-L.png} and
+ * <p><b>The current Items pins since release 1.2.1 are {@code docs/handoff/lab/ticker-{,hidden-,options-,amounts-hidden-,live-,live-amounts-hidden-}2026-10-24-S.png}</b>:
+ * the L and V pictures below with the gp figures drawn at brightness 55 where they were drawn at 45 (the setting's new default) and
+ * nothing else changed - which {@code ChangeSizePicturesTest} measures against the L and V files themselves, pixel by pixel, as
+ * "changed only inside a gp figure's box" - plus two pictures of the live sidebar at other sizes, {@code ticker-live-change-large-2026-10-24-S.png}
+ * (gp Large, percentage Large) and {@code ticker-live-change-small-2026-10-24-S.png} (gp Largest, percentage Small), drawn through
+ * {@link #render(HeroVisibility, ViewOptions, ChangeText)} at the height their taller rows need ({@link #height(ViewOptions, ChangeText)}).
+ * The History pins are not touched by it.
+ *
+ * <p><b>The L and V Items pins are {@code docs/handoff/lab/ticker-{,hidden-,options-,amounts-hidden-}2026-10-07-L.png} and
  * {@code docs/handoff/lab/ticker-live-2026-10-08-V.png} with {@code ticker-live-amounts-hidden-2026-10-08-V.png}.</b> The L
  * pictures are 1.2.0 part P2 (the grade word under the percentage): the guide-only ones - the ticker, the hidden card, the
  * options picture and the one with the amounts hidden - are byte for byte the T pictures below, nothing being graded with live
@@ -102,8 +110,16 @@ import static org.mockito.Mockito.when;
  * and nothing else changed, which {@code ViewStripPicturesTest} measures against the I files themselves. The History pins
  * are untouched by it.
  *
- * <p><b>The current History pins are {@code docs/handoff/lab/history{,-one,-empty,-hidden,-amounts-hidden}-2026-10-07-G2.png}</b>
- * (1.1.1 part G2, the two gears on the Net Worth History tab): the I pictures below with the History options icon added at
+ * <p><b>The current History pins since release 1.2.1 part 2 are {@code docs/handoff/lab/history{,-one,-empty,-hidden,-amounts-hidden}-2026-10-25-H.png}</b>:
+ * the G2 pictures below with the gp figures - the day rows' and the change line's over the chart - drawn at opacity 55 where they were
+ * drawn at 45 (the History tab's own setting, its new default) and nothing else changed, which {@code HistoryChangePicturesTest}
+ * (local) measures against the G2 files themselves as "changed only inside a gp figure's box"; plus
+ * {@link #HISTORY_CHANGE_LARGE_FILE}, the 40-day picture with the History gp figures Large and the percentages Large, drawn through
+ * {@link #renderHistory(HeroVisibility, BankHistorySeries, ChangeText)}. The Items pins are the S ones above.
+ *
+ * <p><b>The G2 History pins are {@code docs/handoff/lab/history{,-one,-empty,-hidden,-amounts-hidden}-2026-10-07-G2.png}</b>
+ * (1.1.1 part G2, the two gears on the Net Worth History tab; kept, and what this class drew until release 1.2.1 part 2 - draw
+ * them again with {@link #HISTORY_OLD_TEXT}): the I pictures below with the History options icon added at
  * the right end of the "Bank net worth history" caption's row - {@link #historyOptionsIcon}'s 12 x 12 box - and nothing else
  * changed (the fixture holds no hidden days, so none shows the notice), which {@code HistorySidebarPicturesTest} measures
  * against the I files themselves. The Items pins are the T ones above.
@@ -478,6 +494,30 @@ public final class LookRenderer
 	}
 
 	/**
+	 * {@link #render(HeroVisibility, ViewOptions)} with the change settings chosen (release 1.2.1), at the height those
+	 * switches and those sizes need ({@link #height(ViewOptions, ChangeText)}).
+	 */
+	public static BufferedImage render(HeroVisibility shown, ViewOptions options, ChangeText style) throws Exception
+	{
+		final ViewOptions view = options == null ? GUIDE_ONLY : options;
+		final AtomicReference<BufferedImage> out = new AtomicReference<>();
+		onEdt(() -> out.set(paint(build(shown, view, style), height(view, style))));
+		return out.get();
+	}
+
+	/**
+	 * How tall the picture is drawn for a set of view switches and change settings (release 1.2.1): {@link #height(ViewOptions)},
+	 * and one more row pitch's growth for every row the list holds - the fixture's fifteen for the live picture - when the
+	 * sizes make a row taller than {@link MovementRowPanel#ROW_HEIGHT}, so the ground under the last row stays what it was
+	 * and the list never grows a scroll bar that narrows every card.
+	 */
+	public static int height(ViewOptions options, ChangeText style)
+	{
+		final int rows = options != null && (options.livePrices() || options.countUntradeables()) ? 15 : 13;
+		return height(options) + rows * (MovementRowPanel.rowHeight(style) - MovementRowPanel.ROW_HEIGHT);
+	}
+
+	/**
 	 * How tall the picture is drawn for a set of view switches: {@link #HEIGHT}, and {@link #OPTIONS_HEIGHT} once
 	 * the untradeable switch has put two more rows in the list than {@link #HEIGHT} holds (R5).
 	 */
@@ -529,7 +569,18 @@ public final class LookRenderer
 	static BankPriceMovementPanel build(HeroVisibility shown, ViewOptions options, boolean foldOpen)
 	{
 		final ViewOptions view = options == null ? GUIDE_ONLY : options;
-		return build(shown, view, foldOpen, RowFilter.DEFAULT, SidebarView.ITEMS, status(view), NOW_MILLIS);
+		return build(shown, view, foldOpen, RowFilter.DEFAULT, SidebarView.ITEMS, status(view), NOW_MILLIS, null, null);
+	}
+
+	/**
+	 * {@link #build(HeroVisibility, ViewOptions)} with the List options menu's change settings chosen (release 1.2.1): the
+	 * fixture's prefs answer {@code style} to {@code loadChangeText}, which is how the client starts up on the stored keys.
+	 * Null is the shipped default, both sizes Normal and the brightness 55.
+	 */
+	static BankPriceMovementPanel build(HeroVisibility shown, ViewOptions options, ChangeText style)
+	{
+		final ViewOptions view = options == null ? GUIDE_ONLY : options;
+		return build(shown, view, FOLD_OPEN, RowFilter.DEFAULT, SidebarView.ITEMS, status(view), NOW_MILLIS, style, null);
 	}
 
 	/**
@@ -539,7 +590,8 @@ public final class LookRenderer
 	 * pinned to {@code nowMillis} and the panel switched to {@code showing} as the toggle would.
 	 */
 	private static BankPriceMovementPanel build(HeroVisibility shown, ViewOptions options, boolean foldOpen,
-		RowFilter filter, SidebarView showing, PriceService.Status status, long nowMillis)
+		RowFilter filter, SidebarView showing, PriceService.Status status, long nowMillis, @Nullable ChangeText style,
+		@Nullable ChangeText historyStyle)
 	{
 		final ViewOptions view = options == null ? GUIDE_ONLY : options;
 		final ItemManager itemManager = mock(ItemManager.class);
@@ -586,6 +638,20 @@ public final class LookRenderer
 			{
 				return view.countUntradeables();
 			}
+
+			// Release 1.2.1: the change settings the picture is drawn in; null is the default and draws what every release drew.
+			@Override
+			public ChangeText loadChangeText()
+			{
+				return style;
+			}
+
+			// Release 1.2.1 part 2: the History tab's own settings; null is the default (opacity 55, both sizes Normal).
+			@Override
+			public ChangeText loadHistoryText()
+			{
+				return historyStyle;
+			}
 		};
 		final BankPriceMovementPanel panel = new BankPriceMovementPanel(itemManager, service, prefs);
 		// The picture must be the same one whenever it is rendered, so "today" is the fixture's own day and not
@@ -603,13 +669,17 @@ public final class LookRenderer
 	// ---------------------------------------------------------------- the whole sidebar in History (addendum AU)
 
 	/** The History pictures, by the names they are pinned under in {@code docs/handoff/lab/}. */
-	public static final String HISTORY_FILE = "history-2026-10-07-G2.png";
+	public static final String HISTORY_FILE = "history-2026-10-25-H.png";
 	/** Day one: the one reading, today's (plan 7.5 item 3: the one point, its readout, its row, no sentence). */
-	public static final String HISTORY_ONE_FILE = "history-one-2026-10-07-G2.png";
+	public static final String HISTORY_ONE_FILE = "history-one-2026-10-25-H.png";
 	/** No reading yet: the card's two History lines a dash each (ruling 9.7), the view its one sentence. */
-	public static final String HISTORY_EMPTY_FILE = "history-empty-2026-10-07-G2.png";
+	public static final String HISTORY_EMPTY_FILE = "history-empty-2026-10-25-H.png";
 	/** The 40-day fixture with the card's three figures hidden (O3 in History: the card shrinks exactly as in Items). */
-	public static final String HISTORY_HIDDEN_FILE = "history-hidden-2026-10-07-G2.png";
+	public static final String HISTORY_HIDDEN_FILE = "history-hidden-2026-10-25-H.png";
+	/** Release 1.2.1 part 2: the 40-day fixture with the History tab's gp figures Large and its percentages Large, at the default opacity. */
+	public static final String HISTORY_CHANGE_LARGE_FILE = "history-change-large-2026-10-25-H.png";
+	/** The History settings every picture before release 1.2.1 part 2 was drawn in: both sizes Normal and the opacity 45. */
+	public static final ChangeText HISTORY_OLD_TEXT = ChangeText.of(ChangeSize.NORMAL, ChangeSize.NORMAL, 45);
 	/** The card's lit chip in every History picture: 30d, mock 5's own. */
 	public static final MovementWindow HISTORY_WINDOW = MovementWindow.D30;
 	/**
@@ -636,8 +706,19 @@ public final class LookRenderer
 	 */
 	static BankPriceMovementPanel buildHistory(HeroVisibility shown, BankHistorySeries series)
 	{
+		return buildHistory(shown, series, null);
+	}
+
+	/**
+	 * {@link #buildHistory(HeroVisibility, BankHistorySeries)} with the History tab's own change settings chosen (release 1.2.1
+	 * part 2): the fixture's prefs answer {@code style} to {@code loadHistoryText}, which is how the client starts up on the stored
+	 * keys. Null is the shipped default, both sizes Normal and the opacity 55; {@link #HISTORY_OLD_TEXT} draws the pictures of every
+	 * earlier release.
+	 */
+	static BankPriceMovementPanel buildHistory(HeroVisibility shown, BankHistorySeries series, @Nullable ChangeText style)
+	{
 		return build(shown, GUIDE_ONLY, FOLD_OPEN, RowFilter.DEFAULT.withWindow(HISTORY_WINDOW), SidebarView.HISTORY,
-			historyStatus(series), historyNowMillis());
+			historyStatus(series), historyNowMillis(), null, style);
 	}
 
 	/**
@@ -818,10 +899,17 @@ public final class LookRenderer
 	/** The whole sidebar in History over {@code series}, painted at {@link #historyHeight}; built and painted on the EDT. */
 	public static BufferedImage renderHistory(HeroVisibility shown, BankHistorySeries series) throws Exception
 	{
+		return renderHistory(shown, series, null);
+	}
+
+	/** {@link #renderHistory(HeroVisibility, BankHistorySeries)} with the History tab's change settings chosen (release 1.2.1 part 2). */
+	public static BufferedImage renderHistory(HeroVisibility shown, BankHistorySeries series, @Nullable ChangeText style)
+		throws Exception
+	{
 		final AtomicReference<BufferedImage> out = new AtomicReference<>();
 		onEdt(() ->
 		{
-			final BankPriceMovementPanel panel = buildHistory(shown, series);
+			final BankPriceMovementPanel panel = buildHistory(shown, series, style);
 			out.set(paint(panel, historyHeight(panel)));
 		});
 		return out.get();
@@ -831,7 +919,14 @@ public final class LookRenderer
 	public static File writeHistory(File dir, String name, HeroVisibility shown, BankHistorySeries series)
 		throws Exception
 	{
-		final BufferedImage image = renderHistory(shown, series);
+		return writeHistory(dir, name, shown, series, null);
+	}
+
+	/** {@link #writeHistory(File, String, HeroVisibility, BankHistorySeries)} with the History tab's change settings chosen (release 1.2.1 part 2). */
+	public static File writeHistory(File dir, String name, HeroVisibility shown, BankHistorySeries series,
+		@Nullable ChangeText style) throws Exception
+	{
+		final BufferedImage image = renderHistory(shown, series, style);
 		if (!dir.isDirectory() && !dir.mkdirs())
 		{
 			throw new IOException("could not create " + dir);

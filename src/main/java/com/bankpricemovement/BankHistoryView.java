@@ -60,8 +60,13 @@ import net.runelite.client.ui.ColorScheme;
  * in the Items list's manner.
  *
  * <p><b>The range.</b> The view starts at {@code forWindow(MovementWindow.DEFAULT)} (D7). The card's chip sets it
- * through {@link #setRange}; the view's OWN chips move the chart the same way but are never saved nor sent anywhere,
- * and the next {@link #setRange} with a different range overrules them (amendment 9.10).
+ * through {@link #setRange}; the view's OWN chips move the chart the same way, and the next {@link #setRange} with a different
+ * range overrules them (amendment 9.10). Every change of the range, by any of those roads, is told to the listener the panel
+ * hands in ({@link #setRangeListener}), which stores it (release 1.2.1 part 2), and the panel seeds the stored range at start.
+ *
+ * <p><b>The change settings</b> (release 1.2.1 part 2): the day rows' two sizes and the opacity of every gp figure - the rows' and
+ * the change line's over the chart, which keeps its sizes - come from the {@link ChangeText} the panel hands in
+ * ({@link #setChangeText}); a row is built from it, so a change of it builds every row again ({@link #recolour}).
  *
  * <p><b>Cost</b> (plan 7.2 item 9). {@link #show} is a no-op when the series, the four total-changing switches and
  * today all equal what is drawn. Otherwise the chart is re-fed and the list re-used row by row: a row is rebuilt only
@@ -98,6 +103,12 @@ public final class BankHistoryView extends JPanel
 	private final ZoneId zone;
 
 	private BankHistoryRange range = BankHistoryRange.forWindow(MovementWindow.DEFAULT);
+	/** Told every new range, after it is drawn; the panel stores it. */
+	private Consumer<BankHistoryRange> rangeListener = r ->
+	{
+	};
+	/** The History tab's own sizes and opacity: what a day row is built from, and the colour of the change line's gp figure. */
+	private ChangeText text = ChangeText.DEFAULT;
 
 	// ---- what is drawn: null before the first show
 	@Nullable
@@ -261,8 +272,30 @@ public final class BankHistoryView extends JPanel
 	}
 
 	/**
-	 * The chart's range, as the card's chip sets it ({@code BankHistoryRange.forWindow(window)}). Redraws the chart
-	 * only; a no-op for the range already drawn, and safe before any {@link #show}. Null is ignored.
+	 * Stores the settings every day row is built from and the change line's gp figure is coloured by, and draws nothing - the
+	 * panel follows it with {@link #recolour} when this view is on screen and when it next arrives, as it does for
+	 * {@link #setAmountsHidden}. Safe before any {@link #show}. Costs the service nothing: it is never asked.
+	 */
+	void setChangeText(final ChangeText next)
+	{
+		text = next;
+	}
+
+	/** Who is told when the chart's range changes, by any road (release 1.2.1 part 2): the panel, which stores it. */
+	void setRangeListener(final Consumer<BankHistoryRange> listener)
+	{
+		rangeListener = listener;
+	}
+
+	/** Where the list of days starts in this view, from its top, in px: what the panel scales the reader's scroll place about. */
+	int listTop()
+	{
+		return list.getY();
+	}
+
+	/**
+	 * The chart's range, as the card's chip sets it ({@code BankHistoryRange.forWindow(window)}) or the view's own bar. Redraws the
+	 * chart only and tells the range listener; a no-op for the range already drawn, and safe before any {@link #show}. Null is ignored.
 	 */
 	public void setRange(@Nullable final BankHistoryRange next)
 	{
@@ -278,9 +311,10 @@ public final class BankHistoryView extends JPanel
 			block.revalidate();
 			block.repaint();
 		}
+		rangeListener.accept(next);
 	}
 
-	/** One of the view's own chips: moves the chart, and nothing else - unsaved, never sent anywhere. */
+	/** One of the view's own chips: moves the chart and is stored by the panel through the range listener, never sent to the service. */
 	private void pickRange(final BankHistoryRange r)
 	{
 		setRange(r);
@@ -423,7 +457,7 @@ public final class BankHistoryView extends JPanel
 				: AmountMask.change(hideAmounts, MovementRowPanel.signedGp(change.deltaGp())));
 			changePct.setText(MovementMath.formatPctCompact(change.pct(), change.deltaGp()));
 		}
-		changeGp.setForeground(Widgets.move(sign, Widgets.Kind.QUIET));
+		changeGp.setForeground(Widgets.quietAt(sign, text.brightness()));
 		changePct.setForeground(Widgets.move(sign, Widgets.Kind.FIGURE));
 
 		chart.setData(days, shown.size() > 1, sign);
@@ -480,7 +514,7 @@ public final class BankHistoryView extends JPanel
 			final BankHistoryDayRow.Model model = BankHistoryDayRow.model(shown, listDays.get(i), drawnToday, drawnOptions,
 				hideAmounts);
 			final BankHistoryDayRow kept = old.get(model.day());
-			next.add(kept != null && kept.model().equals(model) ? kept : new BankHistoryDayRow(model));
+			next.add(kept != null && kept.model().equals(model) ? kept : new BankHistoryDayRow(model, text));
 		}
 
 		// The list's children: the header, the rows, and the pager row when more are left.

@@ -1312,7 +1312,8 @@ public class SidebarViewPanelTest
 		{
 			panel.pressView(SidebarView.HISTORY);
 			final Component[] none = panel.historyMenu().getComponents();
-			assertEquals("no hidden days: one row", 1, none.length);
+			// Release 1.2.1 part 2: "Single chart colour", a rule and the tab's five change rows follow it.
+			assertEquals("no hidden days: the chart row, a rule and the five change rows", 7, none.length);
 			assertTrue(none[0] instanceof SwatchRow);
 			assertEquals(BankPriceMovementPanel.SINGLE_CHART_COLOUR_TEXT, ((SwatchRow) none[0]).getText());
 			assertNull(historyLegacyItem());
@@ -1321,7 +1322,7 @@ public class SidebarViewPanelTest
 		onEdt(() ->
 		{
 			final Component[] c = panel.historyMenu().getComponents();
-			assertEquals("the item, a rule, the chart row", 3, c.length);
+			assertEquals("the item, a rule, the chart row, a rule and the five change rows", 9, c.length);
 			assertEquals(BankPriceMovementPanel.LEGACY_PLACEHOLDERS_TEXT, ((javax.swing.JCheckBoxMenuItem) c[0]).getText());
 			assertTrue("a rule under it", c[1] instanceof javax.swing.JSeparator);
 			assertTrue(c[2] instanceof SwatchRow);
@@ -1336,14 +1337,14 @@ public class SidebarViewPanelTest
 		{
 			assertEquals("the 1.0.9 words for a G.E.-only record", BankPriceMovementPanel.LEGACY_TEXT,
 				historyLegacyItem().getText());
-			assertEquals(3, panel.historyMenu().getComponentCount());
+			assertEquals(9, panel.historyMenu().getComponentCount());
 			assertEquals(BankPriceMovementPanel.LEGACY_TIP, historyLegacyItem().getToolTipText());
 		});
 		publish(rows(3), status(series(TODAY.minusDays(2), TODAY.minusDays(1), TODAY), VALUE_NOW, NOW - 60_000L));
 		onEdt(() ->
 		{
 			assertNull("the days are gone: so is the item", historyLegacyItem());
-			assertEquals("and its rule", 1, panel.historyMenu().getComponentCount());
+			assertEquals("and its rule", 7, panel.historyMenu().getComponentCount());
 		});
 	}
 

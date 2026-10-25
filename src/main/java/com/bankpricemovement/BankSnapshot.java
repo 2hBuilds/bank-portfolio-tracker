@@ -16,7 +16,7 @@ import java.util.Objects;
  *
  * <p>Since addendum Y line Y2 the same file carries what the player was CARRYING and WEARING at the last read
  * ({@link #inventory}, {@link #worn}, {@link #carriedGp}, {@link #carriedAtMillis}, put there by
- * {@link #withCarried(BankReader.Carried)}), so "Include inventory and worn gear" can be flipped on and off without
+ * {@link #withCarried(BankReader.Carried)}), so "Include inventory and worn items" can be flipped on and off without
  * a bank visit - the same reasoning that keeps {@link #currencyGp} and every untradeable stack in every capture.
  * Older files have none of it and read as "carrying nothing".
  *
@@ -90,7 +90,7 @@ public class BankSnapshot
 	 * The stacks in the player's INVENTORY at the last carried read (addendum Y, line Y2), one per canonical id and
 	 * by exactly the rules {@link #items} follows. Never null after {@link #normalize()}; EMPTY in every
 	 * {@code bank-*.json} written before addendum Y. It is read at every bank read and every Refresh WHATEVER
-	 * "Include inventory and worn gear" says - the switch acts only when the service adds up (addendum AV), which is
+	 * "Include inventory and worn items" says - the switch acts only when the service adds up (addendum AV), which is
 	 * what lets addendum AU's History keep the carried half of every reading - and "we have read nothing" and "you
 	 * were carrying nothing" are the same thing to every reader, because both mean there is nothing to add.
 	 */
@@ -111,7 +111,7 @@ public class BankSnapshot
 
 	/**
 	 * What the coins and platinum tokens the player was CARRYING are worth, in gp - the carried twin of
-	 * {@link #currencyGp}, kept apart from it so that turning "Include inventory and worn gear" off takes exactly
+	 * {@link #currencyGp}, kept apart from it so that turning "Include inventory and worn items" off takes exactly
 	 * the carried cash back out of the bank value and leaves the bank's own alone. 0 in a file written before
 	 * addendum Y.
 	 */

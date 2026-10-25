@@ -305,8 +305,10 @@ public class ColourPresetsTest
 			assertTrue("the list options menu had its rule already", list[1] instanceof JSeparator);
 			assertEquals(BankPriceMovementPanel.UP_COLOUR_TEXT, ((JMenuItem) list[2]).getText());
 			assertEquals(BankPriceMovementPanel.DOWN_COLOUR_TEXT, ((JMenuItem) list[3]).getText());
-			assertGroup(Arrays.asList(list).subList(4, 10));
-			assertEquals("and nothing after the save row", 10, list.length);
+			// Release 1.2.1: the change settings' five rows (two captions, two bars, the brightness row) stand between the colour rows
+			// and the presets; ListOptionsTest pins them.
+			assertGroup(Arrays.asList(list).subList(9, 15));
+			assertEquals("and nothing after the save row", 15, list.length);
 		});
 	}
 

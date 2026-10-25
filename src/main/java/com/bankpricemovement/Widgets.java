@@ -17,8 +17,6 @@ import java.awt.RenderingHints;
 import java.awt.event.ActionListener;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
-import java.awt.geom.Ellipse2D;
-import java.awt.geom.Line2D;
 import java.awt.geom.Path2D;
 import java.awt.image.BufferedImage;
 import java.util.function.IntConsumer;
@@ -62,8 +60,7 @@ import net.runelite.client.ui.components.FlatTextField;
  * <p><b>Addendum N</b> ({@code docs/bank-price-movement-addendum-N-2026-09-09.md}) added the second half of
  * this file: the sans type scale ({@link #sans}/{@link #sansBold}, N section 3 §2), the segmented chip
  * ({@link #segment}, {@link #chip}, N section 2), the text link ({@link #linkLabel}), the hero card's
- * coloured edge ({@link #card}) and the drawn glyphs ({@link #triangle}, {@link #clearIcon},
- * {@link #dotIcon}, N section 7). Two rules run through all of it. Every glyph is DRAWN and never typed,
+ * coloured edge ({@link #card}) and the drawn glyphs ({@link #triangle}, {@link #clearIcon}, N section 7). Two rules run through all of it. Every glyph is DRAWN and never typed,
  * because the bitmap RuneScape faces box a character they lack (playbook 7.5). Every colour is a
  * {@code ColorScheme} constant or its {@code .darker()}, so the sidebar cannot drift away from the client it
  * lives in - with ONE declared exception, {@link #MOVE_DOWN_TEXT}, which addendum N section 3 §2 pre-authorised
@@ -149,14 +146,10 @@ final class Widgets
 	private static final int TRIANGLE_SIZE = 7;
 
 	/**
-	 * The size {@link #gearIcon} is drawn at on the hero card (addendum Q, line Q1), in px: a small control
-	 * beside a 28 px total, sized like the 11 px "x" in the price fold rather than like a chip.
+	 * The size the settings icon ({@link GearGlyph#icon}) is drawn at on the hero card (addendum Q, line Q1), in px: a
+	 * small control beside a 28 px total, sized like the 11 px "x" in the price fold rather than like a chip.
 	 */
 	static final int GEAR_SIZE = 12;
-	/** How many teeth the gear has - eight, the smallest count that still reads as a gear and not as a star. */
-	static final int GEAR_TEETH = 8;
-	/** The smallest gear that keeps its hole; a smaller {@code size} is raised to it rather than drawn shut. */
-	static final int GEAR_MIN = 7;
 
 	/** Where {@link #chip} records whether a chip is lit, so {@link #isLit} and the hover can read it back. */
 	private static final String KEY_LIT = "bpm.chip.lit";
@@ -532,6 +525,23 @@ final class Widgets
 			default:
 				return colour;
 		}
+	}
+
+	/**
+	 * The colour of a gp figure on an Items row at the brightness the player chose (release 1.2.1): the figure colour -
+	 * {@link Kind#FIGURE}, the colour of the percentage beside it - mixed {@code 100 - brightness} percent of the way into the
+	 * card's own grey, so 100 is the percentage's colour exactly and 55, the default, is a little brighter than {@link Kind#QUIET},
+	 * which mixes a figure {@value #QUIET_MIX_PERCENT} percent into the card and so draws it at 45. A flat move or none takes the quiet grey undimmed, as it does
+	 * in {@link #move}. Both tabs read it, each at its own opacity setting: the Items rows, and the Net Worth History tab's day
+	 * rows and the change line above its chart.
+	 */
+	static Color quietAt(int signum, int brightness)
+	{
+		if (signum == 0)
+		{
+			return ColorScheme.LIGHT_GRAY_COLOR;
+		}
+		return towards(move(signum, Kind.FIGURE), ColorScheme.DARKER_GRAY_COLOR, (100 - brightness) / 100.0);
 	}
 
 	/**
@@ -1044,74 +1054,6 @@ final class Widgets
 	}
 
 	/**
-	 * The mark on a sort-menu entry (addendum N section 3.4): a filled 7 px {@code BRAND_ORANGE} dot on the
-	 * ordering in force, a 5 px {@code LIGHT_GRAY} ring on the other five. Both are drawn into the same 7 px
-	 * box so the six labels line up, and neither depends on the look-and-feel's radio-button mark - which is
-	 * why these are plain {@code JMenuItem}s and not {@code JRadioButtonMenuItem}s.
-	 */
-	static ImageIcon dotIcon(boolean filled)
-	{
-		final int s = TRIANGLE_SIZE;
-		return icon(s, s, g ->
-		{
-			if (filled)
-			{
-				g.setColor(ColorScheme.BRAND_ORANGE);
-				g.fill(new Ellipse2D.Double(0, 0, s, s));
-				return;
-			}
-
-			g.setColor(ColorScheme.LIGHT_GRAY_COLOR);
-			g.setStroke(new BasicStroke(1f));
-			g.draw(new Ellipse2D.Double(1.5, 1.5, s - 3.0, s - 3.0));
-		});
-	}
-
-	/**
-	 * The options gear (addendum Q, line Q1): a ring with {@value #GEAR_TEETH} teeth and a HOLE through the
-	 * middle, drawn in code at the size and colour the caller asks for - {@code LIGHT_GRAY} at rest on the hero
-	 * card's total line, {@code BRAND_ORANGE} under the mouse. Drawn and not loaded, exactly as
-	 * {@link NavIcon} draws the sidebar button, because the bitmap RuneScape faces have no gear glyph to type. (This
-	 * package shipped no image files at all until 1.0.9; the only ones it carries now are the brands' own marks,
-	 * {@link SupportLinks#markIcon}, which are not ours to redraw.)
-	 *
-	 * <p>The ring is a STROKE and not a filled disc, so the middle stays transparent and the glyph reads as a
-	 * gear at 12 px rather than as a cogged blob; the teeth are eight round-capped spokes every 45 degrees,
-	 * starting on the ring's own circle so each one is rooted inside the ring's metal and none of them reaches
-	 * into the hole. Every length is a fraction of {@code size}, so the same shape comes out at any size.
-	 *
-	 * @param size   the square icon's side in px; anything under {@value #GEAR_MIN} is raised to it, below
-	 *               which the hole closes and the teeth merge
-	 * @param colour the ink; null falls back to the sidebar's quiet grey
-	 */
-	static ImageIcon gearIcon(int size, @Nullable Color colour)
-	{
-		final int s = Math.max(GEAR_MIN, size);
-		return icon(s, s, g ->
-		{
-			g.setColor(colour == null ? ColorScheme.LIGHT_GRAY_COLOR : colour);
-			final double centre = s / 2.0;
-			// The ring's centre line, the width of its metal, and how far a tooth's centre line reaches - the
-			// last one pulled in by half a tooth so the round cap lands inside the icon instead of being clipped.
-			final double ring = centre * 0.52;
-			final float ringWidth = (float) Math.max(1.5, s * 0.2);
-			final float toothWidth = (float) Math.max(1.3, s * 0.16);
-			final double toothOut = centre - toothWidth / 2.0 - 0.25;
-			g.setStroke(new BasicStroke(ringWidth, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-			g.draw(new Ellipse2D.Double(centre - ring, centre - ring, ring * 2.0, ring * 2.0));
-			g.setStroke(new BasicStroke(toothWidth, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-			for (int i = 0; i < GEAR_TEETH; i++)
-			{
-				final double angle = i * 2.0 * Math.PI / GEAR_TEETH;
-				final double cos = Math.cos(angle);
-				final double sin = Math.sin(angle);
-				g.draw(new Line2D.Double(centre + cos * ring, centre + sin * ring,
-					centre + cos * toothOut, centre + sin * toothOut));
-			}
-		});
-	}
-
-	/**
 	 * Paints one code-drawn icon into an off-screen image with antialiasing on, and hands back an
 	 * {@link ImageIcon} of it. A {@link BufferedImage} rather than a live {@code Icon} implementation so the
 	 * drawing happens ONCE, headless, at build time - which is also what lets the tests paint every glyph in
@@ -1471,14 +1413,9 @@ final class Widgets
 		return c;
 	}
 
-	/** A vertical stack (top to bottom, full width) on the panel background, 3 px between rows. */
-	static JPanel column()
-	{
-		return column(3);
-	}
-
 	/**
-	 * {@link #column()} with a chosen gap. {@link DynamicGridLayout} gives every row its preferred height and
+	 * A vertical stack (top to bottom, full width) on the panel background with a chosen gap between rows.
+	 * {@link DynamicGridLayout} gives every row its preferred height and
 	 * scales widths to the column's own width ({@code DynamicGridLayout.java:97-113}), which is what lets a
 	 * 213 px design fill the 225 or 242 px the sidebar actually has.
 	 */

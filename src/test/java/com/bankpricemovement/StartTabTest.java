@@ -179,9 +179,12 @@ public class StartTabTest
 				if (o.hidden())
 				{
 					hidden++;
-					assertTrue("the hidden ones are startTab, includeLegacyHistory and (part J) the two slot colours",
+					assertTrue("the hidden ones are startTab, includeLegacyHistory, (part J) the two slot colours and (release 1.2.1)"
+						+ " the three change settings",
 						"startTab".equals(o.keyName()) || "includeLegacyHistory".equals(o.keyName())
-							|| "slotUpColour".equals(o.keyName()) || "slotDownColour".equals(o.keyName()));
+							|| "slotUpColour".equals(o.keyName()) || "slotDownColour".equals(o.keyName())
+							|| "gpChangeSize".equals(o.keyName()) || "pctChangeSize".equals(o.keyName())
+							|| "gpBrightness".equals(o.keyName()) || BankPriceMovementPlugin.isHistoryKey(o.keyName()));
 				}
 			}
 		}
@@ -189,8 +192,10 @@ public class StartTabTest
 		// alch tick, all listed on the page: twenty-two on the page and the two hidden ones; part J added two more hidden
 		// ones (the slot colours): twenty-two on the page and the four hidden ones.
 		// Release 1.2.0 deleted the hover switch, which was listed: twenty-one on the page and the four hidden ones.
-		assertEquals("twenty-one items on the page and the four hidden ones", 25, items);
-		assertEquals(4, hidden);
+		// Release 1.2.1 added three hidden ones, the change settings: twenty-one on the page and the seven hidden ones.
+		// Its part 2 added four more, the History tab's three twins and the chart's range: twenty-one and the eleven hidden ones.
+		assertEquals("twenty-one items on the page and the eleven hidden ones", 32, items);
+		assertEquals(11, hidden);
 	}
 
 

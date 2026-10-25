@@ -20,7 +20,7 @@ import javax.annotation.Nullable;
  * id-to-name table nor the guide table has no baseline, so a null {@link #thenPrice()} is ordinary, renders as
  * "-" and sorts LAST under every sort (design D6, contract C9).
  *
- * <p>Since addendum Y line Y3 a row is not only the bank's: with "Include inventory and worn gear" on, one row
+ * <p>Since addendum Y line Y3 a row is not only the bank's: with "Include inventory and worn items" on, one row
  * carries the whole of what the player owns of that item - {@link #quantity()} is the bank's, the inventory's and
  * the worn gear's added - and {@link #bankQuantity()}, {@link #inventoryQuantity()} and {@link #wornQuantity()} say
  * where it is, for the one hover line that names the parts ("3 in bank, 1 in inventory, 1 worn"). All three are 0
@@ -248,7 +248,7 @@ public final class MovementRow
 	/**
 	 * Where the {@link #quantity} is (addendum Y, line Y3): how many of it the BANK holds, how many are in the
 	 * INVENTORY, how many are WORN, and - since 1.0.9 part 3 - how many are in the Grand Exchange OFFERS. All four are
-	 * 0 on every row computed with neither "Include inventory and worn gear" nor "Include Grand Exchange offers" on -
+	 * 0 on every row computed with neither "Include inventory and worn items" nor "Include Grand Exchange offers" on -
 	 * which is what keeps such a row byte-identical to the pre-Y one - and they add up to {@link #quantity} while
 	 * either is.
 	 */
@@ -340,7 +340,7 @@ public final class MovementRow
 	/**
 	 * The same, saying where the quantity IS (addendum Y, line Y3). The arity above is the pre-Y one, kept so every
 	 * caller that knows nothing of the inventory keeps compiling AND keeps its meaning: it delegates with three
-	 * zeros, which is exactly what a row computed with "Include inventory and worn gear" off carries.
+	 * zeros, which is exactly what a row computed with "Include inventory and worn items" off carries.
 	 *
 	 * @param bankQuantity      how many of {@code quantity} the bank holds; 0 while the switch is off
 	 * @param inventoryQuantity how many are in the inventory; 0 while the switch is off
@@ -616,7 +616,7 @@ public final class MovementRow
 
 	/**
 	 * This same row, saying where its quantity is (addendum Y, line Y3) - the last thing the service does to a row
-	 * while "Include inventory and worn gear" is on, after every other {@code as*} copy, so nothing can drop it.
+	 * while "Include inventory and worn items" is on, after every other {@code as*} copy, so nothing can drop it.
 	 *
 	 * <p>Every figure is untouched: the split says where the stack lives, never what it is worth. Four zeros answer
 	 * this row unchanged, which is what the switches being off hand it.

@@ -2102,13 +2102,13 @@ public class BankPriceMovementPanelTest
 			assertEquals("Settings", SupportLinks.SETTINGS_TIP);
 			assertEquals("a 12 px glyph", Widgets.GEAR_SIZE, panel.gearLabel().getIcon().getIconWidth());
 			assertTrue("it is the drawn gear at rest",
-				sameIcon(Widgets.gearIcon(Widgets.GEAR_SIZE, ColorScheme.LIGHT_GRAY_COLOR), panel.gearLabel().getIcon()));
+				sameIcon(GearGlyph.icon(Widgets.GEAR_SIZE, ColorScheme.LIGHT_GRAY_COLOR), panel.gearLabel().getIcon()));
 
 			hover(panel.gearLabel(), true);
 			assertTrue("and brightens under the mouse",
-				sameIcon(Widgets.gearIcon(Widgets.GEAR_SIZE, ColorScheme.BRAND_ORANGE), panel.gearLabel().getIcon()));
+				sameIcon(GearGlyph.icon(Widgets.GEAR_SIZE, ColorScheme.BRAND_ORANGE), panel.gearLabel().getIcon()));
 			hover(panel.gearLabel(), false);
-			assertTrue(sameIcon(Widgets.gearIcon(Widgets.GEAR_SIZE, ColorScheme.LIGHT_GRAY_COLOR), panel.gearLabel().getIcon()));
+			assertTrue(sameIcon(GearGlyph.icon(Widgets.GEAR_SIZE, ColorScheme.LIGHT_GRAY_COLOR), panel.gearLabel().getIcon()));
 
 			// A press off the screen opens nothing rather than throwing: a popup can only be placed against a
 			// component that is showing, which is the guard the order menu one row down carries too.
@@ -2138,10 +2138,10 @@ public class BankPriceMovementPanelTest
 			assertEquals(SupportLinks.SETTINGS_TIP, gear.getToolTipText());
 			assertEquals("a 12 px glyph", Widgets.GEAR_SIZE, gear.getIcon().getIconWidth());
 			assertTrue("the drawn gear at rest",
-				sameIcon(Widgets.gearIcon(Widgets.GEAR_SIZE, ColorScheme.LIGHT_GRAY_COLOR), gear.getIcon()));
+				sameIcon(GearGlyph.icon(Widgets.GEAR_SIZE, ColorScheme.LIGHT_GRAY_COLOR), gear.getIcon()));
 			hover(gear, true);
 			assertTrue("brightening under the mouse",
-				sameIcon(Widgets.gearIcon(Widgets.GEAR_SIZE, ColorScheme.BRAND_ORANGE), gear.getIcon()));
+				sameIcon(GearGlyph.icon(Widgets.GEAR_SIZE, ColorScheme.BRAND_ORANGE), gear.getIcon()));
 			hover(gear, false);
 			assertNotSame("not the hero card's gear", panel.gearLabel(), gear);
 			assertFalse("and not on the hero card", panel.shows(gear));
@@ -2156,7 +2156,7 @@ public class BankPriceMovementPanelTest
 			final JLabel gear = gearIn(panel.shotComponents().get(1));
 			assertEquals(SupportLinks.SETTINGS_TIP, gear.getToolTipText());
 			assertTrue("the drawn gear at rest",
-				sameIcon(Widgets.gearIcon(Widgets.GEAR_SIZE, ColorScheme.LIGHT_GRAY_COLOR), gear.getIcon()));
+				sameIcon(GearGlyph.icon(Widgets.GEAR_SIZE, ColorScheme.LIGHT_GRAY_COLOR), gear.getIcon()));
 			assertNotSame("one label cannot sit in two cards", loginGear.get(), gear);
 			assertNotSame(panel.gearLabel(), gear);
 		});
@@ -2729,7 +2729,7 @@ public class BankPriceMovementPanelTest
 			"Include coins and platinum tokens",
 			// AV: the untradeables switch in the user's words since it reaches the alch-only ones alone.
 			"Include alch-only untradeables",
-			"Include inventory and worn gear",
+			"Include inventory and worn items",
 			// 1.0.9 part 3: directly after it, and the last of the group.
 			"Include Grand Exchange offers",
 			// 1.1.0 part C: the net worth chart's switch, under its caption and last of the items.
@@ -2777,10 +2777,10 @@ public class BankPriceMovementPanelTest
 		assertSame("1.0.9 part 3: the Grand Exchange switch directly after it", panel.countGrandExchangeItem(),
 			menu.getComponent(19));
 		assertTrue("and last of the group, with the separator under it", menu.getComponent(20) instanceof JSeparator);
-		assertEquals("the name addendum Y asks for, pinned", "Include inventory and worn gear",
+		assertEquals("the name addendum Y asks for, pinned", "Include inventory and worn items",
 			BankPriceMovementPanel.COUNT_INVENTORY_TEXT);
 		assertEquals("the description addendum Y asks for, its moment the close since addendum AS, pinned",
-			"Items in your inventory and worn gear count in the bank value and are listed with the bank's stacks."
+			"Items in your inventory and worn items count in the bank value and are listed with the bank's stacks."
 				+ " They are read when you close the bank or press Refresh.",
 			BankPriceMovementPanel.COUNT_INVENTORY_TIP);
 		assertEquals(BankPriceMovementPanel.COUNT_INVENTORY_TIP, panel.countInventoryItem().getToolTipText());
@@ -2826,7 +2826,7 @@ public class BankPriceMovementPanelTest
 		publish(rows(3), listedWith(summary()));
 		final JPopupMenu menu = panel.heroMenu();
 		assertSame(panel.countGrandExchangeItem(), item(menu, BankPriceMovementPanel.COUNT_GRAND_EXCHANGE_TEXT));
-		assertSame("directly after \"Include inventory and worn gear\"", panel.countGrandExchangeItem(),
+		assertSame("directly after \"Include inventory and worn items\"", panel.countGrandExchangeItem(),
 			menu.getComponent(19));
 		assertSame(panel.countInventoryItem(), menu.getComponent(18));
 		assertEquals("the name, pinned", "Include Grand Exchange offers",
@@ -2930,11 +2930,10 @@ public class BankPriceMovementPanelTest
 	/**
 	 * R4, through the panel rather than through {@link MovementRowPanel} alone: a stack the service valued at its
 	 * tradeable parts is built into the list as an ordinary PRICED row - its own price, its own gp figure, its
-	 * own percentage, no "alch" tag - and the one thing that says where that price came from is the extra
-	 * tooltip line naming the parts.
+	 * own percentage, no "alch" tag.
 	 */
 	@Test
-	public void aPartsRowIsListedAsAnOrdinaryPricedRowWithThePartsOnItsTooltip() throws Exception
+	public void aPartsRowIsListedAsAnOrdinaryPricedRow() throws Exception
 	{
 		build();
 		final List<MovementRow> listed = new ArrayList<>(rows(2));
@@ -2949,8 +2948,6 @@ public class BankPriceMovementPanelTest
 			assertEquals("the move figures, not a tag", "-1.60m", row.gpText());
 			assertEquals("-8.7%", row.changeText());
 			assertNotEquals(MovementRowPanel.ALCH_TAG, row.changeText());
-			assertTrue(row.tooltipHtml(), row.tooltipHtml()
-				.contains("<br>Untradeable - valued as its parts: 3 x Crystal armour seed<br>"));
 		});
 	}
 
@@ -3828,7 +3825,7 @@ public class BankPriceMovementPanelTest
 	 * Z2: the gear menu's last group - a rule under the last view switch, then the row with its grey caption and
 	 * three boxes (addendum AH's hover switch stood under it from AH until release 1.2.0 deleted it), the "Net worth chart"
 	 * group and the OK row. The last view switch that rule sits under is "Include Grand Exchange offers" since 1.0.9
-	 * part 3 ("Include inventory and worn gear" before it, since addendum AO deleted "Show stack value on rows").
+	 * part 3 ("Include inventory and worn items" before it, since addendum AO deleted "Show stack value on rows").
 	 *
 	 * <p>"Reset to default" left this group in AH2: the user, looking at the menu, wanted it "in the orange box
 	 * alongside 'OK' ... just aligned left", so it is a button in the bottom row now and
@@ -4831,10 +4828,10 @@ public class BankPriceMovementPanelTest
 		assertTrue(panel.problemShowing());
 		assertEquals(ColorScheme.PROGRESS_ERROR_COLOR, panel.problemLabel().getForeground());
 
-		// A different window with equal rows still rebuilds: the rows' tooltips name the window.
+		// A different window with equal rows still rebuilds: the rows' open blocks name the window.
 		publish(new ArrayList<>(rows(3)), status(true, true, 3, 3, MovementWindow.D7, null, STATUS_TEXT, PRICES_AT));
 		assertEquals(2, panel.rebuilds());
-		assertTrue(panel.rowPanels().get(0).tooltipHtml().contains("7d ago"));
+		assertNotSame(first.get(0), panel.rowPanels().get(0));
 
 		// Different rows rebuild.
 		publish(rows(4), status(true, true, 4, 4, MovementWindow.D7, null, STATUS_TEXT, PRICES_AT));
@@ -4946,13 +4943,13 @@ public class BankPriceMovementPanelTest
 				final String why = p.row().name() + ": ";
 				final JLabel gp = gpLabelOf(p);
 				assertNotNull(why + "it has a gp figure to dim", gp);
-				assertEquals(why + "AL: the gp figure takes the QUIET role",
-					Widgets.move(signum, Widgets.Kind.QUIET), gp.getForeground());
+				assertEquals(why + "AL: the gp figure takes the quiet role - at the default brightness since release 1.2.1",
+					Widgets.quietAt(signum, ChangeText.DEFAULT_BRIGHTNESS), gp.getForeground());
 				assertEquals(why + "...and the percentage keeps the full FIGURE colour",
 					Widgets.move(signum, Widgets.Kind.FIGURE), p.changeColor());
 				assertNotEquals(why + "AL: which is the point - the two no longer read as one figure",
 					gp.getForeground(), p.changeColor());
-				assertEquals(why + "the row's own helper is what painted it", MovementRowPanel.quietChangeColor(p.row()),
+				assertEquals(why + "the row's own helper is what painted it", MovementRowPanel.quietChangeColor(p.row(), ChangeText.DEFAULT_BRIGHTNESS),
 					gp.getForeground());
 			}
 
@@ -4974,7 +4971,7 @@ public class BankPriceMovementPanelTest
 				flat.changeColor());
 			assertEquals("and QUIET takes it UNDIMMED: a grey dash pushed toward the background only reads worse",
 				Widgets.move(0, Widgets.Kind.FIGURE), Widgets.move(0, Widgets.Kind.QUIET));
-			assertEquals(Widgets.move(0, Widgets.Kind.QUIET), MovementRowPanel.quietChangeColor(flat.row()));
+			assertEquals(Widgets.move(0, Widgets.Kind.QUIET), MovementRowPanel.quietChangeColor(flat.row(), ChangeText.DEFAULT_BRIGHTNESS));
 		});
 	}
 
@@ -4989,7 +4986,7 @@ public class BankPriceMovementPanelTest
 	}
 
 	/**
-	 * L7: the baseline DAY is stamped into every row's tooltip, so a NEW day has to rebuild the rows even when
+	 * L7: the baseline DAY is stamped into every row's open block, so a NEW day has to rebuild the rows even when
 	 * it moved no price at all - which is the ordinary case for the long windows on a quiet day.
 	 */
 	@Test
@@ -4999,15 +4996,13 @@ public class BankPriceMovementPanelTest
 		publish(rows(3), listed(3, 3));
 		assertEquals(1, panel.rebuilds());
 		assertEquals(THEN_DAY, panel.listThenDay());
-		final String before = panel.rowPanels().get(0).tooltipHtml();
-		assertTrue(before, before.contains("1d ago (07 Sep):"));
+		final MovementRowPanel before = panel.rowPanels().get(0);
 
 		final LocalDate newer = THEN_DAY.plusDays(1);
 		publish(new ArrayList<>(rows(3)), status(true, true, 3, 3, MovementWindow.D1, null, STATUS_TEXT, PRICES_AT, newer));
 		assertEquals(2, panel.rebuilds());
 		assertEquals(newer, panel.listThenDay());
-		final String after = panel.rowPanels().get(0).tooltipHtml();
-		assertTrue(after, after.contains("1d ago (08 Sep):"));
+		assertNotSame("the rows were built again for the new day", before, panel.rowPanels().get(0));
 
 		// The same day again with the same rows is still a status-only publish.
 		publish(new ArrayList<>(rows(3)), status(true, true, 3, 3, MovementWindow.D1, null, STATUS_TEXT, PRICES_AT, newer));
@@ -5021,7 +5016,6 @@ public class BankPriceMovementPanelTest
 		publish(rows(3), status(true, true, 3, 3, MovementWindow.D180, null, "Guide prices - Bank as of 13:52", PRICES_AT, null));
 		assertEquals(1, panel.rebuilds());
 		assertNull(panel.listThenDay());
-		assertTrue(panel.rowPanels().get(0).tooltipHtml().contains("180d ago (-):"));
 
 		publish(new ArrayList<>(rows(3)), status(true, true, 3, 3, MovementWindow.D180, null,
 			"Guide prices - Bank as of 13:52", PRICES_AT, null));
@@ -5834,6 +5828,10 @@ public class BankPriceMovementPanelTest
 		assertTrue(d, d.contains(",\"sortLabel\":\"gp change\",\"countText\":\"All items\",\"bandOn\":false,\"foldOpen\":false"
 			+ ",\"includeLegacy\":false,\"legacyDays\":false"
 			+ ",\"presets\":[100000,1000000,10000000],\"presetLabels\":[\"All\",\"100k+\",\"1m+\",\"10m+\"]"
+			// Release 1.2.1: the change settings ride after the chips - both sizes and the gp opacity in force, then (part 2) the
+			// History tab's own three.
+			+ ",\"changeText\":{\"gpSize\":\"NORMAL\",\"pctSize\":\"NORMAL\",\"gpOpacity\":55}"
+			+ ",\"historyChangeText\":{\"gpSize\":\"NORMAL\",\"pctSize\":\"NORMAL\",\"gpOpacity\":55}"
 			+ ",\"problemText\":\"\",\"problemRed\":false,\"showMoreText\":\"\"}"));
 		assertFalse(d, d.contains("sortHint"));
 
@@ -5976,7 +5974,6 @@ public class BankPriceMovementPanelTest
 			assertTrue("the widest row column line asks for " + Widgets.widest(panel.rowsColumn()), Widgets.widest(panel.rowsColumn()) <= W);
 			final MovementRowPanel longName = rowPanels.get(0);
 			assertTrue(longName.nameText(), longName.nameText().endsWith(Widgets.ELLIPSIS));
-			assertTrue(longName.tooltipHtml(), longName.tooltipHtml().contains("Karambwan vessel (baited) long"));
 			System.out.println(report);
 		});
 	}
@@ -6087,7 +6084,7 @@ public class BankPriceMovementPanelTest
 	 */
 	private static List<JLabel> gpFiguresOf(MovementRowPanel row)
 	{
-		final Color quiet = MovementRowPanel.quietChangeColor(row.row());
+		final Color quiet = MovementRowPanel.quietChangeColor(row.row(), ChangeText.DEFAULT_BRIGHTNESS);
 		final List<JComponent> parts = new ArrayList<>();
 		descendants(row, parts);
 		final List<JLabel> out = new ArrayList<>();
@@ -6210,7 +6207,6 @@ public class BankPriceMovementPanelTest
 			MovementRow.PriceSource.GUIDE, live.get(1).windowSource(MovementWindow.D1));
 		assertEquals(LookRenderer.WHIP_LIVE_NOW, live.get(1).unitPrice().longValue());
 		assertEquals("Green hat", live.get(5).name());
-		assertEquals("Valued at the guide price: no trades", MovementRowPanel.liveRefusalLine(live.get(5)));
 		assertEquals(LookRenderer.LIVE_STACKS, LookRenderer.summary(LookRenderer.LIVE).liveRows());
 		assertEquals("the guide-only list is untouched by any of it: the twelve and, since AV, the Crystal body",
 			LookRenderer.rows().subList(0, 11), LookRenderer.rows(LookRenderer.GUIDE_ONLY).subList(0, 11));

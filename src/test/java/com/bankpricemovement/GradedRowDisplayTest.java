@@ -196,15 +196,25 @@ public class GradedRowDisplayTest
 	/** Lays the row out at its own size, EDT. */
 	private static void layout(MovementRowPanel row)
 	{
-		row.setSize(MovementRowPanel.ROW_WIDTH, MovementRowPanel.ROW_HEIGHT);
+		layout(row, MovementRowPanel.ROW_HEIGHT);
+	}
+
+	/** {@link #layout(MovementRowPanel)} at a row height of the caller's: the sizes of release 1.2.1 make a row taller. */
+	private static void layout(MovementRowPanel row, int height)
+	{
+		row.setSize(MovementRowPanel.ROW_WIDTH, height);
 		LookRenderer.layoutTree(row);
 	}
 
 	private static BufferedImage paint(MovementRowPanel row)
 	{
-		layout(row);
-		final BufferedImage image = new BufferedImage(MovementRowPanel.ROW_WIDTH, MovementRowPanel.ROW_HEIGHT,
-			BufferedImage.TYPE_INT_RGB);
+		return paint(row, MovementRowPanel.ROW_HEIGHT);
+	}
+
+	private static BufferedImage paint(MovementRowPanel row, int height)
+	{
+		layout(row, height);
+		final BufferedImage image = new BufferedImage(MovementRowPanel.ROW_WIDTH, height, BufferedImage.TYPE_INT_RGB);
 		final Graphics2D g = image.createGraphics();
 		try
 		{
@@ -436,6 +446,45 @@ public class GradedRowDisplayTest
 	}
 
 	/**
+	 * Release 1.2.1 (S4), the test above at every one of the sixteen pairs of sizes: the word still sits on the working's baseline when
+	 * the gp figure beside it is Large or Largest and the line is taller than the working (the working then stands lower in it, and the
+	 * word follows), and at every percentage size - whose own column the word's slot is wider than at Small. Painted, the same
+	 * way: the bottom row of the word's ink is the bottom row of the working's. The word keeps its face (11 px, or 9 for the two long
+	 * ones at the slot's 54 px) at all of them.
+	 */
+	@Test
+	public void theWordSitsOnTheWorkingsBaselineAtEveryGpAndPercentageSize() throws Exception
+	{
+		for (ChangeSize gp : ChangeSize.values())
+		{
+			for (ChangeSize pct : ChangeSize.values())
+			{
+				final ChangeText style = ChangeText.of(gp, pct, ChangeText.DEFAULT_BRIGHTNESS);
+				final int height = MovementRowPanel.rowHeight(style);
+				for (String word : new String[]{"low vol 3", GradeWords.spread(100L), GradeWords.lastTraded(23L * HOUR),
+					GradeWords.lastTraded(2L * 24L * HOUR)})
+				{
+					final MovementRow row = rowOf(measuredAtMark(Grade.SOFT, word, 228L), 5);
+					final MovementRowPanel panel = onEdt(() -> new MovementRowPanel(row, null, MovementWindow.D1, null, 0L,
+						ViewOptions.DEFAULT, url ->
+						{
+						}, null, false, style));
+					final JLabel working = labelStartingWith(panel, "5 x ");
+					final JLabel wordLabel = labelWithText(panel, word);
+					assertNotNull("the working", working);
+					assertNotNull("the word", wordLabel);
+					final BufferedImage image = onEdt(() -> paint(panel, height));
+					final int workingBottom = inkBottom(image, boxIn(panel, working));
+					final int wordBottom = inkBottom(image, aboveTheBaseline(wordLabel, word, boxIn(panel, wordLabel)));
+					assertTrue(style + " " + word + ": the working is drawn", workingBottom >= 0);
+					assertEquals(style + " " + word + ": ink bottom of the word is the working's", workingBottom, wordBottom);
+					assertTrue(style + " " + word + ": the slot is at least 54 px", wordLabel.getWidth() >= 54);
+				}
+			}
+		}
+	}
+
+	/**
 	 * The part of a right-aligned word's box that holds only letters standing on the baseline: its longest run of characters
 	 * with none that hangs below it (g, j, p, q, y), or the whole box when no letter hangs. "last 23h ago" hangs only at the "g"
 	 * of "ago" (its run is "last 23h a"), "spread 100%" only at the "p" (its run is "read 100%"), and the ink bottom of the
@@ -582,12 +631,6 @@ public class GradedRowDisplayTest
 		assertTrue(blockOf(cheapRow(0.004d), MovementWindow.D1, false), blockOf(cheapRow(0.004d), MovementWindow.D1, false)
 			.contains("0 each&nbsp; +0.4%"));
 
-		// The hover text's "Change per item" line is signed by the move as well.
-		final String tip = MovementRowPanel.tooltip(cheapRow(0.004d), MovementWindow.D1, null);
-		assertTrue(tip, tip.contains("Change per item: 0 gp (+0.4%)"));
-		final String tipDown = MovementRowPanel.tooltip(cheapRow(-0.004d), MovementWindow.D1, null);
-		assertTrue(tipDown, tipDown.contains("Change per item: 0 gp (-0.4%)"));
-
 		// Nothing graded: the gp change signs the percentage, as since L2 - a 0 gp row with a 0.4 % is the grey "0.4%".
 		final MovementRow legacy = new MovementRow(5005, "Legacy", 10, false, 50L, 50L, 0L, 0.4d, 500L, null);
 		assertEquals("0.4%", MovementRowPanel.changeText(legacy));
@@ -634,6 +677,25 @@ public class GradedRowDisplayTest
 		assertEquals("no trades for the longer windows says what is missing",
 			"No trades to compare with over 30d, so there is no figure for it.",
 			MovementRowPanel.provenance(none, MovementWindow.D30, false));
+
+		// 6. an untradeable's figure summed from its parts (GradeMath.combineParts): no side of its own, so no sentence - it threw a
+		// NullPointerException in 1.2.0, so a Crystal body row would not open, and in 1.2.1 a size change with one open stopped
+		// the list's redraw (the user's client log, 2026-10-25).
+		final GradedMove parts = new GradedMove(Grade.SOLID, GradeWords.SOLID, 0.032d, 14_440_000L, 462_000L, false, null,
+			null, TODAY, YESTERDAY, null);
+		for (MovementWindow w : MovementWindow.values())
+		{
+			assertEquals(w.label(), "", MovementRowPanel.provenance(parts, w, false));
+			assertEquals(w.label(), "", MovementRowPanel.provenance(parts, w, true));
+		}
+		assertEquals("", MovementRowPanel.lastPrints(parts, false));
+		final MovementRow crystal = new MovementRow(23975, "Crystal body", 1, false, 14_902_000L, 14_440_000L, 462_000L, 3.2d,
+			14_902_000L, MovementRow.PriceSource.PARTS, null, null, null, null, 0, 0, 0, 0, parts);
+		for (boolean hide : new boolean[]{false, true})
+		{
+			final String block = blockOf(crystal, MovementWindow.D1, hide);
+			assertTrue("its block builds, without a sides sentence", block.endsWith("</html>") && !block.contains("paid"));
+		}
 	}
 
 	/**

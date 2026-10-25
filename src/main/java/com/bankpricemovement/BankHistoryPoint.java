@@ -41,7 +41,7 @@ public final class BankHistoryPoint
 	public static final int BANK_PARTS = 2;
 	/** Untradeables in the bank at their alch value that day. Counted with "Include alch-only untradeables". */
 	public static final int BANK_ALCH = 3;
-	/** Tradeable stacks carried (inventory + worn). Counted with "Include inventory and worn gear". */
+	/** Tradeable stacks carried (inventory + worn). Counted with "Include inventory and worn items". */
 	public static final int CARRIED_TRADEABLE = 4;
 	/** Carried coins and platinum tokens. Counted with the inventory switch AND the coins switch. */
 	public static final int CARRIED_CASH = 5;

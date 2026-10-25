@@ -409,39 +409,43 @@ public class PriceServiceTest
 		assertEquals("R0 and the three revisions before it are looked at for the now time", 4, PriceService.MATCH_DEPTH);
 	}
 
-	// ---------------------------------------------------------------- T1: pickBaseline, the pure half
+	// ---------------------------------------------------------------- T1: pickThen on a window's target time
+
+	/** The revision a window's baseline is read from with no table time known yet: {@code pickThen} on the window's target. */
+	private static RevisionRef pick(List<RevisionRef> index, long nowSeconds, MovementWindow window)
+	{
+		return RevisionRef.pickThen(index, window.targetSeconds(nowSeconds));
+	}
 
 	@Test
-	public void pickBaselineIsPickThenOnTheWindowsTargetTime()
+	public void pickThenOnEachWindowsTargetTimeFindsItsBaseline()
 	{
 		final long now = dataSecondsFor(BOT_0908);
-		assertEquals(BOT_0907, PriceService.pickBaseline(HISTORY, now, MovementWindow.D1));
-		assertEquals(BOT_0901, PriceService.pickBaseline(HISTORY, now, MovementWindow.D7));
-		assertEquals(BOT_0809, PriceService.pickBaseline(HISTORY, now, MovementWindow.D30));
+		assertEquals(BOT_0907, pick(HISTORY, now, MovementWindow.D1));
+		assertEquals(BOT_0901, pick(HISTORY, now, MovementWindow.D7));
+		assertEquals(BOT_0809, pick(HISTORY, now, MovementWindow.D30));
 		assertEquals("no revision on 10 Jun: the newest older one, 09 Jun", BOT_0609,
-			PriceService.pickBaseline(HISTORY, now, MovementWindow.D90));
-		assertEquals(BOT_0312, PriceService.pickBaseline(HISTORY, now, MovementWindow.D180));
+			pick(HISTORY, now, MovementWindow.D90));
+		assertEquals(BOT_0312, pick(HISTORY, now, MovementWindow.D180));
 		assertEquals("with RuneLite ahead the clock is now, and a day before it is still 07 Sep - never R0", BOT_0907,
-			PriceService.pickBaseline(HISTORY, T0 / 1000L, MovementWindow.D1));
+			pick(HISTORY, T0 / 1000L, MovementWindow.D1));
 		assertEquals("R0 is a 1d baseline only once it is a whole day older than now", BOT_0908,
-			PriceService.pickBaseline(HISTORY, BOT_0908.editSeconds() + 86_400L, MovementWindow.D1));
+			pick(HISTORY, BOT_0908.editSeconds() + 86_400L, MovementWindow.D1));
 	}
 
 	@Test
-	public void pickBaselinePrefersTheBotOverAHumanEditOnTheSameDate()
+	public void pickThenPrefersTheBotOverAHumanEditOnTheSameDate()
 	{
 		assertEquals("03 Sep has Riblet15's 06:46 edit and the bot's 21:45 run: the bot's", BOT_0903,
-			PriceService.pickBaseline(HISTORY, utcSeconds(SEP_4, 23, 0, 0), MovementWindow.D1));
+			pick(HISTORY, utcSeconds(SEP_4, 23, 0, 0), MovementWindow.D1));
 	}
 
 	@Test
-	public void pickBaselineAnswersNullWithoutANowTimeOrBeyondTheIndex()
+	public void pickThenAnswersNullBeyondTheIndex()
 	{
-		assertNull("no now time: no target, no baseline, no guess", PriceService.pickBaseline(HISTORY, 0L, MovementWindow.D1));
-		assertNull(PriceService.pickBaseline(HISTORY, T0 / 1000L, null));
-		assertNull(PriceService.pickBaseline(Collections.emptyList(), T0 / 1000L, MovementWindow.D1));
+		assertNull(pick(Collections.emptyList(), T0 / 1000L, MovementWindow.D1));
 		assertNull("the index starts on 12 Mar: a 180d window from 01 Sep predates it (L11)",
-			PriceService.pickBaseline(HISTORY, utcSeconds(SEP_1, 12, 0, 0), MovementWindow.D180));
+			pick(HISTORY, utcSeconds(SEP_1, 12, 0, 0), MovementWindow.D180));
 	}
 
 	// ---------------------------------------------------------------- L8: project, owners, the refused fallback

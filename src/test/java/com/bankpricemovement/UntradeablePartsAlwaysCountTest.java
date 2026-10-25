@@ -396,7 +396,7 @@ public class UntradeablePartsAlwaysCountTest
 
 	/**
 	 * Every stack is priced whatever the switches say - the PARTS of a stack only the player wears included: with
-	 * "Include inventory and worn gear" off and the Crystal body worn and never banked, its seed is still asked
+	 * "Include inventory and worn items" off and the Crystal body worn and never banked, its seed is still asked
 	 * for, and the body is still not a row.
 	 */
 	@Test

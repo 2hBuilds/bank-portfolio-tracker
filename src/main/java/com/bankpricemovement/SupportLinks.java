@@ -42,8 +42,8 @@ import net.runelite.client.util.ImageUtil;
  * ({@link #markIcon} loads them beside this class).
  *
  * <p>Every hover here is ONE word (or a few) and is always on: an icon with no text beside it has nothing else on
- * the screen to say what it is, so it names itself whatever a plugin's "Show hover text" switch says. The hovers are
- * set on the labels directly and are never offered to a switch.
+ * the screen to say what it is, so it names itself. Like every other hover in a 2hBuilds plugin it is always on - no
+ * plugin of ours has a switch that hides hovers - and it is set on the label directly.
  */
 final class SupportLinks
 {
@@ -266,8 +266,8 @@ final class SupportLinks
 
 	/**
 	 * An icon-only control that names itself: {@link #pressable}'s look and press, with a ONE-WORD hover that is
-	 * always on. The word is set on the label directly and is never offered to a "Show hover text" switch, so the
-	 * exemption is in how the label is made, not in a special case where a switch is applied.
+	 * always on, like every hover in a 2hBuilds plugin. The word is set on the label directly: there is no hover
+	 * switch for it to be offered to.
 	 */
 	static JLabel namedIconButton(ImageIcon rest, ImageIcon hot, String name, Runnable onClick)
 	{
