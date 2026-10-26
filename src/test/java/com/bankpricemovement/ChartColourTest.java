@@ -70,7 +70,7 @@ public class ChartColourTest
 	private PriceService.Listener listener;
 
 	/** The config as a memory: what the chart switch and colour are stored as, and every write of anything. */
-	private static final class Memory implements BankPriceMovementPanel.Prefs
+	private static final class Memory extends PrefsDefaults
 	{
 		/**
 		 * Stored OFF unless a test says otherwise: part C's tests were written for an unticked row and a chart that follows
@@ -215,7 +215,7 @@ public class ChartColourTest
 			panel.setColourPicker(picker);
 			if (picker != null)
 			{
-				picker.view = panel::view;
+				picker.view = () -> panel.view;
 			}
 		});
 		final ArgumentCaptor<PriceService.Listener> captor = ArgumentCaptor.forClass(PriceService.Listener.class);
@@ -582,7 +582,7 @@ public class ChartColourTest
 			final SwatchRow row = chartRow();
 			row.setSize(row.getPreferredSize());
 			release(row, row.getWidth() - BankPriceMovementPanel.ROW_GAP - 5, row.getHeight() / 2);
-			assertEquals(SidebarView.ITEMS, panel.view());
+			assertEquals(SidebarView.ITEMS, panel.view);
 			assertTrue(row.isSelected());
 		});
 		assertTrue(prefs.wroteNothing());
@@ -652,18 +652,18 @@ public class ChartColourTest
 		clearInvocations(service);
 		onEdt(() ->
 		{
-			assertEquals(SidebarView.ITEMS, panel.view());
+			assertEquals(SidebarView.ITEMS, panel.view);
 			chartRow().doClick(0);
-			assertEquals("ticking brought the chart's tab into view", SidebarView.HISTORY, panel.view());
+			assertEquals("ticking brought the chart's tab into view", SidebarView.HISTORY, panel.view);
 			assertEquals(Arrays.asList(SidebarView.HISTORY), prefs.tabSaves);
 			assertEquals(Arrays.asList(true), prefs.singleSaves);
 			assertEquals("seen live: the chart is already in the colour", GOLD, chart().lineColour());
-			assertEquals("and it stays there", SidebarView.HISTORY, panel.view());
+			assertEquals("and it stays there", SidebarView.HISTORY, panel.view);
 
 			panel.pressView(SidebarView.ITEMS);
 			assertEquals(Arrays.asList(SidebarView.HISTORY, SidebarView.ITEMS), prefs.tabSaves);
 			chartRow().doClick(0);
-			assertEquals("unticking brings it into view too", SidebarView.HISTORY, panel.view());
+			assertEquals("unticking brings it into view too", SidebarView.HISTORY, panel.view);
 			assertEquals(Arrays.asList(true, false), prefs.singleSaves);
 			assertEquals(Arrays.asList(SidebarView.HISTORY, SidebarView.ITEMS, SidebarView.HISTORY), prefs.tabSaves);
 		});
@@ -681,14 +681,14 @@ public class ChartColourTest
 		load(rising());
 		onEdt(() ->
 		{
-			assertEquals(SidebarView.ITEMS, panel.view());
+			assertEquals(SidebarView.ITEMS, panel.view);
 			final SwatchRow row = chartRow();
 			row.setSize(row.getPreferredSize());
 			release(row, row.getWidth() - BankPriceMovementPanel.ROW_GAP - 5, row.getHeight() / 2);
 			assertEquals(1, picker.titles.size());
 			assertEquals("the tab was already in view when the picker opened", Arrays.asList(SidebarView.HISTORY),
 				picker.viewsAtOpen);
-			assertEquals(SidebarView.HISTORY, panel.view());
+			assertEquals(SidebarView.HISTORY, panel.view);
 			assertEquals("and it is the remembered tab", Arrays.asList(SidebarView.HISTORY), prefs.tabSaves);
 		});
 		assertTrue(prefs.singleSaves.isEmpty() && prefs.chartSaves.isEmpty());
@@ -730,7 +730,7 @@ public class ChartColourTest
 				prefs.presetSaves);
 			assertEquals(Arrays.asList(ColorScheme.PROGRESS_COMPLETE_COLOR), prefs.upSaves);
 			assertEquals(Arrays.asList(Widgets.MOVE_DOWN_TEXT), prefs.downSaves);
-			assertEquals("no tab was brought into view or stored", SidebarView.HISTORY, panel.view());
+			assertEquals("no tab was brought into view or stored", SidebarView.HISTORY, panel.view);
 			assertTrue(prefs.tabSaves.isEmpty());
 
 			// Unticked and ticked again, the row draws the gold: the colour the reset stored.
@@ -755,7 +755,7 @@ public class ChartColourTest
 		onEdt(() ->
 		{
 			panel.resetPresetsButton().doClick(0);
-			assertEquals(SidebarView.ITEMS, panel.view());
+			assertEquals(SidebarView.ITEMS, panel.view);
 		});
 		assertEquals(Arrays.asList(true), prefs.singleSaves);
 		assertTrue(prefs.tabSaves.isEmpty());
@@ -772,7 +772,7 @@ public class ChartColourTest
 	@Test
 	public void d2_aPanelWhosePrefsAnswerNullDrawsTheChartInTheGoldOnARiseAndOnAFall() throws Exception
 	{
-		assertNull("the default method answers nothing stored", new BankPriceMovementPanel.Prefs()
+		assertNull("the default method answers nothing stored", new PrefsDefaults()
 		{
 			@Override
 			public RowFilter load()
@@ -866,9 +866,9 @@ public class ChartColourTest
 		clearInvocations(service);
 		onEdt(() ->
 		{
-			assertEquals(SidebarView.ITEMS, panel.view());
+			assertEquals(SidebarView.ITEMS, panel.view);
 			panel.applyChartColour(true, CHART);
-			assertEquals("still on Items: the settings page does not move the reader", SidebarView.ITEMS, panel.view());
+			assertEquals("still on Items: the settings page does not move the reader", SidebarView.ITEMS, panel.view);
 			assertTrue("the row is ticked to match", chartRow().isSelected());
 			assertSwatch(chartRow(), CHART);
 			// The chart is mounted when its tab is first shown; it has the colour then, and keeps it when the reader
@@ -887,7 +887,7 @@ public class ChartColourTest
 			panel.applyChartColour(false, CHART);
 			assertEquals(Widgets.move(1, Widgets.Kind.FIGURE), chart().lineColour());
 			assertFalse(chartRow().isSelected());
-			assertEquals("a change from the settings page never switches tabs", SidebarView.ITEMS, panel.view());
+			assertEquals("a change from the settings page never switches tabs", SidebarView.ITEMS, panel.view);
 		});
 		verifyNoInteractions(service);
 		assertTrue(prefs.wroteNothing());
@@ -906,6 +906,6 @@ public class ChartColourTest
 	@Test
 	public void c7_theVersionIs110()
 	{
-		assertEquals("1.2.1", Version.CURRENT);
+		assertEquals("1.2.2", Version.CURRENT);
 	}
 }

@@ -12,8 +12,7 @@ import javax.annotation.Nullable;
  * per window that has a baseline in memory. The WHOLE bank - the gp band the rows are filtered on is not applied,
  * because a portfolio is everything you own, not the slice you are looking at.
  *
- * <p>Immutable and shared: computed by {@link PortfolioMath#summariseResolved} (the service's shape) or
- * {@link PortfolioMath#summarise} (the contract's) on the service's executor, published inside
+ * <p>Immutable and shared: computed by {@link PortfolioMath#summariseResolved} on the service's executor, published inside
  * {@link PriceService.Status} to the EDT, echoed by the dev bridge. {@link #EMPTY} is what a status carries until
  * the first computation (M3).
  *
@@ -27,7 +26,7 @@ import javax.annotation.Nullable;
  *
  * <p><b>Cash</b> (addendum P, line P1; {@code docs/bank-price-movement-addendum-P-2026-09-10.md}). The bank's coins
  * and platinum tokens are not stacks - they have no market and never appear as a row - but they are half of what a
- * player means by "bank value", so {@link #currencyGp()} rides here beside the stacks and {@link #valueNow()} is the
+ * player means by "bank value", so {@link #currencyGp} rides here beside the stacks and {@link #valueNow()} is the
  * two added. {@link #itemsPriced()} and {@link #itemsTotal()} still count stacks only.
  */
 public final class PortfolioSummary
@@ -38,7 +37,11 @@ public final class PortfolioSummary
 	private final long valueStacks;
 	private final int itemsPriced;
 	private final int itemsTotal;
-	private final long currencyGp;
+	/**
+	 * The bank's coins and platinum tokens in gp ({@code coins + 1,000 x platinum}, P1); 0 when the bank holds no
+	 * currency, and 0 for a remembered bank captured before the plugin measured it ({@link BankSnapshot#currencyGp}).
+	 */
+	final long currencyGp;
 	private final int liveRows;
 	private final Map<MovementWindow, WindowMove> moves;
 
@@ -107,7 +110,7 @@ public final class PortfolioSummary
 
 	/**
 	 * The whole bank's worth at today's guide prices: the {@link #itemsPriced()} stacks that have one, PLUS the
-	 * {@link #currencyGp()} in the bank (P1). The headline figure on the card, and clamped at
+	 * {@link #currencyGp} in the bank (P1). The headline figure on the card, and clamped at
 	 * {@link Long#MAX_VALUE} like every other sum here.
 	 */
 	public long valueNow()
@@ -126,15 +129,6 @@ public final class PortfolioSummary
 	public long valueStacks()
 	{
 		return valueStacks;
-	}
-
-	/**
-	 * The bank's coins and platinum tokens in gp ({@code coins + 1,000 x platinum}, P1); 0 when the bank holds no
-	 * currency, and 0 for a remembered bank captured before the plugin measured it ({@link BankSnapshot#currencyGp}).
-	 */
-	public long currencyGp()
-	{
-		return currencyGp;
 	}
 
 	/**
@@ -208,16 +202,5 @@ public final class PortfolioSummary
 	public int hashCode()
 	{
 		return Objects.hash(valueStacks, itemsPriced, itemsTotal, currencyGp, liveRows, moves);
-	}
-
-	@Override
-	public String toString()
-	{
-		return "PortfolioSummary{valueNow=" + valueNow()
-			+ ", currencyGp=" + currencyGp
-			+ ", itemsPriced=" + itemsPriced
-			+ ", itemsTotal=" + itemsTotal
-			+ (liveRows > 0 ? ", liveRows=" + liveRows : "")
-			+ ", moves=" + moves.values() + '}';
 	}
 }

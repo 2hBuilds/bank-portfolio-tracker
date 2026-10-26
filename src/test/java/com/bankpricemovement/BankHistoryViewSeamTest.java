@@ -12,7 +12,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 
 /**
- * Addendum AU, amendment 9.12: the four semantics of {@link BankHistoryView#describe()} the panel relies on across the
+ * Addendum AU, amendment 9.12: the four semantics of {@code PanelState.describe(BankHistoryView)} the panel relies on across the
  * seam - {@code range}, {@code readings}, {@code first}, {@code last} - which the view must keep whatever it draws; plus
  * the seven keys and their types (amendment 9.11). {@code SidebarHistorySeamTest} drives the same view through the real
  * panel.
@@ -41,14 +41,14 @@ public class BankHistoryViewSeamTest
 	public void theRangeStartsAtTheDefaultWindowsAndFollowsSetRange()
 	{
 		final BankHistoryView view = new BankHistoryView(() -> noon(20), TORONTO);
-		assertEquals("7d", view.describe().get("range"));
+		assertEquals("7d", PanelState.describe(view).get("range"));
 
 		view.setRange(BankHistoryRange.D90);
-		assertEquals("90d", view.describe().get("range"));
+		assertEquals("90d", PanelState.describe(view).get("range"));
 		view.setRange(BankHistoryRange.ALL);
-		assertEquals("all", view.describe().get("range"));
+		assertEquals("all", PanelState.describe(view).get("range"));
 		view.setRange(null);
-		assertEquals("null is ignored", "all", view.describe().get("range"));
+		assertEquals("null is ignored", "all", PanelState.describe(view).get("range"));
 	}
 
 	@Test
@@ -56,24 +56,24 @@ public class BankHistoryViewSeamTest
 	{
 		final AtomicLong clock = new AtomicLong(noon(20));
 		final BankHistoryView view = new BankHistoryView(clock::get, TORONTO);
-		assertEquals(0, view.describe().get("readings"));
-		assertNull(view.describe().get("first"));
-		assertNull(view.describe().get("last"));
+		assertEquals(0, PanelState.describe(view).get("readings"));
+		assertNull(PanelState.describe(view).get("first"));
+		assertNull(PanelState.describe(view).get("last"));
 
 		view.show(series(3, 9, 20, 22), ViewOptions.DEFAULT);
 
-		assertEquals("the 22nd is after today and is not drawn", 3, view.describe().get("readings"));
-		assertEquals("2026-09-03", view.describe().get("first"));
-		assertEquals("2026-09-20", view.describe().get("last"));
+		assertEquals("the 22nd is after today and is not drawn", 3, PanelState.describe(view).get("readings"));
+		assertEquals("2026-09-03", PanelState.describe(view).get("first"));
+		assertEquals("2026-09-20", PanelState.describe(view).get("last"));
 
 		clock.set(noon(22));
 		view.show(series(3, 9, 20, 22), null);
-		assertEquals(4, view.describe().get("readings"));
-		assertEquals("2026-09-22", view.describe().get("last"));
+		assertEquals(4, PanelState.describe(view).get("readings"));
+		assertEquals("2026-09-22", PanelState.describe(view).get("last"));
 
 		view.show(null, null);
-		assertEquals("null reads as EMPTY", 0, view.describe().get("readings"));
-		assertNull(view.describe().get("first"));
+		assertEquals("null reads as EMPTY", 0, PanelState.describe(view).get("readings"));
+		assertNull(PanelState.describe(view).get("first"));
 	}
 
 	@Test
@@ -83,8 +83,8 @@ public class BankHistoryViewSeamTest
 		final long lateEvening = LocalDate.of(2026, 9, 21).atTime(1, 0).toInstant(ZoneOffset.UTC).toEpochMilli();
 		final BankHistoryView view = new BankHistoryView(() -> lateEvening, TORONTO);
 		view.show(series(20, 21), ViewOptions.DEFAULT);
-		assertEquals(1, view.describe().get("readings"));
-		assertEquals("2026-09-20", view.describe().get("last"));
+		assertEquals(1, PanelState.describe(view).get("readings"));
+		assertEquals("2026-09-20", PanelState.describe(view).get("last"));
 	}
 
 	@Test
@@ -92,7 +92,7 @@ public class BankHistoryViewSeamTest
 	{
 		final BankHistoryView view = new BankHistoryView(() -> noon(20), TORONTO);
 		view.show(series(19, 20), ViewOptions.DEFAULT);
-		final LinkedHashMap<String, Object> map = view.describe();
+		final LinkedHashMap<String, Object> map = PanelState.describe(view);
 
 		assertEquals(Arrays.asList("readings", "first", "last", "range", "rows", "carriedRows", "hoverDay"),
 			Arrays.asList(map.keySet().toArray()));

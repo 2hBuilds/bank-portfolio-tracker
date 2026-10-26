@@ -21,10 +21,10 @@ public final class ChangeText
 	public static final int MIN_BRIGHTNESS = 20;
 	/** The most: the percentage's own colour. */
 	public static final int MAX_BRIGHTNESS = 100;
-	/** What the gp figures are drawn at unless the player chose otherwise (it was 45 until release 1.2.1). */
-	public static final int DEFAULT_BRIGHTNESS = 55;
+	/** What the gp figures are drawn at unless the player chose otherwise (it was 45 until release 1.2.1, and 55 in 1.2.1). */
+	public static final int DEFAULT_BRIGHTNESS = 69;
 
-	/** Both sizes Normal and the brightness at its default: the rows as release 1.2.1 draws them with nothing chosen. */
+	/** Both sizes Normal and the brightness at its default: the rows as release 1.2.2 draws them with nothing chosen. */
 	public static final ChangeText DEFAULT = new ChangeText(ChangeSize.NORMAL, ChangeSize.NORMAL, DEFAULT_BRIGHTNESS);
 
 	private final ChangeSize gp;
@@ -106,11 +106,5 @@ public final class ChangeText
 	public int hashCode()
 	{
 		return Objects.hash(gp, pct, brightness);
-	}
-
-	@Override
-	public String toString()
-	{
-		return "ChangeText{gp=" + gp.name() + ", pct=" + pct.name() + ", brightness=" + brightness + "}";
 	}
 }

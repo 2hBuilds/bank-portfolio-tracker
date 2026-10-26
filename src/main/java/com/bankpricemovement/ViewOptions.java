@@ -1,6 +1,5 @@
 package com.bankpricemovement;
 
-import java.util.LinkedHashMap;
 import java.util.Objects;
 
 /**
@@ -135,23 +134,6 @@ public final class ViewOptions
 		return new ViewOptions(countCash, countUntradeables, livePrices, countInventory, value);
 	}
 
-	/**
-	 * The switches in the order the dev bridge prints them: {@code cash}, {@code untradeables}, {@code live},
-	 * {@code inventory}, {@code ge}. Addendum AO line AO1 removed {@code holding} from between the second and the
-	 * third with the switch it echoed; 1.0.9 part 3 put {@code ge} directly after {@code inventory}; release 1.2.0
-	 * removed {@code hover}, the sixth, with the switch behind it.
-	 */
-	public LinkedHashMap<String, Boolean> asMap()
-	{
-		final LinkedHashMap<String, Boolean> map = new LinkedHashMap<>();
-		map.put("cash", countCash);
-		map.put("untradeables", countUntradeables);
-		map.put("live", livePrices);
-		map.put("inventory", countInventory);
-		map.put("ge", countGrandExchange);
-		return map;
-	}
-
 	@Override
 	public boolean equals(final Object o)
 	{
@@ -175,12 +157,5 @@ public final class ViewOptions
 	public int hashCode()
 	{
 		return Objects.hash(countCash, countUntradeables, livePrices, countInventory, countGrandExchange);
-	}
-
-	@Override
-	public String toString()
-	{
-		return "ViewOptions{cash=" + countCash + ", untradeables=" + countUntradeables + ", live=" + livePrices
-			+ ", inventory=" + countInventory + ", ge=" + countGrandExchange + '}';
 	}
 }

@@ -47,7 +47,8 @@ import static org.mockito.Mockito.when;
  * stand directly under "Down colour", in order; a press on an unlit cell of a bar lights it, stores it and redraws the rows at
  * once, and never asks the service for anything; the box opens on no focus, saves on Enter, on focus lost and when the menu
  * closes, and goes red on anything that is not a whole number from 20 to 100; "Reset to default" restores all three; the
- * hovers are one line each. The bridge's {@code change=} presses the same road.
+ * hovers are one line each. The dev bridge's {@code change=} verb presses the same road ({@code pressChangeText}); its
+ * reading of the words is pinned in the test source set.
  *
  * <p>The move palette is one static for the whole process, so every test clears it in {@code @After}.
  */
@@ -59,7 +60,7 @@ public class ChangeSizeMenuTest
 	private Memory prefs;
 
 	/** The config as a memory: the three change settings as stored, and every write of them, in order. */
-	private static final class Memory implements BankPriceMovementPanel.Prefs
+	private static final class Memory extends PrefsDefaults
 	{
 		@Nullable
 		ChangeText stored;
@@ -261,9 +262,9 @@ public class ChangeSizeMenuTest
 			}
 			assertEquals(Arrays.asList("Opacity", "%"), words);
 			assertEquals(ChangeSettings.FIELD_WIDTH, box().getPreferredSize().width);
-			assertEquals("55", box().getText());
+			assertEquals("the default opacity since release 1.2.2", "69", box().getText());
 			assertEquals("the same box as the preset price boxes", box().getTextField().getFont(), panel.presetField(0).getTextField().getFont());
-			assertFalse("a fresh box is not red", Widgets.isMarkedInvalid(box()));
+			assertFalse("a fresh box is not red", PanelState.isMarkedInvalid(box()));
 
 			// The bars: four cells in order, a 1 px frame, the lit look on Normal and the unlit look on the rest.
 			for (SizeBar bar : Arrays.asList(gpBar(), pctBar()))
@@ -351,7 +352,7 @@ public class ChangeSizeMenuTest
 			press(cell(pctBar(), 3), java.awt.event.MouseEvent.BUTTON1);
 			assertEquals(3, litIndex(pctBar()));
 			assertEquals(2, litIndex(gpBar()));
-			assertEquals(ChangeText.of(ChangeSize.LARGE, ChangeSize.LARGEST, 55), prefs.saves.get(1));
+			assertEquals(ChangeText.of(ChangeSize.LARGE, ChangeSize.LARGEST, 69), prefs.saves.get(1));
 			assertEquals(Widgets.sansBold(18), pctFont(1));
 			press(cell(pctBar(), 0), java.awt.event.MouseEvent.BUTTON1);
 			press(cell(gpBar(), 0), java.awt.event.MouseEvent.BUTTON1);
@@ -387,7 +388,7 @@ public class ChangeSizeMenuTest
 			panel.applyChangeText(null);
 			assertEquals(ChangeText.DEFAULT, panel.changeText());
 			assertEquals(1, litIndex(gpBar()));
-			assertEquals("55", box().getText());
+			assertEquals("69", box().getText());
 			assertEquals("written back: nothing", 0, prefs.saves.size());
 		});
 	}
@@ -438,13 +439,13 @@ public class ChangeSizeMenuTest
 			assertFalse("the box has no focus", box().getTextField().isFocusOwner());
 			box().setText("abc");
 			box().getTextField().postActionEvent();
-			assertTrue("red", Widgets.isMarkedInvalid(box()));
+			assertTrue("red", PanelState.isMarkedInvalid(box()));
 			for (PopupMenuListener l : panel.listMenu().getPopupMenuListeners())
 			{
 				l.popupMenuWillBecomeVisible(new PopupMenuEvent(panel.listMenu()));
 			}
-			assertEquals("the value in force again", "55", box().getText());
-			assertFalse("and not red", Widgets.isMarkedInvalid(box()));
+			assertEquals("the value in force again", "69", box().getText());
+			assertFalse("and not red", PanelState.isMarkedInvalid(box()));
 		});
 	}
 
@@ -464,7 +465,7 @@ public class ChangeSizeMenuTest
 			{
 				box().setText(bad);
 				box().getTextField().postActionEvent();
-				assertTrue("'" + bad + "' is refused in red", Widgets.isMarkedInvalid(box()));
+				assertTrue("'" + bad + "' is refused in red", PanelState.isMarkedInvalid(box()));
 				assertEquals("'" + bad + "' saves nothing", 0, prefs.saves.size());
 				assertEquals(ChangeText.DEFAULT, panel.changeText());
 				assertEquals(before, gpLabel(panel.rowPanels().get(0)).getForeground());
@@ -474,7 +475,7 @@ public class ChangeSizeMenuTest
 				prefs.saves.clear();
 				box().setText(good);
 				box().getTextField().postActionEvent();
-				assertFalse("'" + good + "' is not red", Widgets.isMarkedInvalid(box()));
+				assertFalse("'" + good + "' is not red", PanelState.isMarkedInvalid(box()));
 				final int want = Integer.parseInt(good.trim());
 				assertEquals(want, panel.changeText().brightness());
 				assertEquals(1, prefs.saves.size());
@@ -527,7 +528,7 @@ public class ChangeSizeMenuTest
 				l.popupMenuWillBecomeInvisible(new PopupMenuEvent(panel.listMenu()));
 			}
 			assertEquals("a refused text is not saved by the close either", 2, prefs.saves.size());
-			assertTrue(Widgets.isMarkedInvalid(box()));
+			assertTrue(PanelState.isMarkedInvalid(box()));
 			assertEquals(60, panel.changeText().brightness());
 		});
 	}
@@ -583,7 +584,7 @@ public class ChangeSizeMenuTest
 			press(cell(gpBar(), 2), java.awt.event.MouseEvent.BUTTON1);
 			assertEquals(ChangeText.of(ChangeSize.LARGE, ChangeSize.NORMAL, 70), panel.changeText());
 			assertEquals("70", box().getText());
-			assertFalse(Widgets.isMarkedInvalid(box()));
+			assertFalse(PanelState.isMarkedInvalid(box()));
 			assertEquals(2, litIndex(gpBar()));
 			assertEquals(Widgets.sans(12), gpFont(0));
 			assertEquals("both are stored, brightness first", Arrays.asList(ChangeText.DEFAULT.withBrightness(70),
@@ -634,14 +635,14 @@ public class ChangeSizeMenuTest
 			press(cell(pctBar(), 2), java.awt.event.MouseEvent.BUTTON1);
 			assertEquals(ChangeText.DEFAULT.withPct(ChangeSize.LARGE), panel.changeText());
 			assertEquals(Collections.singletonList(ChangeText.DEFAULT.withPct(ChangeSize.LARGE)), prefs.saves);
-			assertEquals("the value in force", "55", box().getText());
+			assertEquals("the value in force", "69", box().getText());
 			fireFocusLost(false);
 			assertEquals(1, prefs.saves.size());
 
 			// A press that chooses nothing leaves the refused text red, as Enter would.
 			box().setText("abc");
 			press(cell(pctBar(), 2), java.awt.event.MouseEvent.BUTTON1);
-			assertTrue(Widgets.isMarkedInvalid(box()));
+			assertTrue(PanelState.isMarkedInvalid(box()));
 			assertEquals(1, prefs.saves.size());
 		});
 	}
@@ -722,7 +723,7 @@ public class ChangeSizeMenuTest
 			assertEquals(normalPitch[0] * 20, panel.rowPanels().get(20).getY());
 			bar.setValue(normalPitch[0] * 20);
 			assertEquals(normalPitch[0] * 20, bar.getValue());
-			panel.pressChangeText(ChangeText.of(ChangeSize.LARGEST, ChangeSize.LARGEST, 55));
+			panel.pressChangeText(ChangeText.of(ChangeSize.LARGEST, ChangeSize.LARGEST, ChangeText.DEFAULT_BRIGHTNESS));
 			layout();
 		});
 		onEdt(() ->
@@ -870,39 +871,37 @@ public class ChangeSizeMenuTest
 			assertEquals(ChangeText.DEFAULT, panel.changeText());
 			assertEquals(1, litIndex(gpBar()));
 			assertEquals(1, litIndex(pctBar()));
-			assertEquals("55", box().getText());
+			assertEquals("69", box().getText());
 			assertEquals(Widgets.sans(10), gpFont(0));
 			assertEquals(Widgets.sansBold(15), pctFont(0));
 			assertEquals("stored too", ChangeText.DEFAULT, prefs.saves.get(prefs.saves.size() - 1));
 		});
 	}
 
-	// ---------------------------------------------------------------------------------------------------- bridge
+	// ---------------------------------------------------------------------------------------------------- the road a terminal presses
 
-	private JsonObject bridge(String cmd)
+	/** The panel's own JSON line as a tree: what {@code state.panel} holds for a script. */
+	private JsonObject describe() throws Exception
 	{
-		final BpmCommands commands = new BpmCommands(panel, service, new Gson());
-		return new Gson().fromJson(commands.apply(cmd), JsonObject.class);
+		return new Gson().fromJson(onEdtValue(() -> PanelState.describe(panel)), JsonObject.class);
 	}
 
 	/**
-	 * S3: {@code state.panel.changeText} echoes the three values, and {@code change=gp:large,pct:normal,opacity:70} - any subset
-	 * of the three parts - presses the menu's own road: drawn at once, stored, and a part left out stays as it was. A part it
-	 * cannot read is refused with a one-line reason and NOTHING is changed.
+	 * S3: {@code state.panel.changeText} echoes the three values, and {@code pressChangeText} - the road the menu's cells and the
+	 * dev bridge's {@code change=} both press - draws at once, stores, and writes nothing when the value does not change. A part
+	 * changed on its own leaves the other two as they were.
 	 */
 	@Test
-	public void s3_theBridgeEchoesTheThreeAndChangeEqualsPressesTheMenusRoad() throws Exception
+	public void s3_theEchoShowsTheThreeAndPressingTheMenusRoadDrawsAndStores() throws Exception
 	{
 		build(null);
-		JsonObject state = bridge("state");
-		JsonObject echo = state.getAsJsonObject("panel").getAsJsonObject("changeText");
+		JsonObject echo = describe().getAsJsonObject("changeText");
 		assertEquals("NORMAL", echo.get("gpSize").getAsString());
 		assertEquals("NORMAL", echo.get("pctSize").getAsString());
-		assertEquals(55, echo.get("gpOpacity").getAsInt());
+		assertEquals(69, echo.get("gpOpacity").getAsInt());
 
-		state = bridge("change=gp:large,pct:normal,opacity:70");
-		assertTrue(state.toString(), state.get("ok").getAsBoolean());
-		echo = state.getAsJsonObject("panel").getAsJsonObject("changeText");
+		onEdt(() -> panel.pressChangeText(ChangeText.of(ChangeSize.LARGE, ChangeSize.NORMAL, 70)));
+		echo = describe().getAsJsonObject("changeText");
 		assertEquals("LARGE", echo.get("gpSize").getAsString());
 		assertEquals("NORMAL", echo.get("pctSize").getAsString());
 		assertEquals(70, echo.get("gpOpacity").getAsInt());
@@ -914,31 +913,15 @@ public class ChangeSizeMenuTest
 			assertEquals("70", box().getText());
 		});
 
-		// A subset: the parts left out stay as they were.
-		state = bridge("change=pct:largest");
-		assertTrue(state.get("ok").getAsBoolean());
+		// One part on its own: the others stay as they were.
+		onEdt(() -> panel.pressChangeText(panel.changeText().withPct(ChangeSize.LARGEST)));
 		assertEquals(ChangeText.of(ChangeSize.LARGE, ChangeSize.LARGEST, 70), onEdtValue(() -> panel.changeText()));
-		state = bridge("change=opacity:100");
+		onEdt(() -> panel.pressChangeText(panel.changeText().withBrightness(100)));
 		assertEquals(ChangeText.of(ChangeSize.LARGE, ChangeSize.LARGEST, 100), onEdtValue(() -> panel.changeText()));
 		// The same again: idempotent, no extra write.
 		final int writes = prefs.saves.size();
-		bridge("change=opacity:100");
+		onEdt(() -> panel.pressChangeText(panel.changeText().withBrightness(100)));
 		assertEquals(writes, prefs.saves.size());
-
-		// Refusals: a one-line reason, the sidebar exactly as it was, even when an earlier part was readable.
-		for (String bad : new String[]{"change=gp:huge", "change=opacity:19", "change=opacity:101", "change=opacity:abc",
-			"change=pct:", "change=nothing:1", "change=", "change=gp:small,opacity:5", "change=gp:small,wat"})
-		{
-			final JsonObject refused = bridge(bad);
-			assertFalse(bad + ": " + refused, refused.get("ok").getAsBoolean());
-			final String why = refused.get("error").getAsString();
-			assertFalse(bad + ": one line: " + why, why.contains("\n"));
-			assertEquals(bad + ": nothing changed", ChangeText.of(ChangeSize.LARGE, ChangeSize.LARGEST, 100),
-				onEdtValue(() -> panel.changeText()));
-			assertEquals(bad + ": nothing written", writes, prefs.saves.size());
-		}
-		assertTrue(bridge("change=gp:huge").get("error").getAsString().contains("small, normal, large or largest"));
-		assertTrue(bridge("change=opacity:19").get("error").getAsString().contains("20 to 100"));
 	}
 
 	private <T> T onEdtValue(java.util.function.Supplier<T> body) throws Exception

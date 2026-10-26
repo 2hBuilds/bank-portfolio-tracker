@@ -27,7 +27,7 @@ import static org.junit.Assert.assertTrue;
 public class PrefsTest
 {
 	/** The least a {@code Prefs} can be: the filter pair, and not one line more. */
-	private static final class Bare implements BankPriceMovementPanel.Prefs
+	private static final class Bare extends PrefsDefaults
 	{
 		final List<RowFilter> saved = new ArrayList<>();
 

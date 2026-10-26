@@ -260,7 +260,7 @@ public class HistoryCardTest
 		draw(readings(TODAY.minusDays(1), TODAY));
 		onEdt(() ->
 		{
-			assertEquals(SidebarView.HISTORY, panel.view());
+			assertEquals(SidebarView.HISTORY, panel.view);
 			assertNull("no hover on the record line", panel.updateLabel().getToolTipText());
 			panel.pressView(SidebarView.ITEMS);
 			assertNotNull("Items' update line has its hover back", panel.updateLabel().getToolTipText());
@@ -306,7 +306,7 @@ public class HistoryCardTest
 					final int inHistory = panel.hero().getPreferredSize().height;
 					panel.pressView(SidebarView.ITEMS);
 					final int inItems = panel.hero().getPreferredSize().height;
-					assertEquals(s.size() + " readings, " + v, inItems, inHistory);
+					assertEquals(s.size() + " readings, " + PanelState.asMap(v), inItems, inHistory);
 				});
 			}
 		}
@@ -320,15 +320,15 @@ public class HistoryCardTest
 		onEdt(() ->
 		{
 			panel.applyHeroVisibility(HeroVisibility.NONE);
-			assertFalse("the total is removed", panel.shows(panel.totalLabel()));
-			assertFalse("and the move line", panel.shows(panel.moveLine()));
-			assertTrue("the footnote stays", panel.shows(panel.footnoteLabel()));
-			assertTrue("and the record line", panel.shows(panel.updateLabel()));
+			assertFalse("the total is removed", PanelState.shows(panel, panel.totalLabel()));
+			assertFalse("and the move line", PanelState.shows(panel, panel.moveLine()));
+			assertTrue("the footnote stays", PanelState.shows(panel, panel.footnoteLabel()));
+			assertTrue("and the record line", PanelState.shows(panel, panel.updateLabel()));
 			assertEquals("1d vs your 27 Sep total", panel.footnoteLabel().getText());
 			panel.applyHeroVisibility(HeroVisibility.ALL);
-			assertTrue(panel.shows(panel.totalLabel()));
-			assertTrue(panel.shows(panel.deltaLabel()));
-			assertTrue(panel.shows(panel.pctLabel()));
+			assertTrue(PanelState.shows(panel, panel.totalLabel()));
+			assertTrue(PanelState.shows(panel, panel.deltaLabel()));
+			assertTrue(PanelState.shows(panel, panel.pctLabel()));
 		});
 	}
 
@@ -366,6 +366,31 @@ public class HistoryCardTest
 			LocalDate.of(2026, 9, 26), MovementWindow.D30, change, false).get(0));
 		assertEquals("30d from 17 Oct", BankPriceMovementPanel.historyFootnoteForms(readings(LocalDate.of(2026, 9,
 			17)), TODAY, MovementWindow.D30, null, false).get(0));
+	}
+
+	/**
+	 * 1.2.2, the user's pick: with a transfer marked AFTER the reading the move used, that day's figure is the corrected one,
+	 * not the total the list prints for it, so the card names the day alone ("30d vs 27 Aug"); a note on or before that day
+	 * moves nothing the card measures from, and the card keeps "your ... total".
+	 */
+	@Test
+	public void aTransferAfterTheFromDayDropsYourTotal()
+	{
+		final BankHistorySeries record = everyDay(LocalDate.of(2026, 8, 18), 37);
+		final LocalDate day = LocalDate.of(2026, 9, 26);
+		final BankHistorySeries after = record.withTransfer(LocalDate.of(2026, 9, 20),
+			new BankHistorySeries.Transfer(-200L, false));
+		final BankHistoryMath.Change vs = BankHistoryMath.sinceDay(after, day, 30, ViewOptions.DEFAULT, VALUE_NOW);
+		assertEquals(java.util.Collections.singletonList("30d vs 27 Aug"),
+			BankPriceMovementPanel.historyFootnoteForms(after, day, MovementWindow.D30, vs, false));
+		assertEquals(java.util.Collections.singletonList("30d vs 27 Aug - logged out"),
+			BankPriceMovementPanel.historyFootnoteForms(after, day, MovementWindow.D30, vs, true));
+
+		final BankHistorySeries before = record.withTransfer(LocalDate.of(2026, 8, 27),
+			new BankHistorySeries.Transfer(-200L, false));
+		assertEquals(java.util.Arrays.asList("30d vs your 27 Aug total", "30d vs 27 Aug"),
+			BankPriceMovementPanel.historyFootnoteForms(before, day, MovementWindow.D30,
+				BankHistoryMath.sinceDay(before, day, 30, ViewOptions.DEFAULT, VALUE_NOW), false));
 	}
 
 	/**
@@ -427,7 +452,7 @@ public class HistoryCardTest
 				{
 					final String drawn = BankPriceMovementPanel.firstThatFits(label, forms, 191);
 					assertTrue(drawn + " fits the card's line", fm.stringWidth(drawn) <= 191);
-					assertEquals("so the fitter cuts nothing", drawn, Widgets.fit(label.getFont(), drawn, 191));
+					assertEquals("so the fitter cuts nothing", drawn, WidgetsProbe.fit(label.getFont(), drawn, 191));
 					assertEquals(drawn, loggedOut, drawn.endsWith("logged out"));
 				}
 			}

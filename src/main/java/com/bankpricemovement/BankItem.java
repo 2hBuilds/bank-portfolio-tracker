@@ -103,12 +103,6 @@ public class BankItem
 		{
 			return Objects.hash(id, quantity, name);
 		}
-
-		@Override
-		public String toString()
-		{
-			return "Part{id=" + id + ", quantity=" + quantity + ", name='" + name + "'}";
-		}
 	}
 
 	/**
@@ -291,13 +285,5 @@ public class BankItem
 		result = 31 * result + (name == null ? 0 : name.hashCode());
 		result = 31 * result + (parts == null ? 0 : parts.hashCode());
 		return result;
-	}
-
-	@Override
-	public String toString()
-	{
-		return "BankItem{id=" + id + ", quantity=" + quantity + ", name='" + name + "', stackable=" + stackable
-			+ (untradeable ? ", untradeable, haPrice=" + haPrice : "")
-			+ (hasParts() ? ", parts=" + parts : "") + '}';
 	}
 }

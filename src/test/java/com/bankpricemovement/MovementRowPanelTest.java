@@ -30,6 +30,7 @@ import javax.swing.SwingUtilities;
 import net.runelite.api.Constants;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.util.AsyncBufferedImage;
+import net.runelite.client.util.LinkBrowser;
 import org.junit.Test;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -464,8 +465,8 @@ public class MovementRowPanelTest
 			final MovementRow shield = stack("Elemental shield", 1, 2_551L, 1_560L, 1_560d * 100.0 / 991d);
 			final RecordingExpansion seam = new RecordingExpansion();
 			seam.setExpanded(shield.id(), true);
-			final MovementRowPanel p = new MovementRowPanel(shield, null, MovementWindow.D1, THEN_DAY,
-				ViewOptions.DEFAULT, seam);
+			final MovementRowPanel p = new MovementRowPanel(shield, null, MovementWindow.D1, THEN_DAY, 0L,
+				ViewOptions.DEFAULT, LinkBrowser::browse, seam, false, ChangeText.DEFAULT);
 			layOut(p);
 
 			assertEquals("+157%", p.changeText());
@@ -901,30 +902,23 @@ public class MovementRowPanelTest
 	private static final ViewOptions LIVE_OFF = ViewOptions.DEFAULT.withLivePrices(false);
 
 	/**
-	 * A Twisted bow priced off the traded series (T4): the mid of a 63.6m buy and a 63.3m sell, 517 units traded
-	 * yesterday, against that day's traded average of 62,100,000.
-	 *
-	 * @param windowSource what the 1 d window used - LIVE for a traded comparison, GUIDE for T4's fallback
+	 * A Twisted bow priced off the traded series (T4): the mid of a 63.6m buy and a 63.3m sell, against that day's
+	 * traded average of 62,100,000.
 	 */
-	private static MovementRow liveBow(MovementRow.PriceSource windowSource)
+	private static MovementRow liveBow()
 	{
-		final Map<MovementWindow, MovementRow.PriceSource> sources = new EnumMap<>(MovementWindow.class);
-		sources.put(MovementWindow.D1, windowSource);
-		return guideBow().asLive(null, sources, new MovementRow.LiveFacts(63_600_000L, 63_300_000L, 517L, null));
+		return LiveRows.asLive(guideBow(), null, null);
 	}
 
 	/**
-	 * {@link #liveBow(MovementRow.PriceSource)} carrying the DAY its 1 d window actually compared against (addendum
-	 * U, line U3) - the traded bucket's own day on a live window, the guide baseline day on one that fell back.
+	 * {@link #liveBow()} carrying the DAY its 1 d window actually compared against (addendum U, line U3) - the traded
+	 * bucket's own day on a live window, the guide baseline day on one that fell back.
 	 */
-	private static MovementRow liveBow(MovementRow.PriceSource windowSource, LocalDate windowDay)
+	private static MovementRow liveBow(LocalDate windowDay)
 	{
-		final Map<MovementWindow, MovementRow.PriceSource> sources = new EnumMap<>(MovementWindow.class);
-		sources.put(MovementWindow.D1, windowSource);
 		final Map<MovementWindow, LocalDate> days = new EnumMap<>(MovementWindow.class);
 		days.put(MovementWindow.D1, windowDay);
-		return guideBow().asLive(null, sources, days,
-			new MovementRow.LiveFacts(63_600_000L, 63_300_000L, 517L, null));
+		return LiveRows.asLive(guideBow(), null, days);
 	}
 
 	/** The same figures with no traded series behind them: what the live row has to paint exactly like. */
@@ -949,7 +943,7 @@ public class MovementRowPanelTest
 	public void aLiveRowsWindowLineStampsTheDayTheRowComparedAgainst()
 	{
 		final LocalDate liveDay = LocalDate.of(2026, 9, 11);
-		final MovementRow row = liveBow(MovementRow.PriceSource.LIVE, liveDay);
+		final MovementRow row = liveBow(liveDay);
 		// TRADED_DAY here is the GUIDE's baseline day, a day behind the traded bucket this row really used.
 		assertEquals(liveDay, MovementRowPanel.stampedDay(row, MovementWindow.D1, TRADED_DAY, true));
 		assertEquals("a window this row recorded nothing for", TRADED_DAY,
@@ -959,7 +953,7 @@ public class MovementRowPanelTest
 		assertEquals("a guide row carries no days at all", TRADED_DAY,
 			MovementRowPanel.stampedDay(guideBow(), MovementWindow.D1, TRADED_DAY, true));
 		assertEquals("a window that fell back to the guide stamps the guide's day", TRADED_DAY,
-			MovementRowPanel.stampedDay(liveBow(MovementRow.PriceSource.GUIDE, TRADED_DAY), MovementWindow.D1, TRADED_DAY, true));
+			MovementRowPanel.stampedDay(liveBow(TRADED_DAY), MovementWindow.D1, TRADED_DAY, true));
 		assertNull("no day anywhere stamps a dash, never 1970",
 			MovementRowPanel.stampedDay(row, null, null, true));
 
@@ -979,7 +973,7 @@ public class MovementRowPanelTest
 	{
 		onEdt(() ->
 		{
-			final MovementRow live = liveBow(MovementRow.PriceSource.LIVE);
+			final MovementRow live = liveBow();
 			final MovementRowPanel a = new MovementRowPanel(live, null, MovementWindow.D1, TRADED_DAY);
 			final MovementRowPanel b = new MovementRowPanel(guideBow(), null, MovementWindow.D1, TRADED_DAY);
 			assertEquals(b.nameText(), a.nameText());
@@ -994,7 +988,8 @@ public class MovementRowPanelTest
 			assertFalse(MovementRowPanel.isAlch(live));
 
 			// The row the panel builds under the switch OFF paints the same (T8).
-			final MovementRowPanel off = new MovementRowPanel(live, null, MovementWindow.D1, TRADED_DAY, LIVE_OFF);
+			final MovementRowPanel off = new MovementRowPanel(live, null, MovementWindow.D1, TRADED_DAY, 0L, LIVE_OFF,
+				LinkBrowser::browse, null, false, ChangeText.DEFAULT);
 			assertEquals(b.priceText(), off.priceText());
 		});
 	}
@@ -1020,8 +1015,8 @@ public class MovementRowPanelTest
 		onEdt(() ->
 		{
 			final AtomicReference<String> opened = new AtomicReference<>();
-			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY,
-				ViewOptions.DEFAULT, opened::set);
+			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY, 0L,
+				ViewOptions.DEFAULT, opened::set, null, false, ChangeText.DEFAULT);
 			final JPopupMenu menu = p.getComponentPopupMenu();
 			assertEquals("entries", 2, menu.getComponentCount());
 
@@ -1344,7 +1339,7 @@ public class MovementRowPanelTest
 			final MovementRowPanel fits = new MovementRowPanel(row("Stamina potion(4)", 12_000L, 11_800L, 200L, 1.7),
 				null, MovementWindow.D1, THEN_DAY);
 			assertEquals("Stamina potion(4)", fits.nameText());
-			final String squeezed = Widgets.fitName(Widgets.sansBold(14), "Super combat potion(4)", 30);
+			final String squeezed = WidgetsProbe.fitName(Widgets.sansBold(14), "Super combat potion(4)", 30);
 			assertTrue(squeezed, squeezed.endsWith(Widgets.ELLIPSIS));
 			assertFalse("a box too small for a stem falls back to the plain cut, never \"...(4)\"",
 				squeezed.endsWith("(4)"));
@@ -1829,8 +1824,8 @@ public class MovementRowPanelTest
 		onEdt(() ->
 		{
 			final AtomicReference<String> opened = new AtomicReference<>();
-			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY,
-				ViewOptions.DEFAULT, opened::set);
+			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY, 0L,
+				ViewOptions.DEFAULT, opened::set, null, false, ChangeText.DEFAULT);
 			leftClick(p);
 			assertTrue(p.expanded());
 
@@ -1860,8 +1855,8 @@ public class MovementRowPanelTest
 			seam.setExpanded(4151, true);
 			seam.writes = 0;
 
-			final MovementRowPanel opened = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY,
-				ViewOptions.DEFAULT, seam);
+			final MovementRowPanel opened = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY, 0L,
+				ViewOptions.DEFAULT, LinkBrowser::browse, seam, false, ChangeText.DEFAULT);
 			assertTrue("a row whose id is already expanded is open", opened.expanded());
 			assertEquals("reading the seam writes nothing to it", 0, seam.writes);
 
@@ -1879,13 +1874,14 @@ public class MovementRowPanelTest
 
 			// The whole point: the next publish builds a NEW row from the same seam, and it stands where the
 			// reader left it - keyed by item id, so a re-sort or a change of price band does not lose it either.
-			final MovementRowPanel rebuilt = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY,
-				ViewOptions.DEFAULT, seam);
+			final MovementRowPanel rebuilt = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY, 0L,
+				ViewOptions.DEFAULT, LinkBrowser::browse, seam, false, ChangeText.DEFAULT);
 			assertTrue(rebuilt.expanded());
 
 			// ...and one row's state is one ITEM's: another id in the same seam is untouched by all of that.
 			final MovementRowPanel other = new MovementRowPanel(alch("Graceful hood", 4, 20_000L), null,
-				MovementWindow.D1, THEN_DAY, ViewOptions.DEFAULT, seam);
+				MovementWindow.D1, THEN_DAY, 0L, ViewOptions.DEFAULT, LinkBrowser::browse, seam, false,
+					ChangeText.DEFAULT);
 			assertFalse(other.expanded());
 			assertFalse(detail(other).isVisible());
 		});
@@ -1910,8 +1906,8 @@ public class MovementRowPanelTest
 			final RecordingExpansion seam = new RecordingExpansion();
 			seam.setExpanded(4151, true);
 
-			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY,
-				ViewOptions.DEFAULT, seam);
+			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY, 0L,
+				ViewOptions.DEFAULT, LinkBrowser::browse, seam, false, ChangeText.DEFAULT);
 			assertTrue("the state is read at build time", p.expanded());
 			assertTrue("...and the cell it decides is open", detail(p).isVisible());
 			assertEquals("a rebuilt open row stands at its open height",
@@ -1936,10 +1932,10 @@ public class MovementRowPanelTest
 	{
 		onEdt(() ->
 		{
-			final MovementRowPanel a = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY,
-				ViewOptions.DEFAULT, (MovementRowPanel.Expansion) null);
-			final MovementRowPanel b = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY,
-				ViewOptions.DEFAULT, (MovementRowPanel.Expansion) null);
+			final MovementRowPanel a = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY, 0L,
+				ViewOptions.DEFAULT, LinkBrowser::browse, (MovementRowPanel.Expansion) null, false, ChangeText.DEFAULT);
+			final MovementRowPanel b = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY, 0L,
+				ViewOptions.DEFAULT, LinkBrowser::browse, (MovementRowPanel.Expansion) null, false, ChangeText.DEFAULT);
 			assertFalse("both start shut", a.expanded());
 			assertFalse(b.expanded());
 
@@ -2100,7 +2096,8 @@ public class MovementRowPanelTest
 		onEdt(() ->
 		{
 			final MovementRow long0 = row("Twisted ancestral robe bottom", 1_000L, 900L, 100L, 11.1);
-			final MovementRowPanel p = new MovementRowPanel(long0, null, MovementWindow.D1, THEN_DAY, ViewOptions.DEFAULT);
+			final MovementRowPanel p = new MovementRowPanel(long0, null, MovementWindow.D1, THEN_DAY, 0L,
+				ViewOptions.DEFAULT, LinkBrowser::browse, null, false, ChangeText.DEFAULT);
 			assertNotEquals("the face had to cut the name, so the fitter left the whole of it behind",
 				long0.name(), p.nameText());
 			assertNull("the row", p.getToolTipText());
@@ -2151,8 +2148,9 @@ public class MovementRowPanelTest
 		onEdt(() ->
 		{
 			final RecordingExpansion seam = new RecordingExpansion();
-			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY, ViewOptions.DEFAULT,
-				seam);
+			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY, 0L,
+				ViewOptions.DEFAULT, LinkBrowser::browse,
+				seam, false, ChangeText.DEFAULT);
 			assertFalse("a fresh row is shut", p.expanded());
 			assertFalse("and says nothing under its face", detail(p).isVisible());
 			assertEquals("building only reads the seam", 0, seam.writes);
@@ -2347,7 +2345,7 @@ public class MovementRowPanelTest
 	@Test
 	public void theOpenCellOfARowWithNoGradeCarriesNoLiveNotes()
 	{
-		final MovementRow live = liveBow(MovementRow.PriceSource.LIVE);
+		final MovementRow live = liveBow();
 		final String html = block(live, MovementWindow.D1);
 		assertTrue(html, html.endsWith("</table></div></html>"));
 		assertFalse("no volume note: " + html, html.contains("traded yesterday"));
@@ -2361,8 +2359,7 @@ public class MovementRowPanelTest
 			.contains("traded yesterday"));
 
 		// A row the service priced at the guide carries its reason nowhere on the cell; it stays four lines.
-		final MovementRow thin = whip().withLiveRefusal(
-			new MovementRow.LiveFacts(1_540_000L, 1_200_000L, 12L, GradeWords.NO_TRADES));
+		final MovementRow thin = whip();
 		assertTrue(block(thin, MovementWindow.D1), block(thin, MovementWindow.D1).endsWith("</table></div></html>"));
 	}
 
@@ -2445,7 +2442,7 @@ public class MovementRowPanelTest
 
 		// Two notes: the second takes one, or it runs on to the end of the first.
 		final MovementRow worn = new MovementRow(7, "Graceful hood", 1, false, 20_000L, null, null, null,
-			20_000L, MovementRow.PriceSource.ALCH, null, null, null, null, 0, 0, 1);
+			20_000L, MovementRow.PriceSource.ALCH, null, null, 0, 0, 1, 0, null);
 		final String two = block(worn, MovementWindow.D1);
 		assertTrue(two, two.contains("</table>" + MovementRowPanel.ALCH_NOTE + "<br>1 worn"));
 		assertTrue(two, two.endsWith("1 worn</div></html>"));
@@ -2557,8 +2554,8 @@ public class MovementRowPanelTest
 			final RecordingExpansion shut = new RecordingExpansion();
 			for (int i = 0; i < 50; i++)
 			{
-				final MovementRowPanel p = new MovementRowPanel(pageRow(i), null, MovementWindow.D7, THEN_DAY,
-					ViewOptions.DEFAULT, shut);
+				final MovementRowPanel p = new MovementRowPanel(pageRow(i), null, MovementWindow.D7, THEN_DAY, 0L,
+					ViewOptions.DEFAULT, LinkBrowser::browse, shut, false, ChangeText.DEFAULT);
 				assertFalse(p.row().name() + ": built shut", p.expanded());
 				assertEquals(p.row().name() + ": and its block is not written", "", detail(p).getText());
 			}
@@ -2572,15 +2569,15 @@ public class MovementRowPanelTest
 			oneOpen.setExpanded(pageRow(17).id(), true);
 			for (int i = 0; i < 50; i++)
 			{
-				final MovementRowPanel p = new MovementRowPanel(pageRow(i), null, MovementWindow.D7, THEN_DAY,
-					ViewOptions.DEFAULT, oneOpen);
+				final MovementRowPanel p = new MovementRowPanel(pageRow(i), null, MovementWindow.D7, THEN_DAY, 0L,
+					ViewOptions.DEFAULT, LinkBrowser::browse, oneOpen, false, ChangeText.DEFAULT);
 				assertEquals(p.row().name() + ": open exactly when the seam says so", i == 17, p.expanded());
 			}
 			assertEquals("one row open, one block written", details + 1, MovementRowPanel.detailBuilds());
 
 			// The counter can count, or the zeros above prove nothing.
-			final MovementRowPanel opened = new MovementRowPanel(pageRow(3), null, MovementWindow.D7, THEN_DAY,
-				ViewOptions.DEFAULT, new RecordingExpansion());
+			final MovementRowPanel opened = new MovementRowPanel(pageRow(3), null, MovementWindow.D7, THEN_DAY, 0L,
+				ViewOptions.DEFAULT, LinkBrowser::browse, new RecordingExpansion(), false, ChangeText.DEFAULT);
 			leftClick(opened);
 			assertEquals("an opening writes one block", details + 2, MovementRowPanel.detailBuilds());
 		});
@@ -2660,8 +2657,8 @@ public class MovementRowPanelTest
 			seam.writes = 0;
 
 			final long before = MovementRowPanel.detailBuilds();
-			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY,
-				ViewOptions.DEFAULT, seam);
+			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY, 0L,
+				ViewOptions.DEFAULT, LinkBrowser::browse, seam, false, ChangeText.DEFAULT);
 			assertEquals("the constructor wrote the one block its seam asked for", before + 1,
 				MovementRowPanel.detailBuilds());
 			assertEquals("...and it is this row's block",
@@ -2743,8 +2740,8 @@ public class MovementRowPanelTest
 		onEdt(() ->
 		{
 			final AtomicReference<String> browsed = new AtomicReference<>();
-			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY,
-				ViewOptions.DEFAULT, browsed::set);
+			final MovementRowPanel p = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY, 0L,
+				ViewOptions.DEFAULT, browsed::set, null, false, ChangeText.DEFAULT);
 			final JLabel block = detail(p);
 			assertEquals("fresh, and empty", "", block.getText());
 			final List<JComponent> children = new ArrayList<>();
@@ -2813,7 +2810,7 @@ public class MovementRowPanelTest
 		assertTrue(MovementRowPanel.maskedDetail(whip(), MovementWindow.D1, THEN_DAY, TABLE_0907, ViewOptions.DEFAULT,
 			false).contains("(07&nbsp;Sep&nbsp;21:32&nbsp;UTC)"));
 
-		final String live = MovementRowPanel.detail(liveBow(MovementRow.PriceSource.LIVE, TRADED_DAY), MovementWindow.D1,
+		final String live = MovementRowPanel.detail(liveBow(TRADED_DAY), MovementWindow.D1,
 			THEN_DAY, TABLE_0907, ViewOptions.DEFAULT, false);
 		assertTrue(live, live.contains("(10 Sep)"));
 		assertFalse("the guide table's time never stands beside a traded day: " + live, live.contains("UTC"));
@@ -2833,7 +2830,7 @@ public class MovementRowPanelTest
 			assertEquals("a short figure: the same height", openHeight(shortFigure, 0L), openHeight(shortFigure, TABLE_0907));
 
 			final MovementRowPanel probe = new MovementRowPanel(whip(), null, MovementWindow.D1, THEN_DAY, TABLE_0907,
-				ViewOptions.DEFAULT, url -> { }, null, false);
+				ViewOptions.DEFAULT, url -> { }, null, false, ChangeText.DEFAULT);
 			leftClick(probe);
 			final int line = detail(probe).getFontMetrics(detail(probe).getFont()).getHeight();
 			for (final MovementRow wide : Arrays.asList(whip(), row("Twisted bow", 1_634_372_640L, 1_621_000_000L,
@@ -2849,7 +2846,7 @@ public class MovementRowPanelTest
 	private static int openHeight(final MovementRow row, final long thenSeconds)
 	{
 		final MovementRowPanel p = new MovementRowPanel(row, null, MovementWindow.D1, THEN_DAY, thenSeconds,
-			ViewOptions.DEFAULT, url -> { }, null, false);
+			ViewOptions.DEFAULT, url -> { }, null, false, ChangeText.DEFAULT);
 		leftClick(p);
 		assertTrue(p.expanded());
 		return p.getPreferredSize().height;
@@ -2861,8 +2858,9 @@ public class MovementRowPanelTest
 		onEdt(() ->
 		{
 			final LocalDate day = LocalDate.of(2026, 8, 12);
-			final MovementRow live = liveBow(MovementRow.PriceSource.LIVE);
-			final MovementRowPanel p = new MovementRowPanel(live, null, MovementWindow.D30, day, LIVE_OFF);
+			final MovementRow live = liveBow();
+			final MovementRowPanel p = new MovementRowPanel(live, null, MovementWindow.D30, day, 0L, LIVE_OFF,
+				LinkBrowser::browse, null, false, ChangeText.DEFAULT);
 			leftClick(p);
 			final String block = MovementRowPanel.detail(live, MovementWindow.D30, day, 0L, LIVE_OFF, false);
 			assertEquals("the block, as the row's own window, day and switches write it", block,
@@ -2945,8 +2943,8 @@ public class MovementRowPanelTest
 	{
 		final int quantity = bank + inventory + worn + exchange;
 		return new MovementRow(4151, "Abyssal whip", quantity, false, 1_520_000L, 1_500_000L, 20_000L,
-			20_000d * 100.0 / 1_500_000d, 1_520_000L * quantity, null, null, null, null, null,
-			bank, inventory, worn, exchange);
+			20_000d * 100.0 / 1_500_000d, 1_520_000L * quantity, null, null, null,
+			bank, inventory, worn, exchange, null);
 	}
 
 	/**
@@ -2960,7 +2958,7 @@ public class MovementRowPanelTest
 	{
 		return new MovementRow(23975, name, 1, false, 16_694_766L, 18_300_000L, -1_605_234L,
 			-1_605_234d * 100.0 / 18_300_000d, 16_694_766L,
-			parts == null ? null : MovementRow.PriceSource.PARTS, parts);
+			parts == null ? null : MovementRow.PriceSource.PARTS, parts, null, 0, 0, 0, 0, null);
 	}
 
 	/** What a Crystal body reverts to: three Crystal armour seeds ({@code ItemMapping.ITEM_CRYSTAL_BODY}). */
@@ -2982,8 +2980,6 @@ public class MovementRowPanelTest
 	 */
 	private static MovementRow longDescription()
 	{
-		final Map<MovementWindow, MovementRow.PriceSource> sources = new EnumMap<>(MovementWindow.class);
-		sources.put(MovementWindow.D1, MovementRow.PriceSource.LIVE);
 		final Map<MovementWindow, LocalDate> days = new EnumMap<>(MovementWindow.class);
 		days.put(MovementWindow.D1, TRADED_DAY);
 		final GradedMove.Side buy = new GradedMove.Side(16_800_000L, 18_400_000L, 16_800_000d / 18_400_000d - 1d, 6,
@@ -2993,8 +2989,8 @@ public class MovementRowPanelTest
 		final GradedMove graded = new GradedMove(Grade.SOFT, GradeWords.volume(3), -1_605_234d / 18_300_000d,
 			18_300_000L, -1_605_234L, false, buy, sell, TRADED_DAY.plusDays(1L), TRADED_DAY, 17_500_000L);
 		return new MovementRow(23975, "Crystal body", 5, false, 16_694_766L, 18_300_000L, -1_605_234L,
-			-1_605_234d * 100.0 / 18_300_000d, 83_473_830L, MovementRow.PriceSource.LIVE, seeds(), sources, days,
-			new MovementRow.LiveFacts(16_800_000L, 16_600_000L, 517L, null), 3, 1, 1, 0, graded);
+			-1_605_234d * 100.0 / 18_300_000d, 83_473_830L, MovementRow.PriceSource.LIVE, seeds(), days, 3, 1, 1, 0,
+				graded);
 	}
 
 	/**
@@ -3023,16 +3019,15 @@ public class MovementRowPanelTest
 					MovementRow.PriceSource.ALCH);
 			case 5:
 				return new MovementRow(id, "Parts " + i, 1, false, 16_694_766L, 18_300_000L, -1_605_234L,
-					-1_605_234d * 100.0 / 18_300_000d, 16_694_766L, MovementRow.PriceSource.PARTS, seeds());
+					-1_605_234d * 100.0 / 18_300_000d, 16_694_766L, MovementRow.PriceSource.PARTS, seeds(), null, 0, 0,
+						0, 0, null);
 			case 6:
 			{
-				final Map<MovementWindow, MovementRow.PriceSource> sources = new EnumMap<>(MovementWindow.class);
-				sources.put(MovementWindow.D7, MovementRow.PriceSource.LIVE);
 				final Map<MovementWindow, LocalDate> days = new EnumMap<>(MovementWindow.class);
 				days.put(MovementWindow.D7, TRADED_DAY);
 				return new MovementRow(id, "Live " + i, 5, false, 16_694_766L, 18_300_000L, -1_605_234L,
-					-1_605_234d * 100.0 / 18_300_000d, 83_473_830L, MovementRow.PriceSource.LIVE, null, sources,
-					days, new MovementRow.LiveFacts(16_800_000L, 16_600_000L, 517L, null), 3, 1, 1);
+					-1_605_234d * 100.0 / 18_300_000d, 83_473_830L, MovementRow.PriceSource.LIVE, null,
+					days, 3, 1, 1, 0, null);
 			}
 			default:
 				return new MovementRow(id, "A very long item name that goes on and on and on for ever " + i, 1,

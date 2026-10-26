@@ -1,7 +1,5 @@
 package com.bankpricemovement;
 
-import java.util.Locale;
-
 /**
  * The four columns the sidebar's sort button offers, in the order the user gave them (addendum W, line W1;
  * {@code docs/bank-price-movement-addendum-W-2026-09-13.md}): <b>"1) Percent change 2) GP change 3) Item price
@@ -20,9 +18,9 @@ import java.util.Locale;
  * written by an older build still reads. Adding a constant is allowed - that is what W did - renaming one is
  * not.
  *
- * <p>{@link #parse(String)} takes the short verbs the dev bridge uses ({@code bpm sort=stack}) as well as the
- * labels and the constant names, so one code path serves the panel, the config and the terminal. Every verb
- * that ever worked still works, the pre-W labels ("% move", "gp move") included.
+ * <p>The short verbs the dev bridge takes ({@code bpm sort=stack}), the labels and the constant names are read by
+ * the bridge's own parser in the test source set; every verb that ever worked still works there, the pre-W labels
+ * ("% move", "gp move") included.
  *
  * <p>{@link #toString()} is the LABEL so RuneLite's config combo box reads "Percent change" rather than
  * "PERCENT_MOVE"; the stored value is unaffected because {@code ConfigManager} serialises an enum with
@@ -32,7 +30,7 @@ import java.util.Locale;
 public enum SortMode
 {
 	/** The percentage the unit price moved over the window. The default column ({@link RowFilter#DEFAULT}). */
-	PERCENT_MOVE("Percent change", "pct", "percent", "% move"),
+	PERCENT_MOVE("Percent change"),
 
 	/**
 	 * The gp the WHOLE STACK moved over the window ({@link MovementRow#holdingDeltaGp()}), under every switch
@@ -46,24 +44,22 @@ public enum SortMode
 	 *
 	 * <p><b>That changes the default ordering of this column for every existing user</b>: the deleted switch
 	 * defaulted to OFF, and OFF was the per-item reading. No stored {@code sortMode} moves - the constant, the
-	 * label and every alias are the ones they always were - but the list this column draws is ordered by a
+	 * label and every dev-bridge alias are the ones they always were - but the list this column draws is ordered by a
 	 * different number than it was before AO.
 	 */
-	GP_MOVE("gp change", "gp", "amount", "gp move"),
+	GP_MOVE("gp change"),
 
 	/** What ONE item costs, under every switch (addendum W reverted addendum V's line V1). */
-	UNIT_PRICE("Item price", "price", "unit"),
+	UNIT_PRICE("Item price"),
 
 	/** What the whole stack is worth: unit price times quantity ({@link MovementRow#holdingValue()}). */
-	STACK_VALUE("Stack price", "stack", "stacks", "holding");
+	STACK_VALUE("Stack price");
 
 	private final String label;
-	private final String[] aliases;
 
-	SortMode(final String label, final String... aliases)
+	SortMode(final String label)
 	{
 		this.label = label;
-		this.aliases = aliases;
 	}
 
 	/**
@@ -72,51 +68,6 @@ public enum SortMode
 	public String label()
 	{
 		return label;
-	}
-
-	/**
-	 * Reads a column out of user or dev-bridge text: the constant name ("STACK_VALUE"), the label ("Stack
-	 * price"), or one of the short verbs - "pct" / "percent" / "% move", "gp" / "amount" / "gp move", "price"
-	 * / "unit", "stack" / "stacks" / "holding". Trimmed and case-insensitive.
-	 *
-	 * <p>The pre-addendum-W labels are among those verbs on purpose: "% move" and "gp move" were what the
-	 * button printed for two years of scripts, and a rename of the words on screen is no reason for
-	 * {@code bpm sort="% move"} to stop answering.
-	 *
-	 * @param text anything, including null
-	 * @return the column, or null when the text names none (the caller keeps its current column)
-	 */
-	public static SortMode parse(final String text)
-	{
-		if (text == null)
-		{
-			return null;
-		}
-
-		final String key = text.trim().toLowerCase(Locale.ENGLISH);
-		if (key.isEmpty())
-		{
-			return null;
-		}
-
-		for (final SortMode mode : values())
-		{
-			if (key.equals(mode.label.toLowerCase(Locale.ENGLISH))
-				|| key.equals(mode.name().toLowerCase(Locale.ENGLISH)))
-			{
-				return mode;
-			}
-
-			for (final String alias : mode.aliases)
-			{
-				if (key.equals(alias))
-				{
-					return mode;
-				}
-			}
-		}
-
-		return null;
 	}
 
 	@Override

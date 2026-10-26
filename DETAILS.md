@@ -183,8 +183,9 @@ change) and one for the percentage; the lit button is the one in use, and pressi
 *Normal* is the size every earlier release drew. The columns widen with the size so the figures still line up from
 row to row, and a row grows taller only when a bigger figure needs the room; the item's name, the stack value, the
 picture and the small word under the percentage keep their sizes. *Opacity* sets how solid the gp change is, from
-20 to 100: 100 is the same colour as the percentage, and lower numbers fade it toward the card's grey. It starts at 55,
-a little more solid than the 45 earlier releases used. Type a whole number and press Enter, or click anywhere else; a
+20 to 100: 100 is the same colour as the percentage, and lower numbers fade it toward the card's grey. It starts at 69
+(1.2.2; it was 55 in 1.2.1 and 45 before that). Anyone still on 1.2.1's 55 is moved to 69 once, on both tabs, when 1.2.2 first
+starts; any other number you chose stays, and so does a 55 you pick afterwards. Type a whole number and press Enter, or click anywhere else; a
 box holding anything else turns red and is not saved. The Net Worth History has its own three settings, set in its own
 options menu and independent of these (see *Net Worth History* below). These are in the menus only, not on RuneLite's
 settings page, and *Reset to default* in the settings menu puts all six back.
@@ -206,7 +207,8 @@ your own local dates, and nothing is recorded while you sit at the login screen.
 
 **The card** keeps its place and its size, but in the Net Worth History it compares your total now with the
 total you actually had: *30d vs your 27 Aug total*. If there is no reading on that exact day, it uses the one
-before it and says how far back that is: *1d vs your 25 Sep total (3 days)*. A window your record is not long
+before it and says how far back that is: *1d vs your 25 Sep total (3 days)*. When a transfer is marked after that
+day, the card measures from the corrected figure and names the day alone: *30d vs 27 Aug*. A window your record is not long
 enough for yet is greyed, its move reads a dash, and the footnote says when it fills - *30d from 17 Oct* -
 though you can still click it. Instead of *Guide prices update every few hours*, the last line says how long your
 record is: *37 days recorded since 18 Aug*.
@@ -237,19 +239,22 @@ shows its year. The days come in pages of 250, like the items.
 carrying, each split into tradeable items, coins and platinum tokens, untradeables made from tradeable items,
 and alch-only untradeables, and since 1.0.9 the items and the coins in your Grand Exchange offers - so the Net
 Worth History always counts exactly what your settings count. Readings saved before 1.0.9 did not count offers,
-so the tracker hides them by default and your first bank read on 1.0.9 is day one. *Include days before v1.0.9*,
-in the settings menu's *Net worth chart* section, shows them again after a short confirmation (those days did not count open G.E.
-orders, so their totals may read low); it appears only if you have such days, and it is remembered. Nothing is
-deleted. The same happens once more in 1.1.1 for players whose bank placeholders were counted as items (see
-*What is left out of the list* below): if your first bank read on 1.1.1 finds any, the days before it read high
-and are hidden behind *Include days before v1.1.1*; if it finds none, nothing is hidden. Turn off
+so the tracker hides them by default and your first bank read on 1.0.9 is day one. *Restore history* in *History options*
+(below) shows them again after a short confirmation (those days did not count open G.E. orders, so their totals may read
+low), and so does *Include days before v1.0.9* in the settings menu's *Net worth chart* section; it appears only if you have
+such days, and it is remembered. Nothing is lost. The same happens once more in 1.1.1 for players whose bank placeholders
+were counted as items (see *What is left out of the list* below): if your first bank read on 1.1.1 finds any, the days
+before it read high and are hidden until you *Restore history* (or tick *Include days before v1.1.1*); if it finds none,
+nothing is hidden. Turn off
 *Include coins and platinum tokens* and the whole line redraws without coins, past days included; it never shows
 up as a one-day loss. The options icon at the right end of the *Bank net worth history* line opens *History
-options* - *Include days before ...* (only while such days exist) and *Single chart colour*, the same two items as in the
-settings menu, then the tab's own *GP change size*, *Opacity* and *Percent change size* (below) - and while the days before
-v1.1.1 are hidden, a small *i* disc beside the icon says on hover that they
-might read high because of the bank placeholder bug and that you can restore them in settings; pressing it asks the same
-*Include* question as the menu item, and it goes away once you include them. A reading is priced the way the card priced it that day, and the guide-price figure is
+options* - *Single chart colour*, the same as in the settings menu, then the tab's own *GP change size*, *Opacity* and
+*Percent change size* (below), then one row with *Reset history* hard left and *Restore history* hard right (see *Reset
+history* below) - and while the days before v1.1.1 are hidden, a small *i* disc beside the icon says on hover that they
+might read high because of the bank placeholder bug and that *Restore history* in the History options brings them back;
+pressing it asks the same *Include* question as the settings menu item, and it goes away once you restore them. The same
+disc stands there while days *you* hid (see *Reset history*) are hidden, and says so: *Days before 26 Sep are hidden because
+you reset your history. Restore history in the History options brings them back.* A reading is priced the way the card priced it that day, and the guide-price figure is
 saved beside it, so turning *Use live prices* off redraws the line on guide prices alone. A day saved with live
 prices off has only its guide figure, so turning them on later can show a small step at the first live day.
 
@@ -259,8 +264,43 @@ colour*, and set the day list on their own: the percentage on each day's first l
 *Normal*, *Large* and *Largest* and the gp change on its second line is 8, 10, 12 or 13 px. *Normal* is what the tab always
 drew and the row is as tall as it always was; a bigger size makes every day row taller by exactly what its figure needs, so the
 list stays even. The dates, the totals and the exact totals keep their sizes. *Opacity* colours the gp figure on every day and
-the gp figure over the chart (which keeps its size); it starts at 55, where this tab drew them at 45. Nothing you set here moves
+the gp figure over the chart (which keeps its size); it starts at 69, like the *Items* tab's (this tab drew them at 45 before
+1.2.1 and at 55 in it). Nothing you set here moves
 the *Items* tab, and nothing there moves this one.
+
+**Transfers between your accounts** (1.2.2). Sent 200m to your alt, and your main's chart fell off a cliff? Right-click that day's
+row in the list and pick *This was a transfer: -200m* - the amount is what the day's change was, taken as exactly the coins that moved
+when they were most of it - or *This was a transfer of another amount...*, which asks for it: a minus is gold that left, a plus gold
+that arrived, and with no sign the day's own direction (*200m*, *1.5m*, *12,345,678*; the box turns red for anything else, and for
+0). The days before it are then drawn as if the gold had already moved, so the line runs smooth, and every *change* - the line over
+the chart, the card at the top, each day's row - stops counting it; every *total* stays what you really had, so the list and the card
+still read real figures. The marked day's row reads its real total, *0.0%* on a grey edge when the transfer was the whole change, the
+amount in grey where the gp change goes, and *vs 19 Sep, transfer* with the word in orange. The same works on the account that
+*received* it (a plus). Right-click a marked day for *Not a transfer* or *Change the amount...*. A transfer is a note kept beside your
+readings in its own small file, `notes-<account>-<profile>.json`, written only when you mark, change or remove one; no reading is
+changed or removed, and an older build simply ignores the file. A note of coins counts only while *Include coins and platinum
+tokens* is on, as the dip it explains would not show otherwise. If shifting the days would draw any of them below zero - the account
+earned the gold it sent - the chart draws your real totals instead, with the step into the marked day dotted and a small orange
+mark; the figures are corrected either way. Hovering the chart names the figure the point is drawn at in the line above it; and a
+point drawn at a shifted total - a day before a transfer - also shows a hover with what you really had that day, the exact
+total and *gp at the time* (*931,224,820 gp at the time*; a mask in its place while amounts are hidden). A point drawn at its own
+total has no hover.
+
+**Reset history** (1.2.2). *Reset history*, hard left on the bottom row of *History options* (hover: *Start the chart again from
+today. Nothing is lost.*), hides every day before today after a question (*Reset your history? You can bring it back with Restore
+history.*, with *Reset* and *Cancel*), and right-clicking any day offers *Reset history from this day*, which asks the same way
+(*Reset your history before Sun 20 Sep? You can bring it back with Restore history.*). Nothing is lost: *Restore history*, hard
+right on the same row (hover: *Bring back the days a reset hid.*), shows every day again - at once for a reset of yours, with no
+question, since you hid them, and after the same warning as before for the days the automatic restarts of 1.0.9 and 1.1.1 hid (a
+reset of yours over one of those restarts keeps it: *Restore history* then asks that warning first, because those days read wrong) -
+and the transfers you marked with them. It is on whenever days are hidden for any reason and not already shown, and greyed when nothing
+is hidden. A reset and its restore belong to the account you are playing: resetting your alt never hides your main's restored days
+again, and restoring your main never brings back the alt's - each account keeps its own, in its own files, and finds them as it left them
+after a restart. Resetting again later hides from the new day; resetting from a day earlier or later than a reset you made
+before simply moves it. While you have days hidden the card's longer windows are greyed until the record is old enough
+(*30d from 25 Oct*), as they are for any short record. The settings menu's *Include days before ...* tick, in its *Net worth chart*
+section, stays for the days the automatic restarts of 1.0.9 and 1.1.1 hid (it is one setting for every account, as it always was);
+there is no tick for a reset of yours - *Restore history* is its way back.
 
 **The chart remembers its range.** Pick *7d*, *30d*, *90d* or *all* under the chart, or change the card's window, and the chart
 opens on that range the next time you start RuneLite. Until you have chosen one, the card's window picks it, as it always did.
@@ -510,7 +550,8 @@ Most of them are also controls in the panel's own **Options** menu, behind the s
 top-right corner: the three that decide what the card draws, a line, and the *Up colour* and *Down colour* swatches,
 then *Colour presets* (see below), then *Use live prices* and the four that decide what the card counts and which stacks
 get a row, then *Preset price ranges* as three boxes, then a *Net worth chart* section with
-*Single chart colour* and, if you have hidden days, *Include days before v1.0.9* (or *v1.1.1*, whichever applies to you). A swatch opens
+*Single chart colour* and, if you have days hidden by an automatic restart, *Include days before v1.0.9* (or *v1.1.1*; *Restore history* in
+the History options does the same, and is the only way back from a reset of yours). A swatch opens
 RuneLite's colour picker beside the sidebar, and the panel changes as you drag. *Reset to default* puts the preset
 ranges and the colours back (not Slot 1), and *OK* closes the menu. *Show preset price ranges* has no entry of its own: the band button in the sidebar is
 the switch, and this row is where it reads back. The sidebar opens on the tab you used last.
@@ -538,6 +579,7 @@ Everything is under `~/.runelite/plugin-data/bank-portfolio-tracker/`:
 |---|---|
 | `bank-<accountHash>-<profileType>.json` | the last bank seen, one file per account and profile |
 | `history-<accountHash>-<profileType>.json` | your bank net worth, one reading a day, one file per account and profile |
+| `notes-<accountHash>-<profileType>.json` | the days you marked as transfers between your accounts, and which of your resets you restored (1.2.2), only if you marked or restored any |
 | `mapping.json` | the item id -> wiki name table (refreshed weekly) |
 | `revindex.json` | the guide page's revision history (refreshed every six hours) |
 | `baseline-D1.json` … `baseline-D180.json` | one guide table per window |

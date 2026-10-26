@@ -11,6 +11,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.function.Consumer;
 import java.util.function.Predicate;
 import net.runelite.api.Client;
 import net.runelite.api.GameState;
@@ -31,6 +32,7 @@ import net.runelite.client.config.RuneScapeProfileType;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ClientShutdown;
 import net.runelite.client.events.ConfigChanged;
+import net.runelite.client.events.ProfileChanged;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
@@ -113,9 +115,8 @@ public class BankPriceMovementPlugin extends Plugin
 	/**
 	 * The two stored keys addendum Q's gear menu still has (Q3), which travel with the three below as one
 	 * {@link ViewOptions}. The menu opened with a third, {@code holdingOnRows}, which addendum AO deleted once
-	 * addendum AN's three-line row printed the stack AND the item and left it nothing to choose - see
-	 * {@link #LEGACY_HOLDING_KEY}. They are named here for the same three users as the hero keys above - the
-	 * {@code ConfigChanged} route, the pref seam the gear's check items write through and
+	 * addendum AN's three-line row printed the stack AND the item and left it nothing to choose. They are named
+	 * here for the same three users as the hero keys above - the {@code ConfigChanged} route, the pref seam the gear's check items write through and
 	 * {@link #isOptionKey(String)} - but they take a DIFFERENT road from there: both change what the figures are,
 	 * not merely whether they are painted, so the service is told as well as the panel.
 	 */
@@ -234,15 +235,16 @@ public class BankPriceMovementPlugin extends Plugin
 	static final String HISTORY_GP_OPACITY_KEY = "historyGpOpacity";
 	static final String HISTORY_RANGE_KEY = "historyRange";
 	/**
-	 * Addendum N's look switch, which addendum O deleted (O1). The key survives only as something to SWEEP:
-	 * see {@link #unstickLook()}.
+	 * Release 1.2.2 part 4's marker: whether the one-time move of a stored opacity of 55 to the new default of 69 has run for this
+	 * profile ({@link #switchOpacityTo69()}). A RAW key in the group - no {@code @ConfigItem} declares it, on purpose: RuneLite's own Reset
+	 * on the plugin's page writes every declared item's default back ({@code ConfigManager.setDefaultConfiguration}, override on), which
+	 * would put a declared marker back to false and move the next 55 the player picks. An absent key is "not done", which is what a 1.2.1
+	 * profile holds. It has no road of its own in {@link #onConfigChanged}: only start-up and a switch of RuneLite profile
+	 * ({@link #onProfileChanged}) write it.
 	 */
-	static final String LEGACY_LOOK_KEY = "look";
-	/**
-	 * Addendum Q's stack-value switch (Q6), which addendum AO deleted (AO1). The key survives only as something
-	 * to SWEEP: see {@link #unstickHolding()}.
-	 */
-	static final String LEGACY_HOLDING_KEY = "holdingOnRows";
+	static final String OPACITY_69_DONE_KEY = "opacity69Done";
+	/** What the opacity default was in release 1.2.1: the value a 1.2.1 profile holds because RuneLite wrote the default there. */
+	private static final int OPACITY_DEFAULT_IN_1_2_1 = 55;
 	/**
 	 * Addendum AH's hover switch, which release 1.2.0 deleted at the user's word (2026-10-08): the sidebar's hovers
 	 * are always on. The key survives only as something to SWEEP: see {@link #unstickShowHoverText()}.
@@ -360,7 +362,7 @@ public class BankPriceMovementPlugin extends Plugin
 
 	/**
 	 * The logged-in account's identity, cached on the CLIENT thread whenever it is read there and used off it
-	 * by the dev bridge's synthetic {@code bank=} (see {@link BpmCommands.Account}). {@code volatile} because
+	 * by the dev bridge's synthetic {@code bank=} (see {@link BpmDevBridge.Factory}). {@code volatile} because
 	 * the writer is the client thread and the reader is the EDT.
 	 */
 	private volatile long accountHash;
@@ -384,9 +386,10 @@ public class BankPriceMovementPlugin extends Plugin
 	private volatile String sentProfile = "";
 
 	/**
-	 * Non-null only while {@link #configPrefs()} is inside a write of its own - {@code save}'s five
-	 * {@code setConfiguration} calls, {@code saveHero}'s three, {@code saveOptions}' six or
-	 * {@code savePresets}' one - and it holds the thread making them.
+	 * Non-null only while {@link #configPrefs()} is inside a write of its own - one {@code setConfiguration} call,
+	 * which {@link #saveColour} marks (so {@code save}'s five, {@code saveHero}'s three and {@code saveOptions}' five
+	 * are five, three and five marked writes, one after another on the one thread) - and
+	 * it holds the thread making it.
 	 * {@code ConfigManager} posts {@code ConfigChanged} SYNCHRONOUSLY, on the caller's own thread and only when
 	 * the value really changed (clone ConfigManager.java:874-901), so a two-key change - "Clear price range"
 	 * writes {@code gpMin} and {@code gpMax} - re-entered {@link #onConfigChanged} after the FIRST write and
@@ -538,14 +541,14 @@ public class BankPriceMovementPlugin extends Plugin
 		// this run's service has never been given. shutDown clears them too; this does not depend on it having run.
 		resetBankHold();
 		// First, before anything reads the config: a profile written by the pre-addendum-K build still says
-		// window=H24, which no longer names a constant (K9), one written by the addendum-N build still
-		// holds a look= this build has no item for (O1), one written by any build up to addendum AN holds a
-		// holdingOnRows= whose item went the same way (AO1), and one written by any build from addendum AH to 1.1.2
-		// may hold a showHoverText= whose item went the same way in 1.2.0.
+		// window=H24, which no longer names a constant (K9), and one written by any build from addendum AH to 1.1.2
+		// may hold a showHoverText= whose item went the same way in 1.2.0. (The look= of the addendum-N build and
+		// the holdingOnRows= of the builds up to addendum AN were swept here until release 1.2.2 took the sweeps out:
+		// both items went before the first build the Hub served, so no player's profile holds either.)
 		unstickWindow();
-		unstickLook();
-		unstickHolding();
 		unstickShowHoverText();
+		// 1.2.2 part 4: the opacity default is 69 for everyone, 1.2.1 players included - before the panel reads it.
+		switchOpacityTo69();
 		// getPluginDirectory() is RuneLite's own: it answers a Filepath rooted at
 		// ~/.runelite/plugin-data/bank-portfolio-tracker/, moves the legacy folder in on the first call, and
 		// throws if the disk refuses. Handed over as a method reference rather than called here, so this method
@@ -629,12 +632,13 @@ public class BankPriceMovementPlugin extends Plugin
 		// re-check's cooldown on a local redraw.
 		panel.setBankRefresh(this::refreshHeldBank);
 		// Developer mode only (see BpmDevBridge): the Effect Lab's /bpm route drives this panel through it. A
-		// Hub client binds developerMode false, so the handler stays null and nothing can reach the sidebar.
-		if (developerMode)
+		// Hub client binds developerMode false, so the handler stays null and nothing can reach the sidebar; the
+		// handler's own code is in the test source set, which the dev launcher installs a factory from.
+		if (developerMode && BpmDevBridge.factory != null)
 		{
-			// The shots folder sits inside this plugin's own directory, asked for only when a shot is taken.
-			BpmDevBridge.handler = new BpmCommands(panel, service, gson, account(),
-				() -> getPluginDirectory().joinSegment(BpmCommands.SHOT_DIR), panel::isShowing);
+			// The plugin's own directory is handed over as it is, asked for only when a shot is taken.
+			BpmDevBridge.handler = BpmDevBridge.factory.create(panel, service, gson, () -> accountHash,
+				() -> profileType, this::getPluginDirectory, panel::isShowing);
 		}
 		navButton = NavigationButton.builder()
 			.tooltip("2h Bank Portfolio Tracker")
@@ -763,77 +767,20 @@ public class BankPriceMovementPlugin extends Plugin
 	 * invalidates the proxy cache and posts a {@code ConfigChanged} (ConfigManager.java:972-993), after which
 	 * the interface default applies cleanly and the first chip click writes a current constant.
 	 *
-	 * <p><b>The test is {@code name()}, not {@link MovementWindow#parse(String)}.</b> {@code parse} is generous
-	 * on purpose - it folds "H24" and "1h" onto D1 so an old {@code /bpm} script keeps working - but generosity
-	 * here would be wrong: what matters is whether {@code ConfigManager} can read the value back, and
-	 * {@code ConfigManager} calls {@code Enum.valueOf}, which knows only the constant names. A string {@code
-	 * parse} understands and {@code Enum.valueOf} does not is exactly the case this guard exists for.
+	 * <p><b>The test is {@code name()}, not a generous reading of the text.</b> The dev bridge's window parser (in
+	 * the test source set) is generous on purpose - it folds "H24" and "1h" onto D1 so an old {@code /bpm} script
+	 * keeps working - but generosity here would be wrong: what matters is whether {@code ConfigManager} can read
+	 * the value back, and {@code ConfigManager} calls {@code Enum.valueOf}, which knows only the constant names. A
+	 * string such a parser understands and {@code Enum.valueOf} does not is exactly the case this guard exists for.
 	 *
 	 * <p>Package-private so {@code BankPriceMovementWiringTest} can drive it with a mocked manager; the sweep
-	 * itself is {@link #dropStoredKey}, which {@link #unstickLook()}, {@link #unstickHolding()} and
-	 * {@link #unstickShowHoverText()} share.
+	 * itself is {@link #dropStoredKey}, which {@link #unstickShowHoverText()} shares.
 	 */
 	void unstickWindow()
 	{
 		dropStoredKey("window", BankPriceMovementPlugin::namesAConstant,
 			"it is not one of the five windows this build knows, so the default ("
 				+ MovementWindow.DEFAULT.name() + ") applies");
-	}
-
-	/**
-	 * O1. Drops {@code bankpricemovement.look} if a profile still holds it. Addendum N put two sidebar designs
-	 * behind that item so the user could pick a winner; the user picked Ticker, the item is gone and the panel
-	 * has one design - so whichever of the two names a profile stored is a value with no item, no reader and no
-	 * way for a user to clear it by hand (RuneLite's config panel only lists the items the interface declares).
-	 *
-	 * <p>Unlike {@link #unstickWindow()} this is housekeeping and not a repair: an orphaned key breaks nothing
-	 * while it sits there, because nothing reads it any more. It goes anyway, with ONE line at INFO, so a
-	 * profile that has been through the whole wave ends up holding exactly the keys this build declares -
-	 * and so a future item that happened to reuse the name could never inherit a value from the deleted enum.
-	 * {@code ConfigManager.unsetConfiguration} drops the value, invalidates the proxy cache and posts a
-	 * {@code ConfigChanged} (ConfigManager.java:972-993); that event's key is not one of ours, so
-	 * {@link #onConfigChanged} treats it as a filter change and re-applies the filter it already has, which is
-	 * a no-op by the time it lands.
-	 *
-	 * <p>Package-private so {@code BankPriceMovementWiringTest} can drive it with a mocked manager; the sweep
-	 * itself is {@link #dropStoredKey}, which {@link #unstickWindow()}, {@link #unstickHolding()} and
-	 * {@link #unstickShowHoverText()} share.
-	 * Nothing stored here is valid any more, so the test it passes refuses every value rather than naming one.
-	 */
-	void unstickLook()
-	{
-		dropStoredKey(LEGACY_LOOK_KEY, stored -> false,
-			"addendum O made Ticker the only design, so the key has no item behind it any more");
-	}
-
-	/**
-	 * AO1. Drops {@code bankpricemovement.holdingOnRows} if a profile still holds it. Addendum Q put the choice
-	 * between a row's per-ITEM reading and its per-STACK one behind that item (Q6); addendum AN's three-line row
-	 * prints BOTH - the stack on line two, one item on line three - so by the time the user saw it in a client
-	 * the switch reached nothing drawn, and the last thing it still decided, which figure
-	 * {@link SortMode#GP_MOVE} compares, is now settled the other way for good: the gp column follows the STACK
-	 * whatever a profile says. So whichever of true or false a profile stored is a value with no item, no reader
-	 * and no way for a user to clear it by hand (RuneLite's config panel only lists the items the interface
-	 * declares).
-	 *
-	 * <p>Like {@link #unstickLook()} and unlike {@link #unstickWindow()} this is housekeeping and not a repair:
-	 * an orphaned key breaks nothing while it sits there, because nothing reads it any more. It goes anyway, with
-	 * ONE line at INFO, so a profile that has been through the whole wave ends up holding exactly the keys this
-	 * build declares - and so a future item that happened to reuse the name could never inherit a value from the
-	 * deleted switch. {@code ConfigManager.unsetConfiguration} drops the value, invalidates the proxy cache and
-	 * posts a {@code ConfigChanged} (ConfigManager.java:972-993); that event's key is no longer one of ours, so
-	 * {@link #onConfigChanged} treats it as a filter change and re-applies the filter it already has, which is a
-	 * no-op by the time it lands.
-	 *
-	 * <p>Package-private so {@code BankPriceMovementWiringTest} can drive it with a mocked manager; the sweep
-	 * itself is {@link #dropStoredKey}, which {@link #unstickWindow()}, {@link #unstickLook()} and
-	 * {@link #unstickShowHoverText()} share. Nothing
-	 * stored here is valid any more, so the test it passes refuses every value rather than naming one.
-	 */
-	void unstickHolding()
-	{
-		dropStoredKey(LEGACY_HOLDING_KEY, stored -> false,
-			"addendum AN's row prints the stack and the item both, so the key has no item behind it any more");
 	}
 
 	/**
@@ -845,9 +792,8 @@ public class BankPriceMovementPlugin extends Plugin
 	 * interface declares). A profile that had turned the switch ON loses nothing by it: the hovers it asked for are
 	 * on for everyone now.
 	 *
-	 * <p>Like {@link #unstickLook()} and {@link #unstickHolding()}, and unlike {@link #unstickWindow()}, this is
-	 * housekeeping and not a repair: an orphaned key breaks nothing while it sits there, because nothing reads it
-	 * any more. It goes anyway, with ONE line at INFO, so a profile that has been through the whole wave ends up
+	 * <p>Unlike {@link #unstickWindow()} this is housekeeping and not a repair: an orphaned key breaks nothing while
+	 * it sits there, because nothing reads it any more. It goes anyway, with ONE line at INFO, so a profile that has been through the whole wave ends up
 	 * holding exactly the keys this build declares - and so a future item that happened to reuse the name could
 	 * never inherit a value from the deleted switch. It is the ACTIVE profile's key that goes, as it is for the
 	 * other sweeps - {@code ConfigManager} reaches no other - so a profile the player switches to later is swept the
@@ -867,10 +813,9 @@ public class BankPriceMovementPlugin extends Plugin
 	}
 
 	/**
-	 * The one sweep behind {@link #unstickWindow()}, {@link #unstickLook()}, {@link #unstickHolding()} and
-	 * {@link #unstickShowHoverText()}: read
+	 * The one sweep behind {@link #unstickWindow()} and {@link #unstickShowHoverText()}: read
 	 * one stored key of this plugin's group, and unset it unless it is empty or {@code stillValid} accepts it.
-	 * All four callers wanted the same five steps - read, ignore nothing-stored, test, say so once at INFO,
+	 * Both callers wanted the same five steps - read, ignore nothing-stored, test, say so once at INFO,
 	 * unset - and every step of each
 	 * has to survive a {@link ConfigManager} that is missing (a field never injected, as the unit tests leave it)
 	 * or that throws, because this runs first thing in {@link #startUp()} and a failed sweep may not take the
@@ -910,6 +855,69 @@ public class BankPriceMovementPlugin extends Plugin
 		catch (RuntimeException e)
 		{
 			log.debug("could not unset the stored {}", key, e);
+		}
+	}
+
+	/**
+	 * Release 1.2.2 part 4 (the user's 1a: the gp figures' default opacity is 69 for everyone, existing players included). RuneLite
+	 * writes a missing default into the profile when a plugin loads ({@code ConfigManager.setDefaultConfiguration}), so every 1.2.1
+	 * profile holds {@code gpBrightness} = 55 and {@code historyGpOpacity} = 55 as the OLD DEFAULT, indistinguishable from a choice;
+	 * changing the interface's default alone would leave all of them at 55. So, ONCE per profile: when {@link #OPACITY_69_DONE_KEY}
+	 * is not yet true, each of the two keys that holds exactly 55 is set to 69 - any other stored value is a choice and stays - and
+	 * the marker is set. A player who later picks 55 keeps it, because the marker is already true. A fresh profile holds 69 (the new
+	 * default) and only gets its marker. Runs first in {@link #startUp()}, before the panel reads the config, so the first paint is
+	 * in 69; the writes post {@code ConfigChanged} before this plugin's handlers are registered, so nothing re-reads them. It runs again
+	 * for the profile a switch lands on ({@link #onProfileChanged}), where the handlers ARE registered and the panel follows the writes.
+	 *
+	 * <p>Every step survives a {@link ConfigManager} that is missing or throws, as the sweeps beside it do: a failed switch is
+	 * retried on the next start (the marker was not set) and may not take the plugin down. Package-private for the wiring test.
+	 */
+	void switchOpacityTo69()
+	{
+		final ConfigManager cm = configManager;
+		if (cm == null)
+		{
+			return;
+		}
+		try
+		{
+			if ("true".equals(cm.getConfiguration(BankPriceMovementConfig.GROUP, OPACITY_69_DONE_KEY)))
+			{
+				return;
+			}
+			for (final String key : new String[]{GP_BRIGHTNESS_KEY, HISTORY_GP_OPACITY_KEY})
+			{
+				if (String.valueOf(OPACITY_DEFAULT_IN_1_2_1).equals(cm.getConfiguration(BankPriceMovementConfig.GROUP, key)))
+				{
+					log.info("bank-portfolio-tracker: the stored {} was release 1.2.1's default, {} - now {}", key,
+						OPACITY_DEFAULT_IN_1_2_1, ChangeText.DEFAULT_BRIGHTNESS);
+					cm.setConfiguration(BankPriceMovementConfig.GROUP, key, ChangeText.DEFAULT_BRIGHTNESS);
+				}
+			}
+			cm.setConfiguration(BankPriceMovementConfig.GROUP, OPACITY_69_DONE_KEY, true);
+		}
+		catch (RuntimeException e)
+		{
+			log.debug("could not switch the stored opacity to {}", ChangeText.DEFAULT_BRIGHTNESS, e);
+		}
+	}
+
+	/**
+	 * Part 4 review fix: the one-time opacity move for the profile RuneLite has just switched to. {@link #startUp()} covers only the
+	 * profile active when the client starts, and in 1.13.4 {@code PluginManager.onProfileChanged} only refreshes the plugin list,
+	 * starting or stopping a plugin whose enabled state differs between the two profiles - one enabled in both is NOT restarted, so a
+	 * second 1.2.1 profile met in-session would stay at 55 until some later start found it active. {@code ConfigManager.switchProfile}
+	 * posts this event last, after it has loaded the new profile and fired a {@code ConfigChanged} for each key that differed, so the
+	 * read and the writes here are the new profile's and the panel follows them on {@link #onConfigChanged}'s ordinary road. The bus
+	 * iterates the subscribers it held when the event was posted, so a plugin the same switch has just turned off is still called here:
+	 * with no panel it is not running, and it writes nothing.
+	 */
+	@Subscribe
+	public void onProfileChanged(ProfileChanged event)
+	{
+		if (panel != null)
+		{
+			switchOpacityTo69();
 		}
 	}
 
@@ -1890,14 +1898,6 @@ public class BankPriceMovementPlugin extends Plugin
 		{
 			return 31 * (31 * Long.hashCode(bank) + Long.hashCode(inventory)) + Long.hashCode(worn);
 		}
-
-		/** The three sums in hex, for the client log and a failing test's message. */
-		@Override
-		public String toString()
-		{
-			return "Fingerprint{bank=" + Long.toHexString(bank) + ", inventory=" + Long.toHexString(inventory)
-				+ ", worn=" + Long.toHexString(worn) + '}';
-		}
 	}
 
 	/**
@@ -2033,11 +2033,7 @@ public class BankPriceMovementPlugin extends Plugin
 		if (isHeroKey(event.getKey()))
 		{
 			final HeroVisibility hero = heroFromConfig();
-			final BankPriceMovementPanel card = panel;
-			if (card != null)
-			{
-				SwingUtilities.invokeLater(() -> card.applyHeroVisibility(hero));
-			}
+			toPanel(card -> card.applyHeroVisibility(hero));
 			return;
 		}
 		if (isOptionKey(event.getKey()))
@@ -2054,11 +2050,7 @@ public class BankPriceMovementPlugin extends Plugin
 			{
 				withOptions.setOptions(options);
 			}
-			final BankPriceMovementPanel view = panel;
-			if (view != null)
-			{
-				SwingUtilities.invokeLater(() -> view.applyOptions(options));
-			}
+			toPanel(view -> view.applyOptions(options));
 			return;
 		}
 		if (isPresetKey(event.getKey()))
@@ -2070,11 +2062,7 @@ public class BankPriceMovementPlugin extends Plugin
 			// there is nothing for the service to recompute. The boxes' own write comes back this way only when
 			// it was not this thread's (see prefsWriter) - the gear menu has already applied the value itself.
 			final BandPresets presets = presetsFromConfig();
-			final BankPriceMovementPanel chips = panel;
-			if (chips != null)
-			{
-				SwingUtilities.invokeLater(() -> chips.applyPresets(presets));
-			}
+			toPanel(chips -> chips.applyPresets(presets));
 			return;
 		}
 		if (isFoldKey(event.getKey()))
@@ -2085,13 +2073,9 @@ public class BankPriceMovementPlugin extends Plugin
 			// no row. Not the option road: no figure is recomputed. The band button's own press comes back this
 			// way only when it was not this thread's (see prefsWriter), the press having already moved the header.
 			final boolean open = foldOpenFromConfig();
-			final BankPriceMovementPanel shape = panel;
-			if (shape != null)
-			{
-				// setFoldOpen and not pressFold: this IS the config, so writing it back would be a round trip that
-				// says nothing, and on the settings page's own write it would be a second write of the same value.
-				SwingUtilities.invokeLater(() -> shape.setFoldOpen(open));
-			}
+			// setFoldOpen and not pressFold: this IS the config, so writing it back would be a round trip that
+			// says nothing, and on the settings page's own write it would be a second write of the same value.
+			toPanel(shape -> shape.setFoldOpen(open));
 			return;
 		}
 		if (isStartTabKey(event.getKey()))
@@ -2100,12 +2084,8 @@ public class BankPriceMovementPlugin extends Plugin
 			// built, so the panel is told and nobody else - no figure is recomputed, no list is asked for, and the
 			// tab that is showing does not change.
 			final SidebarView tab = startTabFromConfig();
-			final BankPriceMovementPanel shape = panel;
-			if (shape != null)
-			{
-				// setStartTab and not pressStartTab: this IS the config, so writing it back would say nothing.
-				SwingUtilities.invokeLater(() -> shape.setStartTab(tab));
-			}
+			// setStartTab and not pressStartTab: this IS the config, so writing it back would say nothing.
+			toPanel(shape -> shape.setStartTab(tab));
 			return;
 		}
 		if (isLegacyKey(event.getKey()))
@@ -2114,13 +2094,9 @@ public class BankPriceMovementPlugin extends Plugin
 			// sidebar's shape, so the panel is told and nobody else. No figure is recomputed - the days were read
 			// from the file long ago and only which of them are drawn changes - so the service is never told.
 			final boolean include = includeLegacyFromConfig();
-			final BankPriceMovementPanel shape = panel;
-			if (shape != null)
-			{
-				// setIncludeLegacy and not pressLegacy: this IS the config, so writing it back would say nothing, and
-				// pressLegacy would ask the reader the question again for a change they already answered.
-				SwingUtilities.invokeLater(() -> shape.setIncludeLegacy(include));
-			}
+			// setIncludeLegacy and not pressLegacy: this IS the config, so writing it back would say nothing, and
+			// pressLegacy would ask the reader the question again for a change they already answered.
+			toPanel(shape -> shape.setIncludeLegacy(include));
 			return;
 		}
 		if (isColourKey(event.getKey()))
@@ -2130,12 +2106,8 @@ public class BankPriceMovementPlugin extends Plugin
 			// whichever one changed: the panel takes the pair, and the one that did not change comes back as it was.
 			final Color up = upColourFromConfig();
 			final Color down = downColourFromConfig();
-			final BankPriceMovementPanel look = panel;
-			if (look != null)
-			{
-				// applyMoveColours and not the picker's own path: this IS the config, so writing it back would say nothing.
-				SwingUtilities.invokeLater(() -> look.applyMoveColours(up, down));
-			}
+			// applyMoveColours and not the picker's own path: this IS the config, so writing it back would say nothing.
+			toPanel(look -> look.applyMoveColours(up, down));
 			return;
 		}
 		if (isSlotKey(event.getKey()))
@@ -2144,12 +2116,8 @@ public class BankPriceMovementPlugin extends Plugin
 			// else - no figure is recomputed, so the service never is. Both keys are read whichever one changed.
 			final Color up = slotUpFromConfig();
 			final Color down = slotDownFromConfig();
-			final BankPriceMovementPanel look = panel;
-			if (look != null)
-			{
-				// applySlotColours and not the menu's own save: this IS the config, so writing it back would say nothing.
-				SwingUtilities.invokeLater(() -> look.applySlotColours(up, down));
-			}
+			// applySlotColours and not the menu's own save: this IS the config, so writing it back would say nothing.
+			toPanel(look -> look.applySlotColours(up, down));
 			return;
 		}
 		if (isChangeTextKey(event.getKey()) || isHistoryKey(event.getKey()))
@@ -2161,17 +2129,13 @@ public class BankPriceMovementPlugin extends Plugin
 			final ChangeText text = changeTextFromConfig();
 			final ChangeText historyText = historyTextFromConfig();
 			final BankHistoryRange range = historyRangeFromConfig();
-			final BankPriceMovementPanel look = panel;
-			if (look != null)
+			// apply* and not the menus' own presses: this IS the config, so writing it back would say nothing.
+			toPanel(look ->
 			{
-				// apply* and not the menus' own presses: this IS the config, so writing it back would say nothing.
-				SwingUtilities.invokeLater(() ->
-				{
-					look.applyChangeText(text);
-					look.applyHistoryText(historyText);
-					look.setHistoryRange(range);
-				});
-			}
+				look.applyChangeText(text);
+				look.applyHistoryText(historyText);
+				look.setHistoryRange(range);
+			});
 			return;
 		}
 		if (isChartKey(event.getKey()))
@@ -2181,13 +2145,9 @@ public class BankPriceMovementPlugin extends Plugin
 			// panel takes the switch and the colour together, and the one that did not change comes back as it was.
 			final boolean single = singleChartFromConfig();
 			final Color colour = chartColourFromConfig();
-			final BankPriceMovementPanel look = panel;
-			if (look != null)
-			{
-				// applyChartColour and not the menu's own path: this IS the config, so writing it back would say nothing, and
-				// the menu's tick would bring the History tab into view for a change made on the settings page.
-				SwingUtilities.invokeLater(() -> look.applyChartColour(single, colour));
-			}
+			// applyChartColour and not the menu's own path: this IS the config, so writing it back would say nothing, and
+			// the menu's tick would bring the History tab into view for a change made on the settings page.
+			toPanel(look -> look.applyChartColour(single, colour));
 			return;
 		}
 		if (isHideKey(event.getKey()))
@@ -2195,13 +2155,9 @@ public class BankPriceMovementPlugin extends Plugin
 			// 1.1.0 part E's road, the fold's twin: whether the amounts are hidden is the sidebar's look, so the panel is told
 			// and nobody else - no figure is recomputed, so the service never is.
 			final boolean hide = hideAmountsFromConfig();
-			final BankPriceMovementPanel look = panel;
-			if (look != null)
-			{
-				// applyHideAmounts and not the eye's own press: this IS the config, so writing it back would say nothing, and
-				// pressing would flip a switch the settings page just set.
-				SwingUtilities.invokeLater(() -> look.applyHideAmounts(hide));
-			}
+			// applyHideAmounts and not the eye's own press: this IS the config, so writing it back would say nothing, and
+			// pressing would flip a switch the settings page just set.
+			toPanel(look -> look.applyHideAmounts(hide));
 			return;
 		}
 		if (isAlchKey(event.getKey()))
@@ -2209,24 +2165,29 @@ public class BankPriceMovementPlugin extends Plugin
 			// 1.1.0 part G's road, the fold's twin: whether the list shows its alch rows is the sidebar's look, so the panel is
 			// told and nobody else - no figure is recomputed, so the service never is.
 			final boolean show = showAlchFromConfig();
-			final BankPriceMovementPanel look = panel;
-			if (look != null)
-			{
-				// applyShowAlchRows and not the menu's own press: this IS the config, so writing it back would say nothing.
-				SwingUtilities.invokeLater(() -> look.applyShowAlchRows(show));
-			}
+			// applyShowAlchRows and not the menu's own press: this IS the config, so writing it back would say nothing.
+			toPanel(look -> look.applyShowAlchRows(show));
 			return;
 		}
 		final RowFilter filter = filterFromConfig();
-		final BankPriceMovementPanel p = panel;
-		if (p != null)
-		{
-			SwingUtilities.invokeLater(() -> p.applyFilter(filter));
-		}
+		toPanel(p -> p.applyFilter(filter));
 		final PriceService s = service;
 		if (s != null)
 		{
 			s.setFilter(filter);
+		}
+	}
+
+	/**
+	 * Hands the panel what {@link #onConfigChanged} has just read, on the event dispatch thread - the value was read on
+	 * the event thread before this call, and the panel is read here, after it. No panel yet (or any more): nothing.
+	 */
+	private void toPanel(final Consumer<BankPriceMovementPanel> apply)
+	{
+		final BankPriceMovementPanel view = panel;
+		if (view != null)
+		{
+			SwingUtilities.invokeLater(() -> apply.accept(view));
 		}
 	}
 
@@ -2311,9 +2272,9 @@ public class BankPriceMovementPlugin extends Plugin
 
 	/**
 	 * Whether a {@code ConfigChanged} key is one of the gear menu's view switches - addendum Q's two remaining
-	 * ones (Q3; the third, {@code holdingOnRows}, went with addendum AO and is swept by {@link #unstickHolding()}
-	 * rather than answered here), addendum T's live-price switch (T1), addendum Y's carried switch (Y1) or 1.0.9 part
-	 * 3's Grand Exchange switch, which ride the same road for the
+	 * ones (Q3; the third, {@code holdingOnRows}, went with addendum AO and is not answered here), addendum T's
+	 * live-price switch (T1), addendum Y's carried switch (Y1) or 1.0.9 part 3's Grand Exchange switch, which ride
+	 * the same road for the
 	 * same reason: they are neither a filter (no gp band changes, and no ordering) nor presentation (what a live
 	 * row's unit, "then" and move figures ARE changes, and so does the bank value built out of them, and so does
 	 * the quantity of a stack the player is half carrying), so the service is told and the panel is re-rendered,
@@ -2655,29 +2616,14 @@ public class BankPriceMovementPlugin extends Plugin
 				{
 					return;
 				}
-				final ConfigManager cm = configManager;
-				if (cm == null)
-				{
-					return;
-				}
 				// The five writes are ONE change of mind, and each one posts a ConfigChanged on this very
-				// thread as it lands. Marking the thread keeps onConfigChanged out of the middle of them: see
-				// prefsWriter. Restored rather than nulled, so a nested save (there is none today) still ends
-				// with the outer one's mark in place.
-				final Thread outer = prefsWriter;
-				prefsWriter = Thread.currentThread();
-				try
-				{
-					cm.setConfiguration(BankPriceMovementConfig.GROUP, "gpMin", clampToInt(filter.gpMin()));
-					cm.setConfiguration(BankPriceMovementConfig.GROUP, "gpMax", clampToInt(filter.gpMax()));
-					cm.setConfiguration(BankPriceMovementConfig.GROUP, "sortMode", filter.sort());
-					cm.setConfiguration(BankPriceMovementConfig.GROUP, "sortDescending", filter.descending());
-					cm.setConfiguration(BankPriceMovementConfig.GROUP, "window", filter.window());
-				}
-				finally
-				{
-					prefsWriter = outer;
-				}
+				// thread as it lands. saveColour marks the thread for each write, which keeps onConfigChanged out
+				// of the middle of them: see prefsWriter.
+				saveColour("gpMin", clampToInt(filter.gpMin()));
+				saveColour("gpMax", clampToInt(filter.gpMax()));
+				saveColour("sortMode", filter.sort());
+				saveColour("sortDescending", filter.descending());
+				saveColour("window", filter.window());
 			}
 
 			@Override
@@ -2689,8 +2635,7 @@ public class BankPriceMovementPlugin extends Plugin
 			@Override
 			public void saveHero(HeroVisibility hero)
 			{
-				final ConfigManager cm = configManager;
-				if (hero == null || cm == null)
+				if (hero == null)
 				{
 					return;
 				}
@@ -2699,20 +2644,12 @@ public class BankPriceMovementPlugin extends Plugin
 				// item that was ticked has already painted the card itself (setHeroVisibility applies, then
 				// calls this). Unmarked, one tick re-rendered the card three more times - twice from a config
 				// in which only some of the three keys had been written. See prefsWriter.
-				final Thread outer = prefsWriter;
-				prefsWriter = Thread.currentThread();
-				try
-				{
-					// All three every time: a check item that only wrote its own key would leave the other two
-					// unstored the first time a fresh profile touches the menu.
-					cm.setConfiguration(BankPriceMovementConfig.GROUP, SHOW_VALUE_KEY, hero.value());
-					cm.setConfiguration(BankPriceMovementConfig.GROUP, SHOW_GP_KEY, hero.gp());
-					cm.setConfiguration(BankPriceMovementConfig.GROUP, SHOW_PCT_KEY, hero.pct());
-				}
-				finally
-				{
-					prefsWriter = outer;
-				}
+				//
+				// All three every time: a check item that only wrote its own key would leave the other two
+				// unstored the first time a fresh profile touches the menu.
+				saveColour(SHOW_VALUE_KEY, hero.value());
+				saveColour(SHOW_GP_KEY, hero.gp());
+				saveColour(SHOW_PCT_KEY, hero.pct());
 			}
 
 			@Override
@@ -2728,45 +2665,30 @@ public class BankPriceMovementPlugin extends Plugin
 				{
 					return;
 				}
-				final ConfigManager cm = configManager;
-				if (cm != null)
-				{
-					// Five writes since release 1.2.0 (six from 1.0.9 part 3 to 1.1.2), one change of mind, guarded
-					// exactly as saveHero's three are: ConfigManager posts a ConfigChanged on this very thread as
-					// each key lands, and the check item that was ticked has already applied the switch itself.
-					// Unguarded, ticking one item would recompute the whole bank value again for every other key,
-					// from a config in which only some of the five had been written - and each of those figures
-					// would be wrong on screen for as long as the recompute took.
-					final Thread outer = prefsWriter;
-					prefsWriter = Thread.currentThread();
-					try
-					{
-						// All five every time, for saveHero's reason: an item that wrote only its own key would
-						// leave the others unstored the first time a fresh profile touched the menu.
-						cm.setConfiguration(BankPriceMovementConfig.GROUP, COUNT_CASH_KEY, options.countCash());
-						cm.setConfiguration(BankPriceMovementConfig.GROUP, COUNT_UNTRADEABLES_KEY,
-							options.countUntradeables());
-						// T1, and the one of the five that is worth a fetch: PriceService stops asking for the
-						// traded feeds altogether when this goes off, so it must be stored before the service is
-						// told below or a relaunch would quietly turn them back on.
-						cm.setConfiguration(BankPriceMovementConfig.GROUP, LIVE_PRICES_KEY, options.livePrices());
-						// Y1. Nothing is fetched for this one - the inventory and the worn gear come from the
-						// client, not from the wiki - but it is stored the same way and before the service is
-						// told below, or the choice would be forgotten by the next launch.
-						cm.setConfiguration(BankPriceMovementConfig.GROUP, COUNT_INVENTORY_KEY,
-							options.countInventory());
-						// 1.0.9 part 3. The Grand Exchange offers come from the client the same way, and it is stored
-						// with the rest before the service is told below.
-						cm.setConfiguration(BankPriceMovementConfig.GROUP, COUNT_GRAND_EXCHANGE_KEY,
-							options.countGrandExchange());
-					}
-					finally
-					{
-						prefsWriter = outer;
-					}
-				}
-				// ...and then, OUTSIDE the guard and whether or not there was a manager to write to, the half the
-				// guard just suppressed. The gear's check item paints the card and the rows itself, but the sums
+				// Five writes since release 1.2.0 (six from 1.0.9 part 3 to 1.1.2), one change of mind, guarded
+				// exactly as saveHero's three are: ConfigManager posts a ConfigChanged on this very thread as
+				// each key lands, and the check item that was ticked has already applied the switch itself.
+				// Unguarded, ticking one item would recompute the whole bank value again for every other key,
+				// from a config in which only some of the five had been written - and each of those figures
+				// would be wrong on screen for as long as the recompute took.
+				//
+				// All five every time, for saveHero's reason: an item that wrote only its own key would
+				// leave the others unstored the first time a fresh profile touched the menu.
+				saveColour(COUNT_CASH_KEY, options.countCash());
+				saveColour(COUNT_UNTRADEABLES_KEY, options.countUntradeables());
+				// T1, and the one of the five that is worth a fetch: PriceService stops asking for the
+				// traded feeds altogether when this goes off, so it must be stored before the service is
+				// told below or a relaunch would quietly turn them back on.
+				saveColour(LIVE_PRICES_KEY, options.livePrices());
+				// Y1. Nothing is fetched for this one - the inventory and the worn gear come from the
+				// client, not from the wiki - but it is stored the same way and before the service is
+				// told below, or the choice would be forgotten by the next launch.
+				saveColour(COUNT_INVENTORY_KEY, options.countInventory());
+				// 1.0.9 part 3. The Grand Exchange offers come from the client the same way, and it is stored
+				// with the rest before the service is told below.
+				saveColour(COUNT_GRAND_EXCHANGE_KEY, options.countGrandExchange());
+				// ...and then, whether or not there was a manager to write to, the half the guard just
+				// suppressed. The gear's check item paints the card and the rows itself, but the sums
 				// behind the bank value are the service's (Q4/Q5), and the ConfigChanged that would have carried
 				// them was skipped as this thread's own write. A service that already holds these options does
 				// nothing with them, so saying it here as well as on the config round trip cannot double-count.
@@ -2786,15 +2708,6 @@ public class BankPriceMovementPlugin extends Plugin
 			@Override
 			public void savePresets(BandPresets presets)
 			{
-				if (presets == null)
-				{
-					return;
-				}
-				final ConfigManager cm = configManager;
-				if (cm == null)
-				{
-					return;
-				}
 				// ONE key, and still guarded (see prefsWriter): ConfigManager posts its ConfigChanged on this very
 				// thread as the write lands, and the boxes that made the change have already applied it to the fold
 				// themselves (BankPriceMovementPanel.setPresets applies, then calls this). The round trip would
@@ -2803,18 +2716,11 @@ public class BankPriceMovementPlugin extends Plugin
 				//
 				// Nothing else happens here - no setOptions tail as saveOptions has, and no setFilter: the service
 				// has never been told what the chips offer, because it decides nothing about them.
-				final Thread outer = prefsWriter;
-				prefsWriter = Thread.currentThread();
-				try
-				{
-					// The stored form is the value's OWN text (Z1): ascending, trimmed, in the shorthand the boxes
-					// print, so what the settings page shows and what the three boxes show are the same string.
-					cm.setConfiguration(BankPriceMovementConfig.GROUP, BAND_PRESETS_KEY, presets.format());
-				}
-				finally
-				{
-					prefsWriter = outer;
-				}
+				//
+				// The stored form is the value's OWN text (Z1): ascending, trimmed, in the shorthand the boxes print, so
+				// what the settings page shows and what the three boxes show are the same string. ConfigManager's generic
+				// overload turns a String into that same String, so the write is saveColour's like every other key's.
+				saveColour(BAND_PRESETS_KEY, presets == null ? null : presets.format());
 			}
 
 			@Override
@@ -2826,26 +2732,12 @@ public class BankPriceMovementPlugin extends Plugin
 			@Override
 			public void saveFoldOpen(boolean open)
 			{
-				final ConfigManager cm = configManager;
-				if (cm == null)
-				{
-					return;
-				}
 				// ONE key and no service, exactly as savePresets above (AA1), and guarded for the same reason:
 				// ConfigManager posts its ConfigChanged on this very thread as the write lands, and the band
 				// button that made the change has already taken the fold out of the header itself
 				// (BankPriceMovementPanel.pressFold applies, then calls this). The round trip would re-lay the
 				// header a second time for a state it is already in.
-				final Thread outer = prefsWriter;
-				prefsWriter = Thread.currentThread();
-				try
-				{
-					cm.setConfiguration(BankPriceMovementConfig.GROUP, FOLD_OPEN_KEY, open);
-				}
-				finally
-				{
-					prefsWriter = outer;
-				}
+				saveColour(FOLD_OPEN_KEY, open);
 			}
 
 			@Override
@@ -2857,23 +2749,9 @@ public class BankPriceMovementPlugin extends Plugin
 			@Override
 			public void saveStartTab(SidebarView tab)
 			{
-				final ConfigManager cm = configManager;
-				if (tab == null || cm == null)
-				{
-					return;
-				}
 				// ONE key and no service, guarded as saveFoldOpen is: the toggle has already moved itself, and
 				// the ConfigChanged this write posts on this thread would only move it again.
-				final Thread outer = prefsWriter;
-				prefsWriter = Thread.currentThread();
-				try
-				{
-					cm.setConfiguration(BankPriceMovementConfig.GROUP, START_TAB_KEY, tab);
-				}
-				finally
-				{
-					prefsWriter = outer;
-				}
+				saveColour(START_TAB_KEY, tab);
 			}
 
 			@Override
@@ -2885,24 +2763,10 @@ public class BankPriceMovementPlugin extends Plugin
 			@Override
 			public void saveIncludeLegacy(boolean include)
 			{
-				final ConfigManager cm = configManager;
-				if (cm == null)
-				{
-					return;
-				}
 				// ONE key and no service, guarded as saveFoldOpen is (1.0.9 part 5): the menu item that was ticked has
 				// already redrawn the tab itself (BankPriceMovementPanel.pressLegacy applies, then calls this), and the
 				// ConfigChanged this write posts on this thread would only draw it a second time.
-				final Thread outer = prefsWriter;
-				prefsWriter = Thread.currentThread();
-				try
-				{
-					cm.setConfiguration(BankPriceMovementConfig.GROUP, INCLUDE_LEGACY_KEY, include);
-				}
-				finally
-				{
-					prefsWriter = outer;
-				}
+				saveColour(INCLUDE_LEGACY_KEY, include);
 			}
 
 			@Override
@@ -3060,10 +2924,12 @@ public class BankPriceMovementPlugin extends Plugin
 	}
 
 	/**
-	 * ONE colour or colour-switch key and no service, guarded as {@code saveFoldOpen} is (1.1.0 parts B and C): the picker,
-	 * the menu item or the Reset button that made the change has already drawn the sidebar in it itself (the panel
-	 * applies, then calls this), and the {@code ConfigChanged} this write posts on this thread would only draw it a second
-	 * time.
+	 * ONE key and no service, written with the thread marked as {@link #prefsWriter} (1.1.0 parts B and C; every other
+	 * save in {@link #configPrefs()} goes through it since release 1.2.2): the picker, the menu item
+	 * or the Reset button that made the change has already drawn the sidebar in it itself (the panel applies, then calls
+	 * this), and the {@code ConfigChanged} this write posts on this thread would only draw it a second time. A null value or
+	 * no manager writes nothing. Restored rather than nulled, so a nested write (there is none today) still ends with the
+	 * outer one's mark in place.
 	 */
 	private void saveColour(String key, @Nullable Object value)
 	{
@@ -3107,24 +2973,5 @@ public class BankPriceMovementPlugin extends Plugin
 		accountHash = hash;
 		profileType = RuneScapeProfileType.getCurrent(client).name();
 		return hash;
-	}
-
-	/** The cached pair, for the dev bridge's synthetic {@code bank=} (developer mode only). */
-	private BpmCommands.Account account()
-	{
-		return new BpmCommands.Account()
-		{
-			@Override
-			public long hash()
-			{
-				return accountHash;
-			}
-
-			@Override
-			public String profileType()
-			{
-				return profileType;
-			}
-		};
 	}
 }

@@ -3,21 +3,12 @@ package com.bankpricemovement;
 import com.google.gson.Gson;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import java.io.IOException;
 import java.time.LocalDate;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CopyOnWriteArrayList;
-import okhttp3.Call;
-import okhttp3.Callback;
 import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.Response;
-import okhttp3.ResponseBody;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -76,7 +67,8 @@ import org.slf4j.LoggerFactory;
  *
  * <p>This class holds no cache and no schedule: staleness, the six-hour rule and one-in-flight-per-feed are
  * {@code PriceService}'s. Its only state is {@link #setEnabled(boolean)}, the calls still on the wire for
- * {@link #cancelInFlight()}, and the "a failure has already been logged loudly" flag.
+ * {@link #cancelInFlight()}, and the "a failure has already been logged loudly" flag - all three live in the
+ * {@link WikiCalls} it shares with {@link GuidePriceClient}.
  */
 public class TradedPriceClient
 {
@@ -100,25 +92,15 @@ public class TradedPriceClient
 	/** Seconds in a UTC calendar day - what {@link #midnightSeconds(LocalDate)} multiplies by. */
 	public static final long SECONDS_PER_DAY = 86_400L;
 
-	/** Error and diagnostic text is cut to this many characters before it reaches a message or the log. */
-	private static final int MAX_DETAIL_CHARS = 200;
-
-	private final OkHttpClient client;
 	private final Gson gson;
 
 	/**
-	 * Developer-mode switch, the twin of {@link GuidePriceClient#setEnabled(boolean)}: when false every fetch
-	 * fails immediately without touching the network, so T7's "live prices unavailable" state can be exercised in
-	 * a live client. Volatile because it is written from the bridge/EDT and read on whichever thread starts a
-	 * fetch. Never flipped by user-facing code.
+	 * The request plumbing both wiki clients share. Its {@code enabled} flag is the developer-mode switch, the twin of
+	 * {@link GuidePriceClient#setEnabled(boolean)}: when false every fetch fails immediately without touching the
+	 * network, so T7's "live prices unavailable" state can be exercised in a live client. Never flipped by
+	 * user-facing code.
 	 */
-	private volatile boolean enabled = true;
-
-	/** Every call enqueued and not yet answered, so {@link #cancelInFlight()} can drop them when the plugin stops. */
-	private final List<Call> inFlight = new CopyOnWriteArrayList<>();
-
-	/** Whether {@link #report} has already logged a failure loudly this session. */
-	private volatile boolean reported;
+	private final WikiCalls calls;
 
 	/**
 	 * @param client RuneLite's injected OkHttpClient; constructing one here is a Plugin Hub blocker
@@ -126,15 +108,9 @@ public class TradedPriceClient
 	 */
 	public TradedPriceClient(final OkHttpClient client, final Gson gson)
 	{
-		if (client == null)
-		{
-			throw new IllegalArgumentException("client is required (inject RuneLite's OkHttpClient)");
-		}
-		if (gson == null)
-		{
-			throw new IllegalArgumentException("gson is required (inject RuneLite's Gson)");
-		}
-		this.client = client;
+		calls = new WikiCalls(log, client, gson, "traded-price",
+			"traded price fetches are switched off (developer mode)",
+			" - live prices will fall back to the guide prices until it recovers", body -> null);
 		this.gson = gson;
 	}
 
@@ -149,8 +125,7 @@ public class TradedPriceClient
 	 */
 	public CompletableFuture<Map<Integer, Quote>> fetchLatest(final long nowMillis)
 	{
-		log.debug("bank-portfolio-tracker: fetching the traded /latest snapshot at {}", nowMillis);
-		return request(latestUrl(), this::parseLatest);
+		return calls.request(latestUrl(), this::parseLatest);
 	}
 
 	/**
@@ -167,10 +142,9 @@ public class TradedPriceClient
 		{
 			// Deliberately a failure and not an empty success: a caller with no day has a bug, and an empty map
 			// would look like "that day traded nothing" to the code that stores buckets.
-			return failed(new WikiPriceException("no day to fetch a traded bucket for"));
+			return WikiCalls.failed(new WikiPriceException("no day to fetch a traded bucket for"));
 		}
-		log.debug("bank-portfolio-tracker: fetching the traded bucket of {} at {}", day, nowMillis);
-		return request(dayUrl(day), this::parseDay);
+		return calls.request(dayUrl(day), this::parseDay);
 	}
 
 	/**
@@ -187,10 +161,9 @@ public class TradedPriceClient
 	{
 		if (startSeconds <= 0L)
 		{
-			return failed(new WikiPriceException("no hour to fetch a traded bucket for"));
+			return WikiCalls.failed(new WikiPriceException("no hour to fetch a traded bucket for"));
 		}
-		log.debug("bank-portfolio-tracker: fetching the traded /1h bucket of {} at {}", startSeconds, nowMillis);
-		return request(hourUrl(startSeconds), body -> parseHour(body, nowMillis));
+		return calls.request(hourUrl(startSeconds), body -> parseHour(body, nowMillis));
 	}
 
 	/**
@@ -199,13 +172,13 @@ public class TradedPriceClient
 	 */
 	public void setEnabled(final boolean enabled)
 	{
-		this.enabled = enabled;
+		calls.enabled = enabled;
 	}
 
 	/** @see #setEnabled(boolean) */
 	public boolean isEnabled()
 	{
-		return enabled;
+		return calls.enabled;
 	}
 
 	/**
@@ -214,18 +187,7 @@ public class TradedPriceClient
 	 */
 	public void cancelInFlight()
 	{
-		for (final Call call : new ArrayList<>(inFlight))
-		{
-			inFlight.remove(call);
-			try
-			{
-				call.cancel();
-			}
-			catch (final RuntimeException e)
-			{
-				log.debug("bank-portfolio-tracker: a traded-price call refused to cancel", e);
-			}
-		}
+		calls.cancelInFlight();
 	}
 
 	// ---------------------------------------------------------------- the exact URLs
@@ -491,12 +453,6 @@ public class TradedPriceClient
 		{
 			return Objects.hash(buy, sell, buySeconds, sellSeconds);
 		}
-
-		@Override
-		public String toString()
-		{
-			return "Quote{buy=" + buy + "@" + buySeconds + ", sell=" + sell + "@" + sellSeconds + '}';
-		}
 	}
 
 	/**
@@ -550,12 +506,6 @@ public class TradedPriceClient
 			return lowVolume;
 		}
 
-		/** Units traded that day, both sides - the tooltip's "517 traded yesterday". */
-		public long volume()
-		{
-			return PortfolioMath.clampedAdd(highVolume, lowVolume);
-		}
-
 		@Override
 		public boolean equals(final Object o)
 		{
@@ -577,143 +527,9 @@ public class TradedPriceClient
 		{
 			return Objects.hash(avgHigh, avgLow, highVolume, lowVolume);
 		}
-
-		@Override
-		public String toString()
-		{
-			return "Bucket{avgHigh=" + avgHigh + "x" + highVolume + ", avgLow=" + avgLow + "x" + lowVolume + '}';
-		}
 	}
 
 	// ---------------------------------------------------------------- internals (the guide client's shapes)
-
-	/**
-	 * Builds the request, enqueues it and adapts OkHttp's callback pair onto one future - the same shape as
-	 * {@code GuidePriceClient.request}, including the reason the future is completed on every path and BEFORE an
-	 * {@link Error} is rethrown: OkHttp 3.14.9 rethrows a Throwable from inside {@code onResponse} on its own
-	 * dispatcher thread rather than routing it to {@code onFailure}, so a rethrow first would leave the caller's
-	 * in-flight flag claimed for the rest of the session.
-	 */
-	private <T> CompletableFuture<T> request(final String url, final BodyParser<T> parser)
-	{
-		final CompletableFuture<T> future = new CompletableFuture<>();
-
-		if (!enabled)
-		{
-			future.completeExceptionally(new WikiPriceException("traded price fetches are switched off (developer mode)"));
-			return future;
-		}
-
-		final Request request;
-		try
-		{
-			request = new Request.Builder()
-				.url(url)
-				.header(USER_AGENT_HEADER, USER_AGENT)
-				.get()
-				.build();
-		}
-		catch (final RuntimeException e)
-		{
-			future.completeExceptionally(new WikiPriceException("could not build the traded-price request for " + url, e));
-			return future;
-		}
-
-		try
-		{
-			final Call call = client.newCall(request);
-			inFlight.add(call);
-			future.whenComplete((value, error) -> inFlight.remove(call));
-			call.enqueue(new Callback()
-			{
-				@Override
-				public void onFailure(final Call call, final IOException e)
-				{
-					fail(future, url, new WikiPriceException("traded-price request failed: " + messageOf(e), e));
-				}
-
-				@Override
-				public void onResponse(final Call call, final Response response)
-				{
-					final T value;
-					try (Response closing = response)
-					{
-						final String body = bodyText(closing);
-						if (!closing.isSuccessful())
-						{
-							fail(future, url, httpFailure(closing.code()));
-							return;
-						}
-						value = parser.parse(body);
-					}
-					catch (final IOException e)
-					{
-						fail(future, url, e instanceof WikiPriceException
-							? (WikiPriceException) e
-							: new WikiPriceException("could not read the traded-price response: " + messageOf(e), e));
-						return;
-					}
-					catch (final Throwable t)
-					{
-						failAndRethrow(future, url, new WikiPriceException(
-							"could not parse the traded-price response: " + messageOf(t), t), t);
-						return;
-					}
-					future.complete(value);
-				}
-			});
-		}
-		catch (final Throwable t)
-		{
-			failAndRethrow(future, url, new WikiPriceException("could not queue the traded-price request: " + messageOf(t), t), t);
-		}
-
-		return future;
-	}
-
-	/** The one way a request fails: {@link #report} it, THEN complete the future with it. */
-	private <T> void fail(final CompletableFuture<T> future, final String url, final WikiPriceException failure)
-	{
-		report(url, failure);
-		future.completeExceptionally(failure);
-	}
-
-	/** {@link #fail} for a {@code catch} on {@link Throwable}: complete first, rethrow an {@link Error} after. */
-	private <T> void failAndRethrow(final CompletableFuture<T> future, final String url,
-		final WikiPriceException failure, final Throwable cause)
-	{
-		fail(future, url, failure);
-		if (cause instanceof Error)
-		{
-			throw (Error) cause;
-		}
-	}
-
-	/**
-	 * Logs one failure: the FIRST of the session loudly, with the url and any HTTP status, every one after it at
-	 * debug - the same rule {@code GuidePriceClient.report} follows, and for the same reason (an outage lasts
-	 * hours, the tick is thirty minutes, and a repeated line is noise in someone else's log).
-	 */
-	private void report(final String url, final WikiPriceException failure)
-	{
-		final String status = failure.hasHttpCode() ? " (HTTP " + failure.getHttpCode() + ")" : "";
-		if (reported)
-		{
-			log.debug("bank-portfolio-tracker: traded-price request to {} failed{}", url, status, failure);
-			return;
-		}
-		reported = true;
-		log.warn("bank-portfolio-tracker: traded-price request to {} failed{} - live prices will fall back to the"
-			+ " guide prices until it recovers", url, status, failure);
-	}
-
-	/** A future that has already failed - the shape {@link #fetchDay} refuses a bad argument with. */
-	private static <T> CompletableFuture<T> failed(final WikiPriceException failure)
-	{
-		final CompletableFuture<T> future = new CompletableFuture<>();
-		future.completeExceptionally(failure);
-		return future;
-	}
 
 	/** The {@code data} member of either feed, or a failure naming which feed it was. */
 	private static JsonObject dataOf(final JsonObject root, final String feed) throws WikiPriceException
@@ -724,13 +540,6 @@ public class TradedPriceClient
 			throw new WikiPriceException("the wiki traded " + feed + " response has no data object");
 		}
 		return data.getAsJsonObject();
-	}
-
-	/** Reads the whole body as text, tolerating a null body (a HEAD-shaped or synthetic response). */
-	private static String bodyText(final Response response) throws IOException
-	{
-		final ResponseBody body = response.body();
-		return body == null ? "" : body.string();
 	}
 
 	/**
@@ -752,7 +561,7 @@ public class TradedPriceClient
 		}
 		catch (final RuntimeException e)
 		{
-			throw new WikiPriceException("malformed JSON from the wiki traded prices: " + messageOf(e), e);
+			throw new WikiPriceException("malformed JSON from the wiki traded prices: " + WikiCalls.messageOf(e), e);
 		}
 
 		if (root == null || root.isJsonNull() || !root.isJsonObject())
@@ -771,20 +580,7 @@ public class TradedPriceClient
 	/** A nullable numeric member as a {@code Long}; absent, JSON null or non-numeric all read as null. */
 	private static Long optLong(final JsonObject object, final String key)
 	{
-		final JsonElement value = object.get(key);
-		if (value == null || value.isJsonNull() || !value.isJsonPrimitive())
-		{
-			return null;
-		}
-		try
-		{
-			return Long.valueOf(value.getAsLong());
-		}
-		catch (final RuntimeException e)
-		{
-			// A boolean primitive, or a string that is not a number: skip the member, never fail the fetch.
-			return null;
-		}
+		return WikiCalls.asLong(object.get(key));
 	}
 
 	/** A trade time member in unix seconds; absent or negative reads as 0, which {@link Quote} treats as unknown. */
@@ -814,37 +610,5 @@ public class TradedPriceClient
 		{
 			return null;
 		}
-	}
-
-	/**
-	 * A non-2xx answer. The status is carried on the exception because 403 is diagnosable on its own (the prices
-	 * host pre-emptively blocks default user agents) while the body for it is unhelpful.
-	 */
-	private static WikiPriceException httpFailure(final int code)
-	{
-		return new WikiPriceException("traded-price request failed with HTTP " + code, code);
-	}
-
-	/** {@code Throwable.getMessage()} is null for plenty of IO failures; fall back to the type name. */
-	private static String messageOf(final Throwable t)
-	{
-		final String message = t.getMessage();
-		return truncate(message == null || message.isEmpty() ? t.getClass().getSimpleName() : message);
-	}
-
-	private static String truncate(final String text)
-	{
-		if (text == null)
-		{
-			return null;
-		}
-		return text.length() <= MAX_DETAIL_CHARS ? text : text.substring(0, MAX_DETAIL_CHARS) + "...";
-	}
-
-	/** The one thing that differs between the two requests once the bytes are in hand. */
-	@FunctionalInterface
-	private interface BodyParser<T>
-	{
-		T parse(String body) throws WikiPriceException;
 	}
 }

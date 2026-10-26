@@ -304,9 +304,6 @@ public class PriceService
 	 */
 	static final long RETRY_MS = 60L * 1000L;
 
-	/** K7/L7: the header line always opens with this - the prices are the guide prices, whatever else is known. */
-	public static final String HEADER_PREFIX = "Guide prices";
-
 	/** K7 wording when the history fetch failed and the window has no stored baseline to show instead. */
 	public static final String PROBLEM_HISTORY_UNAVAILABLE = "Wiki history down - no movement";
 
@@ -355,10 +352,10 @@ public class PriceService
 	/**
 	 * The traded feeds of addendum T, or null when the plugin handed none over - in which case not one traded
 	 * request is ever made and every row is the guide-only row of addenda K to S, whatever the switch says. Set
-	 * once, at construction or through {@link #setTradedClient}, before {@link #start()}; read under the lock.
+	 * once, at construction; read under the lock.
 	 */
 	@Nullable
-	private TradedPriceClient traded;
+	private final TradedPriceClient traded;
 	private final PriceStore store;
 	private final ItemManager itemManager;
 	private final ClientThread clientThread;
@@ -520,7 +517,7 @@ public class PriceService
 	/** {@link #r0} projected onto ids (the agreement test and the degraded "now"); EMPTY with it. */
 	private PriceMap r0Map = PriceMap.EMPTY;
 	/**
-	 * The UTC date of {@link #nowSeconds} - what {@link Status#anchorDay()} still prints (contract 1.1.2); null while
+	 * The UTC date of {@link #nowSeconds} - what {@link Status#anchorDay} still prints (contract 1.1.2); null while
 	 * there is no now time.
 	 */
 	@Nullable
@@ -609,11 +606,12 @@ public class PriceService
 	 */
 	private BankHistorySeries bankHistoryBehind = BankHistorySeries.EMPTY;
 	/**
-	 * How many series this service has restarted because their days counted bank placeholders as items (1.1.1 part B) -
-	 * 0 or 1 in practice, a restart being made once per file. Never reset: the panel compares it with the last one it
-	 * answered and turns "Include days before ..." off once for each new one ({@link Status#placeholderRestarts()}), so a
-	 * box ticked for the 1.0.9 reason cannot silently show the inflated days. A counter rather than a flag, so a publish
-	 * the panel stores while hidden and replaces with a later one still carries it.
+	 * How many times this service has restarted a series because its days counted bank placeholders as items (1.1.1 part B,
+	 * once per file) - the AUTOMATIC restarts alone: the player's own reset ({@link #startHistoryFrom}, 1.2.2) and its restore
+	 * belong to one account's notes and never move it. Never reset: the panel compares it with the last one it answered and turns
+	 * "Include days before ..." off once for each new one ({@link Status#placeholderRestarts()}), so a box ticked for the 1.0.9
+	 * reason cannot silently show the inflated days. A counter rather than a flag, so a publish the panel stores while hidden and
+	 * replaces with a later one still carries it.
 	 */
 	private int placeholderRestarts;
 	/**
@@ -764,19 +762,6 @@ public class PriceService
 		status = buildStatusLocked(null);
 	}
 
-	/**
-	 * The traded feeds of addendum T, handed over after construction (seam S2) - the plugin builds the client
-	 * with the injected OkHttp and Gson and gives it to the service it already made. Must be called before
-	 * {@link #start()}; a null client is "guide prices only".
-	 */
-	public void setTradedClient(@Nullable final TradedPriceClient client)
-	{
-		synchronized (lock)
-		{
-			traded = client;
-		}
-	}
-
 	// ---------------------------------------------------------------- nested types (C20, C21, K13, L13)
 
 	/**
@@ -867,12 +852,10 @@ public class PriceService
 	/**
 	 * The header state of one publish (C21, extended by K13 and by L13). Immutable - every field final, no
 	 * setter - but the CLASS is not final: the panel's and the bridge's tests stub it with Mockito 4.11, which has
-	 * no mockito-inline in this workspace and so cannot mock a final class (playbook 7.6). {@link #text()} is the
-	 * one line the panel shows.
+	 * no mockito-inline in this workspace and so cannot mock a final class (playbook 7.6).
 	 *
 	 * <p>Every date here is a UTC calendar day (L9): the guide price steps once a day near the top of the UTC day
-	 * (rollover observed 00:47-02:06 UTC, L-A) and {@link #dayLabel} prints a day, never a local clock. The one
-	 * local-time value in the header is the "Bank as of HH:MM" capture clock.
+	 * (rollover observed 00:47-02:06 UTC, L-A), and {@link MovementMath#formatDay} prints a day, never a local clock.
 	 *
 	 * <p>{@link #bankHistory()} days are LOCAL dates, unlike every other day here (addendum AU, plan 7.1 item 2).
 	 */
@@ -897,15 +880,33 @@ public class PriceService
 			/** The switch is off (or nothing has been computed yet): no feed, no counts, no days. */
 			public static final LiveStatus OFF = new LiveStatus(0L, 0, 0, 0, 0);
 
-			private final long fetchedAtMillis;
-			private final int latestItems;
+			/** When the {@code /latest} snapshot behind these rows was fetched, epoch millis; 0 when there is none. */
+			final long fetchedAtMillis;
+			/** How many items that snapshot names; 0 when there is none. */
+			final int latestItems;
 			private final int liveRows;
-			private final int guideRows;
-			private final int alchRows;
+			/** Stacks priced at a Jagex guide price - including a parts sum, which is guide prices summed (R3). */
+			final int guideRows;
+			/** Untradeable stacks counted at their High Alchemy value (Q5). */
+			final int alchRows;
+			/**
+			 * The UTC calendar date of the {@code /latest} snapshot these rows were priced from (addendum U, line
+			 * U1) - "today" for the live series, and the day every live window counts back from. Null when no
+			 * snapshot has been fetched.
+			 *
+			 * <p>It is the date of {@link #fetchedAtMillis} in UTC and of nothing else: not the wall clock (the
+			 * two differ for the hours either side of UTC midnight, and a row must never compare against a day its
+			 * own price did not come from) and not the guide's anchor day, whose lateness is exactly what addendum U
+			 * was written to undo.
+			 */
 			@Nullable
-			private final LocalDate liveDay;
+			final LocalDate liveDay;
 			private final Map<MovementWindow, LocalDate> windowDays;
-			private final long hourAtSeconds;
+			/**
+			 * The start of the {@code /1h} bucket these rows were graded with, unix seconds (contract 1.2.0, L1) - the
+			 * last closed hour the plugin holds; 0 when none was in hand.
+			 */
+			final long hourAtSeconds;
 
 			/**
 			 * The pre-addendum-U arity: the five figures, with no live calendar behind them. Kept so every caller
@@ -966,50 +967,10 @@ public class PriceService
 				this.windowDays = Collections.unmodifiableMap(days);
 			}
 
-			/** When the {@code /latest} snapshot behind these rows was fetched, epoch millis; 0 when there is none. */
-			public long fetchedAtMillis()
-			{
-				return fetchedAtMillis;
-			}
-
-			/** How many items that snapshot names; 0 when there is none. */
-			public int latestItems()
-			{
-				return latestItems;
-			}
-
 			/** Stacks priced at a live traded mid. */
 			public int liveRows()
 			{
 				return liveRows;
-			}
-
-			/** Stacks priced at a Jagex guide price - including a parts sum, which is guide prices summed (R3). */
-			public int guideRows()
-			{
-				return guideRows;
-			}
-
-			/** Untradeable stacks counted at their High Alchemy value (Q5). */
-			public int alchRows()
-			{
-				return alchRows;
-			}
-
-			/**
-			 * The UTC calendar date of the {@code /latest} snapshot these rows were priced from (addendum U, line
-			 * U1) - "today" for the live series, and the day every live window counts back from. Null when no
-			 * snapshot has been fetched.
-			 *
-			 * <p>It is the date of {@link #fetchedAtMillis()} in UTC and of nothing else: not the wall clock (the
-			 * two differ for the hours either side of UTC midnight, and a row must never compare against a day its
-			 * own price did not come from) and not the guide's anchor day, whose lateness is exactly what addendum U
-			 * was written to undo.
-			 */
-			@Nullable
-			public LocalDate liveDay()
-			{
-				return liveDay;
 			}
 
 			/**
@@ -1024,48 +985,6 @@ public class PriceService
 			public Map<MovementWindow, LocalDate> windowDays()
 			{
 				return windowDays;
-			}
-
-			/**
-			 * The start of the {@code /1h} bucket these rows were graded with, unix seconds (contract 1.2.0, L1) - the
-			 * last closed hour the plugin holds; 0 when none was in hand.
-			 */
-			public long hourAtSeconds()
-			{
-				return hourAtSeconds;
-			}
-
-			/**
-			 * The figures under T8's own key names, in T8's own order, with addendum U's two calendar keys after
-			 * them: {@code fetchedAt}, {@code latestItems}, {@code liveRows}, {@code guideRows}, {@code alchRows},
-			 * then {@code liveDay} (an ISO date string, or null) and {@code windowDays} (an object keyed by window
-			 * label - {@code 1d}, {@code 7d}, ... - of ISO date strings and nulls), and last contract 1.2.0's
-			 * {@code hourAt} - the {@code /1h} bucket's start as an ISO-8601 UTC instant, or null.
-			 *
-			 * <p>Values are {@link Long}, {@link String}, a nested {@code LinkedHashMap<String, String>} and null,
-			 * which is what lets the panel's {@code describe()} write the object without a Gson it does not have -
-			 * the same trick {@link ViewOptions#asMap()} plays with booleans. A writer that drops null values
-			 * (Gson, unless {@code serializeNulls} is on) answers the same question a reader asks of it: a missing
-			 * key and a null value both mean "that window has no traded bucket".
-			 */
-			public LinkedHashMap<String, Object> asMap()
-			{
-				final LinkedHashMap<String, Object> map = new LinkedHashMap<>();
-				map.put("fetchedAt", fetchedAtMillis);
-				map.put("latestItems", (long) latestItems);
-				map.put("liveRows", (long) liveRows);
-				map.put("guideRows", (long) guideRows);
-				map.put("alchRows", (long) alchRows);
-				map.put("liveDay", liveDay == null ? null : liveDay.toString());
-				final LinkedHashMap<String, String> days = new LinkedHashMap<>();
-				for (final MovementWindow window : MovementWindow.values())
-				{
-					final LocalDate day = windowDays.get(window);
-					days.put(window.label(), day == null ? null : day.toString());
-				}
-				map.put("windowDays", days);
-				map.put("hourAt", hourAtSeconds() <= 0L ? null : Instant.ofEpochSecond(hourAtSeconds()).toString());
-				return map;
 			}
 
 			@Override
@@ -1096,37 +1015,48 @@ public class PriceService
 				return Objects.hash(fetchedAtMillis, latestItems, liveRows, guideRows, alchRows, liveDay, windowDays,
 					hourAtSeconds);
 			}
-
-			@Override
-			public String toString()
-			{
-				return "LiveStatus" + asMap();
-			}
 		}
 
 		private final long pricesAtMillis;
 		private final long bankAtMillis;
 		private final boolean bankLoaded;
 		private final boolean loggedIn;
-		private final MovementRow.PriceSource source;
+		/** Never null. */
+		final MovementRow.PriceSource source;
 		@Nullable
 		private final String problem;
 		private final ProblemKind problemKind;
-		private final int totalRows;
+		final int totalRows;
 		private final int bankItems;
 		private final MovementWindow window;
-		private final boolean baselineLoaded;
+		final boolean baselineLoaded;
 		private final long baselineRevisionSeconds;
 		private final long baselineRevId;
-		private final long mappingAtMillis;
-		private final long indexAtMillis;
+		/** When the id-to-wiki-name table in use was fetched, epoch millis; 0 when none is loaded. */
+		final long mappingAtMillis;
+		/** When the revision index in use was fetched, epoch millis; 0 when none is loaded (L4). */
+		final long indexAtMillis;
+		/**
+		 * The UTC date of {@link #nowSeconds} - the day the "now" prices belong to (addendum L called it the anchor
+		 * day D; since contract 1.1.2 it is no longer derived on its own and never "R0's day + 1") - or null when there
+		 * is no now time yet (no R0 in memory, or no bank).
+		 */
 		@Nullable
-		private final LocalDate anchorDay;
-		private final double agree;
-		private final int agreeSamples;
+		final LocalDate anchorDay;
+		/**
+		 * The last agreement between RuneLite's prices and the newest guide table, matches / n in [0, 1], or -1
+		 * when no item could be compared (L3). At or above {@value PriceService#AGREE_THRESHOLD} with enough samples
+		 * means RuneLite holds R0's table; below it, RuneLite holds an older table in memory or one the index has not
+		 * seen (contract 1.1.2).
+		 */
+		final double agree;
+		/** The n behind {@link #agree}: bank items with both a RuneLite price and an R0 value. */
+		final int agreeSamples;
+		/** The newest guide table's own day (its {@code %LAST_UPDATE%} date, L7), or null when R0 is not in memory. */
 		@Nullable
-		private final LocalDate r0Day;
-		private final long r0RevId;
+		final LocalDate r0Day;
+		/** The newest guide table's revision id, or 0 when R0 is not in memory. */
+		final long r0RevId;
 		private final boolean degraded;
 		private final boolean anchorDegraded;
 		@Nullable
@@ -1134,20 +1064,25 @@ public class PriceService
 		private final PortfolioSummary portfolio;
 		private final ViewOptions options;
 		private final LiveStatus live;
-		/** The drawn bank's owner's daily readings (addendum AU); EMPTY from every public constructor. */
+		/** The drawn bank's owner's daily readings (addendum AU); EMPTY when none is offered. */
 		private final BankHistorySeries bankHistory;
 		/**
-		 * Every stack that ended on the alch rule, counted in the bank value or not (1.1.0 part G); 0 from every public
-		 * constructor.
+		 * Every stack that ended on the alch rule, counted in the bank value or not (1.1.0 part G); 0 when none is
+		 * offered.
 		 */
 		private final int alchStacks;
 		/** How many of those {@link #bankItems} counts (all of them with "Include alch-only untradeables" on, none off). */
 		private final int alchCounted;
-		/** The service's count of placeholder restarts when this status was built (1.1.1 part B); 0 from every public constructor. */
+		/** The service's count of placeholder restarts when this status was built (1.1.1 part B); 0 when none is offered. */
 		private final int placeholderRestarts;
-		/** The now time the windows counted back from (contract 1.1.2), unix seconds; 0 from every public constructor. */
-		private final long nowSeconds;
-		/** How the counted rows graded (contract 1.2.0, L3); {@link GradeSummary#NONE} from every public constructor. */
+		/**
+		 * The now time every window counted back from (contract 1.1.2), unix seconds: the table time of the indexed
+		 * revision RuneLite's prices matched, or the clock while they matched none (RuneLite ahead of the index). 0
+		 * when there is none, and for a status the service did not build. {@link #anchorDay} is its UTC date. Not
+		 * part of a status's identity: it is drawn nowhere.
+		 */
+		final long nowSeconds;
+		/** How the counted rows graded (contract 1.2.0, L3); {@link GradeSummary#NONE} when none is offered. */
 		private final GradeSummary grades;
 
 		/**
@@ -1185,52 +1120,19 @@ public class PriceService
 		 * @param degradedReason          one short sentence saying why, or null when not degraded
 		 * @param portfolio               the whole bank's value and per-window moves computed beside the rows (M3);
 		 *                                null reads as {@link PortfolioSummary#EMPTY}
-		 */
-		public Status(final long pricesAtMillis, final long bankAtMillis, final boolean bankLoaded,
-			final boolean loggedIn, @Nullable final MovementRow.PriceSource source, @Nullable final String problem,
-			@Nullable final ProblemKind problemKind,
-			final int totalRows, final int bankItems, @Nullable final MovementWindow window,
-			final boolean baselineLoaded, final long baselineRevisionSeconds, final long baselineRevId,
-			final long mappingAtMillis, final long indexAtMillis, @Nullable final LocalDate anchorDay,
-			final double agree, final int agreeSamples, @Nullable final LocalDate r0Day, final long r0RevId,
-			final boolean degraded, final boolean anchorDegraded, @Nullable final String degradedReason,
-			@Nullable final PortfolioSummary portfolio)
-		{
-			this(pricesAtMillis, bankAtMillis, bankLoaded, loggedIn, source, problem, problemKind, totalRows,
-				bankItems, window, baselineLoaded, baselineRevisionSeconds, baselineRevId, mappingAtMillis,
-				indexAtMillis, anchorDay, agree, agreeSamples, r0Day, r0RevId, degraded, anchorDegraded,
-				degradedReason, portfolio, ViewOptions.DEFAULT);
-		}
-
-		/**
-		 * The same, carrying the view switches the figures were computed under (addendum Q, seam S1). The arity
-		 * above is the pre-Q one, kept so every caller that knows nothing of the switches keeps compiling AND keeps
-		 * its meaning: it delegates with {@link ViewOptions#DEFAULT}, which is what the pre-Q service computed.
-		 *
-		 * @param options the view switches; null reads as {@link ViewOptions#DEFAULT}
-		 */
-		public Status(final long pricesAtMillis, final long bankAtMillis, final boolean bankLoaded,
-			final boolean loggedIn, @Nullable final MovementRow.PriceSource source, @Nullable final String problem,
-			@Nullable final ProblemKind problemKind,
-			final int totalRows, final int bankItems, @Nullable final MovementWindow window,
-			final boolean baselineLoaded, final long baselineRevisionSeconds, final long baselineRevId,
-			final long mappingAtMillis, final long indexAtMillis, @Nullable final LocalDate anchorDay,
-			final double agree, final int agreeSamples, @Nullable final LocalDate r0Day, final long r0RevId,
-			final boolean degraded, final boolean anchorDegraded, @Nullable final String degradedReason,
-			@Nullable final PortfolioSummary portfolio, @Nullable final ViewOptions options)
-		{
-			this(pricesAtMillis, bankAtMillis, bankLoaded, loggedIn, source, problem, problemKind, totalRows,
-				bankItems, window, baselineLoaded, baselineRevisionSeconds, baselineRevId, mappingAtMillis,
-				indexAtMillis, anchorDay, agree, agreeSamples, r0Day, r0RevId, degraded, anchorDegraded,
-				degradedReason, portfolio, options, null);
-		}
-
-		/**
-		 * The same, carrying what the traded feeds delivered (addendum T, line T8; seam S1). The arity above is
-		 * the pre-T one, kept so every caller that knows nothing of live prices keeps compiling AND keeps its
-		 * meaning: it delegates with {@link LiveStatus#OFF}, which is what a guide-only publish says.
-		 *
-		 * @param live the traded feeds' state; null reads as {@link LiveStatus#OFF}
+		 * @param options                 the view switches the figures were computed under (addendum Q, seam S1);
+		 *                                null reads as {@link ViewOptions#DEFAULT}
+		 * @param live                    what the traded feeds delivered (addendum T, line T8; seam S1); null reads
+		 *                                as {@link LiveStatus#OFF}
+		 * @param bankHistory             the drawn bank's owner's daily readings (addendum AU, amendment 9.3); null
+		 *                                reads as {@link BankHistorySeries#EMPTY}
+		 * @param alchStacks              every stack that ended on the alch rule (1.1.0 part G); negative reads as 0
+		 * @param alchCounted             how many of {@link #bankItems} those are; negative reads as 0
+		 * @param placeholderRestarts     the service's count of history restarts (1.1.1 part B); negative reads as 0
+		 * @param nowSeconds              the now time the windows counted back from (contract 1.1.2); negative reads
+		 *                                as 0
+		 * @param grades                  how the counted rows graded (contract 1.2.0, L3); null reads as
+		 *                                {@link GradeSummary#NONE}
 		 */
 		public Status(final long pricesAtMillis, final long bankAtMillis, final boolean bankLoaded,
 			final boolean loggedIn, @Nullable final MovementRow.PriceSource source, @Nullable final String problem,
@@ -1241,7 +1143,9 @@ public class PriceService
 			final double agree, final int agreeSamples, @Nullable final LocalDate r0Day, final long r0RevId,
 			final boolean degraded, final boolean anchorDegraded, @Nullable final String degradedReason,
 			@Nullable final PortfolioSummary portfolio, @Nullable final ViewOptions options,
-			@Nullable final LiveStatus live)
+			@Nullable final LiveStatus live, @Nullable final BankHistorySeries bankHistory, final int alchStacks,
+			final int alchCounted, final int placeholderRestarts, final long nowSeconds,
+			@Nullable final GradeSummary grades)
 		{
 			this.live = live == null ? LiveStatus.OFF : live;
 			this.options = options == null ? ViewOptions.DEFAULT : options;
@@ -1271,109 +1175,17 @@ public class PriceService
 			this.anchorDegraded = degraded && anchorDegraded;
 			this.degradedReason = degraded ? degradedReason : null;
 			this.portfolio = portfolio == null ? PortfolioSummary.EMPTY : portfolio;
-			this.bankHistory = BankHistorySeries.EMPTY;
-			this.alchStacks = 0;
-			this.alchCounted = 0;
-			this.placeholderRestarts = 0;
-			this.nowSeconds = 0L;
-			this.grades = GradeSummary.NONE;
-		}
-
-		/**
-		 * Every field of {@code base}, with {@code bankHistory} in place of its series (amendment 9.3), the two alch
-		 * counts of 1.1.0 part G, the placeholder restarts of 1.1.1 part B and the now time of contract 1.1.2.
-		 */
-		private Status(final Status base, final BankHistorySeries bankHistory, final int alchStacks, final int alchCounted,
-			final int placeholderRestarts, final long nowSeconds, final GradeSummary grades)
-		{
-			this.grades = grades;
-			this.nowSeconds = nowSeconds;
-			this.alchStacks = alchStacks;
-			this.alchCounted = alchCounted;
-			this.placeholderRestarts = placeholderRestarts;
-			this.pricesAtMillis = base.pricesAtMillis;
-			this.bankAtMillis = base.bankAtMillis;
-			this.bankLoaded = base.bankLoaded;
-			this.loggedIn = base.loggedIn;
-			this.source = base.source;
-			this.problem = base.problem;
-			this.problemKind = base.problemKind;
-			this.totalRows = base.totalRows;
-			this.bankItems = base.bankItems;
-			this.window = base.window;
-			this.baselineLoaded = base.baselineLoaded;
-			this.baselineRevisionSeconds = base.baselineRevisionSeconds;
-			this.baselineRevId = base.baselineRevId;
-			this.mappingAtMillis = base.mappingAtMillis;
-			this.indexAtMillis = base.indexAtMillis;
-			this.anchorDay = base.anchorDay;
-			this.agree = base.agree;
-			this.agreeSamples = base.agreeSamples;
-			this.r0Day = base.r0Day;
-			this.r0RevId = base.r0RevId;
-			this.degraded = base.degraded;
-			this.anchorDegraded = base.anchorDegraded;
-			this.degradedReason = base.degradedReason;
-			this.portfolio = base.portfolio;
-			this.options = base.options;
-			this.live = base.live;
-			this.bankHistory = bankHistory;
-		}
-
-		/**
-		 * This status carrying {@code series} as its {@link #bankHistory()} (addendum AU, amendment 9.3) - how the
-		 * service attaches the drawn owner's readings to every status it builds, and how a test puts a series on a
-		 * fixture. Null reads as {@link BankHistorySeries#EMPTY}.
-		 */
-		public Status withBankHistory(@Nullable final BankHistorySeries series)
-		{
-			return new Status(this, series == null ? BankHistorySeries.EMPTY : series, alchStacks, alchCounted,
-				placeholderRestarts, nowSeconds, grades);
-		}
-
-		/**
-		 * This status carrying the alch counts of its computation (1.1.0 part G) - how the service tells the panel how many
-		 * stacks ended on the alch rule and how many of them {@link #bankItems()} counts, so the panel can list or hide the
-		 * alch rows and still say "n of m items" over what it lists. Negative reads as 0.
-		 */
-		public Status withAlchStacks(final int all, final int counted)
-		{
-			return new Status(this, bankHistory, Math.max(0, all), Math.max(0, counted), placeholderRestarts, nowSeconds,
-				grades);
-		}
-
-		/**
-		 * This status carrying the service's count of placeholder restarts (1.1.1 part B). Negative reads as 0.
-		 */
-		public Status withPlaceholderRestarts(final int restarts)
-		{
-			return new Status(this, bankHistory, alchStacks, alchCounted, Math.max(0, restarts), nowSeconds, grades);
-		}
-
-		/**
-		 * This status carrying the now time its windows counted back from (contract 1.1.2) - the table time of the
-		 * revision RuneLite's prices matched, or the clock while they matched none. Negative reads as 0.
-		 */
-		public Status withNowSeconds(final long seconds)
-		{
-			return new Status(this, bankHistory, alchStacks, alchCounted, placeholderRestarts, Math.max(0L, seconds),
-				grades);
-		}
-
-		/**
-		 * This status carrying how its computation's counted rows graded (contract 1.2.0, L3) - the solid, soft and none
-		 * counts, and whether the card is soft. Null reads as {@link GradeSummary#NONE}.
-		 */
-		public Status withGrades(@Nullable final GradeSummary summary)
-		{
-			return new Status(this, bankHistory, alchStacks, alchCounted, placeholderRestarts, nowSeconds,
-				summary == null ? GradeSummary.NONE : summary);
+			this.bankHistory = bankHistory == null ? BankHistorySeries.EMPTY : bankHistory;
+			this.alchStacks = Math.max(0, alchStacks);
+			this.alchCounted = Math.max(0, alchCounted);
+			this.placeholderRestarts = Math.max(0, placeholderRestarts);
+			this.nowSeconds = Math.max(0L, nowSeconds);
+			this.grades = grades == null ? GradeSummary.NONE : grades;
 		}
 
 		/**
 		 * How the counted rows of the window on screen graded (contract 1.2.0, L3): how many are solid, soft and none,
-		 * and whether the CARD is soft - its solid rows under {@value GradeMath#CARD_SOLID_VALUE_PCT} % of the counted
-		 * value, or its soft rows over {@value GradeMath#CARD_SOFT_MOVE_PCT} % of the gp move ({@link GradeSummary#soft()}).
+		 * and what the solid rows hold of the counted value and the soft rows supply of the gp move.
 		 * {@link GradeSummary#NONE} while nothing is graded - live prices off - and for a status the service did not
 		 * build. Never null.
 		 */
@@ -1383,20 +1195,10 @@ public class PriceService
 		}
 
 		/**
-		 * The now time every window counted back from (contract 1.1.2), unix seconds: the table time of the indexed
-		 * revision RuneLite's prices matched, or the clock while they matched none (RuneLite ahead of the index). 0
-		 * when there is none, and for a status the service did not build. {@link #anchorDay()} is its UTC date. Not
-		 * part of a status's identity: it is echoed by the dev bridge and drawn nowhere.
-		 */
-		public long nowSeconds()
-		{
-			return nowSeconds;
-		}
-
-		/**
-		 * How many Net Worth History series the service had restarted, when this status was built, because their days
-		 * counted bank placeholders as items (1.1.1 part B). It only ever grows; the panel turns "Include days before ..."
-		 * off once each time it does. 0 for a status the service did not build.
+		 * How many Net Worth History series the service had restarted, when this status was built - because their days
+		 * counted bank placeholders as items (1.1.1 part B). The player's own reset (1.2.2) is no restart: it belongs to one
+		 * account's notes and never moves this. It only ever grows; the panel turns "Include days before ..." off once each
+		 * time it does. 0 for a status the service did not build.
 		 */
 		public int placeholderRestarts()
 		{
@@ -1442,13 +1244,7 @@ public class PriceService
 			return loggedIn;
 		}
 
-		/** Never null. */
-		public MovementRow.PriceSource source()
-		{
-			return source;
-		}
-
-		/** Null when nothing is wrong; otherwise the sentence {@link #text()} shows instead of the header. */
+		/** Null when nothing is wrong; otherwise the one short sentence that says what is. */
 		@Nullable
 		public String problem()
 		{
@@ -1465,11 +1261,6 @@ public class PriceService
 			return problemKind;
 		}
 
-		public int totalRows()
-		{
-			return totalRows;
-		}
-
 		public int bankItems()
 		{
 			return bankItems;
@@ -1479,11 +1270,6 @@ public class PriceService
 		public MovementWindow window()
 		{
 			return window;
-		}
-
-		public boolean baselineLoaded()
-		{
-			return baselineLoaded;
 		}
 
 		/**
@@ -1505,59 +1291,6 @@ public class PriceService
 			return baselineRevId;
 		}
 
-		/** When the id-to-wiki-name table in use was fetched, epoch millis; 0 when none is loaded. */
-		public long mappingAtMillis()
-		{
-			return mappingAtMillis;
-		}
-
-		/** When the revision index in use was fetched, epoch millis; 0 when none is loaded (L4). */
-		public long indexAtMillis()
-		{
-			return indexAtMillis;
-		}
-
-		/**
-		 * The UTC date of {@link #nowSeconds()} - the day the "now" prices belong to (addendum L called it the anchor
-		 * day D; since contract 1.1.2 it is no longer derived on its own and never "R0's day + 1") - or null when there
-		 * is no now time yet (no R0 in memory, or no bank).
-		 */
-		@Nullable
-		public LocalDate anchorDay()
-		{
-			return anchorDay;
-		}
-
-		/**
-		 * The last agreement between RuneLite's prices and the newest guide table, matches / n in [0, 1], or -1
-		 * when no item could be compared (L3). At or above {@value PriceService#AGREE_THRESHOLD} with enough samples
-		 * means RuneLite holds R0's table; below it, RuneLite holds an older table in memory or one the index has not
-		 * seen (contract 1.1.2).
-		 */
-		public double agree()
-		{
-			return agree;
-		}
-
-		/** The n behind {@link #agree()}: bank items with both a RuneLite price and an R0 value. */
-		public int agreeSamples()
-		{
-			return agreeSamples;
-		}
-
-		/** The newest guide table's own day (its {@code %LAST_UPDATE%} date, L7), or null when R0 is not in memory. */
-		@Nullable
-		public LocalDate r0Day()
-		{
-			return r0Day;
-		}
-
-		/** The newest guide table's revision id, or 0 when R0 is not in memory. */
-		public long r0RevId()
-		{
-			return r0RevId;
-		}
-
 		/**
 		 * The UTC day the current window's baseline prices belong to - what the header prints ("1d vs 07 Sep")
 		 * and the tooltip repeats ("1d ago (07 Sep)", L7) - or null when there is no baseline. It is the REAL day
@@ -1568,12 +1301,6 @@ public class PriceService
 		public LocalDate thenDay()
 		{
 			return baselineRevisionSeconds <= 0L ? null : RevisionRef.dayOf(baselineRevisionSeconds);
-		}
-
-		/** The same value as {@link #baselineRevId()} under the L13 name. */
-		public long thenRevId()
-		{
-			return baselineRevId;
 		}
 
 		/**
@@ -1613,7 +1340,7 @@ public class PriceService
 
 		/**
 		 * The bank value line (M3): the whole bank's worth at the guide prices the rows were computed from - the
-		 * priced stacks plus the bank's coins and platinum tokens ({@link PortfolioSummary#currencyGp()}, P1) - and
+		 * priced stacks plus the bank's coins and platinum tokens ({@link PortfolioSummary#currencyGp}, P1) - and
 		 * one move per window with a baseline in memory, computed by the SAME computation as the rows, from the whole
 		 * snapshot rather than the filtered rows. {@link PortfolioSummary#EMPTY} until the first computation; never
 		 * null.
@@ -1658,72 +1385,6 @@ public class PriceService
 		public BankHistorySeries bankHistory()
 		{
 			return bankHistory;
-		}
-
-		/**
-		 * The status line (C21, K7): the {@link #problem()} sentence when there is one - the live acceptance list
-		 * reads "Wiki history down - no movement" and the cooldown text off this line, and at 213 px there
-		 * is no room for both - otherwise {@link #headerText()}.
-		 */
-		public String text()
-		{
-			return problem != null ? problem : headerText();
-		}
-
-		/**
-		 * The header line regardless of any problem (L7): {@code "Guide prices - Bank as of HH:MM"}, and with a
-		 * baseline {@code "Guide prices - 1d vs 07 Sep - Bank as of HH:MM"} (the guide DAY, UTC);
-		 * {@code "No bank yet"} while no snapshot exists and {@code "(logged out)"} appended while the client is
-		 * out. Meant for the tooltip when {@link #text()} shows a problem.
-		 */
-		public String headerText()
-		{
-			final StringBuilder sb = new StringBuilder(HEADER_PREFIX);
-			final String baseline = baselineText();
-			if (baseline != null)
-			{
-				sb.append(" - ").append(baseline);
-			}
-			sb.append(" - ");
-			if (!bankLoaded)
-			{
-				sb.append("No bank yet");
-			}
-			else
-			{
-				sb.append("Bank as of ").append(MovementMath.formatTime(bankAtMillis));
-				if (!loggedIn)
-				{
-					sb.append(" (logged out)");
-				}
-			}
-			return sb.toString();
-		}
-
-		/**
-		 * The baseline part of the header on its own - {@code "1d vs 07 Sep"} (L7) - or null when the window has
-		 * no baseline. The tooltip repeats it.
-		 */
-		@Nullable
-		public String baselineText()
-		{
-			final LocalDate day = thenDay();
-			if (day == null)
-			{
-				return null;
-			}
-			return window.label() + " vs " + dayLabel(day);
-		}
-
-		/**
-		 * A UTC calendar day as the header and tooltip print it - {@code "07 Sep"} (L7) - or
-		 * {@link MovementMath#DASH} for null. Delegates to {@link MovementMath#formatDay}, the ONE spelling of the
-		 * day format: the row tooltip prints through that method, and a second formatter here is how a header and a
-		 * tooltip drift apart (folded by the checker, 2026-09-09).
-		 */
-		public static String dayLabel(@Nullable final LocalDate day)
-		{
-			return MovementMath.formatDay(day);
 		}
 
 		@Override
@@ -1775,22 +1436,6 @@ public class PriceService
 				bankItems, window, baselineLoaded, baselineRevisionSeconds, baselineRevId, mappingAtMillis,
 				indexAtMillis, anchorDay, agree, agreeSamples, r0Day, r0RevId, degraded, anchorDegraded,
 				degradedReason, portfolio, options, live, bankHistory, placeholderRestarts, grades);
-		}
-
-		@Override
-		public String toString()
-		{
-			return "Status{pricesAt=" + pricesAtMillis + ", bankAt=" + bankAtMillis + ", bankLoaded=" + bankLoaded
-				+ ", loggedIn=" + loggedIn + ", source=" + source + ", problem=" + problem + ", totalRows=" + totalRows
-				+ ", bankItems=" + bankItems + ", window=" + window.name() + ", baselineLoaded=" + baselineLoaded
-				+ ", thenDay=" + thenDay() + ", baselineRevId=" + baselineRevId + ", mappingAt=" + mappingAtMillis
-				+ ", indexAt=" + indexAtMillis + ", anchorDay=" + anchorDay + ", now=" + nowSeconds + ", agree=" + agree
-				+ ", agreeSamples=" + agreeSamples + ", r0Day=" + r0Day + ", r0RevId=" + r0RevId
-				+ ", degraded=" + degraded + ", bankValue=" + portfolio.valueNow()
-				+ ", options=" + options
-				+ (LiveStatus.OFF.equals(live) ? "" : ", live=" + live)
-				+ (bankHistory.isEmpty() ? "" : ", bankHistory=" + bankHistory.size())
-				+ (grades.graded() ? ", grades=" + grades : "") + '}';
 		}
 	}
 
@@ -2642,12 +2287,6 @@ public class PriceService
 		{
 			return seconds <= 0L ? null : RevisionRef.dayOf(seconds);
 		}
-
-		@Override
-		public String toString()
-		{
-			return "NowTime{seconds=" + seconds + ", revId=" + revId + ", behind=" + behind + ", ahead=" + ahead + '}';
-		}
 	}
 
 	/**
@@ -2892,8 +2531,8 @@ public class PriceService
 
 	/**
 	 * Pass-through to {@link GuidePriceClient#setEnabled(boolean)} for the dev bridge's {@code wiki=on|off}
-	 * verb (L13): {@code BpmCommands(panel, service, gson)} holds no client reference. Developer mode only;
-	 * no user-facing behaviour depends on it.
+	 * verb (L13): the bridge's handler holds no client reference. Developer mode only; no user-facing behaviour
+	 * depends on it.
 	 */
 	public void setWikiEnabled(final boolean wikiEnabled)
 	{
@@ -5718,7 +5357,7 @@ public class PriceService
 				if (moves != null)
 				{
 					// 1.2.0: the parts' figures summed, window by window, and graded as the worst of them.
-					row = gradedRow(item, price, moves, current, 0L).asParts(item.parts);
+					row = gradedRow(item, price, moves, current).asParts(item.parts);
 					recordWindows(item.id, moves, windowNow, windowThen);
 					live += price.live ? 1 : 0;
 				}
@@ -5779,8 +5418,7 @@ public class PriceService
 			{
 				// 1.2.0, L2-L4: the window's graded figure decides the row's then, move and percentage, and the 1d
 				// figure its price; the guide's own two ends play no part while the stack is graded.
-				final TradedPriceClient.Bucket yesterday = in.bucket(MovementWindow.D1, item.id);
-				row = gradedRow(item, price, moves, current, yesterday == null ? 0L : yesterday.volume());
+				row = gradedRow(item, price, moves, current);
 				recordWindows(item.id, moves, windowNow, windowThen);
 				live += price.live ? 1 : 0;
 			}
@@ -5850,40 +5488,29 @@ public class PriceService
 	 * {@code thenMark x (1 + move)} where it has one, the guide where it has none - and, when the window on screen has
 	 * a figure, the row's "then" is that figure's mark, its move the figure's gp move and its percentage the figure x
 	 * 100, so the % and the gp agree and on 1d the price, the then and the move add up to the gp. A window with no
-	 * figure is the dash. The row carries the window's {@link GradedMove} for the sidebar, which series each window
-	 * used ({@link MovementRow.PriceSource#LIVE} where it has a figure) and the day it compared against, and - for the
-	 * panel's live lines until it reads the grade - {@link MovementRow.LiveFacts}: the last print of each side, and
-	 * as the reason the 1d word when the price is the guide's.
+	 * figure is the dash. The row carries the window's {@link GradedMove} for the sidebar, its source
+	 * ({@link MovementRow.PriceSource#LIVE} where the price is a graded figure's) and the day each window's figure
+	 * compared against.
 	 */
 	private static MovementRow gradedRow(final BankItem item, final StackPrice price,
-		final Map<MovementWindow, GradedMove> moves, final MovementWindow current, final long volumeYesterday)
+		final Map<MovementWindow, GradedMove> moves, final MovementWindow current)
 	{
 		final GradedMove move = moves.get(current);
 		final Long unit = price.cardUnit;
 		final boolean figure = unit != null && move != null && move.hasFigure();
-		final Map<MovementWindow, MovementRow.PriceSource> sources = new EnumMap<>(MovementWindow.class);
 		final Map<MovementWindow, LocalDate> days = new EnumMap<>(MovementWindow.class);
 		for (final Map.Entry<MovementWindow, GradedMove> entry : moves.entrySet())
 		{
 			if (entry.getValue() != null && entry.getValue().hasFigure())
 			{
-				sources.put(entry.getKey(), MovementRow.PriceSource.LIVE);
 				putDay(days, entry.getKey(), entry.getValue().thenDay());
 			}
 		}
-		final GradedMove oneDay = moves.get(MovementWindow.D1);
-		final GradedMove sides = move == null ? oneDay : move;
-		final Long lastBuy = sides == null ? null : sides.buy().last();
-		final Long lastSell = sides == null ? null : sides.sell().last();
 		final MovementRow.PriceSource source = unit == null ? MovementRow.PriceSource.NONE
 			: price.live ? MovementRow.PriceSource.LIVE : MovementRow.PriceSource.GUIDE;
-		final MovementRow row = new MovementRow(item.id, item.name, item.quantity, item.stackable, unit,
+		return new MovementRow(item.id, item.name, item.quantity, item.stackable, unit,
 			figure ? move.thenMark() : null, figure ? move.deltaGp() : null, figure ? move.move() * 100.0d : null,
-			MovementMath.holdingValue(unit, item.quantity), source, null, sources, days,
-			price.live ? new MovementRow.LiveFacts(lastBuy, lastSell, volumeYesterday, null) : null, 0, 0, 0, 0, move);
-		// A row whose price is the guide's says why, as the panel's refusal line has since addendum T: the 1d word.
-		return price.live ? row : row.withLiveRefusal(new MovementRow.LiveFacts(lastBuy, lastSell, volumeYesterday,
-			oneDay == null ? GradeWords.NO_TRADES : oneDay.word()));
+			MovementMath.holdingValue(unit, item.quantity), source, null, days, 0, 0, 0, 0, move);
 	}
 
 	/**
@@ -6519,6 +6146,116 @@ public class PriceService
 		}
 	}
 
+	/**
+	 * The player marks {@code day} as a transfer (1.2.2): {@code gp} to or from another account, minus when it left, plus when
+	 * it arrived, and {@code coins} when the amount was coins. Replaces the day's note; a gp of 0 takes it away. For the
+	 * account whose history is in memory and a day it holds a reading of - false otherwise, and when stopped. The series is
+	 * updated under the lock, the status rebuilt and published, then the file written on the executor: the road a reading
+	 * takes. Only the notes change - no reading, and no other file, is touched.
+	 */
+	public boolean markTransfer(@Nullable final LocalDate day, final long gp, final boolean coins)
+	{
+		return setTransfer(day, gp == 0L ? null : new BankHistorySeries.Transfer(gp, coins));
+	}
+
+	/** The player takes the transfer off {@code day} (1.2.2): {@link #markTransfer}'s road with no note. False for a day with no reading. */
+	public boolean removeTransfer(@Nullable final LocalDate day)
+	{
+		return setTransfer(day, null);
+	}
+
+	private boolean setTransfer(@Nullable final LocalDate day, @Nullable final BankHistorySeries.Transfer note)
+	{
+		final long hash;
+		final String profile;
+		synchronized (lock)
+		{
+			if (stopped || day == null || !BankSnapshot.isAccount(bankHistoryHash) || bankHistory.on(day) == null)
+			{
+				return false;
+			}
+			bankHistory = bankHistory.withTransfer(day, note);
+			hash = bankHistoryHash;
+			profile = bankHistoryProfile;
+		}
+		publishStatusOnly(null);
+		submitWrite("saving the transfer notes", () -> store.recordTransfer(hash, profile, day, note));
+		return true;
+	}
+
+	/**
+	 * The player starts the history from {@code day} (1.2.2) - "Reset history" from today, or "Reset history from this day":
+	 * every day before it is hidden, none deleted. The cut may move earlier or later than the one standing, and its reason is
+	 * {@value BankHistorySeries#WHY_PLAYER}; the placeholder rule that never moves a start back is for the automatic restarts
+	 * alone. The cut is THIS account's: its restore mark comes off ({@link BankHistorySeries#withRestored}), so the cut shows
+	 * whatever the shared "Include days before ..." box says and whatever another account did - and it is no
+	 * {@link #placeholderRestarts}, which would turn that shared box off for every account. For the account whose history is in
+	 * memory; false when it holds no reading, and when stopped. The file is written on the executor unless it failed to read this
+	 * session.
+	 */
+	public boolean startHistoryFrom(@Nullable final LocalDate day)
+	{
+		final long hash;
+		final String profile;
+		final boolean write;
+		synchronized (lock)
+		{
+			if (stopped || day == null || !BankSnapshot.isAccount(bankHistoryHash) || bankHistory.isEmpty())
+			{
+				return false;
+			}
+			// The automatic cut it replaces stays with the account (BankHistorySeries#autoCut), so Restore can still warn.
+			bankHistory = bankHistory.withAutoCut(bankHistory.autoCutToKeep()).withFreshFrom(day)
+				.withFreshWhy(BankHistorySeries.WHY_PLAYER).withRestored(false);
+			hash = bankHistoryHash;
+			profile = bankHistoryProfile;
+			write = !bankHistoryFailed;
+		}
+		publishStatusOnly(null);
+		if (write)
+		{
+			submitWrite("saving the start of the history", () -> store.recordFreshStart(hash, profile, day));
+		}
+		return true;
+	}
+
+	/**
+	 * The player brings back the days their own reset hid (1.2.2 part 5): "Restore history" for a record whose reason is
+	 * {@value BankHistorySeries#WHY_PLAYER}. For the account whose history is in memory ALONE - its restore mark is set, in its own
+	 * notes file, and no other account's record, nor the shared "Include days before ..." box, is touched. False when the record is
+	 * not a player's reset, holds no reading, was already restored, and when stopped. The series is updated under the lock and
+	 * published, then the file written on the executor: {@link #markTransfer}'s road - unless the history failed to read this
+	 * session, when the restore, like the reset it undoes ({@link #startHistoryFrom}), is kept in memory only: a mark written next to
+	 * a cut that was never saved would restore whatever older cut the file still holds.
+	 */
+	public boolean restoreHistory()
+	{
+		final long hash;
+		final String profile;
+		final boolean write;
+		final LocalDate cut;
+		synchronized (lock)
+		{
+			if (stopped || !BankSnapshot.isAccount(bankHistoryHash) || bankHistory.isEmpty() || bankHistory.restored()
+				|| !BankHistorySeries.WHY_PLAYER.equals(bankHistory.freshWhy()))
+			{
+				return false;
+			}
+			bankHistory = bankHistory.withRestored(true);
+			hash = bankHistoryHash;
+			profile = bankHistoryProfile;
+			write = !bankHistoryFailed;
+			cut = bankHistory.freshFrom();
+		}
+		publishStatusOnly(null);
+		if (write)
+		{
+			// The mark names the cut it restored, so a cut made later never reads as restored.
+			submitWrite("saving the restore of the history", () -> store.recordRestored(hash, profile, cut));
+		}
+		return true;
+	}
+
 	/** Under the lock: {@code series} without the readings {@link #bankHistoryBehind} holds, each while it is still its day's. */
 	private BankHistorySeries withoutBehind(final BankHistorySeries series)
 	{
@@ -6534,10 +6271,11 @@ public class PriceService
 				kept.add(point);
 			}
 		}
-		// Rebuilt from its readings, so the fresh start (1.0.9 part 5) and the placeholder judgement and its reason (1.1.1
-		// part B) have to be put back on it.
+		// Rebuilt from its readings, so the fresh start (1.0.9 part 5), the placeholder judgement and its reason (1.1.1
+		// part B) and the player's transfer notes and restore mark (1.2.2) have to be put back on it.
 		return BankHistorySeries.of(kept).withFreshFrom(series.freshFrom())
-			.withPlaceholdersChecked(series.placeholdersChecked()).withFreshWhy(series.freshWhy());
+			.withPlaceholdersChecked(series.placeholdersChecked()).withFreshWhy(series.freshWhy())
+			.withTransfers(series.transfers()).withRestored(series.restored()).withAutoCut(series.autoCut());
 	}
 
 	/** Whether two readings carry the same eight cells, card and guide - what a write is decided on (plan 7.7 item 7). */
@@ -6847,18 +6585,18 @@ public class PriceService
 			liveOnUsed
 				? new Status.LiveStatus(latestAtMillis, latest.size(), liveRows, guideRows, alchRows, liveDayUsed,
 					windowDaysUsed, hourAtUsed)
-				: Status.LiveStatus.OFF)
+				: Status.LiveStatus.OFF,
 			// AU, amendment 9.3: the one place a status is built, so a status-only publish carries the series too.
-			.withBankHistory(bankHistory)
-			// 1.1.1 part B: and the restarts, so every status after one carries it to the panel.
-			.withPlaceholderRestarts(placeholderRestarts)
-			// 1.1.2: the now time the windows counted back from, for the bridge's echo.
-			.withNowSeconds(nowSeconds)
-			// 1.2.0: how the counted rows graded, and whether the card is soft (L3).
-			.withGrades(gradesUsed)
+			bankHistory,
 			// 1.1.0 part G: how many stacks ended on the alch rule, and how many of them bankItems has in it - all of them
 			// while the switch is on, none while it is off - so the panel can say "n of m items" over the alch rows it lists.
-			.withAlchStacks(alchStacksAll, optionsUsed.countUntradeables() ? alchStacksAll : 0);
+			alchStacksAll, optionsUsed.countUntradeables() ? alchStacksAll : 0,
+			// 1.1.1 part B: and the restarts, so every status after one carries it to the panel.
+			placeholderRestarts,
+			// 1.1.2: the now time the windows counted back from, for the bridge's echo.
+			nowSeconds,
+			// 1.2.0: how the counted rows graded, and whether the card is soft (L3).
+			gradesUsed);
 	}
 
 	/**

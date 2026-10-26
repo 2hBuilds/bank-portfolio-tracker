@@ -15,11 +15,14 @@ import java.awt.geom.Ellipse2D;
 import java.awt.geom.Line2D;
 import java.awt.geom.Path2D;
 import java.util.ArrayList;
+import java.time.LocalDate;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import javax.annotation.Nullable;
 import javax.swing.JComponent;
+import javax.swing.ToolTipManager;
 import net.runelite.client.ui.ColorScheme;
 
 /**
@@ -46,7 +49,14 @@ import net.runelite.client.ui.ColorScheme;
  * and tells the view (which prints the readout); leaving the chart hands the readout back to the latest reading. The
  * chart repaints only when the hovered index changes, and the points' coordinates and the figures' places are computed
  * when the data or the size changes - never per mouse move. It paints and hit-tests from its own {@link #getWidth()}
- * (amendment 9.8). No tooltip, ever (amendment 9.13).
+ * (amendment 9.8). No tooltip (amendment 9.13), with the one exception of the next paragraph.
+ *
+ * <p><b>Transfers</b> (1.2.2). The line, its fill, the high and the low and the hover are drawn on each day's
+ * {@link BankHistoryMath.Day#drawnGp() drawn} total, so a day the player marked as a transfer leaves no cliff. When shifting the days
+ * would draw one below zero ({@link BankHistoryMath#drawsBelowZero}) the view hands in the marked days instead and the chart draws
+ * the REAL totals, the step into each marked day dotted in grey with a small orange mark at the point. A point drawn at a
+ * total that is not the real one (a day before a marked transfer) carries one hover, {@link #tipAt}: "<exact total> gp at the
+ * time", the amount masked while amounts are hidden; every other point has none.
  */
 final class BankHistoryChart extends JComponent
 {
@@ -88,7 +98,11 @@ final class BankHistoryChart extends JComponent
 		new float[]{2f, 2f}, 0f);
 	private static final BasicStroke RING = new BasicStroke(1.6f);
 	private static final double MARK_RADIUS = 1.5;
+	/** The orange mark on a day the player marked as a transfer, when the chart draws the real totals (1.2.2). */
+	private static final double TRANSFER_RADIUS = 2;
 	private static final double RING_RADIUS = 4.5;
+	/** What follows the real total in the hover on a shifted point (1.2.2). */
+	static final String AT_THE_TIME = " gp at the time";
 
 	/** Told whenever the hovered point changes: its index, or -1 when the pointer left. */
 	interface HoverListener
@@ -116,7 +130,7 @@ final class BankHistoryChart extends JComponent
 
 	private final HoverListener listener;
 
-	private List<BankHistoryMath.Day> days = Collections.emptyList();
+	List<BankHistoryMath.Day> days = Collections.emptyList();
 	private boolean drawLine;
 	private int sign;
 	private Color line = ColorScheme.LIGHT_GRAY_COLOR;
@@ -131,9 +145,15 @@ final class BankHistoryChart extends JComponent
 	 * compact totals. The line, its shape, the dots and the hover are the same either way: only the two words change.
 	 */
 	private boolean hideAmounts;
+	/**
+	 * 1.2.2: true while the chart draws the REAL totals - the fallback for a shift that would go below zero - and the days whose step
+	 * is dotted and marked, by index; empty while it draws the shifted ones.
+	 */
+	private boolean real;
+	private boolean[] stepInto = new boolean[0];
 	/** The latest reading among {@link #days}, or -1. */
 	private int latest = -1;
-	private int hover = -1;
+	int hover = -1;
 
 	/** The points' coordinates and the figures' places, for the size they were computed at. */
 	private double[] xs = new double[0];
@@ -175,6 +195,29 @@ final class BankHistoryChart extends JComponent
 		};
 		addMouseListener(mouse);
 		addMouseMotionListener(mouse);
+		// The hover is asked for point by point (getToolTipText(MouseEvent)), so the chart is registered and has no fixed text.
+		ToolTipManager.sharedInstance().registerComponent(this);
+	}
+
+	@Override
+	public String getToolTipText(final MouseEvent e)
+	{
+		return tipAt(indexAt(e.getX()));
+	}
+
+	/**
+	 * The hover of drawn point {@code index} (1.2.2): its REAL total, exact, and " gp at the time" - or its mask while amounts are
+	 * hidden - when the chart draws that point at another total (a day before a marked transfer); null for a point drawn at its
+	 * own total, for the real-totals fallback, and for an index that names no point.
+	 */
+	@Nullable
+	String tipAt(final int index)
+	{
+		if (index < 0 || index >= days.size() || value(days.get(index)) == days.get(index).valueGp())
+		{
+			return null;
+		}
+		return AmountMask.amount(hideAmounts, MovementMath.formatExact(days.get(index).valueGp())) + AT_THE_TIME;
 	}
 
 	/**
@@ -188,9 +231,32 @@ final class BankHistoryChart extends JComponent
 	 */
 	void setData(final List<BankHistoryMath.Day> days, final boolean drawLine, final int sign)
 	{
+		setData(days, drawLine, sign, null);
+	}
+
+	/**
+	 * @param marked null to draw the shifted totals; else the days the player marked as transfers, and the REAL totals are drawn with
+	 *               the step into each dotted and marked - a day thinned away marks the drawn day that stands for it
+	 */
+	void setData(final List<BankHistoryMath.Day> days, final boolean drawLine, final int sign,
+		@Nullable final Set<LocalDate> marked)
+	{
 		this.days = days == null ? Collections.emptyList() : days;
 		this.drawLine = drawLine;
 		this.sign = Integer.signum(sign);
+		real = marked != null;
+		stepInto = new boolean[this.days.size()];
+		for (final LocalDate note : marked == null ? Collections.<LocalDate>emptySet() : marked)
+		{
+			for (int i = 0; i < stepInto.length; i++)
+			{
+				if (!this.days.get(i).day().isBefore(note))
+				{
+					stepInto[i] = true;
+					break;
+				}
+			}
+		}
 		line = lineFor(this.sign);
 		latest = -1;
 		for (int i = this.days.size() - 1; i >= 0; i--)
@@ -240,6 +306,12 @@ final class BankHistoryChart extends JComponent
 	List<BankHistoryMath.Day> days()
 	{
 		return days;
+	}
+
+	/** The total this chart draws for a day: the shifted one, or the real one in the below-zero fallback (1.2.2). */
+	long value(final BankHistoryMath.Day day)
+	{
+		return real ? day.valueGp() : day.drawnGp();
 	}
 
 	/** The point the readout names: the hovered one, else the latest reading, else the last day drawn; -1 if none. */
@@ -331,8 +403,8 @@ final class BankHistoryChart extends JComponent
 		long max = Long.MIN_VALUE;
 		for (BankHistoryMath.Day d : days)
 		{
-			min = Math.min(min, d.valueGp());
-			max = Math.max(max, d.valueGp());
+			min = Math.min(min, value(d));
+			max = Math.max(max, value(d));
 		}
 		final double top = INSET_Y;
 		final double plot = Math.max(1, h - 2 * INSET_Y);
@@ -340,7 +412,7 @@ final class BankHistoryChart extends JComponent
 		{
 			xs[i] = xAt(i, n, w);
 			ys[i] = max == min ? top + plot / 2.0
-				: top + (max - (double) days.get(i).valueGp()) * plot / ((double) max - (double) min);
+				: top + (max - (double) value(days.get(i))) * plot / ((double) max - (double) min);
 		}
 		figures = placeFigures(w, h);
 	}
@@ -369,16 +441,16 @@ final class BankHistoryChart extends JComponent
 				continue;
 			}
 			readings++;
-			if (hi < 0 || d.valueGp() > days.get(hi).valueGp())
+			if (hi < 0 || value(d) > value(days.get(hi)))
 			{
 				hi = i;
 			}
-			if (lo < 0 || d.valueGp() < days.get(lo).valueGp())
+			if (lo < 0 || value(d) < value(days.get(lo)))
 			{
 				lo = i;
 			}
 		}
-		if (readings < 2 || days.get(hi).valueGp() == days.get(lo).valueGp())
+		if (readings < 2 || value(days.get(hi)) == value(days.get(lo)))
 		{
 			return Collections.emptyList();
 		}
@@ -391,7 +463,7 @@ final class BankHistoryChart extends JComponent
 
 	private Figure place(final int i, final boolean high, final FontMetrics fm, final int w, final int h)
 	{
-		final String text = AmountMask.amount(hideAmounts, MovementMath.formatGp(days.get(i).valueGp()));
+		final String text = AmountMask.amount(hideAmounts, MovementMath.formatGp(value(days.get(i))));
 		final int width = fm.stringWidth(text);
 		// The ink's height above the baseline, as the face draws this text (the figures have no descenders).
 		final int cap = -FIGURE_FONT.createGlyphVector(fm.getFontRenderContext(), text).getPixelBounds(null, 0, 0).y;
@@ -540,14 +612,27 @@ final class BankHistoryChart extends JComponent
 			if (line)
 			{
 				final Path2D.Double path = new Path2D.Double();
+				final Path2D.Double steps = new Path2D.Double();
 				path.moveTo(xs[0], ys[0]);
 				for (int i = 1; i < n; i++)
 				{
-					path.lineTo(xs[i], ys[i]);
+					if (stepInto[i])
+					{
+						steps.moveTo(xs[i - 1], ys[i - 1]);
+						steps.lineTo(xs[i], ys[i]);
+						path.moveTo(xs[i], ys[i]);
+					}
+					else
+					{
+						path.lineTo(xs[i], ys[i]);
+					}
 				}
 				g2.setColor(this.line);
 				g2.setStroke(LINE);
 				g2.draw(path);
+				g2.setColor(ColorScheme.MEDIUM_GRAY_COLOR);
+				g2.setStroke(GUIDE);
+				g2.draw(steps);
 			}
 			g2.setColor(ColorScheme.LIGHT_GRAY_COLOR);
 			for (Figure f : marks)
@@ -555,6 +640,14 @@ final class BankHistoryChart extends JComponent
 				if (f.index != latest)
 				{
 					g2.fill(circle(xs[f.index], ys[f.index], MARK_RADIUS));
+				}
+			}
+			g2.setColor(ColorScheme.BRAND_ORANGE);
+			for (int i = 1; i < n; i++)
+			{
+				if (stepInto[i])
+				{
+					g2.fill(circle(xs[i], ys[i], TRANSFER_RADIUS));
 				}
 			}
 			if (latest >= 0)
@@ -619,12 +712,5 @@ final class BankHistoryChart extends JComponent
 	private static Ellipse2D circle(final double x, final double y, final double r)
 	{
 		return new Ellipse2D.Double(x - r, y - r, 2 * r, 2 * r);
-	}
-
-	/** The day of the hovered point, or null. */
-	@Nullable
-	BankHistoryMath.Day hoverDay()
-	{
-		return hover >= 0 && hover < days.size() ? days.get(hover) : null;
 	}
 }

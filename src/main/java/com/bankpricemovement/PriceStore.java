@@ -27,7 +27,10 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
+import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -71,6 +74,10 @@ import org.slf4j.LoggerFactory;
  * nothing can fetch it again, so it has its own load with three outcomes ({@link #loadBankHistory}), every write
  * re-reads it and merges one point ({@link #recordBankHistory}), and a file that failed to read once is never
  * written over for the rest of the session. The sweep never touches it.</li>
+ * <li>{@code notes-<accountHash>-<profileType>.json} - the days the player marked as transfers to or from another
+ * account (1.2.2), beside the history in a file of its own so that no older build reads, sweeps or drops it. Read with
+ * the history, written only when the player marks, changes or removes a note ({@link #recordTransfer}) or presses
+ * Restore history ({@link #recordRestored}, 1.2.2 part 5); the sweep never touches it either.</li>
  * </ul>
  *
  * <p><b>What addendum K took away.</b> The real-time trade endpoints are gone from the plugin, so there is no
@@ -214,6 +221,8 @@ public class PriceStore
 	 * locked or damaged read from replacing years of readings with a single point.
 	 */
 	private final Set<String> failedHistory = ConcurrentHashMap.newKeySet();
+	/** The moment a moved-aside copy's name carries; a test fixes it so the name can be taken. */
+	LongSupplier asideMillis = System::currentTimeMillis;
 	/**
 	 * The history owners whose file this session has already copied aside before a rewrite that drops something it
 	 * held ({@link BankHistoryLoad#lossy()}; review finding H7) - one copy per owner per session is enough, because
@@ -551,7 +560,9 @@ public class PriceStore
 	 * FAILED read of a real file nothing is written to it for the rest of the session, and every later load of
 	 * that owner answers FAILED at once, without reading or logging again (review finding H8: one WARN).</li>
 	 * </ul>
-	 * Never throws. Reads the file every time otherwise; nothing is cached.
+	 * The series of a LOADED file carries the owner's transfer notes and restore mark (1.2.2), read from their own file in the
+	 * same call: none when it is missing, unreadable or newer than this build, and a file that does not parse is moved aside first.
+	 * Never throws. Reads the files every time otherwise; nothing is cached.
 	 */
 	public BankHistoryLoad loadBankHistory(final long accountHash, @Nullable final String profileType)
 	{
@@ -570,7 +581,18 @@ public class PriceStore
 		{
 			failedHistory.add(historyOwner(accountHash, profileType));
 		}
-		return load;
+		if (load.state() != BankHistoryLoad.State.LOADED || load.series().isEmpty())
+		{
+			return load;
+		}
+		final Notes notes = readNotes(accountHash, profileType);
+		// The restore mark belongs to the cut it restored: a cut made since - by a reset whose mark could not be cleared - is not restored.
+		final BankHistorySeries cut = load.series();
+		final BankHistorySeries noted = notes == null ? cut
+			: cut.withTransfers(notes.transfers).withAutoCut(notes.autoCut)
+				.withRestored(notes.restoredFrom != null && notes.restoredFrom.equals(cut.freshFrom())
+					&& BankHistorySeries.WHY_PLAYER.equals(cut.freshWhy()));
+		return load.lossy() ? BankHistoryLoad.loadedLossy(noted) : BankHistoryLoad.loaded(noted);
 	}
 
 	/**
@@ -676,36 +698,110 @@ public class PriceStore
 			{
 				return true;
 			}
-			if (read.lossy() && !backedUpHistory.contains(owner))
+			return rewrite(owner, file, read.lossy(), historyJson(merged));
+		}
+	}
+
+	/**
+	 * The player's own fresh start (1.2.2): the file's {@code freshFrom} set to {@code day} - earlier or later than the one
+	 * it holds - with the reason {@value BankHistorySeries#WHY_PLAYER}, every reading left exactly where it is. Reads the
+	 * file fresh, as {@link #recordBankHistory} does, and obeys the same rules: nothing is written when the owner has none,
+	 * the file failed to read this session, or there is no directory, and a file holding more than this build can keep is
+	 * copied aside first. Answers true when the file holds the cut once this returns; false for a file with no readings, and for a
+	 * cut that could not be saved - which leaves the owner's restore mark exactly as it was. A new cut that is in the file then also
+	 * takes this owner's restore mark off ({@link #recordRestored}, part 5): the days it hides stay hidden until THIS account
+	 * presses Restore history again. The mark is keyed to the cut it restored, so one that could not be taken off - the notes file is
+	 * unreadable this session - restores nothing of the new cut.
+	 *
+	 * <p>A cut that replaces an AUTOMATIC one (1.0.9's or 1.1.1's) first writes that cut into the owner's notes, with the mark off
+	 * ({@link BankHistorySeries#autoCut}), so Restore history can still ask the warning those days earn. When the notes cannot be
+	 * written - unreadable or newer than this build - the file is left as it was and false is answered: a cut that forgot what it
+	 * stood over would show days that read wrong with no word.
+	 */
+	public boolean recordFreshStart(final long accountHash, @Nullable final String profileType,
+		@Nullable final LocalDate day)
+	{
+		if (day == null || !BankSnapshot.isAccount(accountHash))
+		{
+			return false;
+		}
+		final String owner = historyOwner(accountHash, profileType);
+		synchronized (historyLock)
+		{
+			final Filepath file = historyFile(accountHash, profileType);
+			if (file == null || failedHistory.contains(owner))
 			{
-				try
-				{
-					file.copyTo(file.getParent().joinSegment(file.getFileName() + CORRUPT_SUFFIX
-						+ System.currentTimeMillis()), StandardCopyOption.REPLACE_EXISTING);
-					backedUpHistory.add(owner);
-					log.warn("{} held entries this build cannot keep - a copy of it was kept before rewriting it", file);
-				}
-				catch (IOException | RuntimeException e)
-				{
-					warnWriteOnce(owner, "could not copy {} aside, so it was not rewritten", file, e);
-					return false;
-				}
+				return false;
 			}
+			final BankHistoryLoad read = readHistory(file);
+			if (read.state() == BankHistoryLoad.State.FAILED)
+			{
+				failedHistory.add(owner);
+				return false;
+			}
+			final BankHistorySeries cut = read.series().withFreshFrom(day).withFreshWhy(BankHistorySeries.WHY_PLAYER);
+			if (cut.isEmpty())
+			{
+				return false;
+			}
+			final BankHistorySeries.AutoCut under = read.series().autoCutToKeep();
+			if (under != null && !changeNotes(accountHash, profileType, notes ->
+				{
+					notes.autoCut = under;
+					notes.restoredFrom = null;
+				}))
+			{
+				return false;
+			}
+			final boolean saved = cut.equals(read.series()) || rewrite(owner, file, read.lossy(), historyJson(cut));
+			if (saved && under == null)
+			{
+				// A new reset hides the days again for this account alone: its restore mark comes off, in the notes file, once the
+				// cut is in the history file. The mark is keyed to the cut it restored, so a notes file that cannot be written leaves
+				// a mark that restores nothing of this one.
+				recordRestored(accountHash, profileType, null);
+			}
+			return saved;
+		}
+	}
+
+	/**
+	 * Under {@link #historyLock}: replaces {@code file} with {@code text}, durably. A file that holds something this build
+	 * cannot keep ({@code lossy}) is copied aside as {@code <name>.corrupt-<millis>} before its first rewrite of the session
+	 * (review finding H7), and nothing is written when that copy fails. False, after one WARN per owner a session, when the
+	 * copy or the write failed.
+	 */
+	private boolean rewrite(final String owner, final Filepath file, final boolean lossy, final String text)
+	{
+		if (lossy && !backedUpHistory.contains(owner))
+		{
 			try
 			{
-				final Filepath parent = file.getParent();
-				if (!parent.isDirectory())
-				{
-					parent.createDirectories();
-				}
-				writeAtomicDurably(file, historyJson(merged));
-				return true;
+				file.copyTo(file.getParent().joinSegment(file.getFileName() + CORRUPT_SUFFIX
+					+ System.currentTimeMillis()), StandardCopyOption.REPLACE_EXISTING);
+				backedUpHistory.add(owner);
+				log.warn("{} held entries this build cannot keep - a copy of it was kept before rewriting it", file);
 			}
 			catch (IOException | RuntimeException e)
 			{
-				warnWriteOnce(owner, "saving {} failed", file, e);
+				warnWriteOnce(owner, "could not copy {} aside, so it was not rewritten", file, e);
 				return false;
 			}
+		}
+		try
+		{
+			final Filepath parent = file.getParent();
+			if (!parent.isDirectory())
+			{
+				parent.createDirectories();
+			}
+			writeAtomicDurably(file, text);
+			return true;
+		}
+		catch (IOException | RuntimeException e)
+		{
+			warnWriteOnce(owner, "saving {} failed", file, e);
+			return false;
 		}
 	}
 
@@ -984,6 +1080,252 @@ public class PriceStore
 		}
 		root.add(POINTS_KEY, points);
 		return gson.toJson(root);
+	}
+
+	// ---- the transfer notes (1.2.2)
+
+	/** Prefix of a transfer-notes file; the account hash and profile type follow, as for a history file. */
+	public static final String NOTES_PREFIX = "notes-";
+
+	/** The version of the notes file's shape; a file with a HIGHER number is a newer build's and is left alone. */
+	static final int NOTES_SCHEMA = 1;
+
+	/** {@code notes-<accountHash>-<profileType>.json}, beside the history of the same owner. */
+	@Nullable
+	public Filepath notesFile(final long accountHash, @Nullable final String profileType)
+	{
+		return file(notesOwner(accountHash, profileType) + JSON_SUFFIX);
+	}
+
+	/** The notes file's name without its suffix - also the key {@link #failedHistory} remembers its owner by. */
+	private static String notesOwner(final long accountHash, @Nullable final String profileType)
+	{
+		return NOTES_PREFIX + accountHash + "-" + safeProfile(profileType);
+	}
+
+	/**
+	 * The owner's notes - the transfers and the restore mark - as they are on disk now, or null when they cannot be trusted this session: the file exists and could
+	 * not be read, or a newer build wrote it - remembered, as a history that failed to read, so nothing is written over it. A
+	 * missing file, and no directory, read as no notes. A file that does not parse, or holds an entry that does not read, is
+	 * moved aside as {@code .corrupt-<millis>} and read as no notes: the next press writes a new one - unless it could not be
+	 * moved, when it is treated as an unreadable one. Never throws.
+	 */
+	@Nullable
+	private Notes readNotes(final long accountHash, @Nullable final String profileType)
+	{
+		final Notes notes = new Notes();
+		final String owner = notesOwner(accountHash, profileType);
+		final Filepath file = notesFile(accountHash, profileType);
+		if (file == null)
+		{
+			return notes;
+		}
+		if (failedHistory.contains(owner))
+		{
+			return null;
+		}
+		final String json;
+		try
+		{
+			json = readAll(file);
+		}
+		catch (NoSuchFileException e)
+		{
+			return notes;
+		}
+		catch (IOException | RuntimeException e)
+		{
+			log.warn("could not read {} (keeping it, and writing nothing over it this session)", file, e);
+			failedHistory.add(owner);
+			return null;
+		}
+		try
+		{
+			final NotesDto dto = gson.fromJson(json, NotesDto.class);
+			if (dto.schema > NOTES_SCHEMA)
+			{
+				log.warn("{} was written by a newer build (schema {}) - leaving it alone", file, dto.schema);
+				failedHistory.add(owner);
+				return null;
+			}
+			for (final NoteEntry entry : dto.transfers == null ? Collections.<NoteEntry>emptyList() : dto.transfers)
+			{
+				if (entry.gp != 0L)
+				{
+					notes.transfers.put(LocalDate.parse(entry.day), new BankHistorySeries.Transfer(entry.gp, entry.coins));
+				}
+			}
+			notes.restoredFrom = dto.restoredFrom == null ? null : LocalDate.parse(dto.restoredFrom);
+			notes.autoCut = dto.underFrom == null ? null
+				: new BankHistorySeries.AutoCut(LocalDate.parse(dto.underFrom), dto.underWhy);
+		}
+		catch (RuntimeException e)
+		{
+			log.warn("could not read {} (keeping a backup, reading no notes)", file, e);
+			notes.transfers.clear();
+			notes.restoredFrom = null;
+			notes.autoCut = null;
+			if (!quarantine(file))
+			{
+				// Not kept aside: a press would write a new file over the only copy, so it is left as an unreadable one is.
+				failedHistory.add(owner);
+				return null;
+			}
+		}
+		return notes;
+	}
+
+	/**
+	 * Marks, changes or removes the transfer of one day (1.2.2): reads the owner's notes file FRESH, puts {@code note} in as
+	 * {@code day}'s note (null takes it away), and replaces the file durably - so a note another client wrote is kept, and
+	 * nothing is written until the player has pressed something. Answers true when the file holds the change once this
+	 * returns. Writes nothing and answers false when the owner has none, there is no directory, or the file was unreadable
+	 * or a newer build's this session. An EMPTY set after a removal is written as an empty list, not deleted. Never throws.
+	 */
+	public boolean recordTransfer(final long accountHash, @Nullable final String profileType, @Nullable final LocalDate day,
+		@Nullable final BankHistorySeries.Transfer note)
+	{
+		if (day == null)
+		{
+			return false;
+		}
+		return changeNotes(accountHash, profileType, notes ->
+		{
+			if (note == null)
+			{
+				notes.transfers.remove(day);
+			}
+			else
+			{
+				notes.transfers.put(day, note);
+			}
+		});
+	}
+
+	/**
+	 * Sets the owner's restore mark (1.2.2 part 5): the player brought back the days their own reset hid - or, null, a new reset
+	 * hid them again. It lives in the owner's notes file beside the transfers, so it is this account's alone, and the road is
+	 * {@link #recordTransfer}'s: the file is read FRESH, the mark changed and the notes kept, written durably only when something
+	 * changed. The mark names the CUT it restored ({@code cut}, the player's {@link BankHistorySeries#freshFrom()}) and counts only
+	 * while the history file still holds that cut, so a later reset whose mark could not be taken off - the notes file unreadable
+	 * that session - is never undone by it. Answers true when the file holds the mark once this returns; false for an owner with
+	 * none, with no directory, or whose file was unreadable or a newer build's this session. Never throws.
+	 */
+	public boolean recordRestored(final long accountHash, @Nullable final String profileType, @Nullable final LocalDate cut)
+	{
+		return changeNotes(accountHash, profileType, notes -> notes.restoredFrom = cut);
+	}
+
+	/** Takes the history lock, reads the owner's notes fresh, lets {@code change} edit them, and writes them back only if they differ. */
+	private boolean changeNotes(final long accountHash, @Nullable final String profileType, final Consumer<Notes> change)
+	{
+		if (!BankSnapshot.isAccount(accountHash))
+		{
+			return false;
+		}
+		synchronized (historyLock)
+		{
+			final Filepath file = notesFile(accountHash, profileType);
+			final Notes read = file == null ? null : readNotes(accountHash, profileType);
+			if (read == null)
+			{
+				return false;
+			}
+			final Notes next = new Notes(read);
+			change.accept(next);
+			return next.equals(read) || rewrite(notesOwner(accountHash, profileType), file, false, notesJson(next));
+		}
+	}
+
+	/**
+	 * The notes file's text: {@code schema}, then {@code transfers} - each {@code day, gp, coins} - then, when set, {@code restoredFrom}
+	 * (the cut the player restored) and {@code underFrom} / {@code underWhy} (the automatic cut their reset stands over).
+	 */
+	private String notesJson(final Notes notes)
+	{
+		final NotesDto dto = new NotesDto();
+		for (final Map.Entry<LocalDate, BankHistorySeries.Transfer> note : notes.transfers.entrySet())
+		{
+			final NoteEntry entry = new NoteEntry();
+			entry.day = note.getKey().toString();
+			entry.gp = note.getValue().gp();
+			entry.coins = note.getValue().coins();
+			dto.transfers.add(entry);
+		}
+		dto.restoredFrom = notes.restoredFrom == null ? null : notes.restoredFrom.toString();
+		if (notes.autoCut != null)
+		{
+			dto.underFrom = notes.autoCut.from().toString();
+			dto.underWhy = notes.autoCut.why();
+		}
+		return gson.toJson(dto);
+	}
+
+	/** What one owner's notes file holds (1.2.2): the transfers by day, the restore mark of part 5 and the cut a reset stands over. */
+	private static final class Notes
+	{
+		final TreeMap<LocalDate, BankHistorySeries.Transfer> transfers;
+		/** The player's cut the restore mark belongs to; null = not restored. */
+		@Nullable
+		LocalDate restoredFrom;
+		/** The automatic cut the player's reset replaced; null = none. */
+		@Nullable
+		BankHistorySeries.AutoCut autoCut;
+
+		Notes()
+		{
+			transfers = new TreeMap<>();
+		}
+
+		Notes(final Notes other)
+		{
+			transfers = new TreeMap<>(other.transfers);
+			restoredFrom = other.restoredFrom;
+			autoCut = other.autoCut;
+		}
+
+		@Override
+		public boolean equals(final Object o)
+		{
+			return o instanceof Notes && transfers.equals(((Notes) o).transfers)
+				&& Objects.equals(restoredFrom, ((Notes) o).restoredFrom) && Objects.equals(autoCut, ((Notes) o).autoCut);
+		}
+
+		@Override
+		public int hashCode()
+		{
+			return Objects.hash(transfers, restoredFrom, autoCut);
+		}
+	}
+
+	/**
+	 * The on-disk form of the notes (1.2.2): public fields, a no-arg constructor, stock-Gson types, as every document here. The
+	 * restore mark ({@code restoredFrom}, an ISO date) and the cut a reset stands over ({@code underFrom}, {@code underWhy}) are
+	 * Strings so a file that never had one is written exactly as before: absent.
+	 */
+	static class NotesDto
+	{
+		public int schema = NOTES_SCHEMA;
+		public List<NoteEntry> transfers = new ArrayList<>();
+		public String restoredFrom;
+		public String underFrom;
+		public String underWhy;
+
+		public NotesDto()
+		{
+		}
+	}
+
+	/** One note: the day it is dated, the signed gold, and whether it was coins. A missing {@code coins} is false. */
+	static class NoteEntry
+	{
+		public String day;
+		public long gp;
+		public boolean coins;
+
+		public NoteEntry()
+		{
+		}
 	}
 
 	// ---- baselines
@@ -1423,8 +1765,9 @@ public class PriceStore
 	 * <li>{@value #LEGACY_LATEST_FILE} - the {@code /latest} spot map. That endpoint is not called any more.</li>
 	 * <li>any {@code baseline-<X>.json} whose {@code X} is not the name of a current {@link MovementWindow} -
 	 * which is exactly {@code baseline-H1.json} and {@code baseline-H24.json}. Matched against
-	 * {@link MovementWindow#name()} and deliberately NOT against {@link MovementWindow#parse(String)}, which
-	 * maps the legacy spelling "H24" onto D1 and would keep the file alive under the wrong window.</li>
+	 * {@link MovementWindow#name()} and deliberately NOT against a generous reading of the text (the dev bridge's
+	 * window parser), which maps the legacy spelling "H24" onto D1 and would keep the file alive under the wrong
+	 * window.</li>
 	 * <li>any surviving baseline whose stored {@code revId} is 0 - a map written before the guide switch, when
 	 * it held real-time trade averages. {@code baseline-D7.json} is the one that can be in this state, since D7
 	 * is a window in both eras, and its trade content is precisely what showed a 1,086 gp hat as +12845.5 %.
@@ -1964,9 +2307,10 @@ public class PriceStore
 
 	/**
 	 * Moves an unusable file aside as {@code <name>.corrupt-<millis>}. A failure to rename is logged and
-	 * nothing else: the file still reads as EMPTY, and the next save replaces it whole anyway.
+	 * nothing else: the file still reads as EMPTY, and the next save replaces it whole anyway. Answers whether the
+	 * file was moved, for the reader whose next save must not replace the only copy (the notes).
 	 */
-	private void quarantine(final Filepath file)
+	private boolean quarantine(final Filepath file)
 	{
 		// Inside the try, all of it: getParent() throws on a Filepath that is its own root, and this method is
 		// reached from a load that promises never to throw. Nothing can pass a root today - every path comes
@@ -1974,12 +2318,14 @@ public class PriceStore
 		try
 		{
 			final Filepath backup = file.getParent()
-				.joinSegment(file.getFileName() + CORRUPT_SUFFIX + System.currentTimeMillis());
+				.joinSegment(file.getFileName() + CORRUPT_SUFFIX + asideMillis.getAsLong());
 			file.moveTo(backup, StandardCopyOption.REPLACE_EXISTING);
+			return true;
 		}
 		catch (IOException | RuntimeException e)
 		{
 			log.warn("could not move {} aside", file, e);
+			return false;
 		}
 	}
 
@@ -2059,12 +2405,6 @@ public class PriceStore
 		public long fetchedAtMillis()
 		{
 			return fetchedAtMillis;
-		}
-
-		@Override
-		public String toString()
-		{
-			return "Stamped{fetchedAtMillis=" + fetchedAtMillis + ", value=" + value + '}';
 		}
 	}
 
@@ -2169,12 +2509,6 @@ public class PriceStore
 		public int hashCode()
 		{
 			return Objects.hash(state, series, lossy);
-		}
-
-		@Override
-		public String toString()
-		{
-			return "BankHistoryLoad{" + state + ", " + series + (lossy ? ", lossy" : "") + '}';
 		}
 	}
 
@@ -2350,6 +2684,27 @@ public class PriceStore
 	}
 
 	/**
+	 * The per-item buckets {@link TradedHour} and {@link TradedDay} hold: a copy with null keys and values dropped, handed
+	 * out unmodifiable, so what the service shares across threads can never change under a reader.
+	 */
+	private static Map<Integer, TradedPriceClient.Bucket> held(
+		@Nullable final Map<Integer, TradedPriceClient.Bucket> buckets)
+	{
+		final Map<Integer, TradedPriceClient.Bucket> copy = new HashMap<>();
+		if (buckets != null)
+		{
+			for (final Map.Entry<Integer, TradedPriceClient.Bucket> entry : buckets.entrySet())
+			{
+				if (entry.getKey() != null && entry.getValue() != null)
+				{
+					copy.put(entry.getKey(), entry.getValue());
+				}
+			}
+		}
+		return Collections.unmodifiableMap(copy);
+	}
+
+	/**
 	 * The newest closed hour's traded bucket as the service holds it (contract 1.2.0, L1): the hour's start, the
 	 * per-item averages and volumes, and when it was fetched. Immutable and shared, like {@link TradedDay};
 	 * {@link #EMPTY} is what a missing, refused or unreadable file reads as.
@@ -2373,18 +2728,7 @@ public class PriceStore
 			final long fetchedAtMillis)
 		{
 			this.startSeconds = Math.max(0L, startSeconds);
-			final Map<Integer, TradedPriceClient.Bucket> copy = new HashMap<>();
-			if (buckets != null)
-			{
-				for (final Map.Entry<Integer, TradedPriceClient.Bucket> entry : buckets.entrySet())
-				{
-					if (entry.getKey() != null && entry.getValue() != null)
-					{
-						copy.put(entry.getKey(), entry.getValue());
-					}
-				}
-			}
-			this.buckets = Collections.unmodifiableMap(copy);
+			this.buckets = held(buckets);
 			this.fetchedAtMillis = fetchedAtMillis;
 		}
 
@@ -2418,13 +2762,6 @@ public class PriceStore
 		{
 			return startSeconds <= 0L || buckets.isEmpty();
 		}
-
-		@Override
-		public String toString()
-		{
-			return "TradedHour{start=" + startSeconds + ", items=" + buckets.size() + ", fetchedAtMillis="
-				+ fetchedAtMillis + '}';
-		}
 	}
 
 	/**
@@ -2456,18 +2793,7 @@ public class PriceStore
 			final long fetchedAtMillis)
 		{
 			this.day = day;
-			final Map<Integer, TradedPriceClient.Bucket> copy = new HashMap<>();
-			if (buckets != null)
-			{
-				for (final Map.Entry<Integer, TradedPriceClient.Bucket> entry : buckets.entrySet())
-				{
-					if (entry.getKey() != null && entry.getValue() != null)
-					{
-						copy.put(entry.getKey(), entry.getValue());
-					}
-				}
-			}
-			this.buckets = Collections.unmodifiableMap(copy);
+			this.buckets = held(buckets);
 			this.fetchedAtMillis = fetchedAtMillis;
 		}
 
@@ -2501,12 +2827,6 @@ public class PriceStore
 		public boolean isEmpty()
 		{
 			return day == null || buckets.isEmpty();
-		}
-
-		@Override
-		public String toString()
-		{
-			return "TradedDay{day=" + day + ", items=" + buckets.size() + ", fetchedAtMillis=" + fetchedAtMillis + '}';
 		}
 	}
 

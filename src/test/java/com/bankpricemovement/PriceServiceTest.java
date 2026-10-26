@@ -403,7 +403,6 @@ public class PriceServiceTest
 			PriceService.HISTORY_MAX_AGE_MS);
 		assertEquals(7L * DAY, PriceService.MAPPING_MAX_AGE_MS);
 		assertEquals(30L * SECOND, PriceService.MANUAL_COOLDOWN_MS);
-		assertEquals("Guide prices", PriceService.HEADER_PREFIX);
 		assertEquals("a paging run reaches the 180d window and a day (contract 1.1.2, T2)", 181,
 			PriceService.INDEX_REACH_DAYS);
 		assertEquals("R0 and the three revisions before it are looked at for the now time", 4, PriceService.MATCH_DEPTH);
@@ -523,27 +522,28 @@ public class PriceServiceTest
 	@Test
 	public void theDayLabelIsTheUtcDayInEnglish()
 	{
-		assertEquals("07 Sep", PriceService.Status.dayLabel(SEP_7));
-		assertEquals("09 Jun", PriceService.Status.dayLabel(JUN_9));
-		assertEquals(MovementMath.DASH, PriceService.Status.dayLabel(null));
+		assertEquals("07 Sep", MovementMath.formatDay(SEP_7));
+		assertEquals("09 Jun", MovementMath.formatDay(JUN_9));
+		assertEquals(MovementMath.DASH, MovementMath.formatDay(null));
 	}
 
 	@Test
 	public void theStatusLineNamesTheGuideDayNeverAClock()
 	{
-		final PriceService.Status status = new PriceService.Status(T0, T0 - HOUR, true, true,
+		final PriceService.Status status = StatusFixtures.status(T0, T0 - HOUR, true, true,
 			MovementRow.PriceSource.GUIDE, null, null, 3, 4, MovementWindow.D1, true, dataSecondsFor(BOT_0907),
-			BOT_0907.revId(), T0 - DAY, T0 - HOUR, SEP_8, 1.0d, 28, SEP_8, BOT_0908.revId(), false, false, null, null);
+			BOT_0907.revId(), T0 - DAY, T0 - HOUR, SEP_8, 1.0d, 28, SEP_8, BOT_0908.revId(), false, false, null, null,
+				ViewOptions.DEFAULT, null);
 
-		assertEquals("Guide prices - 1d vs 07 Sep - Bank as of " + MovementMath.formatTime(T0 - HOUR), status.text());
-		assertEquals("1d vs 07 Sep", status.baselineText());
+		assertEquals("Guide prices - 1d vs 07 Sep - Bank as of " + MovementMath.formatTime(T0 - HOUR), PanelState.text(status));
+		assertEquals("1d vs 07 Sep", PanelState.baselineText(status));
 		assertEquals(SEP_7, status.thenDay());
-		assertEquals(BOT_0907.revId(), status.thenRevId());
 		assertEquals(BOT_0907.revId(), status.baselineRevId());
-		assertEquals(SEP_8, status.anchorDay());
-		assertEquals(SEP_8, status.r0Day());
-		assertEquals(1.0d, status.agree(), 0.0d);
-		assertEquals(28, status.agreeSamples());
+		assertEquals(BOT_0907.revId(), status.baselineRevId());
+		assertEquals(SEP_8, status.anchorDay);
+		assertEquals(SEP_8, status.r0Day);
+		assertEquals(1.0d, status.agree, 0.0d);
+		assertEquals(28, status.agreeSamples);
 		assertFalse(status.degraded());
 		assertNull(status.degradedReason());
 	}
@@ -551,37 +551,38 @@ public class PriceServiceTest
 	@Test
 	public void theStatusLineVariants()
 	{
-		final PriceService.Status noBank = new PriceService.Status(0L, 0L, false, false, null, null, null, 0, 0, null,
-			false, 0L, 0L, 0L, 0L, null, -1.0d, 0, null, 0L, false, false, null, null);
-		assertEquals("Guide prices - No bank yet", noBank.text());
+		final PriceService.Status noBank = StatusFixtures.status(0L, 0L, false, false, null, null, null, 0, 0, null,
+			false, 0L, 0L, 0L, 0L, null, -1.0d, 0, null, 0L, false, false, null, null, ViewOptions.DEFAULT, null);
+		assertEquals("Guide prices - No bank yet", PanelState.text(noBank));
 		assertSame("a null summary reads as EMPTY (M3)", PortfolioSummary.EMPTY, noBank.portfolio());
-		assertNull(noBank.baselineText());
+		assertNull(PanelState.baselineText(noBank));
 		assertNull(noBank.thenDay());
 		assertEquals(MovementWindow.D1, noBank.window());
-		assertEquals(MovementRow.PriceSource.NONE, noBank.source());
+		assertEquals(MovementRow.PriceSource.NONE, noBank.source);
 
-		final PriceService.Status loggedOut = new PriceService.Status(T0, T0, true, false, MovementRow.PriceSource.GUIDE,
-			null, null, 1, 1, MovementWindow.D30, false, 0L, 0L, 0L, 0L, null, -1.0d, 0, null, 0L, false, false, null, null);
-		assertEquals("Guide prices - Bank as of " + MovementMath.formatTime(T0) + " (logged out)", loggedOut.text());
+		final PriceService.Status loggedOut = StatusFixtures.status(T0, T0, true, false, MovementRow.PriceSource.GUIDE,
+			null, null, 1, 1, MovementWindow.D30, false, 0L, 0L, 0L, 0L, null, -1.0d, 0, null, 0L, false, false, null,
+				null, ViewOptions.DEFAULT, null);
+		assertEquals("Guide prices - Bank as of " + MovementMath.formatTime(T0) + " (logged out)", PanelState.text(loggedOut));
 
 		final PortfolioSummary summary = new PortfolioSummary(5L, 1, 1, null);
-		final PriceService.Status problem = new PriceService.Status(T0, T0, true, true, MovementRow.PriceSource.GUIDE,
+		final PriceService.Status problem = StatusFixtures.status(T0, T0, true, true, MovementRow.PriceSource.GUIDE,
 			"No 30d history", PriceService.ProblemKind.NO_HISTORY, 1, 1, MovementWindow.D30, false, 0L, 0L, 0L, 0L,
-			SEP_8, 1.0d, 28, SEP_8, 1L, true, false, "why", summary);
-		assertEquals("the problem replaces the line", "No 30d history", problem.text());
-		assertEquals("the header is still there for a tooltip", "Guide prices - Bank as of " + MovementMath.formatTime(T0), problem.headerText());
+			SEP_8, 1.0d, 28, SEP_8, 1L, true, false, "why", summary, ViewOptions.DEFAULT, null);
+		assertEquals("the problem replaces the line", "No 30d history", PanelState.text(problem));
+		assertEquals("the header is still there for a tooltip", "Guide prices - Bank as of " + MovementMath.formatTime(T0), PanelState.headerText(problem));
 		assertTrue(problem.degraded());
 		assertEquals("why", problem.degradedReason());
 		assertSame("the summary rides on the status (M3)", summary, problem.portfolio());
-		assertTrue(problem.toString(), problem.toString().contains("bankValue=5"));
+		assertEquals(5L, problem.portfolio().valueNow());
 
-		final PriceService.Status notDegraded = new PriceService.Status(T0, T0, true, true, null, null, null, 0, 0, null,
-			false, 0L, 0L, 0L, 0L, null, -1.0d, 0, null, 0L, false, false, "ignored", null);
+		final PriceService.Status notDegraded = StatusFixtures.status(T0, T0, true, true, null, null, null, 0, 0, null,
+			false, 0L, 0L, 0L, 0L, null, -1.0d, 0, null, 0L, false, false, "ignored", null, ViewOptions.DEFAULT, null);
 		assertNull("a reason without the flag is dropped", notDegraded.degradedReason());
 		assertNotEquals("the summary is part of a status's identity", problem,
-			new PriceService.Status(T0, T0, true, true, MovementRow.PriceSource.GUIDE, "No 30d history",
+			StatusFixtures.status(T0, T0, true, true, MovementRow.PriceSource.GUIDE, "No 30d history",
 				PriceService.ProblemKind.NO_HISTORY, 1, 1, MovementWindow.D30, false, 0L, 0L, 0L, 0L, SEP_8, 1.0d, 28,
-				SEP_8, 1L, true, false, "why", null));
+				SEP_8, 1L, true, false, "why", null, ViewOptions.DEFAULT, null));
 	}
 
 	@Test
@@ -614,16 +615,17 @@ public class PriceServiceTest
 	@Test
 	public void aStatusWithoutASentenceIsAlwaysKindNone()
 	{
-		final PriceService.Status quiet = new PriceService.Status(T0, T0, true, true, null, null,
+		final PriceService.Status quiet = StatusFixtures.status(T0, T0, true, true, null, null,
 			PriceService.ProblemKind.HISTORY_DOWN, 0, 0, null, false, 0L, 0L, 0L, 0L, null, -1.0d, 0, null, 0L,
-			false, false, null, null);
+			false, false, null, null, ViewOptions.DEFAULT, null);
 
 		assertNull(quiet.problem());
 		assertEquals(PriceService.ProblemKind.NONE, quiet.problemKind());
 		assertFalse(quiet.problemKind().severe());
 		assertEquals("and a kind offered with a sentence is kept", PriceService.ProblemKind.NO_HISTORY,
-			new PriceService.Status(T0, T0, true, true, null, "No 180d history", PriceService.ProblemKind.NO_HISTORY,
-				0, 0, null, false, 0L, 0L, 0L, 0L, null, -1.0d, 0, null, 0L, false, false, null, null).problemKind());
+			StatusFixtures.status(T0, T0, true, true, null, "No 180d history", PriceService.ProblemKind.NO_HISTORY,
+				0, 0, null, false, 0L, 0L, 0L, 0L, null, -1.0d, 0, null, 0L, false, false, null, null,
+					ViewOptions.DEFAULT, null).problemKind());
 	}
 
 	// ---------------------------------------------------------------- C22: start, stop, flush
@@ -645,18 +647,18 @@ public class PriceServiceTest
 			verify(store).loadBucket(window);
 		}
 		final PriceService.Status status = lastStatus();
-		assertTrue("the 1d baseline came from disk", status.baselineLoaded());
+		assertTrue("the 1d baseline came from disk", status.baselineLoaded);
 		assertEquals(SEP_7, status.thenDay());
 		assertEquals(BOT_0907.revId(), status.baselineRevId());
-		assertEquals(T0 - DAY, status.mappingAtMillis());
-		assertEquals(T0 - HOUR, status.indexAtMillis());
+		assertEquals(T0 - DAY, status.mappingAtMillis);
+		assertEquals(T0 - HOUR, status.indexAtMillis);
 		assertEquals(HISTORY, service.revisionIndex());
-		assertNull("no R0 yet, so no anchor", status.anchorDay());
-		assertNull(status.r0Day());
+		assertNull("no R0 yet, so no anchor", status.anchorDay);
+		assertNull(status.r0Day);
 		assertFalse(status.bankLoaded());
-		assertEquals(MovementRow.PriceSource.NONE, status.source());
+		assertEquals(MovementRow.PriceSource.NONE, status.source);
 		assertTrue(lastRows().isEmpty());
-		assertEquals("Guide prices - 1d vs 07 Sep - No bank yet", status.text());
+		assertEquals("Guide prices - 1d vs 07 Sep - No bank yet", PanelState.text(status));
 		verify(wiki, never()).fetchRevisionIndex(anyLong(), anyLong());
 		verify(wiki, never()).fetchTables(anyCollection(), anyLong());
 		verify(wiki, never()).fetchMapping(anyLong());
@@ -665,7 +667,7 @@ public class PriceServiceTest
 	@Test
 	public void startIsIdempotentAndTheInitialStatusIsGuidePricesNoBankYet()
 	{
-		assertEquals("Guide prices - No bank yet", service.currentStatus().text());
+		assertEquals("Guide prices - No bank yet", PanelState.text(service.currentStatus()));
 		assertTrue(service.currentRows().isEmpty());
 		assertEquals(RowFilter.DEFAULT, service.filter());
 		assertEquals(MovementWindow.D1, service.currentStatus().window());
@@ -692,10 +694,10 @@ public class PriceServiceTest
 
 		service.start();
 
-		assertFalse(lastStatus().baselineLoaded());
+		assertFalse(lastStatus().baselineLoaded);
 		assertEquals(0L, lastStatus().baselineRevId());
 		assertNull(lastStatus().thenDay());
-		assertEquals("Guide prices - No bank yet", lastStatus().text());
+		assertEquals("Guide prices - No bank yet", PanelState.text(lastStatus()));
 	}
 
 	/**
@@ -717,10 +719,10 @@ public class PriceServiceTest
 		service.start();
 
 		assertFalse("a file from a build whose fields meant something else is refetched, not believed",
-			lastStatus().baselineLoaded());
+			lastStatus().baselineLoaded);
 		assertEquals(0L, lastStatus().baselineRevId());
 		assertNull(lastStatus().thenDay());
-		assertEquals("Guide prices - No bank yet", lastStatus().text());
+		assertEquals("Guide prices - No bank yet", PanelState.text(lastStatus()));
 	}
 
 	@Test
@@ -822,7 +824,7 @@ public class PriceServiceTest
 
 		assertTrue("nothing reaches a listener before the EDT consumer runs", publishedRows.isEmpty());
 		assertEquals("the bridge getters are current before the EDT runs", 30, service.currentRows().size());
-		assertEquals(30, service.currentStatus().totalRows());
+		assertEquals(30, service.currentStatus().totalRows);
 
 		edt.drain();
 
@@ -904,9 +906,9 @@ public class PriceServiceTest
 		assertTrue(status.bankLoaded());
 		assertEquals(captured, status.bankAtMillis());
 		assertEquals(31, status.bankItems());
-		assertEquals("bones have no guide price and are dropped by the band", 30, status.totalRows());
-		assertEquals(MovementRow.PriceSource.GUIDE, status.source());
-		assertEquals("Guide prices - 1d vs 07 Sep - Bank as of " + MovementMath.formatTime(captured), status.text());
+		assertEquals("bones have no guide price and are dropped by the band", 30, status.totalRows);
+		assertEquals(MovementRow.PriceSource.GUIDE, status.source);
+		assertEquals("Guide prices - 1d vs 07 Sep - Bank as of " + MovementMath.formatTime(captured), PanelState.text(status));
 	}
 
 	@Test
@@ -942,8 +944,8 @@ public class PriceServiceTest
 
 		assertSame("a logout is a status-only publish: the same rows instance", rows, lastRows());
 		assertFalse(lastStatus().loggedIn());
-		assertEquals(30, lastStatus().totalRows());
-		assertEquals("Guide prices - 1d vs 07 Sep - Bank as of " + MovementMath.formatTime(T0) + " (logged out)", lastStatus().text());
+		assertEquals(30, lastStatus().totalRows);
+		assertEquals("Guide prices - 1d vs 07 Sep - Bank as of " + MovementMath.formatTime(T0) + " (logged out)", PanelState.text(lastStatus()));
 		verify(store, never()).loadBank(anyLong(), anyString());
 	}
 
@@ -1002,7 +1004,7 @@ public class PriceServiceTest
 		assertNull("the box is priced by RuneLite and named by nothing", rowFor(rows, BOX).thenPrice());
 		assertNull("the baited vessel's fallback is refused (L8 b)", rowFor(rows, VESSEL_BAITED).thenPrice());
 		assertEquals(Long.valueOf(3_388L), rowFor(rows, VESSEL_BAITED).unitPrice());
-		assertNull("no R0 in memory: no anchor, no request, the stored baseline serves as it is (L11)", lastStatus().anchorDay());
+		assertNull("no R0 in memory: no anchor, no request, the stored baseline serves as it is (L11)", lastStatus().anchorDay);
 		assertTrue(tableRequests.isEmpty());
 	}
 
@@ -1141,7 +1143,7 @@ public class PriceServiceTest
 
 		assertEquals("one index request", 1, indexFutures.size());
 		assertTrue(tableRequests.isEmpty());
-		assertEquals("No 1d history yet", lastStatus().text());
+		assertEquals("No 1d history yet", PanelState.text(lastStatus()));
 		assertEquals("No 1d history yet", lastStatus().problem());
 		assertEquals("a request is out, not a fault: the panel greys this one",
 			PriceService.ProblemKind.PENDING, lastStatus().problemKind());
@@ -1150,10 +1152,10 @@ public class PriceServiceTest
 
 		verify(store).saveRevisionIndex(eq(HISTORY), eq(T0));
 		assertEquals(HISTORY, service.revisionIndex());
-		assertEquals(T0, lastStatus().indexAtMillis());
+		assertEquals(T0, lastStatus().indexAtMillis);
 		assertEquals("R0 on its own: no anchor day yet, so no window can be picked", 1, tableRequests.size());
 		assertEquals(Collections.singletonList(BOT_0908.revId()), tableRequests.get(0));
-		assertEquals("No 1d history yet", lastStatus().text());
+		assertEquals("No 1d history yet", PanelState.text(lastStatus()));
 
 		answerTables();
 
@@ -1161,23 +1163,23 @@ public class PriceServiceTest
 		assertEquals(Arrays.asList(BOT_0907.revId(), BOT_0901.revId(), BOT_0809.revId(), BOT_0609.revId(), BOT_0312.revId()),
 			tableRequests.get(1));
 		PriceService.Status status = lastStatus();
-		assertEquals(SEP_8, status.r0Day());
-		assertEquals(BOT_0908.revId(), status.r0RevId());
-		assertEquals("RuneLite on 08 Sep agrees with R0 on 08 Sep", SEP_8, status.anchorDay());
-		assertEquals(1.0d, status.agree(), 0.0d);
-		assertEquals("24 items + hat + whip + shark + tablet compare; the box and the vessel have no R0 value", 28, status.agreeSamples());
+		assertEquals(SEP_8, status.r0Day);
+		assertEquals(BOT_0908.revId(), status.r0RevId);
+		assertEquals("RuneLite on 08 Sep agrees with R0 on 08 Sep", SEP_8, status.anchorDay);
+		assertEquals(1.0d, status.agree, 0.0d);
+		assertEquals("24 items + hat + whip + shark + tablet compare; the box and the vessel have no R0 value", 28, status.agreeSamples);
 		assertFalse(status.degraded());
-		assertEquals("No 1d history yet", status.text());
+		assertEquals("No 1d history yet", PanelState.text(status));
 
 		answerTables();
 
 		status = lastStatus();
 		assertNull(status.problem());
-		assertEquals("Guide prices - 1d vs 07 Sep - Bank as of " + MovementMath.formatTime(T0), status.text());
+		assertEquals("Guide prices - 1d vs 07 Sep - Bank as of " + MovementMath.formatTime(T0), PanelState.text(status));
 		assertEquals(SEP_7, status.thenDay());
 		assertEquals(BOT_0907.revId(), status.baselineRevId());
 		assertEquals(dataSecondsFor(BOT_0907), status.baselineRevisionSeconds());
-		assertTrue(status.baselineLoaded());
+		assertTrue(status.baselineLoaded);
 		assertEquals(SEP_1, service.baseline(MovementWindow.D7).dataDay());
 		assertEquals(AUG_9, service.baseline(MovementWindow.D30).dataDay());
 		assertEquals("the walk-back of L5: 10 Jun has no revision, 09 Jun is remembered as the real date", JUN_9,
@@ -1222,10 +1224,10 @@ public class PriceServiceTest
 		answerTables(); // R0
 
 		PriceService.Status status = lastStatus();
-		assertEquals(SEP_8, status.r0Day());
-		assertEquals("only the flat shark still agrees: 1 of 28", 1.0d / 28.0d, status.agree(), 1e-9);
-		assertEquals("the clock is now - never R0's day + 1", T0 / 1000L, status.nowSeconds());
-		assertEquals("its date", SEP_8, status.anchorDay());
+		assertEquals(SEP_8, status.r0Day);
+		assertEquals("only the flat shark still agrees: 1 of 28", 1.0d / 28.0d, status.agree, 1e-9);
+		assertEquals("the clock is now - never R0's day + 1", T0 / 1000L, status.nowSeconds);
+		assertEquals("its date", SEP_8, status.anchorDay);
 		assertFalse("ahead is not degraded: the windows are whole days back from the clock", status.degraded());
 		assertEquals("every window's body in one call, 1d among them: R0 is not a day old", 2, tableRequests.size());
 		assertEquals(Arrays.asList(BOT_0907.revId(), BOT_0901.revId(), BOT_0809.revId(), BOT_0609.revId(), BOT_0312.revId()),
@@ -1235,7 +1237,7 @@ public class PriceServiceTest
 
 		status = lastStatus();
 		assertEquals(BOT_0907.revId(), status.baselineRevId());
-		assertEquals("Guide prices - 1d vs 07 Sep - Bank as of " + MovementMath.formatTime(T0), status.text());
+		assertEquals("Guide prices - 1d vs 07 Sep - Bank as of " + MovementMath.formatTime(T0), PanelState.text(status));
 		final List<MovementRow> rows = lastRows();
 		assertEquals("RuneLite's 09 Sep price against the 07 Sep table", Long.valueOf(1_100L), rowFor(rows, GREEN_HAT).unitPrice());
 		assertEquals(Long.valueOf(1_124L), rowFor(rows, GREEN_HAT).thenPrice());
@@ -1254,14 +1256,14 @@ public class PriceServiceTest
 	public void aNewJagexStepMarksTheIndexStaleUntilTheWikiListsIt()
 	{
 		warmUp();
-		assertEquals(dataSecondsFor(BOT_0908), lastStatus().nowSeconds());
+		assertEquals(dataSecondsFor(BOT_0908), lastStatus().nowSeconds);
 		final int requestsBefore = tableRequests.size();
 
 		runeliteOn(SEP_9);
 		fireTick();
 
 		PriceService.Status status = lastStatus();
-		assertEquals("ahead: the clock", T0 / 1000L, status.nowSeconds());
+		assertEquals("ahead: the clock", T0 / 1000L, status.nowSeconds);
 		assertEquals("a day before the clock is still 07 Sep's table", BOT_0907.revId(), status.baselineRevId());
 		assertEquals("nothing new to fetch for any window", requestsBefore, tableRequests.size());
 		assertEquals("the index is fresh and the mark was only just made: not refetched by this tick", 1,
@@ -1283,9 +1285,9 @@ public class PriceServiceTest
 		answerEveryTable(); // the new R0, and the windows that moved with the clock
 
 		status = lastStatus();
-		assertEquals(bot0909.revId(), status.r0RevId());
-		assertEquals("RuneLite matches the new R0: its table time is now", dataSecondsFor(bot0909), status.nowSeconds());
-		assertEquals(SEP_9, status.anchorDay());
+		assertEquals(bot0909.revId(), status.r0RevId);
+		assertEquals("RuneLite matches the new R0: its table time is now", dataSecondsFor(bot0909), status.nowSeconds);
+		assertEquals(SEP_9, status.anchorDay);
 	}
 
 	/**
@@ -1306,7 +1308,7 @@ public class PriceServiceTest
 		fireTick();
 		answerIndex();
 		answerTables(); // R0
-		assertEquals("ahead: the clock is now", clock.get() / 1000L, lastStatus().nowSeconds());
+		assertEquals("ahead: the clock is now", clock.get() / 1000L, lastStatus().nowSeconds);
 		assertEquals("R0, then the windows' batch", 2, tableRequests.size());
 
 		clock.addAndGet(2L * SECOND);
@@ -1317,7 +1319,7 @@ public class PriceServiceTest
 			clock.addAndGet(2L * SECOND);
 			service.setOptions(service.options().withCountCash(i % 2 == 1)); // a computation, with the clock moved on
 			assertEquals("computation " + i + ": the clock is now, and nothing is asked for", clock.get() / 1000L,
-				lastStatus().nowSeconds());
+				lastStatus().nowSeconds);
 		}
 		assertEquals("ten computations on a drifting clock: still no new body request", 2, tableRequests.size());
 		assertTrue(lastStatus().degraded());
@@ -1363,13 +1365,13 @@ public class PriceServiceTest
 		runelite.put(item(2), runelite.get(item(2)) + 1);
 		runelite.put(item(3), runelite.get(item(3)) + 1);
 		warmUp();
-		assertEquals(25, Math.round(lastStatus().agree() * 28));
-		assertEquals(T0 / 1000L, lastStatus().nowSeconds());
+		assertEquals(25, Math.round(lastStatus().agree * 28));
+		assertEquals(T0 / 1000L, lastStatus().nowSeconds);
 
 		// Back to two nudged: 26 of 28 = 0.929 - R0's own table.
 		runelite.put(item(3), runelite.get(item(3)) - 1);
 		fireTick();
-		assertEquals(dataSecondsFor(BOT_0908), lastStatus().nowSeconds());
+		assertEquals(dataSecondsFor(BOT_0908), lastStatus().nowSeconds);
 		assertEquals("the mark the 25 of 28 left asked for the index on this tick", 2, indexFutures.size());
 	}
 
@@ -1382,10 +1384,10 @@ public class PriceServiceTest
 		warmUp();
 
 		final PriceService.Status status = lastStatus();
-		assertEquals(0, status.agreeSamples());
-		assertEquals(-1.0d, status.agree(), 0.0d);
-		assertEquals("no comparison possible: now is R0's own table time", dataSecondsFor(BOT_0908), status.nowSeconds());
-		assertEquals("and its date is the anchor day", SEP_8, status.anchorDay());
+		assertEquals(0, status.agreeSamples);
+		assertEquals(-1.0d, status.agree, 0.0d);
+		assertEquals("no comparison possible: now is R0's own table time", dataSecondsFor(BOT_0908), status.nowSeconds);
+		assertEquals("and its date is the anchor day", SEP_8, status.anchorDay);
 		assertTrue(status.degraded());
 		assertTrue(status.degradedReason(), status.degradedReason().contains("20"));
 		assertEquals(SEP_7, status.thenDay());
@@ -1395,7 +1397,7 @@ public class PriceServiceTest
 		assertEquals(MovementRow.PriceSource.GUIDE, rowFor(rows, GREEN_HAT).source());
 		assertEquals("an item R0 cannot name keeps RuneLite's price", Long.valueOf(100L), rowFor(rows, BOX).unitPrice());
 		assertNull("the vessel has neither: unpriced, dropped by the band", rowFor(rows, VESSEL_BAITED));
-		assertEquals(MovementRow.PriceSource.GUIDE, status.source());
+		assertEquals(MovementRow.PriceSource.GUIDE, status.source);
 	}
 
 	/**
@@ -1505,7 +1507,7 @@ public class PriceServiceTest
 
 		assertEquals("six hours old is stale (L4)", 1, indexFutures.size());
 		answerIndex();
-		assertEquals(T0, lastStatus().indexAtMillis());
+		assertEquals(T0, lastStatus().indexAtMillis);
 
 		clock.addAndGet(PriceService.HISTORY_MAX_AGE_MS - MINUTE);
 		fireTick();
@@ -1542,9 +1544,9 @@ public class PriceServiceTest
 		answerTables();
 
 		final PriceService.Status status = lastStatus();
-		assertEquals(SEP_9, status.r0Day());
-		assertEquals(bot0909.revId(), status.r0RevId());
-		assertEquals(SEP_9, status.anchorDay());
+		assertEquals(SEP_9, status.r0Day);
+		assertEquals(bot0909.revId(), status.r0RevId);
+		assertEquals(SEP_9, status.anchorDay);
 		assertEquals("the superseded R0 is the new 1d baseline - its table, 20:00 on the 8th, is a day older than the"
 			+ " new one's at 20:05 - adopted from memory, not fetched again", BOT_0908.revId(), status.baselineRevId());
 		assertEquals(SEP_8, status.thenDay());
@@ -1648,7 +1650,7 @@ public class PriceServiceTest
 		final PriceService.Status status = lastStatus();
 		assertEquals(SEP_6, status.thenDay());
 		assertEquals(BOT_0906.revId(), status.baselineRevId());
-		assertEquals("1d vs 06 Sep", status.baselineText());
+		assertEquals("1d vs 06 Sep", PanelState.baselineText(status));
 	}
 
 	@Test
@@ -1662,14 +1664,14 @@ public class PriceServiceTest
 		service.setFilter(RowFilter.DEFAULT.withWindow(MovementWindow.D30));
 
 		PriceService.Status status = lastStatus();
-		assertFalse(status.baselineLoaded());
+		assertFalse(status.baselineLoaded);
 		assertEquals("09 Aug's only revision is unusable and 10 Aug has none: nothing left to try",
-			"Wiki history down - no movement", status.text());
+			"Wiki history down - no movement", PanelState.text(status));
 		assertEquals("and it is the severe kind, which is what the panel paints red",
 			PriceService.ProblemKind.HISTORY_DOWN, status.problemKind());
 		fireTick();
 		assertEquals("the wiki answered without that body: it is not requested again this session", before, tableRequests.size());
-		assertEquals(MovementRow.PriceSource.GUIDE, lastStatus().source());
+		assertEquals(MovementRow.PriceSource.GUIDE, lastStatus().source);
 		assertNull(rowFor(lastRows(), GREEN_HAT).thenPrice());
 
 		service.setFilter(RowFilter.DEFAULT);
@@ -1696,9 +1698,9 @@ public class PriceServiceTest
 		service.setFilter(RowFilter.DEFAULT.withWindow(MovementWindow.D180));
 
 		final PriceService.Status status = lastStatus();
-		assertEquals("No 180d history", status.text());
+		assertEquals("No 180d history", PanelState.text(status));
 		assertEquals("not an error: the panel greys it", PriceService.ProblemKind.NO_HISTORY, status.problemKind());
-		assertFalse(status.baselineLoaded());
+		assertFalse(status.baselineLoaded);
 		assertFalse("not an error: not degraded", status.degraded());
 		fireTick();
 		assertEquals(2, tableRequests.size());
@@ -1919,9 +1921,9 @@ public class PriceServiceTest
 		warmUpEveryTable();
 
 		final PriceService.Status status = lastStatus();
-		assertEquals(15_367_875L, status.r0RevId());
-		assertEquals("the matched table's time is now", octoberTableSeconds(15_367_875L), status.nowSeconds());
-		assertEquals(LocalDate.of(2026, 10, 7), status.anchorDay());
+		assertEquals(15_367_875L, status.r0RevId);
+		assertEquals("the matched table's time is now", octoberTableSeconds(15_367_875L), status.nowSeconds);
+		assertEquals(LocalDate.of(2026, 10, 7), status.anchorDay);
 		assertEquals("06 Oct 14:15 (table 14:11): the newest at or before 06 Oct 16:25", 15_366_865L,
 			service.baseline(MovementWindow.D1).revId());
 		assertNotEquals("not the last of 06 Oct's date", 15_367_181L, service.baseline(MovementWindow.D1).revId());
@@ -1931,8 +1933,8 @@ public class PriceServiceTest
 			service.baseline(MovementWindow.D30).revId());
 		assertEquals(15_259_121L, service.baseline(MovementWindow.D90).revId());
 		assertEquals(15_171_863L, service.baseline(MovementWindow.D180).revId());
-		assertEveryWindowCountsBackFrom(status.nowSeconds(), 15_367_875L);
-		assertEquals("1d vs 06 Oct", status.baselineText());
+		assertEveryWindowCountsBackFrom(status.nowSeconds, 15_367_875L);
+		assertEquals("1d vs 06 Oct", PanelState.baselineText(status));
 		assertEquals("a whole day of movement on every item", Long.valueOf(15_367_875L % 100_000L - 15_366_865L % 100_000L),
 			rowFor(lastRows(), item(1)).deltaGp());
 		assertFalse(status.degraded());
@@ -1960,13 +1962,13 @@ public class PriceServiceTest
 		warmUpEveryTable();
 
 		final PriceService.Status status = lastStatus();
-		assertEquals("21 of 28: three in four, below the 90 % a match needs", 21, Math.round(status.agree() * 28));
+		assertEquals("21 of 28: three in four, below the 90 % a match needs", 21, Math.round(status.agree * 28));
 		assertNotEquals("never R0", 15_367_875L, service.baseline(MovementWindow.D1).revId());
 		assertTrue("1d is at least 24 h before the clock",
 			service.baseline(MovementWindow.D1).bucketSeconds() <= OCT_7_1703 / 1000L - 86_400L);
 		assertEquals(15_366_933L, service.baseline(MovementWindow.D1).revId());
-		assertEquals("the clock is now", OCT_7_1703 / 1000L, status.nowSeconds());
-		assertEveryWindowCountsBackFrom(status.nowSeconds(), 0L);
+		assertEquals("the clock is now", OCT_7_1703 / 1000L, status.nowSeconds);
+		assertEveryWindowCountsBackFrom(status.nowSeconds, 0L);
 		assertFalse("ahead is not degraded", status.degraded());
 
 		fireTick();
@@ -1987,8 +1989,8 @@ public class PriceServiceTest
 		history = before;
 		runeliteOnTable(octoberPrices(15_367_698L));
 		warmUpEveryTable();
-		assertEquals(15_367_698L, lastStatus().r0RevId());
-		assertEquals(octoberTableSeconds(15_367_698L), lastStatus().nowSeconds());
+		assertEquals(15_367_698L, lastStatus().r0RevId);
+		assertEquals(octoberTableSeconds(15_367_698L), lastStatus().nowSeconds);
 
 		history = octoberIndex();
 		clock.addAndGet(PriceService.HISTORY_MAX_AGE_MS);
@@ -1997,11 +1999,11 @@ public class PriceServiceTest
 		answerEveryTable();
 
 		final PriceService.Status status = lastStatus();
-		assertEquals("the wiki's newest is R0", 15_367_875L, status.r0RevId());
-		assertEquals("RuneLite's 13:56 table is now", octoberTableSeconds(15_367_698L), status.nowSeconds());
+		assertEquals("the wiki's newest is R0", 15_367_875L, status.r0RevId);
+		assertEquals("RuneLite's 13:56 table is now", octoberTableSeconds(15_367_698L), status.nowSeconds);
 		assertEquals(15_366_672L, service.baseline(MovementWindow.D1).revId());
 		assertTrue(service.baseline(MovementWindow.D1).bucketSeconds() <= octoberTableSeconds(15_367_698L) - 86_400L);
-		assertEveryWindowCountsBackFrom(status.nowSeconds(), 15_367_698L);
+		assertEveryWindowCountsBackFrom(status.nowSeconds, 15_367_698L);
 		assertFalse("behind is routine at eight tables a day and its figures are right: not degraded", status.degraded());
 		assertNull("and no red sentence", status.degradedReason());
 	}
@@ -2022,9 +2024,9 @@ public class PriceServiceTest
 		for (final MovementWindow window : Arrays.asList(MovementWindow.D30, MovementWindow.D90, MovementWindow.D180))
 		{
 			service.setFilter(RowFilter.DEFAULT.withWindow(window));
-			assertEquals(PriceService.problemNoHistory(window), lastStatus().text());
+			assertEquals(PriceService.problemNoHistory(window), PanelState.text(lastStatus()));
 			assertEquals(PriceService.ProblemKind.NO_HISTORY, lastStatus().problemKind());
-			assertFalse(lastStatus().baselineLoaded());
+			assertFalse(lastStatus().baselineLoaded);
 		}
 	}
 
@@ -2052,12 +2054,12 @@ public class PriceServiceTest
 		warmUpEveryTable();
 
 		PriceService.Status status = lastStatus();
-		assertEquals(sep8.revId(), status.r0RevId());
-		assertEquals(dataSecondsFor(sep8), status.nowSeconds());
+		assertEquals(sep8.revId(), status.r0RevId);
+		assertEquals(dataSecondsFor(sep8), status.nowSeconds);
 		assertTrue("the premise: yesterday's table is at least 24 h before today's",
 			dataSecondsFor(sep8) - dataSecondsFor(sep7) >= 86_400L);
 		assertEquals("yesterday's table", sep7.revId(), status.baselineRevId());
-		assertEquals("1d vs 07 Sep", status.baselineText());
+		assertEquals("1d vs 07 Sep", PanelState.baselineText(status));
 		assertEquals(sep1.revId(), service.baseline(MovementWindow.D7).revId());
 
 		clock.set(utcMillis(SEP_9, 2, 30, 0)); // past UTC midnight, the index six hours old and more
@@ -2066,7 +2068,7 @@ public class PriceServiceTest
 		answerEveryTable();
 
 		status = lastStatus();
-		assertEquals("still RuneLite's table's time, not 09 Sep", dataSecondsFor(sep8), status.nowSeconds());
+		assertEquals("still RuneLite's table's time, not 09 Sep", dataSecondsFor(sep8), status.nowSeconds);
 		assertEquals("yesterday's table, never today's", sep7.revId(), status.baselineRevId());
 		assertNotEquals(sep8.revId(), status.baselineRevId());
 	}
@@ -2089,13 +2091,13 @@ public class PriceServiceTest
 		warmUpEveryTable();
 
 		PriceService.Status status = lastStatus();
-		assertEquals(sep8.revId(), status.r0RevId());
-		assertEquals(dataSecondsFor(sep8), status.nowSeconds());
+		assertEquals(sep8.revId(), status.r0RevId);
+		assertEquals(dataSecondsFor(sep8), status.nowSeconds);
 		assertTrue("the premise: yesterday's table is less than 24 h before today's",
 			dataSecondsFor(sep8) - dataSecondsFor(sep7) < 86_400L);
 		assertEquals("the day before yesterday's table: yesterday's is not a full day older", sep6.revId(),
 			status.baselineRevId());
-		assertEquals("labelled with that day", "1d vs 06 Sep", status.baselineText());
+		assertEquals("labelled with that day", "1d vs 06 Sep", PanelState.baselineText(status));
 		assertEquals(sep1.revId(), service.baseline(MovementWindow.D7).revId());
 
 		clock.set(utcMillis(SEP_9, 2, 30, 0));
@@ -2104,7 +2106,7 @@ public class PriceServiceTest
 		answerEveryTable();
 
 		status = lastStatus();
-		assertEquals("still RuneLite's table's time, not 09 Sep", dataSecondsFor(sep8), status.nowSeconds());
+		assertEquals("still RuneLite's table's time, not 09 Sep", dataSecondsFor(sep8), status.nowSeconds);
 		assertEquals(sep6.revId(), status.baselineRevId());
 		assertNotEquals(sep7.revId(), status.baselineRevId());
 	}
@@ -2198,7 +2200,7 @@ public class PriceServiceTest
 
 		indexFutures.get(0).complete(new GuidePriceClient.CutShortIndex(history));
 
-		assertEquals("the cut-short run is adopted as the index", T0, lastStatus().indexAtMillis());
+		assertEquals("the cut-short run is adopted as the index", T0, lastStatus().indexAtMillis);
 
 		clock.addAndGet(PriceService.HISTORY_MAX_AGE_MS);
 		fireTick();
@@ -2228,12 +2230,12 @@ public class PriceServiceTest
 		assertEquals(MovementWindow.D7, status.window());
 		assertEquals(SEP_1, status.thenDay());
 		assertEquals(BOT_0901.revId(), status.baselineRevId());
-		assertEquals("Guide prices - 7d vs 01 Sep - Bank as of " + MovementMath.formatTime(T0), status.text());
+		assertEquals("Guide prices - 7d vs 01 Sep - Bank as of " + MovementMath.formatTime(T0), PanelState.text(status));
 		assertEquals("Item 1 on 08 Sep against 01 Sep: seven days of one gp each", Long.valueOf(7L), rowFor(lastRows(), item(1)).deltaGp());
 		assertEquals(before, tableRequests.size());
 
 		service.setFilter(RowFilter.DEFAULT.withWindow(MovementWindow.D90));
-		assertEquals("90d vs 09 Jun", lastStatus().baselineText());
+		assertEquals("90d vs 09 Jun", PanelState.baselineText(lastStatus()));
 		service.setFilter(RowFilter.DEFAULT.withWindow(MovementWindow.D90));
 		assertEquals("an equal filter is a no-op", before, tableRequests.size());
 	}
@@ -2248,13 +2250,13 @@ public class PriceServiceTest
 		answerIndex();
 		answerTables(); // R0
 		tableFutures.get(1).completeExceptionally(new WikiPriceException("wiki request failed: timeout")); // the windows batch fails
-		assertEquals("Wiki history down - no movement", lastStatus().text());
+		assertEquals("Wiki history down - no movement", PanelState.text(lastStatus()));
 		assertTrue(lastStatus().degraded());
 		final int before = tableRequests.size();
 
 		service.setFilter(RowFilter.DEFAULT.withWindow(MovementWindow.D7));
 
-		assertEquals("No 7d history yet", lastStatus().text());
+		assertEquals("No 7d history yet", PanelState.text(lastStatus()));
 		assertEquals(before + 1, tableRequests.size());
 		assertTrue(tableRequests.get(before).contains(BOT_0901.revId()));
 		answerTables();
@@ -2279,7 +2281,7 @@ public class PriceServiceTest
 		clock.addAndGet(12 * SECOND);
 		service.refreshNow();
 
-		assertEquals("Refreshed 12 s ago - wait", lastStatus().text());
+		assertEquals("Refreshed 12 s ago - wait", PanelState.text(lastStatus()));
 		assertEquals("a refused refresh is the severe kind", PriceService.ProblemKind.COOLDOWN,
 			lastStatus().problemKind());
 		assertEquals(2, indexFutures.size());
@@ -2348,18 +2350,18 @@ public class PriceServiceTest
 		indexFutures.get(0).completeExceptionally(new WikiPriceException("wiki request failed with HTTP 403", 403));
 
 		final PriceService.Status status = lastStatus();
-		assertEquals("Wiki history down - no movement", status.text());
+		assertEquals("Wiki history down - no movement", PanelState.text(status));
 		assertTrue(status.degraded());
 		assertTrue(status.degradedReason(), status.degradedReason().contains("failed"));
-		assertEquals("the rows keep their guide prices", 30, status.totalRows());
-		assertEquals(MovementRow.PriceSource.GUIDE, status.source());
+		assertEquals("the rows keep their guide prices", 30, status.totalRows);
+		assertEquals(MovementRow.PriceSource.GUIDE, status.source);
 		assertTrue(tableRequests.isEmpty());
 		verify(store, never()).saveRevisionIndex(anyList(), anyLong());
 
 		fireTick();
 
 		assertEquals("the next tick tries again", 2, indexFutures.size());
-		assertEquals("No 1d history yet", lastStatus().text());
+		assertEquals("No 1d history yet", PanelState.text(lastStatus()));
 	}
 
 	@Test
@@ -2378,7 +2380,7 @@ public class PriceServiceTest
 
 		final PriceService.Status status = lastStatus();
 		assertNull("a window with a baseline never complains (L11)", status.problem());
-		assertEquals("Guide prices - 1d vs 07 Sep - Bank as of " + MovementMath.formatTime(T0), status.text());
+		assertEquals("Guide prices - 1d vs 07 Sep - Bank as of " + MovementMath.formatTime(T0), PanelState.text(status));
 		assertTrue("but the bridge can see it", status.degraded());
 		assertEquals(Long.valueOf(-38L), rowFor(lastRows(), GREEN_HAT).deltaGp());
 		assertEquals("the stored index is still history: R0 is asked for on the back of it", 1, tableRequests.size());
@@ -2401,7 +2403,7 @@ public class PriceServiceTest
 		tableFutures.get(tableFutures.size() - 1).completeExceptionally(new WikiPriceException("wiki request failed: reset"));
 
 		final PriceService.Status status = lastStatus();
-		assertEquals("the old R0 and every baseline stay", SEP_8, status.r0Day());
+		assertEquals("the old R0 and every baseline stay", SEP_8, status.r0Day);
 		assertEquals(SEP_7, status.thenDay());
 		assertNull(status.problem());
 		assertTrue(status.degraded());
@@ -2414,8 +2416,8 @@ public class PriceServiceTest
 		runeliteOn(SEP_9);
 		answerTables();
 		assertFalse(lastStatus().degraded());
-		assertEquals(SEP_9, lastStatus().r0Day());
-		assertEquals(SEP_9, lastStatus().anchorDay());
+		assertEquals(SEP_9, lastStatus().r0Day);
+		assertEquals(SEP_9, lastStatus().anchorDay);
 	}
 
 	@Test
@@ -2434,7 +2436,7 @@ public class PriceServiceTest
 
 		fireTick();
 
-		assertEquals("Wiki history down - no movement", lastStatus().text());
+		assertEquals("Wiki history down - no movement", PanelState.text(lastStatus()));
 		assertEquals("the rows keep their unit prices: they are RuneLite's", Long.valueOf(1_086L), rowFor(lastRows(), GREEN_HAT).unitPrice());
 		assertNull(rowFor(lastRows(), GREEN_HAT).deltaGp());
 	}
@@ -2449,7 +2451,7 @@ public class PriceServiceTest
 		fireTick();
 		answerIndex();
 
-		assertEquals("Wiki history down - no movement", lastStatus().text());
+		assertEquals("Wiki history down - no movement", PanelState.text(lastStatus()));
 
 		doAnswer(invocation ->
 		{
@@ -2474,7 +2476,7 @@ public class PriceServiceTest
 		assertNull("the tablet's composition name is not a table key", rowFor(lastRows(), TABLET).thenPrice());
 		assertEquals("with no mapping the vessel's name cannot be refused - the K3 ladder stands",
 			Long.valueOf(3_235L), rowFor(lastRows(), VESSEL_BAITED).thenPrice());
-		final int samplesBefore = lastStatus().agreeSamples();
+		final int samplesBefore = lastStatus().agreeSamples;
 
 		mappingFutures.get(0).complete(mappingTable());
 
@@ -2486,9 +2488,9 @@ public class PriceServiceTest
 		final List<MovementRow> rows = lastRows();
 		assertEquals("the tablet now resolves through the mapping", Long.valueOf(290L + dayIndex(SEP_7)), rowFor(rows, TABLET).thenPrice());
 		assertNull("and the vessel's fallback is refused (L8 b)", rowFor(rows, VESSEL_BAITED).thenPrice());
-		assertEquals(T0, lastStatus().mappingAtMillis());
-		assertEquals("the vessel dropped out of the agreement and the tablet came in", samplesBefore, lastStatus().agreeSamples());
-		assertEquals(SEP_8, lastStatus().anchorDay());
+		assertEquals(T0, lastStatus().mappingAtMillis);
+		assertEquals("the vessel dropped out of the agreement and the tablet came in", samplesBefore, lastStatus().agreeSamples);
+		assertEquals(SEP_8, lastStatus().anchorDay);
 	}
 
 	@Test
@@ -2500,7 +2502,7 @@ public class PriceServiceTest
 		mappingFutures.get(0).completeExceptionally(new WikiPriceException("wiki request failed with HTTP 403", 403));
 
 		assertNull(lastStatus().problem());
-		assertEquals(0L, lastStatus().mappingAtMillis());
+		assertEquals(0L, lastStatus().mappingAtMillis);
 		verify(store, never()).saveMapping(anyMap(), anyLong());
 		fireTick();
 		assertEquals("the next tick tries again", 2, mappingFutures.size());
@@ -2543,9 +2545,9 @@ public class PriceServiceTest
 
 		final WindowMove d1 = p.move(MovementWindow.D1);
 		assertEquals(SEP_7, d1.thenDay());
-		assertEquals("24 items + hat + whip + shark + tablet: the box and the vessel have no then", 28, d1.itemsCovered());
-		assertEquals(6_286_853L, d1.valueThen());
-		assertEquals("the SAME 28 stacks now - not the whole bank's 6,290,824", 6_287_136L, d1.valueNowCovered());
+		assertEquals("24 items + hat + whip + shark + tablet: the box and the vessel have no then", 28, d1.itemsCovered);
+		assertEquals(6_286_853L, d1.valueThen);
+		assertEquals("the SAME 28 stacks now - not the whole bank's 6,290,824", 6_287_136L, d1.valueNowCovered);
 		assertEquals("300 - 38 + 1 + 0 + 20", 283L, d1.deltaGp());
 		assertEquals(283L * 100.0d / 6_286_853L, d1.deltaPct(), 1e-12);
 		long thenSum = 0L;
@@ -2558,13 +2560,13 @@ public class PriceServiceTest
 				nowCovered += row.holdingValue();
 			}
 		}
-		assertEquals("and exactly what the rows say", thenSum, d1.valueThen());
-		assertEquals(nowCovered, d1.valueNowCovered());
+		assertEquals("and exactly what the rows say", thenSum, d1.valueThen);
+		assertEquals(nowCovered, d1.valueNowCovered);
 
 		final WindowMove d7 = p.move(MovementWindow.D7);
 		assertEquals(SEP_1, d7.thenDay());
-		assertEquals(28, d7.itemsCovered());
-		assertEquals(6_284_903L, d7.valueThen());
+		assertEquals(28, d7.itemsCovered);
+		assertEquals(6_284_903L, d7.valueThen);
 		assertEquals(2_233L, d7.deltaGp());
 		assertEquals(AUG_9, p.move(MovementWindow.D30).thenDay());
 		assertEquals("the walk-back's real day (L5)", JUN_9, p.move(MovementWindow.D90).thenDay());
@@ -2589,7 +2591,7 @@ public class PriceServiceTest
 		assertEquals("...and left the portfolio alone (M1: whole bank)", whole, lastStatus().portfolio());
 		assertEquals(6_290_824L, lastStatus().portfolio().valueNow());
 		assertEquals(30, lastStatus().portfolio().itemsPriced());
-		assertEquals(28, lastStatus().portfolio().move(MovementWindow.D1).itemsCovered());
+		assertEquals(28, lastStatus().portfolio().move(MovementWindow.D1).itemsCovered);
 
 		service.setFilter(RowFilter.DEFAULT.withGpMin(100_000L).withWindow(MovementWindow.D30));
 
@@ -2610,7 +2612,7 @@ public class PriceServiceTest
 		assertEquals(Collections.singleton(MovementWindow.D1), p.moves().keySet());
 		final WindowMove d1 = p.move(MovementWindow.D1);
 		assertEquals(SEP_7, d1.thenDay());
-		assertEquals("the disk projection carries every mapped name: 28 covered", 28, d1.itemsCovered());
+		assertEquals("the disk projection carries every mapped name: 28 covered", 28, d1.itemsCovered);
 		assertEquals(283L, d1.deltaGp());
 	}
 
@@ -2639,7 +2641,7 @@ public class PriceServiceTest
 		warmUpWith(bankWithCurrency(T0, CURRENCY));
 
 		final PortfolioSummary p = lastStatus().portfolio();
-		assertEquals(CURRENCY, p.currencyGp());
+		assertEquals(CURRENCY, p.currencyGp);
 		assertEquals(6_290_824L + CURRENCY, p.valueNow());
 		assertEquals("the stacks alone are still what the rows add up to", 6_290_824L, p.valueStacks());
 		assertEquals(holdingSum(lastRows()), p.valueStacks());
@@ -2647,9 +2649,9 @@ public class PriceServiceTest
 		assertEquals(31, p.itemsTotal());
 
 		final WindowMove d1 = p.move(MovementWindow.D1);
-		assertEquals(28, d1.itemsCovered());
-		assertEquals(6_286_853L + CURRENCY, d1.valueThen());
-		assertEquals(6_287_136L + CURRENCY, d1.valueNowCovered());
+		assertEquals(28, d1.itemsCovered);
+		assertEquals(6_286_853L + CURRENCY, d1.valueThen);
+		assertEquals(6_287_136L + CURRENCY, d1.valueNowCovered);
 		assertEquals("the cash sits on both sides and cancels", 283L, d1.deltaGp());
 		assertEquals(283L * 100.0d / (6_286_853L + CURRENCY), d1.deltaPct(), 1e-12);
 	}
@@ -2665,7 +2667,7 @@ public class PriceServiceTest
 		final PortfolioSummary p = lastStatus().portfolio();
 		assertNotEquals("cash is not nothing", PortfolioSummary.EMPTY, p);
 		assertEquals(CURRENCY, p.valueNow());
-		assertEquals(CURRENCY, p.currencyGp());
+		assertEquals(CURRENCY, p.currencyGp);
 		assertEquals(0, p.itemsTotal());
 		assertTrue("no stack to draw a row for", lastRows().isEmpty());
 		assertNull("...and nothing to compare, so no move", p.move(MovementWindow.D1).deltaPct());
@@ -2717,7 +2719,7 @@ public class PriceServiceTest
 		assertEquals("the alch rows are published and the default list keeps them out", lastRows().size() + 2,
 			withThem.size());
 		assertEquals(statusWithThem.portfolio(), lastStatus().portfolio());
-		assertEquals(statusWithThem.totalRows() - 2, lastStatus().totalRows());
+		assertEquals(statusWithThem.totalRows - 2, lastStatus().totalRows);
 		assertEquals("and the same stack count", statusWithThem.bankItems(), lastStatus().bankItems());
 		assertEquals(31, statusWithThem.bankItems());
 		assertEquals(6_290_824L, statusWithThem.portfolio().valueNow());
@@ -2750,9 +2752,9 @@ public class PriceServiceTest
 		assertEquals("but they are stacks the bank holds", 33, p.itemsTotal());
 		assertEquals(33, lastStatus().bankItems());
 		final WindowMove d1 = p.move(MovementWindow.D1);
-		assertEquals("the same 28 covered stacks as without them", 28, d1.itemsCovered());
+		assertEquals("the same 28 covered stacks as without them", 28, d1.itemsCovered);
 		assertEquals(283L, d1.deltaGp());
-		assertEquals("the day the prices are dated by is untouched", SEP_8, lastStatus().anchorDay());
+		assertEquals("the day the prices are dated by is untouched", SEP_8, lastStatus().anchorDay);
 		assertFalse(lastStatus().degraded());
 	}
 
@@ -2795,14 +2797,14 @@ public class PriceServiceTest
 		warmUpWith(bankWithCurrency(T0, CURRENCY));
 
 		final PortfolioSummary p = lastStatus().portfolio();
-		assertEquals("the value used, which is the value shown", 0L, p.currencyGp());
+		assertEquals("the value used, which is the value shown", 0L, p.currencyGp);
 		assertEquals(6_290_824L, p.valueNow());
-		assertEquals(6_286_853L, p.move(MovementWindow.D1).valueThen());
+		assertEquals(6_286_853L, p.move(MovementWindow.D1).valueThen);
 		assertEquals("the gp move never depended on the cash", 283L, p.move(MovementWindow.D1).deltaGp());
 
 		service.setOptions(ViewOptions.DEFAULT);
 
-		assertEquals("the snapshot still knew: no bank visit needed", CURRENCY, lastStatus().portfolio().currencyGp());
+		assertEquals("the snapshot still knew: no bank visit needed", CURRENCY, lastStatus().portfolio().currencyGp);
 		assertEquals(6_290_824L + CURRENCY, lastStatus().portfolio().valueNow());
 	}
 
@@ -2979,9 +2981,9 @@ public class PriceServiceTest
 		assertEquals(32, lastStatus().bankItems());
 
 		final WindowMove d1 = p.move(MovementWindow.D1);
-		assertEquals("the 28 of the tradeable bank, and the crystal body beside them", 29, d1.itemsCovered());
+		assertEquals("the 28 of the tradeable bank, and the crystal body beside them", 29, d1.itemsCovered);
 		assertEquals(283L + 3L * (SEED_NOW - SEED_THEN), d1.deltaGp());
-		assertEquals("the day the prices are dated by is untouched", SEP_8, lastStatus().anchorDay());
+		assertEquals("the day the prices are dated by is untouched", SEP_8, lastStatus().anchorDay);
 		assertFalse(lastStatus().degraded());
 	}
 
@@ -3005,7 +3007,7 @@ public class PriceServiceTest
 		assertNull("half a sum is not a baseline", body.thenPrice());
 		assertFalse(body.hasMovement());
 		assertEquals("priced, so it is in the total and the count", 31, lastStatus().portfolio().itemsPriced());
-		assertEquals("but covered by no window", 28, lastStatus().portfolio().move(MovementWindow.D1).itemsCovered());
+		assertEquals("but covered by no window", 28, lastStatus().portfolio().move(MovementWindow.D1).itemsCovered);
 	}
 
 	/**
@@ -3084,7 +3086,7 @@ public class PriceServiceTest
 
 		assertEquals("the same rows, in the same order, as with the switch on", off, lastRows());
 		assertEquals(statusOff.portfolio(), lastStatus().portfolio());
-		assertEquals(statusOff.totalRows(), lastStatus().totalRows());
+		assertEquals(statusOff.totalRows, lastStatus().totalRows);
 		assertEquals("and the same stack count", statusOff.bankItems(), lastStatus().bankItems());
 	}
 
@@ -3210,7 +3212,7 @@ public class PriceServiceTest
 	public void withRuneLiteBehindTheWikiTheAnchorStepsBackInsteadOfForward()
 	{
 		warmUp();
-		assertEquals(SEP_8, lastStatus().anchorDay());
+		assertEquals(SEP_8, lastStatus().anchorDay);
 		final RevisionRef bot0909 = bot(15_335_900L, SEP_9, 10, 0, 0);
 		final List<RevisionRef> grown = new ArrayList<>(HISTORY);
 		grown.add(0, bot0909);
@@ -3222,8 +3224,8 @@ public class PriceServiceTest
 		answerTables(); // the wiki moves on to 09 Sep; RuneLite's own table stays on 08 Sep
 
 		final PriceService.Status status = lastStatus();
-		assertEquals(SEP_9, status.r0Day());
-		assertEquals("RuneLite is a day BEHIND, so D = day(R0) - 1", SEP_8, status.anchorDay());
+		assertEquals(SEP_9, status.r0Day);
+		assertEquals("RuneLite is a day BEHIND, so D = day(R0) - 1", SEP_8, status.anchorDay);
 		assertFalse("behind is not a fallback: the figures are the older table's own, so the footnote stays grey",
 			status.degraded());
 		assertNull(status.degradedReason());
@@ -3347,7 +3349,7 @@ public class PriceServiceTest
 		service.refreshNow();
 		clock.addAndGet(12 * SECOND);
 		service.refreshNow();
-		assertEquals("Refreshed 12 s ago - wait", lastStatus().text());
+		assertEquals("Refreshed 12 s ago - wait", PanelState.text(lastStatus()));
 		final int requests = indexFutures.size();
 
 		final Timer clear = oneShotWithDelay(PriceService.MANUAL_COOLDOWN_MS - 12 * SECOND);
@@ -3588,10 +3590,10 @@ public class PriceServiceTest
 		final long wanted = PriceService.latestClosedHour(clock.get());
 		answerHour(wanted, Collections.<Integer, TradedPriceClient.Bucket>emptyMap());
 
-		assertEquals("empty: nothing adopted", 0L, lastStatus().live().hourAtSeconds());
+		assertEquals("empty: nothing adopted", 0L, lastStatus().live().hourAtSeconds);
 		verify(store, never()).saveTradedHour(any(PriceStore.TradedHour.class));
 		final Timer retry = oneShotWithDelay(GradeMath.HOUR_RETRY_MILLIS);
-		assertEquals("no figure of the hour yet", 1, rowFor(service.currentRows(), WHIP).graded().buy().observations());
+		assertEquals("no figure of the hour yet", 1, rowFor(service.currentRows(), WHIP).graded().buy().observations);
 
 		clock.addAndGet(GradeMath.HOUR_RETRY_MILLIS - SECOND);
 		fireTick();
@@ -3604,8 +3606,8 @@ public class PriceServiceTest
 		answerHour(wanted, whipHour());
 
 		verify(store, times(1)).saveTradedHour(any(PriceStore.TradedHour.class));
-		assertEquals(wanted, lastStatus().live().hourAtSeconds());
-		assertEquals("the hour is one of today's observations", 2, rowFor(service.currentRows(), WHIP).graded().buy().observations());
+		assertEquals(wanted, lastStatus().live().hourAtSeconds);
+		assertEquals("the hour is one of today's observations", 2, rowFor(service.currentRows(), WHIP).graded().buy().observations);
 	}
 
 	/**
@@ -3630,7 +3632,7 @@ public class PriceServiceTest
 		assertEquals(3, hourFutures.size());
 		answerHour(wanted, whipHour());
 
-		assertEquals("the 20:00 hour is held", wanted, lastStatus().live().hourAtSeconds());
+		assertEquals("the 20:00 hour is held", wanted, lastStatus().live().hourAtSeconds);
 		verify(store, times(2)).saveTradedHour(any(PriceStore.TradedHour.class));
 	}
 
@@ -3757,12 +3759,12 @@ public class PriceServiceTest
 		final MovementRow whip = rowFor(service.currentRows(), WHIP);
 		assertSame(Grade.SOLID, whip.graded().grade());
 		assertEquals("", whip.graded().word());
-		assertEquals(2, whip.graded().buy().observations());
+		assertEquals(2, whip.graded().buy().observations);
 		assertEquals("the median of the 860,000 print and the hour's 861,000", Long.valueOf(860_500L),
 			whip.graded().buy().now());
 		assertEquals(1, lastStatus().grades().solidRows());
-		assertEquals(hourStart, lastStatus().live().hourAtSeconds());
-		assertEquals(java.time.Instant.ofEpochSecond(hourStart).toString(), lastStatus().live().asMap().get("hourAt"));
+		assertEquals(hourStart, lastStatus().live().hourAtSeconds);
+		assertEquals(java.time.Instant.ofEpochSecond(hourStart).toString(), PanelState.asMap(lastStatus().live()).get("hourAt"));
 	}
 
 	/** L1/L2: every distinct print a poll sees today is an observation - two polls, two buy prints, their median. */
@@ -3780,9 +3782,9 @@ public class PriceServiceTest
 		answerLatest(second);
 
 		final GradedMove whip = rowFor(service.currentRows(), WHIP).graded();
-		assertEquals(2, whip.buy().observations());
+		assertEquals(2, whip.buy().observations);
 		assertEquals("the median of 860,000 and 880,000", Long.valueOf(870_000L), whip.buy().now());
-		assertEquals("the sell side's print was the same trade both times", 1, whip.sell().observations());
+		assertEquals("the sell side's print was the same trade both times", 1, whip.sell().observations);
 	}
 
 	/**
@@ -3854,7 +3856,7 @@ public class PriceServiceTest
 			none += row.graded() != null && row.graded().grade() == Grade.NONE ? 1 : 0;
 		}
 		assertEquals("every other priced stack has no trades", none, grades.noneRows());
-		assertTrue("the solid rows hold under nine tenths of the counted value: the card is soft", grades.soft());
+		assertTrue("the solid rows hold under nine tenths of the counted value: the card is soft", PanelState.soft(grades));
 	}
 
 	/** {@link #whipHour()}'s hour, delivered: the newest {@code /1h} request answered. */
@@ -4363,7 +4365,7 @@ public class PriceServiceTest
 		service.refreshNow();
 		clock.addAndGet(12 * SECOND);
 		service.refreshNow(false);
-		assertEquals("Refreshed 12 s ago - wait", lastStatus().text());
+		assertEquals("Refreshed 12 s ago - wait", PanelState.text(lastStatus()));
 		final Timer clear = oneShotWithDelay(PriceService.MANUAL_COOLDOWN_MS - 12 * SECOND);
 		final int publishes = publishedStatus.size();
 		final int timers = scheduler.timers.size();
@@ -4404,7 +4406,7 @@ public class PriceServiceTest
 
 		service.refreshNow(false);
 
-		assertEquals("Refreshed 12 s ago - wait", lastStatus().text());
+		assertEquals("Refreshed 12 s ago - wait", PanelState.text(lastStatus()));
 		assertEquals("red, as a refusal always was", PriceService.ProblemKind.COOLDOWN, lastStatus().problemKind());
 		assertNotNull("and it takes itself down when the cooldown ends",
 			oneShotWithDelay(PriceService.MANUAL_COOLDOWN_MS - 12 * SECOND));
@@ -4480,7 +4482,7 @@ public class PriceServiceTest
 			service.refreshNow(false);
 
 			assertEquals(press + " took the stamp: a loud press 12 s later is refused", "Refreshed 12 s ago - wait",
-				lastStatus().text());
+				PanelState.text(lastStatus()));
 			assertEquals(press + " spent the cooldown: nothing is sent 12 s later", before, indexFutures.size());
 			service.stop();
 		}
@@ -4551,7 +4553,6 @@ public class PriceServiceTest
 
 		final MovementRow whip = rowFor(service.currentRows(), WHIP);
 		assertSame(MovementRow.PriceSource.LIVE, whip.source());
-		assertTrue(whip.isLive());
 		assertEquals(Long.valueOf(WHIP_PRICE), whip.unitPrice());
 		assertEquals(Long.valueOf(WHIP_MARK), whip.thenPrice());
 		assertEquals(Long.valueOf(WHIP_PRICE - WHIP_MARK), whip.deltaGp());
@@ -4564,8 +4565,7 @@ public class PriceServiceTest
 		assertEquals(Long.valueOf(840_000L), graded.sell().now());
 		assertEquals(Long.valueOf(800_000L), graded.sell().then());
 		assertEquals("the last print of each side, with its time", T0 / 1000L - 3_600L, graded.buy().lastSeconds());
-		assertEquals(Long.valueOf(840_000L), whip.liveFacts().sell());
-		assertSame(MovementRow.PriceSource.LIVE, whip.windowSource(MovementWindow.D1));
+		assertEquals(Long.valueOf(840_000L), graded.sell().last());
 		assertEquals(SEP_7, whip.windowDay(MovementWindow.D1));
 	}
 
@@ -4587,7 +4587,7 @@ public class PriceServiceTest
 		assertEquals(Long.valueOf(HAT_MARK), hat.thenPrice());
 		assertEquals(Long.valueOf(0L), hat.deltaGp());
 		assertEquals(0.0d, hat.deltaPct(), 0.0d);
-		assertTrue(hat.isLive());
+		assertSame(MovementRow.PriceSource.LIVE, hat.source());
 	}
 
 	/** L2/L4: an item that traded neither today nor yesterday has no figure - the dash - and keeps its guide price. */
@@ -4604,8 +4604,6 @@ public class PriceServiceTest
 		assertEquals(Long.valueOf(1_000L), shark.unitPrice());
 		assertNull("the dash", shark.deltaPct());
 		assertNull(shark.thenPrice());
-		assertFalse(shark.isLive());
-		assertEquals(GradeWords.NO_TRADES, shark.liveFacts().reason());
 	}
 
 	/** L2: a window whose day's bucket is not in hand has no figure - the dash - while the row keeps its 1d price. */
@@ -4695,11 +4693,11 @@ public class PriceServiceTest
 
 		final PortfolioSummary summary = service.currentStatus().portfolio();
 		final WindowMove d1 = summary.move(MovementWindow.D1);
-		assertEquals("only the two stacks with a 1d figure", 2, d1.itemsCovered());
-		assertEquals(WHIP_MARK + HAT_MARK, d1.valueThen());
-		assertEquals(WHIP_PRICE + HAT_MARK, d1.valueNowCovered());
+		assertEquals("only the two stacks with a 1d figure", 2, d1.itemsCovered);
+		assertEquals(WHIP_MARK + HAT_MARK, d1.valueThen);
+		assertEquals(WHIP_PRICE + HAT_MARK, d1.valueNowCovered);
 		assertEquals(WHIP_PRICE - WHIP_MARK, d1.deltaGp());
-		assertEquals("7d has no bucket: no stack has a figure there", 0, summary.move(MovementWindow.D7).itemsCovered());
+		assertEquals("7d has no bucket: no stack has a figure there", 0, summary.move(MovementWindow.D7).itemsCovered);
 	}
 
 	/** T8/U4 and 1.2.0's hourAt: the bridge's {@code state.live}, and its keys in their order. */
@@ -4710,15 +4708,15 @@ public class PriceServiceTest
 		answerDay(SEP_7, tradedSep7());
 
 		final PriceService.Status.LiveStatus live = service.currentStatus().live();
-		assertEquals(clock.get(), live.fetchedAtMillis());
-		assertEquals(2, live.latestItems());
+		assertEquals(clock.get(), live.fetchedAtMillis);
+		assertEquals(2, live.latestItems);
 		assertEquals("the whip and the hat are priced from their figures", 2, live.liveRows());
 		assertEquals("every other priced stack", service.currentStatus().portfolio().itemsPriced() - 2,
-			live.guideRows());
-		assertEquals(0, live.alchRows());
-		assertEquals("no /1h bucket landed", 0L, live.hourAtSeconds());
+			live.guideRows);
+		assertEquals(0, live.alchRows);
+		assertEquals("no /1h bucket landed", 0L, live.hourAtSeconds);
 		assertEquals(Arrays.asList("fetchedAt", "latestItems", "liveRows", "guideRows", "alchRows", "liveDay",
-			"windowDays", "hourAt"), new ArrayList<>(live.asMap().keySet()));
+			"windowDays", "hourAt"), new ArrayList<>(PanelState.asMap(live).keySet()));
 	}
 
 	/**
@@ -4733,12 +4731,12 @@ public class PriceServiceTest
 		answerDay(SEP_7, tradedSep7());
 
 		final PriceService.Status.LiveStatus live = service.currentStatus().live();
-		assertEquals("the UTC date of the /latest snapshot, not of the guide's anchor", SEP_8, live.liveDay());
+		assertEquals("the UTC date of the /latest snapshot, not of the guide's anchor", SEP_8, live.liveDay);
 		assertEquals(SEP_7, live.windowDays().get(MovementWindow.D1));
 		assertNull("7d has no bucket yet", live.windowDays().get(MovementWindow.D7));
 		assertEquals("every window is a key either way", MovementWindow.values().length, live.windowDays().size());
 
-		final Map<String, Object> map = live.asMap();
+		final Map<String, Object> map = PanelState.asMap(live);
 		assertEquals("2026-09-08", map.get("liveDay"));
 		final Map<?, ?> days = (Map<?, ?>) map.get("windowDays");
 		assertEquals("keyed by the chip's own label", "2026-09-07", days.get("1d"));
@@ -4750,9 +4748,9 @@ public class PriceServiceTest
 	@Test
 	public void theSwitchOffReportsNoLiveCalendarAtAll()
 	{
-		assertNull(PriceService.Status.LiveStatus.OFF.liveDay());
+		assertNull(PriceService.Status.LiveStatus.OFF.liveDay);
 		assertNull(PriceService.Status.LiveStatus.OFF.windowDays().get(MovementWindow.D1));
-		assertNull(PriceService.Status.LiveStatus.OFF.asMap().get("liveDay"));
+		assertNull(PanelState.asMap(PriceService.Status.LiveStatus.OFF).get("liveDay"));
 	}
 
 	// ---------------------------------------------------------------- T7: failure and staleness
@@ -4768,7 +4766,7 @@ public class PriceServiceTest
 		fireTick();
 		failLatest();
 
-		assertTrue("still live", rowFor(service.currentRows(), WHIP).isLive());
+		assertSame("still live", MovementRow.PriceSource.LIVE, rowFor(service.currentRows(), WHIP).source());
 		assertFalse("and nothing to tell the user about", service.currentStatus().degraded());
 	}
 
@@ -4786,7 +4784,7 @@ public class PriceServiceTest
 		final MovementRow whip = rowFor(service.currentRows(), WHIP);
 		assertSame(MovementRow.PriceSource.GUIDE, whip.source());
 		assertEquals("the guide price, to the gp", Long.valueOf(WHIP_GUIDE_NOW), whip.unitPrice());
-		assertNull("and no live state at all", whip.liveFacts());
+		assertNull("and no graded figure at all", whip.graded());
 		assertTrue(service.currentStatus().degraded());
 		assertEquals(PriceService.LIVE_UNAVAILABLE, service.currentStatus().degradedReason());
 		assertEquals("live prices unavailable - showing guide prices", PriceService.LIVE_UNAVAILABLE);
@@ -4818,8 +4816,7 @@ public class PriceServiceTest
 
 		assertFalse(service.currentStatus().degraded());
 		assertSame(MovementRow.PriceSource.GUIDE, rowFor(service.currentRows(), WHIP).source());
-		assertNull("and no row claims a refusal it could not have made",
-			rowFor(service.currentRows(), WHIP).liveFacts());
+		assertNull("and no row claims a grade it could not have made", rowFor(service.currentRows(), WHIP).graded());
 	}
 
 	// ================================================================ addendum U: the live calendar (U1, U2)
@@ -4896,7 +4893,7 @@ public class PriceServiceTest
 		answerDay(SEP_6, tradedSep7());
 
 		final MovementRow whip = rowFor(service.currentRows(), WHIP);
-		assertTrue("the row is live off the day that did close", whip.isLive());
+		assertSame("the row is live off the day that did close", MovementRow.PriceSource.LIVE, whip.source());
 		assertEquals(Long.valueOf(WHIP_MARK), whip.thenPrice());
 		assertEquals("and says which day that was", SEP_6, whip.windowDay(MovementWindow.D1));
 		assertEquals(SEP_6, service.currentStatus().live().windowDays().get(MovementWindow.D1));
@@ -4919,7 +4916,7 @@ public class PriceServiceTest
 		assertSame(MovementRow.PriceSource.GUIDE, whip.source());
 		assertEquals("the guide price, to the gp", Long.valueOf(WHIP_GUIDE_NOW), whip.unitPrice());
 		assertEquals("traded today, but nothing yesterday to compare with", GradeWords.NO_TRADES,
-			whip.liveFacts().reason());
+			whip.graded().word());
 		assertNull(service.currentStatus().live().windowDays().get(MovementWindow.D1));
 	}
 
@@ -4935,7 +4932,7 @@ public class PriceServiceTest
 		assertFalse("07 Sep is already in hand", dayRequests.contains(SEP_7));
 		assertEquals("and the other four are still asked for", 4, dayRequests.size());
 		final MovementRow whip = rowFor(service.currentRows(), WHIP);
-		assertTrue(whip.isLive());
+		assertSame(MovementRow.PriceSource.LIVE, whip.source());
 		assertEquals(SEP_7, whip.windowDay(MovementWindow.D1));
 	}
 
@@ -4954,13 +4951,15 @@ public class PriceServiceTest
 
 		assertTrue("the wanted day is asked for", dayRequests.contains(SEP_7));
 		final MovementRow whip = rowFor(service.currentRows(), WHIP);
-		assertFalse("and a bucket is never used for a day it does not name", whip.isLive());
-		assertEquals(GradeWords.NO_TRADES, whip.liveFacts().reason());
+		assertSame("and a bucket is never used for a day it does not name", MovementRow.PriceSource.GUIDE,
+			whip.source());
+		assertEquals(GradeWords.NO_TRADES, whip.graded().word());
 		assertNull(service.currentStatus().live().windowDays().get(MovementWindow.D1));
 
 		answerDay(SEP_7, tradedSep7());
 
-		assertTrue("and the day that arrives replaces it", rowFor(service.currentRows(), WHIP).isLive());
+		assertSame("and the day that arrives replaces it", MovementRow.PriceSource.LIVE,
+			rowFor(service.currentRows(), WHIP).source());
 		assertEquals(SEP_7, service.currentStatus().live().windowDays().get(MovementWindow.D1));
 	}
 
@@ -4986,7 +4985,7 @@ public class PriceServiceTest
 
 		assertEquals("one per window again", before + MovementWindow.values().length, dayRequests.size());
 		assertEquals("1d now wants 08 Sep", SEP_8, dayRequests.get(before));
-		assertEquals(SEP_9, service.currentStatus().live().liveDay());
+		assertEquals(SEP_9, service.currentStatus().live().liveDay);
 		assertEquals("and until that lands the row compares against the day it really holds", SEP_7,
 			service.currentStatus().live().windowDays().get(MovementWindow.D1));
 	}
@@ -5003,7 +5002,6 @@ public class PriceServiceTest
 
 		final MovementRow whip = rowFor(service.currentRows(), WHIP);
 		assertEquals("1d is live off 07 Sep's bucket", SEP_7, whip.windowDay(MovementWindow.D1));
-		assertSame(MovementRow.PriceSource.GUIDE, whip.windowSource(MovementWindow.D7));
 		assertNull("7d has no figure (1.2.0), so it records no day - the panel falls back to the status's",
 			whip.windowDay(MovementWindow.D7));
 	}
@@ -5054,8 +5052,7 @@ public class PriceServiceTest
 		assertSame("with no live state to echo", PriceService.Status.LiveStatus.OFF, statusWithClient.live());
 		for (final MovementRow row : withClient)
 		{
-			assertNull(row.name() + " must carry no live state at all", row.liveFacts());
-			assertSame(row.source(), row.windowSource(MovementWindow.D1));
+			assertNull(row.name() + " must carry no graded figure at all", row.graded());
 		}
 	}
 
@@ -5129,7 +5126,7 @@ public class PriceServiceTest
 		assertEquals(0, whip.inventoryQuantity());
 		assertEquals(0, whip.wornQuantity());
 		assertTrue(whip.allInBank());
-		assertTrue("it was computed with the switch on, so it does know", whip.split());
+		assertTrue("it was computed with the switch on, so it does know", PanelState.split(whip));
 	}
 
 	/**
@@ -5180,14 +5177,14 @@ public class PriceServiceTest
 	{
 		warmUpWith(bankWithCarried(T0, 791_078L));
 
-		assertEquals(791_078L, lastStatus().portfolio().currencyGp());
+		assertEquals(791_078L, lastStatus().portfolio().currencyGp);
 
 		service.setOptions(ViewOptions.DEFAULT.withCountCash(false));
-		assertEquals("cash off takes the carried coins out too", 0L, lastStatus().portfolio().currencyGp());
+		assertEquals("cash off takes the carried coins out too", 0L, lastStatus().portfolio().currencyGp);
 
 		service.setOptions(ViewOptions.DEFAULT.withCountInventory(false));
 		assertEquals("and so does the inventory switch, with the cash switch back on",
-			0L, lastStatus().portfolio().currencyGp());
+			0L, lastStatus().portfolio().currencyGp);
 	}
 
 	/** And the bank's own cash and the carried cash add up when both switches are on. */
@@ -5197,7 +5194,7 @@ public class PriceServiceTest
 		final BankSnapshot snapshot = bankWithCurrency(T0, CURRENCY).withCarried(carried(791_078L));
 		warmUpWith(snapshot);
 
-		assertEquals(CURRENCY + 791_078L, lastStatus().portfolio().currencyGp());
+		assertEquals(CURRENCY + 791_078L, lastStatus().portfolio().currencyGp);
 		assertEquals(6_290_824L + 2L * rowFor(lastRows(), item(3)).unitPrice() + 3_235L + CURRENCY + 791_078L,
 			lastStatus().portfolio().valueNow());
 	}
@@ -5246,16 +5243,16 @@ public class PriceServiceTest
 
 		assertEquals("the same rows, in the same order", withCarried, lastRows());
 		assertEquals(statusWithCarried.portfolio(), lastStatus().portfolio());
-		assertEquals(statusWithCarried.totalRows(), lastStatus().totalRows());
+		assertEquals(statusWithCarried.totalRows, lastStatus().totalRows);
 		assertEquals("and the same stack count", statusWithCarried.bankItems(), lastStatus().bankItems());
 		assertEquals(31, statusWithCarried.bankItems());
 		assertEquals(6_290_824L, statusWithCarried.portfolio().valueNow());
-		assertEquals("the carried coins are not in it either", 0L, statusWithCarried.portfolio().currencyGp());
+		assertEquals("the carried coins are not in it either", 0L, statusWithCarried.portfolio().currencyGp);
 		assertNull("no worn row was drawn", rowFor(withCarried, VESSEL));
 		assertEquals("and the merged quantity is not there", 3, rowFor(withCarried, item(3)).quantity());
 		for (final MovementRow row : withCarried)
 		{
-			assertFalse(row.name() + " must carry no split at all", row.split());
+			assertFalse(row.name() + " must carry no split at all", PanelState.split(row));
 		}
 	}
 
@@ -5342,18 +5339,18 @@ public class PriceServiceTest
 	{
 		warmUpWith(bankWithOffers(T0, 52_000_000L));
 
-		assertEquals("both on: counted", 52_000_000L, lastStatus().portfolio().currencyGp());
+		assertEquals("both on: counted", 52_000_000L, lastStatus().portfolio().currencyGp);
 		final long unit = rowFor(lastRows(), item(3)).unitPrice();
 		assertEquals(6_290_824L + 2L * unit + 3_235L + 52_000_000L, lastStatus().portfolio().valueNow());
 
 		service.setOptions(ViewOptions.DEFAULT.withCountCash(false));
 		assertEquals("coins off takes the offers' coins out, and keeps their items", 0L,
-			lastStatus().portfolio().currencyGp());
+			lastStatus().portfolio().currencyGp);
 		assertEquals(6_290_824L + 2L * unit + 3_235L, lastStatus().portfolio().valueNow());
 
 		service.setOptions(ViewOptions.DEFAULT.withCountGrandExchange(false));
 		assertEquals("and the Grand Exchange switch off takes them out with the cash switch back on", 0L,
-			lastStatus().portfolio().currencyGp());
+			lastStatus().portfolio().currencyGp);
 		assertEquals("...and the offers' items too", 6_290_824L, lastStatus().portfolio().valueNow());
 	}
 
@@ -5370,17 +5367,17 @@ public class PriceServiceTest
 
 		assertEquals("the same rows, in the same order", withOffers, lastRows());
 		assertEquals(statusWithOffers.portfolio(), lastStatus().portfolio());
-		assertEquals(statusWithOffers.totalRows(), lastStatus().totalRows());
+		assertEquals(statusWithOffers.totalRows, lastStatus().totalRows);
 		assertEquals("and the same stack count", statusWithOffers.bankItems(), lastStatus().bankItems());
 		assertEquals(31, statusWithOffers.bankItems());
 		assertEquals(6_290_824L, statusWithOffers.portfolio().valueNow());
-		assertEquals("the offers' coins are not in it either", 0L, statusWithOffers.portfolio().currencyGp());
+		assertEquals("the offers' coins are not in it either", 0L, statusWithOffers.portfolio().currencyGp);
 		assertEquals(statusWithOffers.options(), lastStatus().options());
 		assertNull("no offer-only row was drawn", rowFor(withOffers, VESSEL));
 		assertEquals("and the merged quantity is not there", 3, rowFor(withOffers, item(3)).quantity());
 		for (final MovementRow row : withOffers)
 		{
-			assertFalse(row.name() + " must carry no split at all", row.split());
+			assertFalse(row.name() + " must carry no split at all", PanelState.split(row));
 		}
 	}
 
@@ -5402,7 +5399,7 @@ public class PriceServiceTest
 		assertEquals(0, three.wornQuantity());
 		assertEquals(2, three.exchangeQuantity());
 		assertNull("the worn vessel is not counted with the inventory switch off", rowFor(lastRows(), VESSEL));
-		assertEquals("the offers' coins, not the pocket's", 4_000L, lastStatus().portfolio().currencyGp());
+		assertEquals("the offers' coins, not the pocket's", 4_000L, lastStatus().portfolio().currencyGp);
 
 		// The other way round: inventory ON, offers OFF merges the carried half alone.
 		service.setOptions(ViewOptions.DEFAULT.withCountGrandExchange(false));
@@ -5410,7 +5407,7 @@ public class PriceServiceTest
 		assertEquals("3 + 1 carried, no offers", 4, carriedOnly.quantity());
 		assertEquals(0, carriedOnly.exchangeQuantity());
 		assertNotNull(rowFor(lastRows(), VESSEL));
-		assertEquals(791_078L, lastStatus().portfolio().currencyGp());
+		assertEquals(791_078L, lastStatus().portfolio().currencyGp);
 	}
 
 	/** Flipping the switch recomputes on the spot: nothing is fetched, and no bank visit is needed. */

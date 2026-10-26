@@ -302,14 +302,4 @@ public final class PriceMap
 	{
 		return Objects.hash(points, fetchedAtMillis, bucketSeconds, revId);
 	}
-
-	@Override
-	public String toString()
-	{
-		return "PriceMap{points=" + points.size()
-			+ ", fetchedAtMillis=" + fetchedAtMillis
-			+ ", bucketSeconds=" + bucketSeconds
-			+ ", revId=" + revId
-			+ ", schema=" + schema + '}';
-	}
 }

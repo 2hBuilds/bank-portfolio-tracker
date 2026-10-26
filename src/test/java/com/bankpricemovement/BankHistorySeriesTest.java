@@ -164,7 +164,6 @@ public class BankHistorySeriesTest
 			card.clone()));
 		final BankHistorySeries bare = BankHistorySeries.EMPTY.with(new BankHistoryPoint(sep(1), 1, 1, card, null));
 		assertEquals(bare, spelled);
-		assertFalse(a.toString().isEmpty());
 	}
 
 	// ---- 1.0.9 part 5: the fresh start
@@ -267,9 +266,9 @@ public class BankHistorySeriesTest
 		assertEquals(cutAt3, fiveDays().withFreshFrom(sep(3)));
 		assertEquals(cutAt3.hashCode(), fiveDays().withFreshFrom(sep(3)).hashCode());
 		assertNotEquals(plain.hashCode(), cutAt3.hashCode());
-		assertTrue(cutAt3.toString().contains("freshFrom=2026-09-03"));
-		assertTrue(fiveDays().withFreshFrom(LocalDate.MAX).toString().contains("freshFrom=all"));
-		assertFalse(plain.toString().contains("freshFrom"));
+		assertEquals(sep(3), cutAt3.freshFrom());
+		assertEquals(LocalDate.MAX, fiveDays().withFreshFrom(LocalDate.MAX).freshFrom());
+		assertNull(plain.freshFrom());
 	}
 
 	// ---- 1.1.1 part B: the placeholder judgement
@@ -299,9 +298,6 @@ public class BankHistorySeriesTest
 			.withFreshWhy(BankHistorySeries.WHY_PLACEHOLDERS);
 		assertEquals(same, restarted);
 		assertEquals(same.hashCode(), restarted.hashCode());
-		assertTrue(restarted.toString(), restarted.toString().contains("freshWhy=placeholders"));
-		assertTrue(restarted.toString(), restarted.toString().contains("placeholdersChecked=2026-09-04"));
-		assertFalse(plain.toString().contains("placeholdersChecked"));
 		assertNull(plain.placeholdersChecked());
 		assertNull(plain.freshWhy());
 		assertNull(BankHistorySeries.EMPTY.placeholdersChecked());
@@ -314,8 +310,8 @@ public class BankHistorySeriesTest
 		for (final BankHistorySeries copy : Arrays.asList(s.with(p(sep(6), 6, 6)), s.with(p(sep(2), 22, 22)),
 			s.with(null), s.upTo(sep(4)), s.upTo(sep(9)), s.withFreshFrom(sep(5)), s.fromFresh()))
 		{
-			assertEquals(copy.toString(), sep(4), copy.placeholdersChecked());
-			assertEquals(copy.toString(), BankHistorySeries.WHY_PLACEHOLDERS, copy.freshWhy());
+			assertEquals(days(copy).toString(), sep(4), copy.placeholdersChecked());
+			assertEquals(days(copy).toString(), BankHistorySeries.WHY_PLACEHOLDERS, copy.freshWhy());
 		}
 		assertNull("the cut keeps the marks, not the fresh start", s.fromFresh().freshFrom());
 		assertEquals(Arrays.asList(sep(4), sep(5)), days(s.fromFresh()));

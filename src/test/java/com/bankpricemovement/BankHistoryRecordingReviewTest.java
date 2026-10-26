@@ -21,6 +21,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -325,14 +326,16 @@ public class BankHistoryRecordingReviewTest
 		final ViewOptions allOn = ViewOptions.DEFAULT.withLivePrices(true).withCountCash(true)
 			.withCountUntradeables(true).withCountInventory(true);
 		f.service.setOptions(allOn);
-		assertTrue("the whip is live", PriceServiceTest.rowFor(f.lastRows(), PriceServiceTest.WHIP).isLive());
+		assertSame("the whip is live", MovementRow.PriceSource.LIVE,
+			PriceServiceTest.rowFor(f.lastRows(), PriceServiceTest.WHIP).source());
 		final BankHistoryPoint before = series().last();
 		final int writes = writes();
 
 		f.runelitePrice(PriceServiceTest.WHIP, 800_400);
 		f.service.setOptions(allOn.withCountCash(false));
 
-		assertTrue("still live", PriceServiceTest.rowFor(f.lastRows(), PriceServiceTest.WHIP).isLive());
+		assertSame("still live", MovementRow.PriceSource.LIVE,
+			PriceServiceTest.rowFor(f.lastRows(), PriceServiceTest.WHIP).source());
 		final BankHistoryPoint after = series().last();
 		assertEquals("the live mid did not move", before.card(BankHistoryPoint.BANK_TRADEABLE),
 			after.card(BankHistoryPoint.BANK_TRADEABLE));

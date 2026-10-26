@@ -7,12 +7,12 @@ import javax.annotation.Nullable;
 /**
  * The whole bank's guide-price move over ONE window, on a consistent basis (addendum M, line M1/M2;
  * {@code docs/bank-price-movement-addendum-M-2026-09-09.md}): only the stacks priced on BOTH days count, so
- * {@link #valueThen()} and {@link #valueNowCovered()} are sums over the same stacks and their difference is a real
- * move rather than the arrival or departure of a price. {@link #itemsCovered()} says how many stacks that was, and
+ * {@link #valueThen} and {@link #valueNowCovered} are sums over the same stacks and their difference is a real
+ * move rather than the arrival or departure of a price. {@link #itemsCovered} says how many stacks that was, and
  * the panel shows it beside {@code itemsPriced} so a reader can see when a window's coverage is thin.
  *
- * <p>Since addendum P line P1 the bank's cash ({@link BankSnapshot#currencyGp}) sits inside {@link #valueThen()} and
- * {@link #valueNowCovered()} alike, so {@link #deltaGp()} is exactly what it always was and {@link #deltaPct()} is
+ * <p>Since addendum P line P1 the bank's cash ({@link BankSnapshot#currencyGp}) sits inside {@link #valueThen} and
+ * {@link #valueNowCovered} alike, so {@link #deltaGp()} is exactly what it always was and {@link #deltaPct()} is
  * measured against the whole bank. A window that covers no stack carries no cash and keeps its zeros - see
  * {@link PortfolioMath}, which computes all of this; this class stays a value holder.
  *
@@ -24,12 +24,18 @@ public final class WindowMove
 	private final MovementWindow window;
 	@Nullable
 	private final LocalDate thenDay;
-	private final long valueThen;
-	private final long valueNowCovered;
+	/** The covered stacks' worth at the baseline day's guide prices, plus the bank's cash (P1). */
+	final long valueThen;
+	/**
+	 * The SAME stacks' worth at today's guide prices, plus the same cash - still not the whole bank's
+	 * {@link PortfolioSummary#valueNow()}, which counts every priced stack rather than only the covered ones.
+	 */
+	final long valueNowCovered;
 	private final long deltaGp;
 	@Nullable
 	private final Double deltaPct;
-	private final int itemsCovered;
+	/** How many stacks were priced on both days - the basis of the three sums. */
+	final int itemsCovered;
 
 	/**
 	 * @param window          the window this move is measured over; null reads as {@link MovementWindow#DEFAULT}
@@ -67,23 +73,8 @@ public final class WindowMove
 		return thenDay;
 	}
 
-	/** The covered stacks' worth at the baseline day's guide prices, plus the bank's cash (P1). */
-	public long valueThen()
-	{
-		return valueThen;
-	}
-
 	/**
-	 * The SAME stacks' worth at today's guide prices, plus the same cash - still not the whole bank's
-	 * {@link PortfolioSummary#valueNow()}, which counts every priced stack rather than only the covered ones.
-	 */
-	public long valueNowCovered()
-	{
-		return valueNowCovered;
-	}
-
-	/**
-	 * {@link #valueNowCovered()} minus {@link #valueThen()}; the sign that colours the line (L2). The cash cancels,
+	 * {@link #valueNowCovered} minus {@link #valueThen}; the sign that colours the line (L2). The cash cancels,
 	 * so this is the covered stacks' move and nothing else (P1).
 	 */
 	public long deltaGp()
@@ -92,19 +83,13 @@ public final class WindowMove
 	}
 
 	/**
-	 * The move as a percentage of {@link #valueThen()} - cash included in that base since P1 - untruncated; null
+	 * The move as a percentage of {@link #valueThen} - cash included in that base since P1 - untruncated; null
 	 * when nothing was worth anything then, which is also the case of a window that covers no stack at all.
 	 */
 	@Nullable
 	public Double deltaPct()
 	{
 		return deltaPct;
-	}
-
-	/** How many stacks were priced on both days - the basis of the three sums. */
-	public int itemsCovered()
-	{
-		return itemsCovered;
 	}
 
 	@Override
@@ -132,17 +117,5 @@ public final class WindowMove
 	public int hashCode()
 	{
 		return Objects.hash(window, thenDay, valueThen, valueNowCovered, deltaGp, deltaPct, itemsCovered);
-	}
-
-	@Override
-	public String toString()
-	{
-		return "WindowMove{window=" + window.name()
-			+ ", thenDay=" + thenDay
-			+ ", valueThen=" + valueThen
-			+ ", valueNowCovered=" + valueNowCovered
-			+ ", deltaGp=" + deltaGp
-			+ ", deltaPct=" + deltaPct
-			+ ", itemsCovered=" + itemsCovered + '}';
 	}
 }

@@ -431,26 +431,4 @@ public class BankSnapshot
 		result = 31 * result + (int) (exchangeGp ^ (exchangeGp >>> 32));
 		return result;
 	}
-
-	/**
-	 * The carried part is printed only when there IS one, so a bank captured before addendum Y - and every bank of a
-	 * player with the switch off - reads exactly as it did; the Grand Exchange part (1.0.9 part 3) likewise only when
-	 * the offers held something.
-	 */
-	@Override
-	public String toString()
-	{
-		final int held = inventory == null ? 0 : inventory.size();
-		final int equipped = worn == null ? 0 : worn.size();
-		final int offered = exchange == null ? 0 : exchange.size();
-		return "BankSnapshot{items=" + (items == null ? 0 : items.size())
-			+ ", capturedAtMillis=" + capturedAtMillis
-			+ ", accountHash=" + accountHash
-			+ ", profileType='" + profileType + "'"
-			+ ", currencyGp=" + currencyGp
-			+ (held == 0 && equipped == 0 && carriedGp == 0L
-				? ""
-				: ", inventory=" + held + ", worn=" + equipped + ", carriedGp=" + carriedGp)
-			+ (offered == 0 && exchangeGp == 0L ? "" : ", exchange=" + offered + ", exchangeGp=" + exchangeGp) + '}';
-	}
 }

@@ -9,9 +9,9 @@ import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 /**
- * Addendum AU, amendment 9.3: how {@link PriceService.Status} carries the drawn owner's bank-history series - the
- * three public constructors unchanged and EMPTY, {@code withBankHistory} copying every other field, the series in
- * {@code equals} / {@code hashCode}, and {@code toString} byte-identical while it is empty.
+ * Addendum AU, amendment 9.3: how {@link PriceService.Status} carries the drawn owner's bank-history series - a null
+ * series reads as EMPTY, the fixtures' copy keeps every other field, and the series is part of {@code equals} /
+ * {@code hashCode}.
  */
 public class StatusBankHistoryTest
 {
@@ -26,49 +26,51 @@ public class StatusBankHistoryTest
 	}
 
 	@Test
-	public void everyPublicConstructorCarriesTheEmptySeries()
+	public void aNullSeriesReadsAsTheEmptyOne()
 	{
 		assertSame(BankHistorySeries.EMPTY, status().bankHistory());
-		final PriceService.Status bare = new PriceService.Status(0L, 0L, false, false, null, null, null, 0, 0, null,
-			false, 0L, 0L, 0L, 0L, null, -1.0d, 0, null, 0L, false, false, null, null);
+		final PriceService.Status bare = StatusFixtures.status(0L, 0L, false, false, null, null, null, 0, 0, null,
+			false, 0L, 0L, 0L, 0L, null, -1.0d, 0, null, 0L, false, false, null, null, ViewOptions.DEFAULT, null);
 		assertSame(BankHistorySeries.EMPTY, bare.bankHistory());
 	}
 
 	@Test
-	public void withBankHistoryCopiesEveryOtherField()
+	public void theCopyKeepsEveryOtherField()
 	{
 		final PriceService.Status base = status();
-		final PriceService.Status with = base.withBankHistory(TWO);
+		final PriceService.Status with = StatusFixtures.withBankHistory(base, TWO);
 
 		assertNotSame(base, with);
 		assertSame(TWO, with.bankHistory());
 		assertEquals("every other field copied: the same status once the series is taken back off", base,
-			with.withBankHistory(BankHistorySeries.EMPTY));
-		assertEquals(base.text(), with.text());
+			StatusFixtures.withBankHistory(with, BankHistorySeries.EMPTY));
+		assertEquals(PanelState.text(base), PanelState.text(with));
 		assertEquals(base.portfolio(), with.portfolio());
 		assertEquals(base.options(), with.options());
 		assertEquals(base.live(), with.live());
-		assertEquals(base.totalRows(), with.totalRows());
+		assertEquals(base.totalRows, with.totalRows);
 		assertEquals(base.bankItems(), with.bankItems());
-		assertSame("null reads as EMPTY", BankHistorySeries.EMPTY, with.withBankHistory(null).bankHistory());
+		assertSame("null reads as EMPTY", BankHistorySeries.EMPTY,
+			StatusFixtures.withBankHistory(with, null).bankHistory());
 	}
 
 	@Test
 	public void theSeriesIsPartOfAStatussIdentity()
 	{
 		final PriceService.Status base = status();
-		assertNotEquals(base, base.withBankHistory(TWO));
-		assertEquals(base.withBankHistory(TWO), base.withBankHistory(BankHistorySeries.of(TWO.points())));
-		assertEquals(base.withBankHistory(TWO).hashCode(),
-			base.withBankHistory(BankHistorySeries.of(TWO.points())).hashCode());
+		assertNotEquals(base, StatusFixtures.withBankHistory(base, TWO));
+		assertEquals(StatusFixtures.withBankHistory(base, TWO),
+			StatusFixtures.withBankHistory(base, BankHistorySeries.of(TWO.points())));
+		assertEquals(StatusFixtures.withBankHistory(base, TWO).hashCode(),
+			StatusFixtures.withBankHistory(base, BankHistorySeries.of(TWO.points())).hashCode());
 	}
 
 	@Test
-	public void toStringIsUnchangedWhileTheSeriesIsEmpty()
+	public void aStatusHoldsAnEmptySeriesUntilOneIsPutOn()
 	{
 		final PriceService.Status base = status();
-		assertEquals(base.toString(), base.withBankHistory(BankHistorySeries.EMPTY).toString());
-		assertTrue(!base.toString().contains("bankHistory"));
-		assertTrue(base.withBankHistory(TWO).toString().endsWith(", bankHistory=2}"));
+		assertTrue(base.bankHistory().isEmpty());
+		assertEquals(base, StatusFixtures.withBankHistory(base, BankHistorySeries.EMPTY));
+		assertEquals(2, StatusFixtures.withBankHistory(base, TWO).bankHistory().size());
 	}
 }

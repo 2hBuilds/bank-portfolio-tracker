@@ -4,7 +4,6 @@ import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import java.io.IOException;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
@@ -18,14 +17,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.regex.Pattern;
-import okhttp3.Call;
-import okhttp3.Callback;
 import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.Response;
-import okhttp3.ResponseBody;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -99,7 +92,8 @@ import org.slf4j.LoggerFactory;
  *
  * <p>This class holds no cache and no history: staleness, scheduling and one-in-flight-per-window are
  * {@code PriceService}'s rules (L10). Its only state is {@link #setEnabled(boolean)}, the list of calls still on
- * the wire for {@link #cancelInFlight()}, and the "a failure has already been logged loudly" flag.
+ * the wire for {@link #cancelInFlight()}, and the "a failure has already been logged loudly" flag - all three live
+ * in the {@link WikiCalls} it shares with {@link TradedPriceClient}.
  */
 public class GuidePriceClient
 {
@@ -182,41 +176,19 @@ public class GuidePriceClient
 	 */
 	private static final long MAX_DATA_LEAD_SECONDS = 300L;
 
-	/** Error and diagnostic text is cut to this many characters before it reaches a message or the log. */
-	private static final int MAX_DETAIL_CHARS = 200;
-
-	private final OkHttpClient client;
 	private final Gson gson;
 
 	/**
-	 * Developer-mode switch behind the dev bridge's {@code wiki=on|off} verb (L13): when false every fetch fails
-	 * immediately without touching the network, so the "no history" statuses can be exercised in a live client.
-	 * Volatile because it is written from the bridge/EDT and read on whichever thread starts a fetch. Never
-	 * flipped by user-facing code.
+	 * The request plumbing both wiki clients share. Its {@code enabled} flag is the developer-mode switch behind the
+	 * dev bridge's {@code wiki=on|off} verb (L13): when false every fetch fails immediately without touching the
+	 * network, so the "no history" statuses can be exercised in a live client. Never flipped by user-facing code.
 	 */
-	private volatile boolean enabled = true;
-
-	/**
-	 * Every call enqueued and not yet answered, so {@link #cancelInFlight()} can drop them when the plugin stops
-	 * (B012). Copy-on-write: at most a handful of entries, written from whichever thread starts a fetch and from
-	 * OkHttp's dispatcher as each answers.
-	 */
-	private final List<Call> inFlight = new CopyOnWriteArrayList<>();
-
-	/** Whether {@link #report} has already logged a failure loudly this session (B010). */
-	private volatile boolean reported;
+	private final WikiCalls calls;
 
 	public GuidePriceClient(final OkHttpClient client, final Gson gson)
 	{
-		if (client == null)
-		{
-			throw new IllegalArgumentException("client is required (inject RuneLite's OkHttpClient)");
-		}
-		if (gson == null)
-		{
-			throw new IllegalArgumentException("gson is required (inject RuneLite's Gson)");
-		}
-		this.client = client;
+		calls = new WikiCalls(log, client, gson, "wiki", "wiki fetches are switched off (developer mode)",
+			" - movement will show stored data until it recovers", this::httpDetail);
 		this.gson = gson;
 	}
 
@@ -252,8 +224,6 @@ public class GuidePriceClient
 	 */
 	public CompletableFuture<List<RevisionRef>> fetchRevisionIndex(final long nowMillis, final long reachSeconds)
 	{
-		log.debug("bank-portfolio-tracker: fetching the guide-table revision index at {}, back to {}", nowMillis,
-			reachSeconds);
 		final CompletableFuture<List<RevisionRef>> done = new CompletableFuture<>();
 		indexPage(null, 1, reachSeconds, new ArrayList<>(), done);
 		return done;
@@ -262,13 +232,13 @@ public class GuidePriceClient
 	/**
 	 * One call of {@link #fetchRevisionIndex}'s run, and the decision on its answer: another page, or done. The
 	 * completion runs on OkHttp's dispatcher thread; every path through it completes {@code done} or starts exactly
-	 * one more call, and a {@link Throwable} out of it completes {@code done} first (B006's rule, {@link #request}).
+	 * one more call, and a {@link Throwable} out of it completes {@code done} first (B006's rule, {@link WikiCalls}).
 	 */
 	private void indexPage(final String token, final int call, final long reachSeconds, final List<RevisionRef> found,
 		final CompletableFuture<List<RevisionRef>> done)
 	{
-		final CompletableFuture<IndexPage> page = request(token == null ? revisionIndexUrl() : revisionIndexUrl(token),
-			this::parseRevisionPage);
+		final CompletableFuture<IndexPage> page = calls.request(
+			token == null ? revisionIndexUrl() : revisionIndexUrl(token), this::parseRevisionPage);
 		page.whenComplete((answer, error) ->
 		{
 			try
@@ -279,7 +249,7 @@ public class GuidePriceClient
 					{
 						found.sort(RevisionRef.NEWEST_FIRST);
 						log.debug("bank-portfolio-tracker: the revision index run was cut short at call {} ({}): keeping the"
-							+ " {} revisions of the earlier calls", call, messageOf(error), found.size());
+							+ " {} revisions of the earlier calls", call, WikiCalls.messageOf(error), found.size());
 						done.complete(new CutShortIndex(found));
 						return;
 					}
@@ -309,7 +279,8 @@ public class GuidePriceClient
 			}
 			catch (final Throwable t)
 			{
-				done.completeExceptionally(new WikiPriceException("could not page the revision index: " + messageOf(t), t));
+				done.completeExceptionally(new WikiPriceException(
+					"could not page the revision index: " + WikiCalls.messageOf(t), t));
 				if (t instanceof Error)
 				{
 					throw (Error) t;
@@ -363,17 +334,16 @@ public class GuidePriceClient
 		{
 			// Deliberately a failure and not an empty success: a caller that asked for nothing has a bug, and an
 			// empty map would look like "every requested revision was fetched" to the code that stores baselines.
-			return failed(new WikiPriceException("no usable revision ids to fetch"));
+			return WikiCalls.failed(new WikiPriceException("no usable revision ids to fetch"));
 		}
 
 		if (ids.size() > MAX_REVIDS)
 		{
-			return failed(new WikiPriceException(
+			return WikiCalls.failed(new WikiPriceException(
 				"a batched revision fetch may carry at most " + MAX_REVIDS + " ids, was asked for " + ids.size()));
 		}
 
-		log.debug("bank-portfolio-tracker: fetching {} guide table(s) in one call: {}", ids.size(), ids);
-		return request(tablesUrl(ids), body -> parseTables(body, nowMillis));
+		return calls.request(tablesUrl(ids), body -> parseTables(body, nowMillis));
 	}
 
 	/**
@@ -385,8 +355,7 @@ public class GuidePriceClient
 	 */
 	public CompletableFuture<Map<Integer, String>> fetchMapping(final long nowMillis)
 	{
-		log.debug("bank-portfolio-tracker: fetching the id/name mapping at {}", nowMillis);
-		return request(MAPPING_URL, this::parseMapping);
+		return calls.request(MAPPING_URL, this::parseMapping);
 	}
 
 	/**
@@ -395,13 +364,13 @@ public class GuidePriceClient
 	 */
 	public void setEnabled(final boolean enabled)
 	{
-		this.enabled = enabled;
+		calls.enabled = enabled;
 	}
 
 	/** @see #setEnabled(boolean) */
 	public boolean isEnabled()
 	{
-		return enabled;
+		return calls.enabled;
 	}
 
 	// ---------------------------------------------------------------- the exact URLs (L4, L6)
@@ -707,188 +676,13 @@ public class GuidePriceClient
 	// ---------------------------------------------------------------- internals
 
 	/**
-	 * Builds the request, enqueues it and adapts OkHttp's callback pair onto one future. Nothing in here blocks:
-	 * the method returns as soon as the call is queued. The response is CLOSED before the future completes, so a
-	 * dependent that starts another request never runs while a body is still open.
-	 *
-	 * <p><b>The future is completed on every path, including an {@link Error}</b> (B006). OkHttp 3.14.9 sets
-	 * {@code signalledCallback} before it invokes {@code onResponse}, so a Throwable thrown from inside the
-	 * callback is rethrown on the dispatcher thread and never routed to {@code onFailure}: the future would then
-	 * never complete, and {@code PriceService}'s in-flight flag would stay claimed for the rest of the session -
-	 * the whole history subsystem stopping with nothing on screen and nothing in the log. A parse of six 4,566-entry
-	 * tables is exactly the shape that can raise {@code OutOfMemoryError} on a small heap, or
-	 * {@code StackOverflowError} on a hostile body, so the catch is on {@code Throwable}, the future is completed
-	 * FIRST, and an {@code Error} is rethrown afterwards for the JVM's own handling. {@link #fail} and
-	 * {@link #failAndRethrow} are that order, spelled once: every failure path here goes through them.
-	 *
-	 * <p>The call is remembered for {@link #cancelInFlight()} until it answers.
-	 */
-	private <T> CompletableFuture<T> request(final String url, final BodyParser<T> parser)
-	{
-		final CompletableFuture<T> future = new CompletableFuture<>();
-
-		if (!enabled)
-		{
-			future.completeExceptionally(new WikiPriceException("wiki fetches are switched off (developer mode)"));
-			return future;
-		}
-
-		final Request request;
-		try
-		{
-			request = new Request.Builder()
-				.url(url)
-				.header(USER_AGENT_HEADER, USER_AGENT)
-				.get()
-				.build();
-		}
-		catch (final RuntimeException e)
-		{
-			// IllegalArgumentException from HttpUrl for a url this class built itself: a programming error, but
-			// it must not escape onto the caller's thread (the service's executor) as an unchecked throw.
-			future.completeExceptionally(new WikiPriceException("could not build the wiki request for " + url, e));
-			return future;
-		}
-
-		try
-		{
-			final Call call = client.newCall(request);
-			inFlight.add(call);
-			future.whenComplete((value, error) -> inFlight.remove(call));
-			call.enqueue(new Callback()
-			{
-				@Override
-				public void onFailure(final Call call, final IOException e)
-				{
-					// Everything the injected client refuses lands here: no network, DNS, TLS, and the three
-					// RuneLiteModule interceptor throws (client thread, EDT, non-LIVE environment domain block).
-					fail(future, url, new WikiPriceException("wiki request failed: " + messageOf(e), e));
-				}
-
-				@Override
-				public void onResponse(final Call call, final Response response)
-				{
-					final T value;
-					try (Response closing = response)
-					{
-						final String body = bodyText(closing);
-						if (!closing.isSuccessful())
-						{
-							fail(future, url, httpFailure(closing.code(), body));
-							return;
-						}
-						value = parser.parse(body);
-					}
-					catch (final IOException e)
-					{
-						fail(future, url, e instanceof WikiPriceException
-							? (WikiPriceException) e
-							: new WikiPriceException("could not read the wiki response: " + messageOf(e), e));
-						return;
-					}
-					catch (final Throwable t)
-					{
-						failAndRethrow(future, url, new WikiPriceException(
-							"could not parse the wiki response: " + messageOf(t), t), t);
-						return;
-					}
-					future.complete(value);
-				}
-			});
-		}
-		catch (final Throwable t)
-		{
-			// Throwable for the same reason: this runs on the service's executor, whose own guard used to stop at
-			// RuntimeException, and an unanswered future is a flag claimed for the session.
-			failAndRethrow(future, url, new WikiPriceException("could not queue the wiki request: " + messageOf(t), t), t);
-		}
-
-		return future;
-	}
-
-	/**
-	 * The one way a request fails: {@link #report} the failure, THEN complete the future with it. Every failure
-	 * site in {@link #request} goes through here, so the once-per-session warning has a single gate and no path
-	 * can leave the future unanswered - which is the whole of B006, since an unanswered future leaves
-	 * {@code PriceService}'s in-flight flag claimed for the rest of the session.
-	 */
-	private <T> void fail(final CompletableFuture<T> future, final String url, final WikiPriceException failure)
-	{
-		report(url, failure);
-		future.completeExceptionally(failure);
-	}
-
-	/**
-	 * {@link #fail} for a {@code catch} on {@link Throwable}: the future is completed FIRST and an {@link Error}
-	 * is rethrown afterwards, for the JVM's own handling. The order is the point (class note above) - OkHttp
-	 * 3.14.9 rethrows on its dispatcher thread rather than routing to {@code onFailure}, so a rethrow before the
-	 * completion would strand the caller.
-	 *
-	 * @param cause what was caught; rethrown only when it is an {@link Error}
-	 */
-	private <T> void failAndRethrow(final CompletableFuture<T> future, final String url,
-		final WikiPriceException failure, final Throwable cause)
-	{
-		fail(future, url, failure);
-		if (cause instanceof Error)
-		{
-			throw (Error) cause;
-		}
-	}
-
-	/**
 	 * Cancels every call still on the wire. Called from {@code PriceService.stop()} when the plugin is switched
 	 * off or its config profile changes: a batched body download is most of a megabyte, and neither finishing it
-	 * nor parsing six tables afterwards can produce anything but a discarded result. {@code Call.cancel()} is safe
-	 * from any thread; a cancelled call's {@code onFailure} completes its future as an ordinary failure, which the
-	 * stopped service drops.
+	 * nor parsing six tables afterwards can produce anything but a discarded result.
 	 */
 	public void cancelInFlight()
 	{
-		for (final Call call : new ArrayList<>(inFlight))
-		{
-			inFlight.remove(call);
-			try
-			{
-				call.cancel();
-			}
-			catch (final RuntimeException e)
-			{
-				log.debug("bank-portfolio-tracker: a wiki call refused to cancel", e);
-			}
-		}
-	}
-
-	/**
-	 * Logs one failure. The FIRST of the session is a warning carrying the url and, where the wiki answered with
-	 * a status, that status; every one after it is debug (B010).
-	 *
-	 * <p>Why the first one is loud: RuneLite logs at INFO, so before this every network failure in the plugin -
-	 * an outage, a proxy serving HTML, the 403 the prices API returns to a default User-Agent - left NOTHING in
-	 * the user's client.log, while every DISK failure in the same plugin was a warning. A bug report then could
-	 * not tell a 403 from a DNS failure without asking the user to reproduce with debug logging on. Why only the
-	 * first: an outage lasts hours and the tick is thirty minutes, and a repeated line is noise in someone else's
-	 * log.
-	 */
-	private void report(final String url, final WikiPriceException failure)
-	{
-		final String status = failure.hasHttpCode() ? " (HTTP " + failure.getHttpCode() + ")" : "";
-		if (reported)
-		{
-			log.debug("bank-portfolio-tracker: wiki request to {} failed{}", url, status, failure);
-			return;
-		}
-		reported = true;
-		log.warn("bank-portfolio-tracker: wiki request to {} failed{} - movement will show stored data until it recovers",
-			url, status, failure);
-	}
-
-	/** A future that has already failed - the shape {@link #fetchTables} refuses a bad argument with. */
-	private static <T> CompletableFuture<T> failed(final WikiPriceException failure)
-	{
-		final CompletableFuture<T> future = new CompletableFuture<>();
-		future.completeExceptionally(failure);
-		return future;
+		calls.cancelInFlight();
 	}
 
 	/**
@@ -1033,7 +827,7 @@ public class GuidePriceClient
 				continue;
 			}
 
-			final Long price = asLong(entry.getValue());
+			final Long price = WikiCalls.asLong(entry.getValue());
 			if (price == null)
 			{
 				continue;
@@ -1101,13 +895,6 @@ public class GuidePriceClient
 		}
 	}
 
-	/** Reads the whole body as text, tolerating a null body (a HEAD-shaped or synthetic response). */
-	private static String bodyText(final Response response) throws IOException
-	{
-		final ResponseBody body = response.body();
-		return body == null ? "" : body.string();
-	}
-
 	/**
 	 * A body as a {@link JsonObject}, or a failure. Parsed as {@link JsonElement} first so a non-object body (an
 	 * array, or a bare string from Gson's lenient reader) becomes a clean failure rather than a
@@ -1142,7 +929,7 @@ public class GuidePriceClient
 		}
 		catch (final RuntimeException e)
 		{
-			throw new WikiPriceException("malformed JSON from the wiki: " + messageOf(e), e);
+			throw new WikiPriceException("malformed JSON from the wiki: " + WikiCalls.messageOf(e), e);
 		}
 
 		if (root == null || root.isJsonNull())
@@ -1160,25 +947,7 @@ public class GuidePriceClient
 	 */
 	private static Long optLong(final JsonObject object, final String key)
 	{
-		return object == null ? null : asLong(object.get(key));
-	}
-
-	/** One JSON value as a {@code Long}, or null when it is absent, null, or not a number. Never throws. */
-	private static Long asLong(final JsonElement value)
-	{
-		if (value == null || value.isJsonNull() || !value.isJsonPrimitive())
-		{
-			return null;
-		}
-		try
-		{
-			return Long.valueOf(value.getAsLong());
-		}
-		catch (final RuntimeException e)
-		{
-			// A boolean primitive, or a string that is not a number: skip the entry, never fail the refresh.
-			return null;
-		}
+		return object == null ? null : WikiCalls.asLong(object.get(key));
 	}
 
 	/** A member rendered as short text, or null when it is absent or JSON null. Never throws. */
@@ -1193,62 +962,29 @@ public class GuidePriceClient
 		{
 			try
 			{
-				return truncate(value.getAsString());
+				return WikiCalls.truncate(value.getAsString());
 			}
 			catch (final RuntimeException e)
 			{
 				// fall through to the structural rendering
 			}
 		}
-		return truncate(value.toString());
+		return WikiCalls.truncate(value.toString());
 	}
 
 	/**
-	 * A non-2xx answer. The status is carried on the exception because 403 is diagnosable on its own (both wiki
-	 * hosts pre-emptively block default user agents, research C3) while the body for it is unhelpful.
+	 * What a non-2xx answer's body adds to the failure: the wiki's own {@code error} member, or null for a body that
+	 * is not JSON (an HTML error page, cloudflare's one-byte 403) - normal here, the status is the information.
 	 */
-	private WikiPriceException httpFailure(final int code, final String body)
+	private String httpDetail(final String body)
 	{
-		String detail = null;
 		try
 		{
-			detail = memberText(readObject(body), "error");
+			return memberText(readObject(body), "error");
 		}
 		catch (final WikiPriceException e)
 		{
-			// A non-JSON error body (an HTML error page, cloudflare's one-byte 403) is normal here - the status
-			// is the information.
-		}
-
-		final String message = detail == null
-			? "wiki request failed with HTTP " + code
-			: "wiki request failed with HTTP " + code + ": " + detail;
-		return new WikiPriceException(message, code);
-	}
-
-	/** {@code Throwable.getMessage()} is null for plenty of IO failures; fall back to the type name. */
-	private static String messageOf(final Throwable t)
-	{
-		final String message = t.getMessage();
-		return truncate(message == null || message.isEmpty() ? t.getClass().getSimpleName() : message);
-	}
-
-	private static String truncate(final String text)
-	{
-		if (text == null)
-		{
 			return null;
 		}
-		return text.length() <= MAX_DETAIL_CHARS ? text : text.substring(0, MAX_DETAIL_CHARS) + "...";
-	}
-
-	/**
-	 * The one thing that differs between the three requests once the bytes are in hand. A tiny interface rather
-	 * than a {@code Function} because the parsers throw a checked {@link WikiPriceException}.
-	 */
-	@FunctionalInterface
-	private interface BodyParser<T>
-	{
-		T parse(String body) throws WikiPriceException;
 	}
 }

@@ -113,10 +113,4 @@ public final class PricePoint
 	{
 		return Objects.hash(high, low);
 	}
-
-	@Override
-	public String toString()
-	{
-		return "PricePoint{high=" + high + ", low=" + low + '}';
-	}
 }

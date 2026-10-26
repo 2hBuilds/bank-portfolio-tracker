@@ -254,11 +254,4 @@ public final class ExchangeOffers
 		h = 31 * h + Arrays.hashCode(prices);
 		return 31 * h + Arrays.hashCode(spent);
 	}
-
-	/** Counts only - slots in use, items, gp - and never an item id. */
-	@Override
-	public String toString()
-	{
-		return "ExchangeOffers{slots=" + slotsInUse() + ", items=" + items().length + ", gp=" + cashGp() + '}';
-	}
 }

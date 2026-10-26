@@ -92,14 +92,24 @@ public class BankItemTest
 		assertEquals(untradeable.hashCode(), new BankItem(772, 2, "Dramen staff", false, true, 1500).hashCode());
 	}
 
-	/** An ordinary stack prints what it always printed; only a marked one says more. */
+	/** An ordinary stack carries no alch value; only a marked one does. */
 	@Test
-	public void toStringNamesTheAlchValueOnlyWhenThereIsOne()
+	public void anOrdinaryStackCarriesNoAlchValueAndAMarkedOneKeepsIt()
 	{
-		assertEquals("BankItem{id=385, quantity=500, name='Shark', stackable=true}",
-			new BankItem(385, 500, "Shark", true).toString());
-		assertEquals("BankItem{id=772, quantity=2, name='Dramen staff', stackable=false, untradeable, haPrice=1500}",
-			new BankItem(772, 2, "Dramen staff", false, true, 1500).toString());
+		final BankItem shark = new BankItem(385, 500, "Shark", true);
+		assertEquals(385, shark.id);
+		assertEquals(500, shark.quantity);
+		assertEquals("Shark", shark.name);
+		assertTrue(shark.stackable);
+		assertFalse(shark.untradeable);
+		assertEquals(0, shark.haPrice);
+		final BankItem staff = new BankItem(772, 2, "Dramen staff", false, true, 1500);
+		assertEquals(772, staff.id);
+		assertEquals(2, staff.quantity);
+		assertEquals("Dramen staff", staff.name);
+		assertFalse(staff.stackable);
+		assertTrue(staff.untradeable);
+		assertEquals(1500, staff.haPrice);
 	}
 
 	// ---------------------------------------------------------------- R1: the tradeable parts
@@ -202,7 +212,9 @@ public class BankItemTest
 		assertNotEquals(part, new BankItem.Part(ARMOUR_SEED + 1, 3L, SEED_NAME));
 		assertNotEquals(part, new BankItem.Part(ARMOUR_SEED, 3L, "Crystal tool seed"));
 		assertEquals("a null name is \"\", as a stack's is", "", new BankItem.Part(1, 1L, null).name);
-		assertEquals("Part{id=23956, quantity=3, name='Crystal armour seed'}", part.toString());
+		assertEquals(ARMOUR_SEED, part.id);
+		assertEquals(3L, part.quantity);
+		assertEquals(SEED_NAME, part.name);
 	}
 
 	/**
@@ -228,14 +240,17 @@ public class BankItemTest
 		assertEquals(body, merged.withQuantity(1));
 	}
 
-	/** An ordinary stack still prints what it always printed; only one with parts says more. */
+	/** An ordinary stack has no parts; one with parts keeps them. */
 	@Test
-	public void toStringNamesThePartsOnlyWhenThereAreSome()
+	public void aStackHasPartsOnlyWhenThereAreSome()
 	{
-		assertEquals("BankItem{id=385, quantity=500, name='Shark', stackable=true}",
-			new BankItem(385, 500, "Shark", true).toString());
-		assertEquals("BankItem{id=23975, quantity=1, name='Crystal body', stackable=false, untradeable, "
-				+ "haPrice=900000, parts=[Part{id=23956, quantity=3, name='Crystal armour seed'}]}",
-			crystalBody().toString());
+		assertFalse(new BankItem(385, 500, "Shark", true).hasParts());
+		final BankItem body = crystalBody();
+		assertEquals(23975, body.id);
+		assertEquals(1, body.quantity);
+		assertEquals("Crystal body", body.name);
+		assertTrue(body.untradeable);
+		assertEquals(900000, body.haPrice);
+		assertEquals(Arrays.asList(new BankItem.Part(ARMOUR_SEED, 3L, SEED_NAME)), body.parts);
 	}
 }

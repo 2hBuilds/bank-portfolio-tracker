@@ -183,7 +183,7 @@ public class BandPresetsTest
 			try
 			{
 				fail(Arrays.toString(trio) + " should not have built a trio, gave "
-					+ BandPresets.of(trio[0], trio[1], trio[2]));
+					+ BandPresets.of(trio[0], trio[1], trio[2]).format());
 			}
 			catch (IllegalArgumentException expected)
 			{
@@ -288,16 +288,5 @@ public class BandPresetsTest
 		assertTrue(seen.add(a));
 		assertFalse("an equal trio is the same key", seen.add(b));
 		assertTrue(seen.add(BandPresets.of(1_000_000L, 10_000_000L, 100_000_000L)));
-	}
-
-	/** {@code toString} is a debugging line and prints gp, not the shorthand a log would have to un-round. */
-	@Test
-	public void toStringNamesTheThreeBandsInGp()
-	{
-		final String text = BandPresets.DEFAULT.toString();
-		assertTrue(text, text.contains("BandPresets"));
-		assertTrue(text, text.contains("100000"));
-		assertTrue(text, text.contains("1000000"));
-		assertTrue(text, text.contains("10000000"));
 	}
 }

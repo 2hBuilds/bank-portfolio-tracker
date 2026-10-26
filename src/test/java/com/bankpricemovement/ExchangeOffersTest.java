@@ -270,10 +270,11 @@ public class ExchangeOffersTest
 	}
 
 	@Test
-	public void toStringPrintsCountsAndNeverAnItemId()
+	public void theCountsAreSlotsItemsAndGp()
 	{
-		final String text = one(GrandExchangeOfferState.SELLING).toString();
-		assertEquals("ExchangeOffers{slots=1, items=1, gp=350}", text);
-		assertFalse(text.contains(String.valueOf(ITEM)));
+		final ExchangeOffers offers = one(GrandExchangeOfferState.SELLING);
+		assertEquals(1, offers.slotsInUse());
+		assertEquals(1, offers.items().length);
+		assertEquals(350L, offers.cashGp());
 	}
 }

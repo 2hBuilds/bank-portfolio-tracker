@@ -7,7 +7,7 @@ import javax.annotation.Nullable;
 /**
  * The ONE place in the panel's tests that names {@link PriceService.Status}'s real constructor.
  *
- * <p><b>Why it exists.</b> Every consumer test - {@code BankPriceMovementPanelTest}, {@code BpmCommandsTest},
+ * <p><b>Why it exists.</b> Every consumer test - {@code BankPriceMovementPanelTest}, the dev bridge's tests,
  * {@link LookRenderer} - drives a MOCKED {@code Status}, and deliberately: the class has grown an argument on
  * every addendum (K, L, M) and another agent owns it, so naming its constructor in each of them would pin an
  * argument list none of them has any business pinning. The cost of that seam is that no test ever hands the
@@ -83,6 +83,47 @@ final class StatusFixtures
 			false,
 			null,
 			portfolio,
-			options);
+			options, null, null, 0, 0, 0, 0L, null);
+	}
+
+	/**
+	 * The 26-argument form the tests built a status with until release 1.2.2: the six figures only the service
+	 * knows (the bank history, the alch counts, the restarts, the now time and the grades) take their defaults, as
+	 * they did from the old public constructors.
+	 */
+	static PriceService.Status status(long pricesAtMillis, long bankAtMillis, boolean bankLoaded, boolean loggedIn,
+		@Nullable MovementRow.PriceSource source, @Nullable String problem,
+		@Nullable PriceService.ProblemKind problemKind, int totalRows, int bankItems, @Nullable MovementWindow window,
+		boolean baselineLoaded, long baselineRevisionSeconds, long baselineRevId, long mappingAtMillis,
+		long indexAtMillis, @Nullable LocalDate anchorDay, double agree, int agreeSamples, @Nullable LocalDate r0Day,
+		long r0RevId, boolean degraded, boolean anchorDegraded, @Nullable String degradedReason,
+		@Nullable PortfolioSummary portfolio, @Nullable ViewOptions options, @Nullable PriceService.Status.LiveStatus live)
+	{
+		return new PriceService.Status(pricesAtMillis, bankAtMillis, bankLoaded, loggedIn, source, problem, problemKind,
+			totalRows, bankItems, window, baselineLoaded, baselineRevisionSeconds, baselineRevId, mappingAtMillis,
+			indexAtMillis, anchorDay, agree, agreeSamples, r0Day, r0RevId, degraded, anchorDegraded, degradedReason,
+			portfolio, options, live, null, 0, 0, 0, 0L, null);
+	}
+
+	/** {@code base} with {@code series} as its bank history (null reads as EMPTY), every other figure copied. */
+	static PriceService.Status withBankHistory(PriceService.Status base, @Nullable BankHistorySeries series)
+	{
+		return copy(base, series, base.nowSeconds);
+	}
+
+	/** {@code base} with {@code seconds} as its now time (negative reads as 0), every other figure copied. */
+	static PriceService.Status withNowSeconds(PriceService.Status base, long seconds)
+	{
+		return copy(base, base.bankHistory(), seconds);
+	}
+
+	private static PriceService.Status copy(PriceService.Status base, @Nullable BankHistorySeries series, long nowSeconds)
+	{
+		return new PriceService.Status(base.pricesAtMillis(), base.bankAtMillis(), base.bankLoaded(), base.loggedIn(),
+			base.source, base.problem(), base.problemKind(), base.totalRows, base.bankItems(), base.window(),
+			base.baselineLoaded, base.baselineRevisionSeconds(), base.baselineRevId(), base.mappingAtMillis,
+			base.indexAtMillis, base.anchorDay, base.agree, base.agreeSamples, base.r0Day, base.r0RevId, base.degraded(),
+			base.anchorDegraded(), base.degradedReason(), base.portfolio(), base.options(), base.live(), series,
+			base.alchStacks(), base.alchCounted(), base.placeholderRestarts(), nowSeconds, base.grades());
 	}
 }

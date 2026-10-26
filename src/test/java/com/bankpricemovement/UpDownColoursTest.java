@@ -60,7 +60,7 @@ public class UpDownColoursTest
 	private PriceService.Listener listener;
 
 	/** The config as a memory: what the colours and the presets are stored as, and every write of them. */
-	private static final class Memory implements BankPriceMovementPanel.Prefs
+	private static final class Memory extends PrefsDefaults
 	{
 		@Nullable
 		Color up;
@@ -399,7 +399,7 @@ public class UpDownColoursTest
 		onEdt(() ->
 		{
 			// ---- Items is showing: a rising row, and a card whose windows all fell.
-			assertEquals(SidebarView.ITEMS, panel.view());
+			assertEquals(SidebarView.ITEMS, panel.view);
 			assertEquals("a rise starts in the built-in green", ColorScheme.PROGRESS_COMPLETE_COLOR, rowPercent());
 			assertEquals("a fall starts in the lifted red", Widgets.MOVE_DOWN_TEXT, panel.deltaLabel().getForeground());
 			final int rebuilds = panel.rebuilds();

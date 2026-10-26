@@ -1120,8 +1120,12 @@ public class BankReaderTest
 
 		assertEquals(one, two);
 		assertEquals(one.hashCode(), two.hashCode());
-		assertEquals("Carried{inventory=1, worn=1, exchange=0, carriedGp=0, exchangeGp=0, readAtMillis=" + NOW + "}",
-			one.toString());
+		assertEquals(1, one.inventory.size());
+		assertEquals(1, one.worn.size());
+		assertEquals(0, one.exchange.size());
+		assertEquals(0L, one.carriedGp);
+		assertEquals(0L, one.exchangeGp);
+		assertEquals(NOW, one.readAtMillis);
 		assertTrue(BankReader.Carried.EMPTY.isEmpty());
 		assertEquals(0L, BankReader.Carried.EMPTY.readAtMillis);
 	}
@@ -1255,8 +1259,10 @@ public class BankReaderTest
 			carried.equals(new BankReader.Carried(null, null, null, 0L, 0L, 0L)));
 		assertFalse("and so is the coin figure",
 			carried.equals(new BankReader.Carried(null, null, Arrays.asList(whip), 0L, 9L, 0L)));
-		assertEquals("Carried{inventory=0, worn=0, exchange=1, carriedGp=0, exchangeGp=0, readAtMillis=0}",
-			carried.toString());
+		assertEquals(0, carried.inventory.size());
+		assertEquals(0, carried.worn.size());
+		assertEquals(1, carried.exchange.size());
+		assertEquals(0L, carried.carriedGp);
 	}
 
 	/** The bank's own read still answers a snapshot with no Grand Exchange half at all. */

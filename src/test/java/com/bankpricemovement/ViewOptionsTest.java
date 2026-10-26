@@ -31,8 +31,7 @@ public class ViewOptionsTest
 	@Test
 	public void theHoverSwitchIsGoneFromWhatTheValuePrintsAndEchoes()
 	{
-		assertFalse("the bridge no longer echoes a hover key", ViewOptions.DEFAULT.asMap().containsKey("hover"));
-		assertFalse("and neither does the value print one", ViewOptions.DEFAULT.toString().contains("hover"));
+		assertFalse("the bridge no longer echoes a hover key", PanelState.asMap(ViewOptions.DEFAULT).containsKey("hover"));
 		// The value now differs from another only by the five switches that remain: spelled out, the default IS DEFAULT.
 		assertEquals(ViewOptions.DEFAULT, new ViewOptions(true, false, true, true, true));
 	}
@@ -134,17 +133,17 @@ public class ViewOptionsTest
 	public void asMapPrintsTheFiveSwitchesInTheOrderTheBridgeUses()
 	{
 		final ViewOptions o = new ViewOptions(false, true, false, false, true);
-		assertEquals("[cash, untradeables, live, inventory, ge]", new ArrayList<>(o.asMap().keySet()).toString());
-		assertEquals("[false, true, false, false, true]", new ArrayList<>(o.asMap().values()).toString());
+		assertEquals("[cash, untradeables, live, inventory, ge]", new ArrayList<>(PanelState.asMap(o).keySet()).toString());
+		assertEquals("[false, true, false, false, true]", new ArrayList<>(PanelState.asMap(o).values()).toString());
 		assertEquals("AO1: live moves up to THIRD, where holding used to sit", "live",
-			new ArrayList<>(ViewOptions.DEFAULT.asMap().keySet()).get(2));
+			new ArrayList<>(PanelState.asMap(ViewOptions.DEFAULT).keySet()).get(2));
 		assertEquals("Y1: inventory is the FOURTH key", "inventory",
-			new ArrayList<>(ViewOptions.DEFAULT.asMap().keySet()).get(3));
+			new ArrayList<>(PanelState.asMap(ViewOptions.DEFAULT).keySet()).get(3));
 		assertEquals("1.0.9 part 3: ge is the FIFTH and last, directly after inventory", "ge",
-			new ArrayList<>(ViewOptions.DEFAULT.asMap().keySet()).get(4));
+			new ArrayList<>(PanelState.asMap(ViewOptions.DEFAULT).keySet()).get(4));
 		assertFalse("AO1: and nothing prints the deleted holding switch any more",
-			ViewOptions.DEFAULT.asMap().containsKey("holding"));
-		assertFalse("release 1.2.0: nor the deleted hover switch", ViewOptions.DEFAULT.asMap().containsKey("hover"));
+			PanelState.asMap(ViewOptions.DEFAULT).containsKey("holding"));
+		assertFalse("release 1.2.0: nor the deleted hover switch", PanelState.asMap(ViewOptions.DEFAULT).containsKey("hover"));
 	}
 
 	@Test
@@ -160,10 +159,6 @@ public class ViewOptionsTest
 		assertNotEquals(ViewOptions.DEFAULT, ViewOptions.DEFAULT.withCountInventory(false));
 		assertNotEquals(ViewOptions.DEFAULT, ViewOptions.DEFAULT.withCountGrandExchange(false));
 		assertNotEquals(ViewOptions.DEFAULT.hashCode(), ViewOptions.DEFAULT.withCountGrandExchange(false).hashCode());
-		assertEquals("ViewOptions{cash=true, untradeables=false, live=true, inventory=true, ge=true}",
-			ViewOptions.DEFAULT.toString());
-		assertEquals("ViewOptions{cash=true, untradeables=false, live=true, inventory=true, ge=false}",
-			ViewOptions.DEFAULT.withCountGrandExchange(false).toString());
 	}
 
 	/**
@@ -178,8 +173,12 @@ public class ViewOptionsTest
 	public void theValueCarriesFiveSwitchesAndNoMore()
 	{
 		assertEquals("AO1 and release 1.2.0 took holding and hover out, so the bridge prints five", 5,
-			ViewOptions.DEFAULT.asMap().size());
-		assertEquals("ViewOptions{cash=true, untradeables=false, live=true, inventory=true, ge=true}",
-			ViewOptions.DEFAULT.toString());
+			PanelState.asMap(ViewOptions.DEFAULT).size());
+		final ViewOptions d = ViewOptions.DEFAULT;
+		assertTrue(d.countCash());
+		assertFalse(d.countUntradeables());
+		assertTrue(d.livePrices());
+		assertTrue(d.countInventory());
+		assertTrue(d.countGrandExchange());
 	}
 }

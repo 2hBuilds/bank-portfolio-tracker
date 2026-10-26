@@ -31,6 +31,9 @@ import net.runelite.client.ui.ColorScheme;
  * answers yes; Escape, <i>Cancel</i> and the window's close box all answer no. It is modal to the client window that
  * owns it: the reader has been asked something about their own numbers, and the sidebar behind it waits for the answer.
  *
+ * <p>Since 1.2.2 the same window puts the player's two "Reset history" questions, with their own title and a yes button
+ * that says <i>Reset</i>.
+ *
  * <p><b>The model and the window are apart.</b> The panel of controls ({@link #content}) is built without a window,
  * so a test can press its buttons on a machine with no screen; the {@link JDialog} that hosts it is made only by
  * {@link #window}.
@@ -57,7 +60,7 @@ final class LegacyDialog
 	@Nullable
 	private JDialog dialog;
 
-	LegacyDialog(final String question)
+	LegacyDialog(final String question, final String yes)
 	{
 		content.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		content.setBorder(new EmptyBorder(PADDING, PADDING, PADDING, PADDING));
@@ -78,7 +81,7 @@ final class LegacyDialog
 		textArea.setPreferredSize(new Dimension(TEXT_WIDTH, textArea.getPreferredSize().height));
 		content.add(textArea, BorderLayout.CENTER);
 
-		includeButton = Widgets.smallButton(INCLUDE_TEXT, null, e -> answer(true));
+		includeButton = Widgets.smallButton(yes, null, e -> answer(true));
 		cancelButton = Widgets.smallButton(CANCEL_TEXT, null, e -> answer(false));
 		final JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
 		buttons.setOpaque(false);
@@ -106,14 +109,15 @@ final class LegacyDialog
 	 *
 	 * @param owner the RuneLite frame (the panel's window ancestor), or null
 	 * @param title the check item's own words, which the panel picks by the record's reason (1.1.1 part B)
+	 * @param yes   the word on the button that answers yes: {@link #INCLUDE_TEXT}, or "Reset" (1.2.2)
 	 */
-	static boolean ask(@Nullable final Window owner, final String title, final String question)
+	static boolean ask(@Nullable final Window owner, final String title, final String question, final String yes)
 	{
 		if (GraphicsEnvironment.isHeadless())
 		{
 			return false;
 		}
-		final LegacyDialog window = window(owner, title, question);
+		final LegacyDialog window = window(owner, title, question, yes);
 		window.dialog.setVisible(true);
 		return window.included;
 	}
@@ -123,9 +127,9 @@ final class LegacyDialog
 	 * box's own words ({@code title}), modal to its owner's windows, closing by disposing, with <i>Include</i> as its
 	 * default button and the focus on it when the window first gets it. Needs a display.
 	 */
-	static LegacyDialog window(@Nullable final Window owner, final String title, final String question)
+	static LegacyDialog window(@Nullable final Window owner, final String title, final String question, final String yes)
 	{
-		final LegacyDialog window = new LegacyDialog(question);
+		final LegacyDialog window = new LegacyDialog(question, yes);
 		final JDialog dialog = new JDialog(owner, title);
 		dialog.setModalityType(Dialog.ModalityType.DOCUMENT_MODAL);
 		dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);

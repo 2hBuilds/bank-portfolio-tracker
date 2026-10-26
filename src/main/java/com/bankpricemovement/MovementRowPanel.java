@@ -194,7 +194,7 @@ public class MovementRowPanel extends JPanel
 	/** The row's width: the sidebar's content width (contract C28/C31). */
 	public static final int ROW_WIDTH = Widgets.CONTENT_WIDTH;
 	/**
-	 * The row's height (the Q4 format, over addendum N section 2 and section 3 §4 and contract C31's 40): 3 px
+	 * The row's height (the Q4 format, over addendum N section 2 and section 3.4 and contract C31's 40): 3 px
 	 * of top padding, the name line, the stack line, the item line and 2 px below. It was 48 while the face
 	 * carried two lines; the third costs 14 px, which is the price of never making the reader divide.
 	 */
@@ -275,7 +275,7 @@ public class MovementRowPanel extends JPanel
 	public static final String IN_EXCHANGE = " in the Grand Exchange";
 
 	/**
-	 * The card's padding inside the coloured edge (N section 3 §4): 213 - 3 - 3 - 6 = 201 px of inner width.
+	 * The card's padding inside the coloured edge (N section 3.4): 213 - 3 - 3 - 6 = 201 px of inner width.
 	 *
 	 * <p>The LEFT inset is one half of the picture's frame, and {@link #GAP} is the other: the two are equal so
 	 * the picture stands exactly midway between the rail and the text (addendum AQ, the user: "the edge of the
@@ -364,7 +364,7 @@ public class MovementRowPanel extends JPanel
 	 */
 	private static final String TIMES = "x";
 
-	/** T3 of addendum N section 3 §2: the item name, bold, white, the row's headline. */
+	/** T3 of addendum N section 3.2: the item name, bold, white, the row's headline. */
 	private static final int NAME_SIZE = 14;
 	/**
 	 * T4, as the Q4 format reassigned it: the STACK's value, line 2's opening figure. One step down from 14,
@@ -605,93 +605,40 @@ public class MovementRowPanel extends JPanel
 	public MovementRowPanel(MovementRow row, @Nullable AsyncBufferedImage icon, MovementWindow window,
 		@Nullable LocalDate thenDay)
 	{
-		this(row, icon, window, thenDay, ViewOptions.DEFAULT);
+		this(row, icon, window, thenDay, 0L, ViewOptions.DEFAULT, LinkBrowser::browse, null, false,
+			ChangeText.DEFAULT);
 	}
 
 	/**
-	 * The list builder's constructor since addendum Q.
+	 * The full list builder's constructor.
 	 *
-	 * @param options the view switches the page is being built under; null reads as {@link ViewOptions#DEFAULT}.
-	 *                NOTHING on the face reads them since the Q4 format - whether an untradeable stack is LISTED
-	 *                at all is the service's decision (Q5), and the three-line face prints both the stack and
-	 *                the item reading, which is what left {@code holdingOnRows} with nothing to choose and is
-	 *                why addendum AO could delete that key outright. A live row paints exactly as a guide row does
-	 *                (T6), and a merged stack is drawn as the one stack it is, so the face still reads only the one switch
-	 */
-	public MovementRowPanel(MovementRow row, @Nullable AsyncBufferedImage icon, MovementWindow window,
-		@Nullable LocalDate thenDay, @Nullable ViewOptions options)
-	{
-		this(row, icon, window, thenDay, options, LinkBrowser::browse);
-	}
-
-	/**
-	 * The list builder's constructor since addendum AG.
-	 *
-	 * @param expansion where the row's clicked/unclicked hover state lives - the PANEL's, so it outlives the
-	 *                  rebuild every publish performs; null gives the row one of its own
-	 */
-	public MovementRowPanel(MovementRow row, @Nullable AsyncBufferedImage icon, MovementWindow window,
-		@Nullable LocalDate thenDay, @Nullable ViewOptions options, @Nullable Expansion expansion)
-	{
-		this(row, icon, window, thenDay, options, LinkBrowser::browse, expansion);
-	}
-
-	/** @param browser what the two right-click entries hand their URL to; the tests record, the client browses */
-	MovementRowPanel(MovementRow row, @Nullable AsyncBufferedImage icon, MovementWindow window,
-		@Nullable LocalDate thenDay, @Nullable ViewOptions options, Consumer<String> browser)
-	{
-		this(row, icon, window, thenDay, options, browser, null);
-	}
-
-	/**
-	 * @param expansion where the clicked/unclicked state of addendum AG lives; null gives the row one of its
-	 *                  own, which is what every caller that never rebuilds a page wants - the row then simply
-	 *                  starts short and toggles for as long as it exists
-	 */
-	MovementRowPanel(MovementRow row, @Nullable AsyncBufferedImage icon, MovementWindow window,
-		@Nullable LocalDate thenDay, @Nullable ViewOptions options, Consumer<String> browser,
-		@Nullable Expansion expansion)
-	{
-		this(row, icon, window, thenDay, options, browser, expansion, false);
-	}
-
-	/**
-	 * The list builder's constructor since 1.1.0 part E ("Hide amounts").
-	 *
+	 * @param thenDay     the UTC calendar day whose guide table {@link MovementRow#thenPrice()} came from - the day
+	 *                    the table's own {@code %LAST_UPDATE%} names (L7); null = not known yet, and the tooltip
+	 *                    stamps "-"
+	 * @param thenSeconds the baseline table's own time ({@code %LAST_UPDATE%}, unix seconds) - {@code Status
+	 *                    .baselineRevisionSeconds()} - which the open block prints beside the day ("06 Oct 21:35 UTC"),
+	 *                    because since the wiki saves eight tables a day a date no longer names one; 0 prints the day
+	 *                    alone, as every build before it did
+	 * @param options     the view switches the page is being built under; null reads as {@link ViewOptions#DEFAULT}.
+	 *                    NOTHING on the face reads them since the Q4 format - whether an untradeable stack is LISTED
+	 *                    at all is the service's decision (Q5), and the three-line face prints both the stack and
+	 *                    the item reading, which is what left {@code holdingOnRows} with nothing to choose and is
+	 *                    why addendum AO could delete that key outright. A live row paints exactly as a guide row does
+	 *                    (T6), and a merged stack is drawn as the one stack it is, so the face still reads only the one
+	 *                    switch
+	 * @param browser     what the two right-click entries hand their URL to; the tests record, the client browses
+	 * @param expansion   where the row's clicked/unclicked state (addendum AG) lives - the PANEL's, so it outlives the
+	 *                    rebuild every publish performs; null gives the row one of its own, which is what every caller
+	 *                    that never rebuilds a page wants - the row then simply starts short and toggles for as long as
+	 *                    it exists
 	 * @param hideAmounts whether every gp amount and every quantity this row prints reads its fixed mask
 	 *                    ({@link AmountMask}) - the stack value, the stack's and the item's gp move, line 3's working, and the
 	 *                    open block's figures - while the name, the percentage and the dates stay. False draws the row as it
 	 *                    was drawn before the eye existed. The PICTURE is the caller's to choose (the plain one, with no
 	 *                    stack number on it, is what the panel hands a hidden row)
-	 */
-	MovementRowPanel(MovementRow row, @Nullable AsyncBufferedImage icon, MovementWindow window,
-		@Nullable LocalDate thenDay, @Nullable ViewOptions options, Consumer<String> browser,
-		@Nullable Expansion expansion, boolean hideAmounts)
-	{
-		this(row, icon, window, thenDay, 0L, options, browser, expansion, hideAmounts);
-	}
-
-	/**
-	 * The list builder's constructor since contract 1.1.2.
-	 *
-	 * @param thenSeconds the baseline table's own time ({@code %LAST_UPDATE%}, unix seconds) - {@code Status
-	 *                    .baselineRevisionSeconds()} - which the open block prints beside the day ("06 Oct 21:35 UTC"),
-	 *                    because since the wiki saves eight tables a day a date no longer names one; 0 prints the day
-	 *                    alone, as every build before it did
-	 */
-	MovementRowPanel(MovementRow row, @Nullable AsyncBufferedImage icon, MovementWindow window,
-		@Nullable LocalDate thenDay, long thenSeconds, @Nullable ViewOptions options, Consumer<String> browser,
-		@Nullable Expansion expansion, boolean hideAmounts)
-	{
-		this(row, icon, window, thenDay, thenSeconds, options, browser, expansion, hideAmounts, ChangeText.DEFAULT);
-	}
-
-	/**
-	 * The list builder's constructor since release 1.2.1.
-	 *
-	 * @param style how big the gp figures and the percentage are drawn and how bright the gp figures are (the List options
-	 *              menu's three settings); null reads as {@link ChangeText#DEFAULT}, which draws every row as it was drawn
-	 *              before they existed - but for the gp figures' colour, which is a little brighter by default
+	 * @param style       how big the gp figures and the percentage are drawn and how bright the gp figures are (the List options
+	 *                    menu's three settings); null reads as {@link ChangeText#DEFAULT}, which draws every row as it was drawn
+	 *                    before they existed - but for the gp figures' colour, which is a little brighter by default
 	 */
 	MovementRowPanel(MovementRow row, @Nullable AsyncBufferedImage icon, MovementWindow window,
 		@Nullable LocalDate thenDay, long thenSeconds, @Nullable ViewOptions options, Consumer<String> browser,
@@ -764,7 +711,7 @@ public class MovementRowPanel extends JPanel
 		changeLabel = isAlch(row)
 			? Widgets.label(ALCH_TAG, SMALL_FONT, ColorScheme.LIGHT_GRAY_COLOR)
 			: Widgets.label(changeText(row), fit.pctFont, moveColour);
-		// AL: the gp figure takes the QUIET role - the same green or red, mixed toward the row's background - so
+		// AL: the gp figure takes the quiet role - the same green or red, mixed toward the row's background - so
 		// the percentage beside it is the one the eye lands on. The user, looking at a full list: "the change in
 		// gp ... and the percent change ... be more isolated from each other". Since release 1.2.1 how far toward it
 		// is the player's to choose (the brightness setting).
@@ -1774,7 +1721,7 @@ public class MovementRowPanel extends JPanel
 	}
 
 	/**
-	 * The 3 px left rail (addendum N section 2 and section 3 §4): the move's colour DARKENED for a mover, and
+	 * The 3 px left rail (addendum N section 2 and section 3.4): the move's colour DARKENED for a mover, and
 	 * the card's own grey - so the rail is invisible without changing the card's width - for a flat row, a row
 	 * with no baseline and a row with no price. Movers only: a quiet day must look like one.
 	 *

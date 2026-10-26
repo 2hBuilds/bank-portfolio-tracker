@@ -5,14 +5,18 @@ import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.FontMetrics;
 import java.awt.Insets;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.function.Function;
 import javax.annotation.Nullable;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
 import javax.swing.border.EmptyBorder;
 import net.runelite.client.ui.ColorScheme;
 
@@ -44,6 +48,10 @@ import net.runelite.client.ui.ColorScheme;
  * the column and is cut with an ellipsis; the words are final, and nearly three years without a reading is the
  * only way to reach it.
  *
+ * <p><b>A day marked as a transfer</b> (1.2.2) prints its real total, its CORRECTED change (a whole-day transfer reads "0.0%" on a
+ * grey rail), the note's amount in grey where the gp change stands, and "vs 19 Sep, transfer" with the word in the brand orange (a
+ * second label after the sub-line: no markup here). A right-click on any row asks the view for that day's menu ({@link #menu}).
+ *
  * <p>Built from an immutable {@link Model} of the strings it prints, so the view can keep a row whose model has not
  * changed (plan 7.2 item 9) and a test can build the widest honest row directly. Plain labels only: no
  * {@code <html>}, no tooltip (amendment 9.13).
@@ -74,6 +82,8 @@ final class BankHistoryDayRow extends JPanel
 	static final int YEAR_AFTER_DAYS = 300;
 
 	static final String FIRST_READING = "first reading";
+	/** The orange word that ends a marked row's sub-line (1.2.2). */
+	static final String TRANSFER_WORD = "transfer";
 	static final String DAY_HEADER = "Day";
 	static final String TOTAL_HEADER = "Bank Total";
 	static final String CHANGE_HEADER = "Change";
@@ -186,19 +196,28 @@ final class BankHistoryDayRow extends JPanel
 	static final class Model
 	{
 		private final LocalDate day;
-		private final boolean carried;
+		/** A carried day: no reading of its own. */
+		final boolean carried;
 		private final String date;
 		private final String sub;
 		private final String total;
-		private final String exact;
+		final String exact;
 		private final String pct;
 		private final String gp;
 		/** +1 rise, -1 fall, 0 no change; {@link #first} rows are 0 too. */
 		private final int signum;
 		private final boolean first;
+		/** 1.2.2: the day is marked as a transfer and the note counts - the sub-line ends in the orange word, the gp is the note's. */
+		final boolean marked;
 
 		Model(final LocalDate day, final boolean carried, final String date, final String sub, final String total,
 			final String exact, final String pct, final String gp, final int signum, final boolean first)
+		{
+			this(day, carried, date, sub, total, exact, pct, gp, signum, first, false);
+		}
+
+		Model(final LocalDate day, final boolean carried, final String date, final String sub, final String total,
+			final String exact, final String pct, final String gp, final int signum, final boolean first, final boolean marked)
 		{
 			this.day = Objects.requireNonNull(day, "day");
 			this.carried = carried;
@@ -210,6 +229,7 @@ final class BankHistoryDayRow extends JPanel
 			this.gp = text(gp);
 			this.signum = Integer.signum(signum);
 			this.first = first;
+			this.marked = marked;
 		}
 
 		private static String text(@Nullable final String s)
@@ -220,11 +240,6 @@ final class BankHistoryDayRow extends JPanel
 		LocalDate day()
 		{
 			return day;
-		}
-
-		boolean carried()
-		{
-			return carried;
 		}
 
 		@Override
@@ -239,7 +254,7 @@ final class BankHistoryDayRow extends JPanel
 				return false;
 			}
 			final Model m = (Model) o;
-			return carried == m.carried && signum == m.signum && first == m.first && day.equals(m.day)
+			return carried == m.carried && signum == m.signum && first == m.first && marked == m.marked && day.equals(m.day)
 				&& date.equals(m.date) && sub.equals(m.sub) && total.equals(m.total) && exact.equals(m.exact)
 				&& pct.equals(m.pct) && gp.equals(m.gp);
 		}
@@ -247,14 +262,7 @@ final class BankHistoryDayRow extends JPanel
 		@Override
 		public int hashCode()
 		{
-			return Objects.hash(day, carried, date, sub, total, exact, pct, gp, signum, first);
-		}
-
-		@Override
-		public String toString()
-		{
-			return carried ? "Model{" + date + '}'
-				: "Model{" + date + " | " + sub + " | " + total + " | " + exact + " | " + pct + " | " + gp + '}';
+			return Objects.hash(day, carried, date, sub, total, exact, pct, gp, signum, first, marked);
 		}
 	}
 
@@ -287,10 +295,14 @@ final class BankHistoryDayRow extends JPanel
 		}
 		final long delta = change.deltaGp();
 		final int span = change.spanDays();
-		final String sub = "vs " + MovementMath.formatDay(change.fromDay()) + (span > 1 ? ", " + span + " days" : "");
-		return new Model(day.day(), false, date, sub, total, exact,
-			MovementMath.formatPctCompact(change.pct(), delta),
-			delta == 0L ? "" : AmountMask.change(hideAmounts, MovementRowPanel.signedGp(delta)), Long.signum(delta), false);
+		final BankHistorySeries.Transfer note = series.transfers().get(day.day());
+		final boolean marked = note != null && note.counts((options == null ? ViewOptions.DEFAULT : options).countCash());
+		// A marked row says "transfer" instead of its span (the date already shows a gap) and prints the note where the gp change stands.
+		final String sub = "vs " + MovementMath.formatDay(change.fromDay())
+			+ (marked ? "," : span > 1 ? ", " + span + " days" : "");
+		final long shown = marked ? note.gp() : delta;
+		return new Model(day.day(), false, date, sub, total, exact, MovementMath.formatPctCompact(change.pct(), delta),
+			shown == 0L ? "" : AmountMask.change(hideAmounts, MovementRowPanel.signedGp(shown)), Long.signum(delta), false, marked);
 	}
 
 	/** "Tue 22 Sep" (amendment 9.14's weekday form). */
@@ -326,6 +338,12 @@ final class BankHistoryDayRow extends JPanel
 	private final JLabel pctLabel;
 	@Nullable
 	private final JLabel gpLabel;
+	/** The orange "transfer" after a marked row's sub-line; null on every other row. */
+	@Nullable
+	private final JLabel tagLabel;
+	/** What a right-click asks for this day's menu, or null for a row that has none. */
+	@Nullable
+	private final Function<LocalDate, JPopupMenu> menus;
 
 	/**
 	 * @param text the History tab's own change settings (release 1.2.1 part 2): the sizes of the percentage and the gp figure and
@@ -333,10 +351,34 @@ final class BankHistoryDayRow extends JPanel
 	 */
 	BankHistoryDayRow(final Model model, final ChangeText text)
 	{
+		this(model, text, null);
+	}
+
+	/** @param menus the menu of a day, asked at every right-click (1.2.2); null for a row with none */
+	BankHistoryDayRow(final Model model, final ChangeText text, @Nullable final Function<LocalDate, JPopupMenu> menus)
+	{
 		super(null);
 		this.model = Objects.requireNonNull(model, "model");
 		this.fit = fit(text.gp(), text.pct());
+		this.menus = menus;
 		setOpaque(true);
+		if (menus != null)
+		{
+			addMouseListener(new MouseAdapter()
+			{
+				@Override
+				public void mousePressed(final MouseEvent e)
+				{
+					popup(e);
+				}
+
+				@Override
+				public void mouseReleased(final MouseEvent e)
+				{
+					popup(e);
+				}
+			});
+		}
 		if (model.carried)
 		{
 			setBackground(CARRIED_GROUND);
@@ -347,6 +389,7 @@ final class BankHistoryDayRow extends JPanel
 			exactLabel = null;
 			pctLabel = null;
 			gpLabel = null;
+			tagLabel = null;
 			setPreferredSize(new Dimension(Widgets.CONTENT_WIDTH, CARRIED_HEIGHT));
 			return;
 		}
@@ -358,8 +401,25 @@ final class BankHistoryDayRow extends JPanel
 		totalLabel = add(Widgets.label(model.total, TOTAL_FONT, Color.WHITE));
 		exactLabel = add(Widgets.label(model.exact, EXACT_FONT, ColorScheme.LIGHT_GRAY_COLOR));
 		pctLabel = add(Widgets.label(model.pct, fit.pctFont, Widgets.move(model.signum, Widgets.Kind.FIGURE)));
-		gpLabel = add(Widgets.label(model.gp, fit.gpFont, Widgets.quietAt(model.signum, text.brightness())));
+		gpLabel = add(Widgets.label(model.gp, fit.gpFont, Widgets.quietAt(model.marked ? 0 : model.signum, text.brightness())));
+		tagLabel = model.marked ? add(Widgets.label(TRANSFER_WORD, SUB_FONT, ColorScheme.BRAND_ORANGE)) : null;
 		setPreferredSize(new Dimension(Widgets.CONTENT_WIDTH, fit.height));
+	}
+
+	/** This day's right-click menu as the panel builds it now, or null when it has none (1.2.2). */
+	@Nullable
+	JPopupMenu menu()
+	{
+		return menus == null ? null : menus.apply(model.day());
+	}
+
+	private void popup(final MouseEvent e)
+	{
+		final JPopupMenu menu = e.isPopupTrigger() && isShowing() ? menu() : null;
+		if (menu != null)
+		{
+			menu.show(this, e.getX(), e.getY());
+		}
 	}
 
 	private JLabel add(final JLabel label)
@@ -394,6 +454,11 @@ final class BankHistoryDayRow extends JPanel
 		place(exactLabel, middle, Math.min(width(exactLabel), gpX - GAP - middle), top(exactLabel, fit.baseline2));
 		place(dateLabel, left, Math.min(width(dateLabel), middle - GAP - left), top(dateLabel, fit.baseline1));
 		place(subLabel, left, Math.min(width(subLabel), middle - GAP - left), top(subLabel, fit.baseline2));
+		if (tagLabel != null)
+		{
+			final int x = left + width(subLabel) + getFontMetrics(SUB_FONT).charWidth(' ');
+			place(tagLabel, x, Math.min(width(tagLabel), middle - GAP - x), top(tagLabel, fit.baseline2));
+		}
 	}
 
 	private static int width(final JLabel label)

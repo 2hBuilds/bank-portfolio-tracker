@@ -41,7 +41,8 @@ public final class GradedMove
 		private final Long then;
 		@Nullable
 		private final Double move;
-		private final int observations;
+		/** How many plausible observations of this side in the last 24 hours "now" was taken over; 0 on a fallback figure. */
+		final int observations;
 		@Nullable
 		private final Long last;
 		private final long lastSeconds;
@@ -79,12 +80,6 @@ public final class GradedMove
 		public Double move()
 		{
 			return move;
-		}
-
-		/** How many plausible observations of this side in the last 24 hours "now" was taken over; 0 on a fallback figure. */
-		public int observations()
-		{
-			return observations;
 		}
 
 		/**
@@ -125,13 +120,6 @@ public final class GradedMove
 		{
 			return Objects.hash(now, then, move, observations, last, lastSeconds);
 		}
-
-		@Override
-		public String toString()
-		{
-			return "{now=" + now + ", then=" + then + ", move=" + move + ", obs=" + observations
-				+ (last == null ? "" : ", last=" + last + "@" + lastSeconds) + '}';
-		}
 	}
 
 	private final Grade grade;
@@ -149,8 +137,9 @@ public final class GradedMove
 	private final LocalDate nowDay;
 	@Nullable
 	private final LocalDate thenDay;
+	/** The plausibility anchor A every price here was judged against (L2), or null when there was none to judge with. */
 	@Nullable
-	private final Long anchor;
+	final Long anchor;
 	@Nullable
 	private final Long spreadPct;
 
@@ -298,13 +287,6 @@ public final class GradedMove
 		return thenDay;
 	}
 
-	/** The plausibility anchor A every price here was judged against (L2), or null when there was none to judge with. */
-	@Nullable
-	public Long anchor()
-	{
-		return anchor;
-	}
-
 	/**
 	 * The number in {@link GradeWords#spread} ("spread 55%"): the current buy and sell pair's gap as a whole percentage of its middle,
 	 * when the pair is a CURRENT and WIDE spread - both prints from the last 24 hours and inside the anchor's range, and more
@@ -341,15 +323,5 @@ public final class GradedMove
 	public int hashCode()
 	{
 		return Objects.hash(grade, word, move, thenMark, deltaGp, fallback, buy, sell, nowDay, thenDay, anchor, spreadPct);
-	}
-
-	@Override
-	public String toString()
-	{
-		return "GradedMove{" + grade.label() + (word.isEmpty() ? "" : " '" + word + "'")
-			+ (move == null ? "" : ", move=" + move + ", thenMark=" + thenMark + ", deltaGp=" + deltaGp)
-			+ (fallback ? ", yday" : "") + ", buy=" + buy + ", sell=" + sell
-			+ (thenDay == null ? "" : ", " + nowDay + " vs " + thenDay) + ", anchor=" + anchor
-			+ (spreadPct == null ? "" : ", spread=" + spreadPct + "%") + '}';
 	}
 }

@@ -31,6 +31,9 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
+import java.util.function.LongSupplier;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -61,8 +64,10 @@ import net.runelite.api.widgets.WidgetModalMode;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.config.RuneScapeProfileType;
+import net.runelite.client.eventbus.EventBus;
 import net.runelite.client.events.ClientShutdown;
 import net.runelite.client.events.ConfigChanged;
+import net.runelite.client.events.ProfileChanged;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
@@ -122,6 +127,13 @@ import static org.mockito.Mockito.when;
 public class BankPriceMovementWiringTest
 {
 	/**
+	 * Two keys deleted before the first build the Hub served (addendum N's {@code look}, addendum AO's {@code holdingOnRows}),
+	 * which release 1.2.2 stopped sweeping. The tests name them here to assert that nothing reads, writes or unsets them.
+	 */
+	private static final String LEGACY_LOOK_KEY = "look";
+	private static final String LEGACY_HOLDING_KEY = "holdingOnRows";
+
+	/**
 	 * The one line that decides where every file this plugin saves lands (addendum AD). Whitespace and line
 	 * breaks are tolerated and nothing else is: a store rooted at any other expression is the defect this pins.
 	 */
@@ -132,13 +144,13 @@ public class BankPriceMovementWiringTest
 	private static final Pattern ANY_STORE = Pattern.compile("new\\s+PriceStore\\s*\\(");
 
 	/**
-	 * The dev bridge's shot directory, pinned as ONE statement: {@code [^;]*} cannot cross a semicolon, so the
-	 * supplier has to sit inside the {@code new BpmCommands(...)} argument list. Written any other way - a
-	 * correct supplier built and then handed to nobody, or a different one handed over - this does not match.
+	 * The dev bridge's directory, pinned as ONE statement: {@code [^;]*} cannot cross a semicolon, so the plugin's own
+	 * directory ({@code this::getPluginDirectory}, un-joined) has to sit inside the {@code factory.create(...)} argument
+	 * list. Written any other way - a correct seam built and then handed to nobody, or a different one handed over - this
+	 * does not match.
 	 */
-	private static final Pattern SHOT_DIR_WIRING = Pattern.compile(
-		"new\\s+BpmCommands\\s*\\([^;]*\\(\\s*\\)\\s*->\\s*getPluginDirectory\\s*\\(\\s*\\)\\s*\\.\\s*"
-			+ "joinSegment\\s*\\(\\s*BpmCommands\\s*\\.\\s*SHOT_DIR\\s*\\)");
+	private static final Pattern DEV_BRIDGE_WIRING = Pattern.compile(
+		"BpmDevBridge\\s*\\.\\s*factory\\s*\\.\\s*create\\s*\\([^;]*this\\s*::\\s*getPluginDirectory\\b");
 
 	/** Any name joined onto a {@code Filepath}, and any reach for the plugin's own directory. */
 	private static final Pattern ANY_JOIN = Pattern.compile("\\.\\s*joinSegment\\s*\\(");
@@ -170,6 +182,7 @@ public class BankPriceMovementWiringTest
 	public void clearBridge()
 	{
 		BpmDevBridge.handler = null;
+		BpmDevBridge.factory = null;
 	}
 
 	// ---------------------------------------------------------------- descriptor and registration
@@ -318,35 +331,29 @@ public class BankPriceMovementWiringTest
 	}
 
 	/**
-	 * The same pin for the developer bridge's shots. {@code BpmCommands} writes a PNG wherever the supplier it
-	 * was handed points, so that supplier is what keeps a shot inside the plugin's own directory:
-	 * {@code () -> getPluginDirectory().joinSegment(BpmCommands.SHOT_DIR)} - the plugin's root, then the strict
-	 * single-component join, and nothing else. Joining a different name, or rooting the supplier anywhere else,
-	 * would leave the suite green and drop files outside the sandbox the Hub asked us to stay inside.
+	 * The same pin for the developer bridge. Its handler is not in this jar (1.2.2 T1) - the test source set builds it from
+	 * the factory this class hands the plugin's own directory to, and the handler joins its own shots folder under that -
+	 * so what keeps a shot inside the plugin's directory is what this class passes: {@code this::getPluginDirectory}, the
+	 * plugin's root, in the one statement that builds the handler, and no join of any name here. Handing the factory any
+	 * other root would leave the suite green and drop files outside the sandbox the Hub asked us to stay inside.
 	 *
-	 * <p>The bridge is developer-mode only and never reachable in a Hub client, so this is not a user-facing
-	 * bug waiting to happen - it is the rule the port was made to keep, held to in the one place that could
-	 * break it quietly.
+	 * <p>The bridge is developer-mode only and never reachable in a Hub client, so this is not a user-facing bug waiting to
+	 * happen - it is the rule the port was made to keep, held to in the one place that could break it quietly. (That the
+	 * shots folder is a single path component is pinned beside the handler, in the test source set.)
 	 */
 	@Test
-	public void theDevBridgeCanOnlyShootInsideThePluginsOwnDirectory() throws Exception
+	public void theDevBridgeIsHandedThePluginsOwnDirectoryAndJoinsNothingHere() throws Exception
 	{
 		final String code = shippedSource("BankPriceMovementPlugin.java");
-		assertEquals("the bridge's shot directory must be getPluginDirectory().joinSegment(BpmCommands.SHOT_DIR)"
-			+ " and must be handed to BpmCommands in that same statement",
-			1, occurrences(SHOT_DIR_WIRING, code));
-		assertEquals("one name is joined onto a Filepath in this class, and the assertion above says which:"
-			+ " a second join is a second folder with nothing watching it",
-			1, occurrences(ANY_JOIN, code));
-		assertEquals("the plugin's own directory is reached exactly twice - the store and the shots - so a"
+		assertEquals("the bridge's directory must be this::getPluginDirectory and must be handed to the factory in the"
+			+ " statement that builds the handler",
+			1, occurrences(DEV_BRIDGE_WIRING, code));
+		assertEquals("no name is joined onto a Filepath in this class: the handler joins its own folder under the"
+			+ " directory it is handed, and a join here would be a second folder with nothing watching it",
+			0, occurrences(ANY_JOIN, code));
+		assertEquals("the plugin's own directory is reached exactly twice - the store and the bridge's factory - so a"
 			+ " third use is added to this test on purpose rather than arriving by accident",
 			2, occurrences(PLUGIN_DIRECTORY, code));
-
-		// SHOT_DIR has to be a single path component or joinSegment - the strict overload, which is what makes
-		// the escape impossible - throws at the moment a shot is taken. Path arithmetic over the temporary
-		// folder: nothing is created.
-		assertEquals("the shots folder must be one path component", BpmCommands.SHOT_DIR,
-			Filepath.Unchecked.getRooted(dir.getRoot().toPath()).joinSegment(BpmCommands.SHOT_DIR).getFileName());
 	}
 
 	/**
@@ -366,8 +373,8 @@ public class BankPriceMovementWiringTest
 			sources.size() >= LEAST_SOURCES);
 		assertTrue("PriceStore.java was not among the files scanned: the scan proves nothing",
 			sources.containsKey("PriceStore.java"));
-		assertTrue("BpmCommands.java was not among the files scanned: the scan proves nothing",
-			sources.containsKey("BpmCommands.java"));
+		assertTrue("BankPriceMovementPlugin.java was not among the files scanned: the scan proves nothing",
+			sources.containsKey("BankPriceMovementPlugin.java"));
 
 		final List<String> builders = new ArrayList<>();
 		final List<String> askers = new ArrayList<>();
@@ -545,17 +552,69 @@ public class BankPriceMovementWiringTest
 		assertNull("shutDown drops it, because RuneLite reuses the plugin instance", field(f.plugin, "traded"));
 	}
 
+	/**
+	 * Developer mode WITH a factory installed (what the dev launcher does): {@code startUp} builds the handler from it -
+	 * handing over the very panel and service it built, the injected Gson, the cached account and the plugin's directory -
+	 * and {@code shutDown} clears it. The handler is whatever the factory answered; the real one is proven by the
+	 * developer-bridge tests, which are local-only and not part of the shipped source.
+	 */
 	@Test
-	public void aDeveloperModeStartUpInstallsTheBridgeAndShutDownClearsIt() throws Exception
+	public void aDeveloperModeStartUpBuildsTheBridgeFromTheInstalledFactoryAndShutDownClearsIt() throws Exception
 	{
+		final List<Object[]> asked = new ArrayList<>();
+		final Function<String, String> built = cmd -> "{\"ok\":true}";
+		BpmDevBridge.factory = (panel, service, gson, hash, profile, directory, showing) ->
+		{
+			asked.add(new Object[]{panel, service, gson, hash, profile, directory, showing});
+			return built;
+		};
 		final Fixture f = new Fixture(true);
+		set(f.plugin, "accountHash", 77L);
 		onEdt(f.plugin::startUp);
-		assertNotNull("developer mode is the only thing that fills the slot", BpmDevBridge.handler);
-		// It really is this plugin's bridge, and it answers without a client.
-		assertTrue(BpmDevBridge.handler.apply("state"), BpmDevBridge.handler.apply("state").contains("\"ok\""));
+
+		assertSame("developer mode with a factory fills the slot with exactly what the factory built", built,
+			BpmDevBridge.handler);
+		assertEquals("the factory is asked once", 1, asked.size());
+		final Object[] args = asked.get(0);
+		assertSame("the panel startUp built", field(f.plugin, "panel"), args[0]);
+		assertSame("the service startUp built", field(f.plugin, "service"), args[1]);
+		assertSame("RuneLite's injected Gson", field(f.plugin, "gson"), args[2]);
+		assertEquals("the cached account hash, read when it is asked for", 77L, ((LongSupplier) args[3]).getAsLong());
+		set(f.plugin, "accountHash", 78L);
+		assertEquals(78L, ((LongSupplier) args[3]).getAsLong());
+		assertEquals("the cached profile type", RuneScapeProfileType.STANDARD.name(), ((Supplier<?>) args[4]).get());
+		assertNotNull("the plugin's own directory, un-joined", args[5]);
+		assertNotNull(args[6]);
 
 		onEdt(f.plugin::shutDown);
 		assertNull(BpmDevBridge.handler);
+	}
+
+	/**
+	 * A developer-mode client with NO factory (any launch but the dev launcher's) gets no bridge, and neither does a Hub
+	 * client that somehow has a factory: the flag and the factory are both required, and a client that is not in
+	 * developer mode never so much as asks the factory.
+	 */
+	@Test
+	public void theBridgeNeedsBothDeveloperModeAndAFactory() throws Exception
+	{
+		BpmDevBridge.factory = null;
+		final Fixture noFactory = new Fixture(true);
+		onEdt(noFactory.plugin::startUp);
+		assertNull("developer mode alone builds nothing", BpmDevBridge.handler);
+		onEdt(noFactory.plugin::shutDown);
+
+		final AtomicReference<Boolean> asked = new AtomicReference<>(false);
+		BpmDevBridge.factory = (panel, service, gson, hash, profile, directory, showing) ->
+		{
+			asked.set(true);
+			return cmd -> "{}";
+		};
+		final Fixture hub = new Fixture(false);
+		onEdt(hub.plugin::startUp);
+		assertNull("a factory alone builds nothing", BpmDevBridge.handler);
+		assertFalse("and a client that is not in developer mode never asks it", asked.get());
+		onEdt(hub.plugin::shutDown);
 	}
 
 	/**
@@ -1180,7 +1239,7 @@ public class BankPriceMovementWiringTest
 
 		// AO1: the deleted switch's key is not one of the gear's own any more. It is swept at start-up, and that
 		// unset posts a ConfigChanged of its own - which must read as a stranger's key and not as a passenger.
-		assertFalse(BankPriceMovementPlugin.isOptionKey(BankPriceMovementPlugin.LEGACY_HOLDING_KEY));
+		assertFalse(BankPriceMovementPlugin.isOptionKey(LEGACY_HOLDING_KEY));
 		// Release 1.2.0: and the same for the hover switch, the road's sixth passenger until the user retired it.
 		assertFalse(BankPriceMovementPlugin.isOptionKey(BankPriceMovementPlugin.LEGACY_SHOW_HOVER_TEXT_KEY));
 		assertEquals("the stored key of 1.0.9 part 3's switch", "countGrandExchange",
@@ -1241,7 +1300,7 @@ public class BankPriceMovementWiringTest
 		verify(cm).setConfiguration(g, BankPriceMovementPlugin.COUNT_GRAND_EXCHANGE_KEY, (Object) Boolean.FALSE);
 		// AO1 and release 1.2.0: and the deleted keys are not written at all. The sweep unsets them at start-up, so a
 		// save that still wrote either would put back on every tick the very value the launch had just taken away.
-		verify(cm, never()).setConfiguration(eq(g), eq(BankPriceMovementPlugin.LEGACY_HOLDING_KEY),
+		verify(cm, never()).setConfiguration(eq(g), eq(LEGACY_HOLDING_KEY),
 			any(Object.class));
 		verify(cm, never()).setConfiguration(eq(g), eq(BankPriceMovementPlugin.LEGACY_SHOW_HOVER_TEXT_KEY),
 			any(Object.class));
@@ -1494,10 +1553,12 @@ public class BankPriceMovementWiringTest
 		// What the boxes hand over is already sorted; what is STORED is the value's own text, so the settings
 		// page and the boxes print the same line.
 		prefs.savePresets(BandPresets.of(100_000_000L, 1_000_000L, 10_000_000L));
-		// The STRING overload of setConfiguration, which is what a String value binds to (ConfigManager declares
-		// both it and the generic one); the boolean and enum keys beside it go through the other.
-		verify(cm).setConfiguration(BankPriceMovementConfig.GROUP, BankPriceMovementPlugin.BAND_PRESETS_KEY,
-			"1m, 10m, 100m");
+		// The STORED value: one write, through the generic overload every other key's save uses (ConfigManager turns a
+		// String into itself there), carrying exactly that line and nothing else.
+		final ArgumentCaptor<Object> stored = ArgumentCaptor.forClass(Object.class);
+		verify(cm).setConfiguration(eq(BankPriceMovementConfig.GROUP), eq(BankPriceMovementPlugin.BAND_PRESETS_KEY),
+			stored.capture());
+		assertEquals("1m, 10m, 100m", stored.getValue());
 		// The one thing saveOptions does that this must not: the service is never told, because it decides
 		// nothing about the chips.
 		verify(service, never()).setOptions(any());
@@ -1505,8 +1566,8 @@ public class BankPriceMovementWiringTest
 
 		// Nothing to save is not a crash, and writes nothing more.
 		prefs.savePresets(null);
-		verify(cm, times(1)).setConfiguration(anyString(), anyString(), anyString());
-		verify(cm, never()).setConfiguration(anyString(), anyString(), any(Object.class));
+		verify(cm, times(1)).setConfiguration(anyString(), anyString(), any(Object.class));
+		verify(cm, never()).setConfiguration(anyString(), anyString(), anyString());
 
 		// No manager at all (a field never injected) is a no-op rather than an NPE.
 		set(plugin, "configManager", null);
@@ -1544,9 +1605,8 @@ public class BankPriceMovementWiringTest
 			plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP,
 				(String) invocation.getArgument(1)));
 			return null;
-			// The STRING overload: a String value binds to it rather than to the generic one the boolean keys
-			// take, and a stub on the wrong overload would never run.
-		}).when(cm).setConfiguration(anyString(), anyString(), anyString());
+			// The generic overload, the one every key's save binds to: a stub on another overload would never run.
+		}).when(cm).setConfiguration(anyString(), anyString(), any(Object.class));
 
 		final BandPresets typed = BandPresets.of(1_000_000L, 10_000_000L, 100_000_000L);
 		plugin.configPrefs().savePresets(typed);
@@ -1931,14 +1991,14 @@ public class BankPriceMovementWiringTest
 		onEdt(on.plugin::startUp);
 		final BankPriceMovementPanel shown = (BankPriceMovementPanel) field(on.plugin, "panel");
 		assertNotNull(shown);
-		assertTrue(shown.describe(), shown.describe().contains("\"includeLegacy\":true"));
+		assertTrue(PanelState.describe(shown), PanelState.describe(shown).contains("\"includeLegacy\":true"));
 		onEdt(on.plugin::shutDown);
 
 		final Fixture fresh = new Fixture(false);
 		onEdt(fresh.plugin::startUp);
 		final BankPriceMovementPanel hidden = (BankPriceMovementPanel) field(fresh.plugin, "panel");
 		assertNotNull(hidden);
-		assertTrue(hidden.describe(), hidden.describe().contains("\"includeLegacy\":false"));
+		assertTrue(PanelState.describe(hidden), PanelState.describe(hidden).contains("\"includeLegacy\":false"));
 		onEdt(fresh.plugin::shutDown);
 	}
 
@@ -2800,7 +2860,7 @@ public class BankPriceMovementWiringTest
 
 	/**
 	 * Release 1.2.1: the three change settings are read straight off the stored config - and as ONE value, a brightness outside
-	 * 20 to 100 reading as 55 and a config that answers no size reading Normal - and round-trip through the pref seam: one
+	 * 20 to 100 reading as 69 and a config that answers no size reading Normal - and round-trip through the pref seam: one
 	 * {@code setConfiguration} of each key per save (the two sizes as their enum constants, the brightness as a number), never
 	 * the service, a null is a no-op and no manager is a no-op rather than an NPE.
 	 */
@@ -2828,9 +2888,9 @@ public class BankPriceMovementWiringTest
 		assertEquals(ChangeText.of(ChangeSize.LARGEST, ChangeSize.SMALL, 70), plugin.configPrefs().loadChangeText());
 		// What is stored outside 20..100 - a hand-edited profile - reads as the default, whichever way it is out.
 		when(config.gpBrightness()).thenReturn(5);
-		assertEquals(55, plugin.changeTextFromConfig().brightness());
+		assertEquals(69, plugin.changeTextFromConfig().brightness());
 		when(config.gpBrightness()).thenReturn(150);
-		assertEquals(55, plugin.changeTextFromConfig().brightness());
+		assertEquals(69, plugin.changeTextFromConfig().brightness());
 
 		final BankPriceMovementPanel.Prefs prefs = plugin.configPrefs();
 		prefs.saveChangeText(ChangeText.of(ChangeSize.LARGE, ChangeSize.NORMAL, 80));
@@ -2914,7 +2974,7 @@ public class BankPriceMovementWiringTest
 
 	/**
 	 * Release 1.2.1 part 2: the History tab's three change settings are read straight off the stored config as ONE value (an opacity
-	 * outside 20 to 100 reading as 55, a config that answers no size reading Normal) and round-trip through the pref seam on their own
+	 * outside 20 to 100 reading as 69, a config that answers no size reading Normal) and round-trip through the pref seam on their own
 	 * three keys - never the Items ones, never the service - and the chart's range is stored as its label, an empty or foreign word
 	 * reading as "nothing stored". A null or a missing manager is a no-op.
 	 */
@@ -2943,9 +3003,9 @@ public class BankPriceMovementWiringTest
 		assertEquals(ChangeText.of(ChangeSize.LARGEST, ChangeSize.SMALL, 70), plugin.historyTextFromConfig());
 		assertEquals(ChangeText.DEFAULT, plugin.changeTextFromConfig());
 		when(config.historyGpOpacity()).thenReturn(5);
-		assertEquals(55, plugin.historyTextFromConfig().brightness());
+		assertEquals(69, plugin.historyTextFromConfig().brightness());
 		when(config.historyGpOpacity()).thenReturn(150);
-		assertEquals(55, plugin.historyTextFromConfig().brightness());
+		assertEquals(69, plugin.historyTextFromConfig().brightness());
 		when(config.historyRange()).thenReturn("");
 		assertEquals(null, plugin.historyRangeFromConfig());
 		when(config.historyRange()).thenReturn("1y");
@@ -3125,104 +3185,15 @@ public class BankPriceMovementWiringTest
 	}
 
 	/**
-	 * O1: the {@code look} key is swept at startUp. Addendum N stored one of two designs there; the user picked
-	 * Ticker, the item is gone, and a value nothing reads and no config panel lists is not something a user
-	 * could clear by hand.
-	 */
-	@Test
-	public void aStoredLookIsUnsetAtStartUp() throws Exception
-	{
-		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
-		final ConfigManager cm = mock(ConfigManager.class);
-		set(plugin, "configManager", cm);
-		final String g = BankPriceMovementConfig.GROUP;
-		final String key = BankPriceMovementPlugin.LEGACY_LOOK_KEY;
-		assertEquals("look", key);
-
-		when(cm.getConfiguration(g, key)).thenReturn("TICKER");
-		plugin.unstickLook();
-		verify(cm).unsetConfiguration(g, key);
-
-		// A profile that never saw addendum N has nothing there, and nothing is written.
-		when(cm.getConfiguration(g, key)).thenReturn(null);
-		plugin.unstickLook();
-		when(cm.getConfiguration(g, key)).thenReturn("");
-		plugin.unstickLook();
-		verify(cm, times(1)).unsetConfiguration(anyString(), anyString());
-
-		// A manager that throws on either call is logged and swallowed; startUp goes on.
-		when(cm.getConfiguration(g, key)).thenThrow(new IllegalStateException());
-		plugin.unstickLook();
-
-		// And no manager at all (a field never injected) is a no-op rather than an NPE.
-		set(plugin, "configManager", null);
-		plugin.unstickLook();
-	}
-
-	/**
-	 * AO1: the {@code holdingOnRows} key is swept at startUp, on {@link #aStoredLookIsUnsetAtStartUp()}'s model
-	 * and for its reason. Addendum Q stored there whether a row printed its per-ITEM reading or its per-STACK one
-	 * (Q6); addendum AN's three-line row prints BOTH, so by the time the user saw it in a client the switch
-	 * reached nothing drawn and he asked for it to go ("if it doesnt do anything anymore then remove it",
-	 * 2026-09-20). The item is deleted, so a profile that ever touched the gear menu holds a true or a false that
-	 * nothing reads and that RuneLite's config panel will never list for the user to clear by hand.
-	 *
-	 * <p>This sweep is the whole reason deleting a STORED key is safe, so it is pinned in both directions: the
-	 * stored value goes, and a profile that has none is left completely alone. The second half is the one that
-	 * would bite - an unset of a key holding nothing posts a {@code ConfigChanged} on every launch for ever, and
-	 * writes a line to the log with it.
-	 *
-	 * <p>Neither of the two values it can hold survives, because neither means anything any more: the reading it
-	 * used to pick is drawn on every row now, and the one thing it still decided - which figure
-	 * {@link SortMode#GP_MOVE} compares - is settled the other way for good (the gp column follows the STACK
-	 * whatever a profile says). So the test the sweep applies must refuse a stored "true" exactly as it refuses
-	 * a stored "false", and both are driven below.
-	 */
-	@Test
-	public void aStoredHoldingOnRowsIsUnsetAtStartUp() throws Exception
-	{
-		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
-		final ConfigManager cm = mock(ConfigManager.class);
-		set(plugin, "configManager", cm);
-		final String g = BankPriceMovementConfig.GROUP;
-		final String key = BankPriceMovementPlugin.LEGACY_HOLDING_KEY;
-		assertEquals("holdingOnRows", key);
-
-		when(cm.getConfiguration(g, key)).thenReturn("true");
-		plugin.unstickHolding();
-		verify(cm).unsetConfiguration(g, key);
-
-		// The other value the switch could hold is no more readable than the first: it named a reading of the
-		// row, and the row has no reading to choose any more.
-		when(cm.getConfiguration(g, key)).thenReturn("false");
-		plugin.unstickHolding();
-		verify(cm, times(2)).unsetConfiguration(g, key);
-
-		// A profile that never touched addendum Q's gear menu has nothing there, and nothing is written.
-		when(cm.getConfiguration(g, key)).thenReturn(null);
-		plugin.unstickHolding();
-		when(cm.getConfiguration(g, key)).thenReturn("");
-		plugin.unstickHolding();
-		verify(cm, times(2)).unsetConfiguration(anyString(), anyString());
-
-		// A manager that throws on either call is logged and swallowed; startUp goes on.
-		when(cm.getConfiguration(g, key)).thenThrow(new IllegalStateException());
-		plugin.unstickHolding();
-
-		// And no manager at all (a field never injected) is a no-op rather than an NPE.
-		set(plugin, "configManager", null);
-		plugin.unstickHolding();
-	}
-
-	/**
 	 * AJ, AO1, release 1.2.0: {@code startUp} really does run the sweeps it has, and runs them on the keys the deleted
-	 * items used. {@link #aStoredLookIsUnsetAtStartUp()}, {@link #aStoredHoldingOnRowsIsUnsetAtStartUp()} and
-	 * {@link #aStoredShowHoverTextIsUnsetAtStartUp()} drive three of them directly and so cannot see whether anything
-	 * calls them; this is the assertion that catches a sweep WRITTEN and never CALLED, which is the way a start-up
-	 * repair usually fails.
+	 * items used. {@link #aStoredShowHoverTextIsUnsetAtStartUp()} drives one of them directly and so cannot see whether
+	 * anything calls it; this is the assertion that catches a sweep WRITTEN and never CALLED, which is the way a
+	 * start-up repair usually fails.
 	 *
-	 * <p>There are FOUR of them since release 1.2.0 - the window's repair (K9), the {@code look} key (O1),
-	 * {@code holdingOnRows} (AO1) and {@code showHoverText}. The last had a short, odd history: addendum AI deleted the
+	 * <p>There are TWO of them since release 1.2.2 - the window's repair (K9) and {@code showHoverText}. The sweeps of
+	 * the {@code look} key (O1) and of {@code holdingOnRows} (AO1) were taken out then, both items having gone before the
+	 * first build the Hub served, so a start-up that still found either stored leaves it alone (asserted below). The
+	 * hover key had a short, odd history: addendum AI deleted the
 	 * hover switch and swept its key, addendum AJ put the switch back at the user's word ("where is the show hover text
 	 * box and wording and default 'off' setting?", 2026-09-20) and so stopped sweeping it - a sweep of a live key would
 	 * have cleared the reader's own answer on every launch - and release 1.2.0 deleted it again (the user, 2026-10-08,
@@ -3233,10 +3204,11 @@ public class BankPriceMovementWiringTest
 	{
 		final Fixture f = new Fixture(false);
 		final String g = BankPriceMovementConfig.GROUP;
-		when(f.configManager.getConfiguration(g, BankPriceMovementPlugin.LEGACY_LOOK_KEY)).thenReturn("TICKER");
+		// Release 1.2.2: the two sweeps that are gone. A profile cannot hold either key (no build the Hub served ever
+		// declared them), so start-up no longer reads them; if one did turn up, it is left where it is.
+		when(f.configManager.getConfiguration(g, LEGACY_LOOK_KEY)).thenReturn("TICKER");
 		when(f.configManager.getConfiguration(g, "window")).thenReturn("H24");
-		// AO1: a profile that ticked addendum Q's row switch on. The item is gone, so the value goes with it.
-		when(f.configManager.getConfiguration(g, BankPriceMovementPlugin.LEGACY_HOLDING_KEY)).thenReturn("true");
+		when(f.configManager.getConfiguration(g, LEGACY_HOLDING_KEY)).thenReturn("true");
 		// Release 1.2.0: a profile that turned the hover text on. The item is gone, so the value goes with it.
 		when(f.configManager.getConfiguration(g, BankPriceMovementPlugin.LEGACY_SHOW_HOVER_TEXT_KEY)).thenReturn("true");
 		// ...and a key that is NOT swept, to prove the sweep names its keys: the live-price switch is a live item.
@@ -3244,18 +3216,17 @@ public class BankPriceMovementWiringTest
 
 		onEdt(f.plugin::startUp);
 
-		verify(f.configManager).unsetConfiguration(g, BankPriceMovementPlugin.LEGACY_LOOK_KEY);
 		verify(f.configManager).unsetConfiguration(g, "window");
-		verify(f.configManager).unsetConfiguration(g, BankPriceMovementPlugin.LEGACY_HOLDING_KEY);
 		verify(f.configManager).unsetConfiguration(g, BankPriceMovementPlugin.LEGACY_SHOW_HOVER_TEXT_KEY);
+		verify(f.configManager, never()).unsetConfiguration(g, LEGACY_LOOK_KEY);
+		verify(f.configManager, never()).unsetConfiguration(g, LEGACY_HOLDING_KEY);
 		verify(f.configManager, never()).unsetConfiguration(g, BankPriceMovementPlugin.LIVE_PRICES_KEY);
-		verify(f.configManager, times(4)).unsetConfiguration(anyString(), anyString());
+		verify(f.configManager, times(2)).unsetConfiguration(anyString(), anyString());
 		onEdt(f.plugin::shutDown);
 	}
 
 	/**
-	 * Release 1.2.0: the {@code showHoverText} key is swept at startUp, on {@link #aStoredHoldingOnRowsIsUnsetAtStartUp()}'s
-	 * model and for its reason. Addendum AH stored there whether the sidebar's hovers were shown at all; the user
+	 * Release 1.2.0: the {@code showHoverText} key is swept at startUp. Addendum AH stored there whether the sidebar's hovers were shown at all; the user
 	 * (2026-10-08) retired the switch because every hover left in the sidebar is one short line, so the hovers are always
 	 * on and a profile that ever touched the gear menu's last item holds a true or a false that nothing reads and that
 	 * RuneLite's config panel will never list for the user to clear by hand.
@@ -3312,6 +3283,306 @@ public class BankPriceMovementWiringTest
 		onEdt(f.plugin::startUp);
 		verify(f.configManager, never()).unsetConfiguration(anyString(), anyString());
 		onEdt(f.plugin::shutDown);
+	}
+
+	/**
+	 * A ConfigManager whose stored strings are {@code stored}: {@code getConfiguration} answers them and {@code setConfiguration}
+	 * writes {@code String.valueOf(value)} back, as the real one does for a number or a boolean - so a switch that ran leaves what it
+	 * would leave in a real profile, and a second run reads it.
+	 */
+	private static ConfigManager storing(final Map<String, String> stored)
+	{
+		final ConfigManager cm = mock(ConfigManager.class);
+		when(cm.getConfiguration(anyString(), anyString())).thenAnswer(invocation -> stored.get((String) invocation.getArgument(1)));
+		doAnswer(invocation ->
+		{
+			stored.put((String) invocation.getArgument(1), String.valueOf((Object) invocation.getArgument(2)));
+			return null;
+		}).when(cm).setConfiguration(anyString(), anyString(), any(Object.class));
+		return cm;
+	}
+
+	/**
+	 * Release 1.2.2 part 4 (R2, the user's 1a): the opacity default went from 55 to 69 for everyone, and RuneLite wrote the old default into
+	 * every 1.2.1 profile, so start-up moves a stored 55 to 69 ONCE. A 1.2.1 profile - 55 stored under the Items key and the History key,
+	 * no marker - reads 69 on both afterwards, with the marker set.
+	 */
+	@Test
+	public void aOneTwoOneProfileHoldingFiftyFiveIsMovedToSixtyNineWithTheMarker() throws Exception
+	{
+		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
+		final Map<String, String> stored = new HashMap<>();
+		stored.put("gpBrightness", "55");
+		stored.put("historyGpOpacity", "55");
+		stored.put("opacity69Done", "false");
+		final ConfigManager cm = storing(stored);
+		set(plugin, "configManager", cm);
+
+		plugin.switchOpacityTo69();
+
+		assertEquals("69", stored.get("gpBrightness"));
+		assertEquals("69", stored.get("historyGpOpacity"));
+		assertEquals("true", stored.get("opacity69Done"));
+		verify(cm).setConfiguration(BankPriceMovementConfig.GROUP, "gpBrightness", (Object) 69);
+		verify(cm).setConfiguration(BankPriceMovementConfig.GROUP, "historyGpOpacity", (Object) 69);
+		verify(cm).setConfiguration(BankPriceMovementConfig.GROUP, "opacity69Done", (Object) true);
+		verify(cm, never()).unsetConfiguration(anyString(), anyString());
+
+		// Run again, as the next start-up does: the marker is set, so nothing is written - a player who now picks 55 keeps it.
+		clearInvocations(cm);
+		stored.put("gpBrightness", "55");
+		plugin.switchOpacityTo69();
+		assertEquals("a 55 picked after the move is a choice and stays", "55", stored.get("gpBrightness"));
+		verify(cm, never()).setConfiguration(anyString(), anyString(), any(Object.class));
+	}
+
+	/**
+	 * ...and a stored 70 is a choice, not the old default: it stays, and the marker is set all the same, so a later 55 is a choice too.
+	 * Each key is judged on its own - the Items one at 55 moves while the History one at 70 stays.
+	 */
+	@Test
+	public void aStoredSeventyIsAChoiceAndStaysWhileTheMarkerIsSet() throws Exception
+	{
+		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
+		final Map<String, String> stored = new HashMap<>();
+		stored.put("gpBrightness", "70");
+		stored.put("historyGpOpacity", "70");
+		final ConfigManager cm = storing(stored);
+		set(plugin, "configManager", cm);
+
+		plugin.switchOpacityTo69();
+		assertEquals("70", stored.get("gpBrightness"));
+		assertEquals("70", stored.get("historyGpOpacity"));
+		assertEquals("true", stored.get("opacity69Done"));
+		verify(cm, times(1)).setConfiguration(anyString(), anyString(), any(Object.class));
+
+		final Map<String, String> mixed = new HashMap<>();
+		mixed.put("gpBrightness", "55");
+		mixed.put("historyGpOpacity", "70");
+		final BankPriceMovementPlugin other = new BankPriceMovementPlugin();
+		set(other, "configManager", storing(mixed));
+		other.switchOpacityTo69();
+		assertEquals("69", mixed.get("gpBrightness"));
+		assertEquals("70", mixed.get("historyGpOpacity"));
+		assertEquals("true", mixed.get("opacity69Done"));
+	}
+
+	/** A marker that is already true means the move has run for this profile: a stored 55 stays 55 and not one write is made. */
+	@Test
+	public void aMarkerAlreadyTrueLeavesAStoredFiftyFiveAlone() throws Exception
+	{
+		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
+		final Map<String, String> stored = new HashMap<>();
+		stored.put("gpBrightness", "55");
+		stored.put("historyGpOpacity", "55");
+		stored.put("opacity69Done", "true");
+		final ConfigManager cm = storing(stored);
+		set(plugin, "configManager", cm);
+
+		plugin.switchOpacityTo69();
+
+		assertEquals("55", stored.get("gpBrightness"));
+		assertEquals("55", stored.get("historyGpOpacity"));
+		verify(cm, never()).setConfiguration(anyString(), anyString(), any(Object.class));
+	}
+
+	/**
+	 * A fresh profile holds the new default, 69, which RuneLite wrote when the plugin loaded: nothing moves, and the marker is set so the
+	 * move never runs for it. (A profile with nothing stored at all, as a bare manager answers, reads the 69 default and is no different.)
+	 */
+	@Test
+	public void aFreshProfileHoldsSixtyNineAndOnlyGetsItsMarker() throws Exception
+	{
+		for (final String written : new String[]{"69", null})
+		{
+			final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
+			final Map<String, String> stored = new HashMap<>();
+			if (written != null)
+			{
+				stored.put("gpBrightness", written);
+				stored.put("historyGpOpacity", written);
+				stored.put("opacity69Done", "false");
+			}
+			final ConfigManager cm = storing(stored);
+			set(plugin, "configManager", cm);
+
+			plugin.switchOpacityTo69();
+
+			assertEquals("true", stored.get("opacity69Done"));
+			assertEquals(written, stored.get("gpBrightness"));
+			assertEquals(written, stored.get("historyGpOpacity"));
+			verify(cm, times(1)).setConfiguration(anyString(), anyString(), any(Object.class));
+		}
+		assertEquals("a fresh profile reads 69 from the interface's own default", 69, new BankPriceMovementConfig() {}.gpBrightness());
+		assertEquals(69, new BankPriceMovementConfig() {}.historyGpOpacity());
+	}
+
+	/** A manager that throws on a read or a write is logged and swallowed - and the marker is then NOT set, so the next start retries. No manager is a no-op. */
+	@Test
+	public void theOpacityMoveSurvivesAManagerThatThrowsOrIsMissing() throws Exception
+	{
+		final BankPriceMovementPlugin plugin = new BankPriceMovementPlugin();
+		final ConfigManager reads = mock(ConfigManager.class);
+		when(reads.getConfiguration(anyString(), anyString())).thenThrow(new IllegalStateException());
+		set(plugin, "configManager", reads);
+		plugin.switchOpacityTo69();
+		verify(reads, never()).setConfiguration(anyString(), anyString(), any(Object.class));
+
+		final Map<String, String> stored = new HashMap<>();
+		stored.put("gpBrightness", "55");
+		final ConfigManager writes = storing(stored);
+		doAnswer(invocation ->
+		{
+			throw new IllegalStateException();
+		}).when(writes).setConfiguration(anyString(), anyString(), any(Object.class));
+		set(plugin, "configManager", writes);
+		plugin.switchOpacityTo69();
+		assertFalse("a failed move leaves the marker unset", stored.containsKey("opacity69Done"));
+
+		set(plugin, "configManager", null);
+		plugin.switchOpacityTo69();
+	}
+
+	/**
+	 * The move runs inside {@code startUp}, BEFORE the panel first reads the opacity: with a stored 55 and no marker, every opacity the
+	 * config answers while the plugin starts is 69 - the first paint is in the new default - and the marker is set. A second start finds
+	 * the marker and writes nothing.
+	 */
+	@Test
+	public void startUpMovesTheOpacityBeforeThePanelReadsIt() throws Exception
+	{
+		final Map<String, String> stored = new HashMap<>();
+		stored.put("gpBrightness", "55");
+		stored.put("historyGpOpacity", "55");
+		final Fixture f = new Fixture(false);
+		final ConfigManager cm = storing(stored);
+		set(f.plugin, "configManager", cm);
+		final List<Integer> read = new ArrayList<>();
+		when(f.config.gpBrightness()).thenAnswer(invocation ->
+		{
+			read.add(Integer.parseInt(stored.get("gpBrightness")));
+			return Integer.parseInt(stored.get("gpBrightness"));
+		});
+		when(f.config.historyGpOpacity()).thenAnswer(invocation ->
+		{
+			read.add(Integer.parseInt(stored.get("historyGpOpacity")));
+			return Integer.parseInt(stored.get("historyGpOpacity"));
+		});
+
+		onEdt(f.plugin::startUp);
+		try
+		{
+			assertFalse("the panel read the opacity while starting", read.isEmpty());
+			for (int opacity : read)
+			{
+				assertEquals("every read of the opacity was after the move", 69, opacity);
+			}
+			assertEquals("true", stored.get("opacity69Done"));
+		}
+		finally
+		{
+			onEdt(f.plugin::shutDown);
+		}
+
+		clearInvocations(cm);
+		stored.put("gpBrightness", "55");
+		onEdt(f.plugin::startUp);
+		try
+		{
+			assertEquals("the marker was set, so the second start moves nothing", "55", stored.get("gpBrightness"));
+			verify(cm, never()).setConfiguration(anyString(), anyString(), any(Object.class));
+		}
+		finally
+		{
+			onEdt(f.plugin::shutDown);
+		}
+	}
+
+	/**
+	 * Part 4 review fix: the move is once PER PROFILE, and RuneLite 1.13.4 does not restart a plugin that is enabled in both profiles when
+	 * the player switches (its {@code PluginManager.onProfileChanged} only refreshes the list), so {@code startUp} sees the profile that was
+	 * active at launch alone. The switch posts a {@code ProfileChanged} AFTER it has loaded the new profile; the plugin hears it through a
+	 * REAL bus ({@code @Subscribe} and all) and moves what the new profile stored: a 1.2.1 profile never active at a start (55, no marker) ->
+	 * 69 + marker; a 70 stays; a profile whose marker is true keeps the 55 its player picked, and writes nothing.
+	 */
+	@Test
+	public void aProfileSwitchMovesTheNewProfilesStoredFiftyFiveToSixtyNine() throws Exception
+	{
+		final Map<String, String> stored = new HashMap<>();
+		stored.put("gpBrightness", "55");
+		stored.put("historyGpOpacity", "55");
+		final Fixture f = new Fixture(false);
+		final ConfigManager cm = storing(stored);
+		set(f.plugin, "configManager", cm);
+		onEdt(f.plugin::startUp);
+		final EventBus bus = new EventBus();
+		try
+		{
+			assertEquals("the profile active at launch is moved by startUp", "69", stored.get("gpBrightness"));
+			assertEquals("true", stored.get("opacity69Done"));
+			// RuneLite registers a started plugin's handlers once startUp has returned.
+			bus.register(f.plugin);
+
+			// Profile B: also a 1.2.1 profile, switched to in the session - the old default under both keys, no marker.
+			stored.clear();
+			stored.put("gpBrightness", "55");
+			stored.put("historyGpOpacity", "55");
+			bus.post(new ProfileChanged());
+			assertEquals("69", stored.get("gpBrightness"));
+			assertEquals("69", stored.get("historyGpOpacity"));
+			assertEquals("true", stored.get("opacity69Done"));
+
+			// Profile C: a 70 is a choice and stays; the marker is set all the same.
+			stored.clear();
+			stored.put("gpBrightness", "70");
+			stored.put("historyGpOpacity", "55");
+			bus.post(new ProfileChanged());
+			assertEquals("70", stored.get("gpBrightness"));
+			assertEquals("69", stored.get("historyGpOpacity"));
+			assertEquals("true", stored.get("opacity69Done"));
+
+			// Profile D: the move already ran there and its player picked 55 - kept, and not one write is made.
+			stored.clear();
+			stored.put("gpBrightness", "55");
+			stored.put("historyGpOpacity", "55");
+			stored.put("opacity69Done", "true");
+			clearInvocations(cm);
+			bus.post(new ProfileChanged());
+			assertEquals("55", stored.get("gpBrightness"));
+			assertEquals("55", stored.get("historyGpOpacity"));
+			verify(cm, never()).setConfiguration(anyString(), anyString(), any(Object.class));
+		}
+		finally
+		{
+			bus.unregister(f.plugin);
+			onEdt(f.plugin::shutDown);
+		}
+	}
+
+	/**
+	 * ...and a plugin the same switch has just turned off is still called with the event (the bus iterates the subscribers it held when the
+	 * event was posted), so with no panel - not running - it writes nothing into the profile it is disabled in.
+	 */
+	@Test
+	public void aProfileSwitchReachingAStoppedPluginWritesNothing() throws Exception
+	{
+		final Map<String, String> stored = new HashMap<>();
+		final Fixture f = new Fixture(false);
+		final ConfigManager cm = storing(stored);
+		set(f.plugin, "configManager", cm);
+		onEdt(f.plugin::startUp);
+		onEdt(f.plugin::shutDown);
+
+		stored.clear();
+		stored.put("gpBrightness", "55");
+		stored.put("historyGpOpacity", "55");
+		clearInvocations(cm);
+		f.plugin.onProfileChanged(new ProfileChanged());
+
+		assertEquals("55", stored.get("gpBrightness"));
+		assertEquals("55", stored.get("historyGpOpacity"));
+		assertFalse("no marker either", stored.containsKey("opacity69Done"));
+		verify(cm, never()).setConfiguration(anyString(), anyString(), any(Object.class));
 	}
 
 	@Test
@@ -6537,7 +6808,7 @@ public class BankPriceMovementWiringTest
 			when(r.client.getItemContainer(anyInt())).thenReturn(null);
 			r.plugin.onGameStateChanged(gameState(end));
 			final ExchangeOffers last = offersOfReads(r).get(offersOfReads(r).size() - 1);
-			assertTrue(end + ": no offer is counted: " + last, last == null || last.isEmpty());
+			assertTrue(end + ": no offer is counted: " + (last == null ? null : last.cashGp() + " gp"), last == null || last.isEmpty());
 		}
 	}
 

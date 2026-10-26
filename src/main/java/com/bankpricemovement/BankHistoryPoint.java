@@ -236,11 +236,4 @@ public final class BankHistoryPoint
 		h = 31 * h + Arrays.hashCode(card);
 		return 31 * h + Arrays.hashCode(guide);
 	}
-
-	@Override
-	public String toString()
-	{
-		return "BankHistoryPoint{day=" + day + ", readAtMillis=" + readAtMillis + ", bankAtMillis=" + bankAtMillis
-			+ ", card=" + Arrays.toString(card) + (guide == null ? "" : ", guide=" + Arrays.toString(guide)) + '}';
-	}
 }

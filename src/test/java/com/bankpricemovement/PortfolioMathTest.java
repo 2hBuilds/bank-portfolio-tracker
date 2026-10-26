@@ -104,7 +104,7 @@ public class PortfolioMathTest
 
 	private static PortfolioSummary fixture()
 	{
-		return PortfolioMath.summariseResolved(bank(), now()::get, thens(), days(), 0L);
+		return PortfolioShapes.summariseResolved(bank(), now()::get, thens(), days(), 0L);
 	}
 
 	private static PriceMap map(final Map<Integer, Long> prices, final long revId)
@@ -138,9 +138,9 @@ public class PortfolioMathTest
 
 		assertEquals(MovementWindow.D1, d1.window());
 		assertEquals(SEP_7, d1.thenDay());
-		assertEquals("the bones have no 1d baseline: the whip and the sharks", 2, d1.itemsCovered());
-		assertEquals("1,507,600 + 500,000", 2_007_600L, d1.valueThen());
-		assertEquals("the SAME two stacks now: 1,520,000 + 500,000 - not the whole bank's 2,030,000", 2_020_000L, d1.valueNowCovered());
+		assertEquals("the bones have no 1d baseline: the whip and the sharks", 2, d1.itemsCovered);
+		assertEquals("1,507,600 + 500,000", 2_007_600L, d1.valueThen);
+		assertEquals("the SAME two stacks now: 1,520,000 + 500,000 - not the whole bank's 2,030,000", 2_020_000L, d1.valueNowCovered);
 		assertEquals(12_400L, d1.deltaGp());
 		assertEquals(12_400L * 100.0d / 2_007_600L, d1.deltaPct(), 1e-12);
 		assertEquals("+0.6%", MovementMath.formatPct(d1.deltaPct(), d1.deltaGp()));
@@ -152,9 +152,9 @@ public class PortfolioMathTest
 		final WindowMove d7 = fixture().move(MovementWindow.D7);
 
 		assertEquals(SEP_1, d7.thenDay());
-		assertEquals(3, d7.itemsCovered());
-		assertEquals("1,500,000 + 500 x 1,100 + 100 x 90", 2_059_000L, d7.valueThen());
-		assertEquals(2_030_000L, d7.valueNowCovered());
+		assertEquals(3, d7.itemsCovered);
+		assertEquals("1,500,000 + 500 x 1,100 + 100 x 90", 2_059_000L, d7.valueThen);
+		assertEquals(2_030_000L, d7.valueNowCovered);
 		assertEquals(-29_000L, d7.deltaGp());
 		assertEquals(-29_000L * 100.0d / 2_059_000L, d7.deltaPct(), 1e-12);
 		assertEquals("-1.4%", MovementMath.formatPct(d7.deltaPct(), d7.deltaGp()));
@@ -186,15 +186,15 @@ public class PortfolioMathTest
 		final Map<MovementWindow, Function<Integer, Long>> thens = new EnumMap<>(MovementWindow.class);
 		thens.put(MovementWindow.D7, then::get);
 
-		final PortfolioSummary s = PortfolioMath.summariseResolved(items, now::get, thens, days(), 0L);
+		final PortfolioSummary s = PortfolioShapes.summariseResolved(items, now::get, thens, days(), 0L);
 
 		assertEquals("the whip and the bones only", 1_520_000L + 10_000L, s.valueNow());
 		assertEquals(2, s.itemsPriced());
 		assertEquals("every stack counts in the total, priced or not", 4, s.itemsTotal());
 		final WindowMove d7 = s.move(MovementWindow.D7);
-		assertEquals("the sharks have no now, the box has no now: two covered", 2, d7.itemsCovered());
-		assertEquals(1_500_000L + 9_000L, d7.valueThen());
-		assertEquals(1_520_000L + 10_000L, d7.valueNowCovered());
+		assertEquals("the sharks have no now, the box has no now: two covered", 2, d7.itemsCovered);
+		assertEquals(1_500_000L + 9_000L, d7.valueThen);
+		assertEquals(1_520_000L + 10_000L, d7.valueNowCovered);
 		assertEquals(21_000L, d7.deltaGp());
 	}
 
@@ -206,13 +206,13 @@ public class PortfolioMathTest
 		final Map<MovementWindow, Function<Integer, Long>> thens = new EnumMap<>(MovementWindow.class);
 		thens.put(MovementWindow.D1, then::get);
 
-		final PortfolioSummary s = PortfolioMath.summariseResolved(bank(), now()::get, thens, days(), 0L);
+		final PortfolioSummary s = PortfolioShapes.summariseResolved(bank(), now()::get, thens, days(), 0L);
 
 		assertEquals(2_030_000L, s.valueNow());
 		final WindowMove d1 = s.move(MovementWindow.D1);
-		assertEquals("only the whip has a positive then", 1, d1.itemsCovered());
-		assertEquals(1_507_600L, d1.valueThen());
-		assertEquals(1_520_000L, d1.valueNowCovered());
+		assertEquals("only the whip has a positive then", 1, d1.itemsCovered);
+		assertEquals(1_507_600L, d1.valueThen);
+		assertEquals(1_520_000L, d1.valueNowCovered);
 		assertEquals(12_400L, d1.deltaGp());
 	}
 
@@ -222,11 +222,11 @@ public class PortfolioMathTest
 		final Map<MovementWindow, Function<Integer, Long>> thens = new EnumMap<>(MovementWindow.class);
 		thens.put(MovementWindow.D1, id -> null); // a baseline that names none of the bank
 
-		final WindowMove d1 = PortfolioMath.summariseResolved(bank(), now()::get, thens, days(), 0L).move(MovementWindow.D1);
+		final WindowMove d1 = PortfolioShapes.summariseResolved(bank(), now()::get, thens, days(), 0L).move(MovementWindow.D1);
 
-		assertEquals(0, d1.itemsCovered());
-		assertEquals(0L, d1.valueThen());
-		assertEquals(0L, d1.valueNowCovered());
+		assertEquals(0, d1.itemsCovered);
+		assertEquals(0L, d1.valueThen);
+		assertEquals(0L, d1.valueNowCovered);
 		assertEquals(0L, d1.deltaGp());
 		assertNull("deltaPct is null when valueThen is 0 (M1) - never a division by zero", d1.deltaPct());
 		assertEquals(MovementMath.DASH, MovementMath.formatPct(d1.deltaPct(), d1.deltaGp()));
@@ -238,10 +238,10 @@ public class PortfolioMathTest
 		final Map<MovementWindow, Function<Integer, Long>> thens = new EnumMap<>(MovementWindow.class);
 		thens.put(MovementWindow.D1, now()::get);
 
-		final WindowMove d1 = PortfolioMath.summariseResolved(bank(), now()::get, thens, days(), 0L).move(MovementWindow.D1);
+		final WindowMove d1 = PortfolioShapes.summariseResolved(bank(), now()::get, thens, days(), 0L).move(MovementWindow.D1);
 
-		assertEquals(3, d1.itemsCovered());
-		assertEquals(2_030_000L, d1.valueThen());
+		assertEquals(3, d1.itemsCovered);
+		assertEquals(2_030_000L, d1.valueThen);
 		assertEquals(0L, d1.deltaGp());
 		assertEquals(0.0d, d1.deltaPct(), 0.0d);
 		assertEquals("0.0%", MovementMath.formatPct(d1.deltaPct(), d1.deltaGp()));
@@ -267,15 +267,15 @@ public class PortfolioMathTest
 		final Map<MovementWindow, Function<Integer, Long>> thens = new EnumMap<>(MovementWindow.class);
 		thens.put(MovementWindow.D1, then::get);
 
-		final PortfolioSummary s = PortfolioMath.summariseResolved(items, now::get, thens, days(), 0L);
+		final PortfolioSummary s = PortfolioShapes.summariseResolved(items, now::get, thens, days(), 0L);
 
 		assertEquals("a clamped holding plus anything is still the clamp, never negative", Long.MAX_VALUE, s.valueNow());
 		assertEquals(3, s.itemsPriced());
 		final WindowMove d1 = s.move(MovementWindow.D1);
-		assertEquals(3, d1.itemsCovered());
-		assertEquals(3L + Integer.MAX_VALUE + 1L, d1.valueThen());
-		assertEquals(Long.MAX_VALUE, d1.valueNowCovered());
-		assertEquals("the difference of two clamped sums cannot overflow", Long.MAX_VALUE - d1.valueThen(), d1.deltaGp());
+		assertEquals(3, d1.itemsCovered);
+		assertEquals(3L + Integer.MAX_VALUE + 1L, d1.valueThen);
+		assertEquals(Long.MAX_VALUE, d1.valueNowCovered);
+		assertEquals("the difference of two clamped sums cannot overflow", Long.MAX_VALUE - d1.valueThen, d1.deltaGp());
 		assertTrue(d1.deltaPct() > 0.0d);
 	}
 
@@ -289,50 +289,21 @@ public class PortfolioMathTest
 		assertEquals(Long.MAX_VALUE, PortfolioMath.clampedAdd(Long.MAX_VALUE, 0L));
 	}
 
-	// ---------------------------------------------------------------- M2: the two signatures agree
-
-	@Test
-	public void theContractSignatureOverProjectedMapsGivesTheSameSummary()
-	{
-		final Map<MovementWindow, PriceMap> baselines = new EnumMap<>(MovementWindow.class);
-		baselines.put(MovementWindow.D1, map(oneDayAgo(), 15_333_448L));
-		baselines.put(MovementWindow.D7, map(sevenDaysAgo(), 15_328_200L));
-
-		final PortfolioSummary viaMaps = PortfolioMath.summarise(bank(), now()::get, baselines, days(), 0L);
-
-		assertEquals(fixture(), viaMaps);
-		assertEquals(fixture().hashCode(), viaMaps.hashCode());
-		assertEquals(2_020_000L, viaMaps.move(MovementWindow.D1).valueNowCovered());
-	}
-
-	@Test
-	public void aResolverOverAMapReadsThePointsMid()
-	{
-		final Function<Integer, Long> resolver = PortfolioMath.resolver(map(oneDayAgo(), 1L));
-
-		assertEquals(Long.valueOf(1_507_600L), resolver.apply(WHIP));
-		assertNull(resolver.apply(BONES));
-		assertNull(resolver.apply(null));
-		assertNull(PortfolioMath.resolver(null).apply(WHIP));
-		assertNull(PortfolioMath.resolver(PriceMap.EMPTY).apply(WHIP));
-	}
-
 	// ---------------------------------------------------------------- M2: the model
 
 	@Test
 	public void emptyAndNullInputsAreTheEmptySummary()
 	{
-		assertEquals(PortfolioSummary.EMPTY, PortfolioMath.summariseResolved(null, null, null, null, 0L));
-		assertEquals(PortfolioSummary.EMPTY, PortfolioMath.summarise(null, null, null, null, 0L));
+		assertEquals(PortfolioSummary.EMPTY, PortfolioShapes.summariseResolved(null, null, null, null, 0L));
 		assertEquals("null entries are skipped, not counted", PortfolioSummary.EMPTY,
-			PortfolioMath.summariseResolved(Collections.singletonList(null), now()::get, Collections.emptyMap(), null, 0L));
+			PortfolioShapes.summariseResolved(Collections.singletonList(null), now()::get, Collections.emptyMap(), null, 0L));
 		// An empty bank against real baselines: nothing is worth anything, and a window with a baseline is still
 		// a window (zero covered, no percent) - it is the SERVICE that publishes EMPTY for an empty snapshot (M3).
-		final PortfolioSummary noStacks = PortfolioMath.summariseResolved(Collections.emptyList(), now()::get, thens(), days(), 0L);
+		final PortfolioSummary noStacks = PortfolioShapes.summariseResolved(Collections.emptyList(), now()::get, thens(), days(), 0L);
 		assertEquals(0L, noStacks.valueNow());
 		assertEquals(0, noStacks.itemsTotal());
 		assertEquals(2, noStacks.moves().size());
-		assertEquals(0, noStacks.move(MovementWindow.D1).itemsCovered());
+		assertEquals(0, noStacks.move(MovementWindow.D1).itemsCovered);
 		assertNull(noStacks.move(MovementWindow.D1).deltaPct());
 		assertEquals(0L, PortfolioSummary.EMPTY.valueNow());
 		assertEquals(0, PortfolioSummary.EMPTY.itemsPriced());
@@ -344,7 +315,7 @@ public class PortfolioMathTest
 	@Test
 	public void aBankWithBaselinesButNoWindowDayStillMoves()
 	{
-		final PortfolioSummary s = PortfolioMath.summariseResolved(bank(), now()::get, thens(), null, 0L);
+		final PortfolioSummary s = PortfolioShapes.summariseResolved(bank(), now()::get, thens(), null, 0L);
 
 		assertEquals(2, s.moves().size());
 		assertNull("no day known: the label prints '-' rather than a guess", s.move(MovementWindow.D1).thenDay());
@@ -370,8 +341,8 @@ public class PortfolioMathTest
 		assertNotEquals(s.move(MovementWindow.D1), s.move(MovementWindow.D7));
 		assertEquals(s.move(MovementWindow.D1), fixture().move(MovementWindow.D1));
 		assertEquals(s.move(MovementWindow.D1).hashCode(), fixture().move(MovementWindow.D1).hashCode());
-		assertTrue(s.toString(), s.toString().contains("valueNow=2030000"));
-		assertTrue(s.move(MovementWindow.D7).toString(), s.move(MovementWindow.D7).toString().contains("deltaGp=-29000"));
+		assertEquals(2_030_000L, s.valueNow());
+		assertEquals(-29_000L, s.move(MovementWindow.D7).deltaGp());
 
 		final Map<MovementWindow, WindowMove> withNulls = new EnumMap<>(MovementWindow.class);
 		withNulls.put(MovementWindow.D1, null);
@@ -390,27 +361,27 @@ public class PortfolioMathTest
 	@Test
 	public void theCashIsAddedToTheBankValueAndToBothSidesOfEveryWindow()
 	{
-		final PortfolioSummary s = PortfolioMath.summariseResolved(bank(), now()::get, thens(), days(), CASH);
+		final PortfolioSummary s = PortfolioShapes.summariseResolved(bank(), now()::get, thens(), days(), CASH);
 
-		assertEquals(CASH, s.currencyGp());
+		assertEquals(CASH, s.currencyGp);
 		assertEquals("2,030,000 of stacks + 1,000,000 of cash", 3_030_000L, s.valueNow());
 		assertEquals("the stacks alone are what the tooltip counts stacks over", 2_030_000L, s.valueStacks());
 		assertEquals("cash is not a stack", 3, s.itemsPriced());
 		assertEquals(3, s.itemsTotal());
 
 		final WindowMove d1 = s.move(MovementWindow.D1);
-		assertEquals("the covered stacks' 2,007,600 + the cash", 3_007_600L, d1.valueThen());
-		assertEquals("the same two stacks' 2,020,000 + the same cash", 3_020_000L, d1.valueNowCovered());
+		assertEquals("the covered stacks' 2,007,600 + the cash", 3_007_600L, d1.valueThen);
+		assertEquals("the same two stacks' 2,020,000 + the same cash", 3_020_000L, d1.valueNowCovered);
 		assertEquals("the cash cancels: the gp move is untouched by P1", 12_400L, d1.deltaGp());
-		assertEquals("2 covered stacks, cash or not", 2, d1.itemsCovered());
+		assertEquals("2 covered stacks, cash or not", 2, d1.itemsCovered);
 		assertEquals(12_400L * 100.0d / 3_007_600L, d1.deltaPct(), 1e-12);
 		assertEquals("+0.4%", MovementMath.formatPct(d1.deltaPct(), d1.deltaGp()));
 		assertEquals("without the cash it was +0.6%", "+0.6%",
 			MovementMath.formatPct(fixture().move(MovementWindow.D1).deltaPct(), 12_400L));
 
 		final WindowMove d7 = s.move(MovementWindow.D7);
-		assertEquals(3_059_000L, d7.valueThen());
-		assertEquals(3_030_000L, d7.valueNowCovered());
+		assertEquals(3_059_000L, d7.valueThen);
+		assertEquals(3_030_000L, d7.valueNowCovered);
 		assertEquals(-29_000L, d7.deltaGp());
 		assertEquals(-29_000L * 100.0d / 3_059_000L, d7.deltaPct(), 1e-12);
 		assertEquals("-0.9%", MovementMath.formatPct(d7.deltaPct(), d7.deltaGp()));
@@ -420,33 +391,32 @@ public class PortfolioMathTest
 	@Test
 	public void aBankWithNoCashAnswersExactlyWhatItAnsweredBeforeP1()
 	{
-		final PortfolioSummary withZero = PortfolioMath.summariseResolved(bank(), now()::get, thens(), days(), 0L);
+		final PortfolioSummary withZero = PortfolioShapes.summariseResolved(bank(), now()::get, thens(), days(), 0L);
 
 		assertEquals(fixture(), withZero);
 		assertEquals(fixture().hashCode(), withZero.hashCode());
-		assertEquals(fixture().toString(), withZero.toString());
-		assertEquals(0L, withZero.currencyGp());
+		assertEquals(0L, withZero.currencyGp);
 		assertEquals("valueNow() is the stacks alone when there is no cash", withZero.valueStacks(), withZero.valueNow());
 		assertEquals(fixture().move(MovementWindow.D1), withZero.move(MovementWindow.D1));
 		assertEquals(fixture().move(MovementWindow.D7), withZero.move(MovementWindow.D7));
-		assertEquals(0L, PortfolioSummary.EMPTY.currencyGp());
+		assertEquals(0L, PortfolioSummary.EMPTY.currencyGp);
 	}
 
 	/** P1: a bank of nothing but coins is worth its coins - it is not {@link PortfolioSummary#EMPTY} - and nothing moved. */
 	@Test
 	public void aBankOfNothingButCoinsIsWorthItsCoinsAndHasNoMove()
 	{
-		final PortfolioSummary s = PortfolioMath.summariseResolved(
+		final PortfolioSummary s = PortfolioShapes.summariseResolved(
 			Collections.<BankItem>emptyList(), now()::get, thens(), days(), CASH);
 
 		assertNotEquals(PortfolioSummary.EMPTY, s);
 		assertEquals(CASH, s.valueNow());
-		assertEquals(CASH, s.currencyGp());
+		assertEquals(CASH, s.currencyGp);
 		assertEquals(0L, s.valueStacks());
 		assertEquals(0, s.itemsPriced());
 		assertEquals(0, s.itemsTotal());
 		final WindowMove d1 = s.move(MovementWindow.D1);
-		assertEquals(0, d1.itemsCovered());
+		assertEquals(0, d1.itemsCovered);
 		assertEquals(0L, d1.deltaGp());
 		assertNull("no stack to compare, so no move - the cash is not a move", d1.deltaPct());
 		assertEquals(MovementMath.DASH, MovementMath.formatPct(d1.deltaPct(), d1.deltaGp()));
@@ -463,12 +433,12 @@ public class PortfolioMathTest
 		final Map<MovementWindow, Function<Integer, Long>> thens = new EnumMap<>(MovementWindow.class);
 		thens.put(MovementWindow.D1, id -> null); // a baseline that names none of the bank
 
-		final WindowMove d1 = PortfolioMath.summariseResolved(bank(), now()::get, thens, days(), CASH)
+		final WindowMove d1 = PortfolioShapes.summariseResolved(bank(), now()::get, thens, days(), CASH)
 			.move(MovementWindow.D1);
 
-		assertEquals(0, d1.itemsCovered());
-		assertEquals("not the cash", 0L, d1.valueThen());
-		assertEquals("not the cash here either", 0L, d1.valueNowCovered());
+		assertEquals(0, d1.itemsCovered);
+		assertEquals("not the cash", 0L, d1.valueThen);
+		assertEquals("not the cash here either", 0L, d1.valueNowCovered);
 		assertEquals(0L, d1.deltaGp());
 		assertNull(d1.deltaPct());
 	}
@@ -485,32 +455,15 @@ public class PortfolioMathTest
 		final Map<MovementWindow, Function<Integer, Long>> thens = new EnumMap<>(MovementWindow.class);
 		thens.put(MovementWindow.D1, then::get);
 
-		final PortfolioSummary s = PortfolioMath.summariseResolved(items, now::get, thens, days(), CASH);
+		final PortfolioSummary s = PortfolioShapes.summariseResolved(items, now::get, thens, days(), CASH);
 
 		assertEquals("Long.MAX_VALUE + 1,000,000 is Long.MAX_VALUE, never a negative fortune", Long.MAX_VALUE, s.valueNow());
-		assertEquals(CASH, s.currencyGp());
+		assertEquals(CASH, s.currencyGp);
 		final WindowMove d1 = s.move(MovementWindow.D1);
-		assertEquals(Long.MAX_VALUE, d1.valueThen());
-		assertEquals(Long.MAX_VALUE, d1.valueNowCovered());
+		assertEquals(Long.MAX_VALUE, d1.valueThen);
+		assertEquals(Long.MAX_VALUE, d1.valueNowCovered);
 		assertEquals("both sides clamped to the same number, and the move is still the real one", 10L, d1.deltaGp());
 		assertTrue(d1.deltaPct() > 0.0d && Double.isFinite(d1.deltaPct()));
-	}
-
-	/** The contract's over-maps shape carries the cash too, and agrees with the resolver shape to the gp. */
-	@Test
-	public void theContractSignatureOverProjectedMapsCarriesTheCash()
-	{
-		final Map<MovementWindow, PriceMap> baselines = new EnumMap<>(MovementWindow.class);
-		baselines.put(MovementWindow.D1, map(oneDayAgo(), 15_333_448L));
-		baselines.put(MovementWindow.D7, map(sevenDaysAgo(), 15_328_200L));
-
-		final PortfolioSummary viaMaps = PortfolioMath.summarise(bank(), now()::get, baselines, days(), CASH);
-
-		assertEquals(PortfolioMath.summariseResolved(bank(), now()::get, thens(), days(), CASH), viaMaps);
-		assertEquals(3_030_000L, viaMaps.valueNow());
-		assertEquals(CASH, viaMaps.currencyGp());
-		assertEquals("and the same shape at a cash of 0 is still cashless", 2_030_000L,
-			PortfolioMath.summarise(bank(), now()::get, baselines, days(), 0L).valueNow());
 	}
 
 	/** The summary holds the cash apart from the stacks, and no bank owes money. */
@@ -520,12 +473,11 @@ public class PortfolioMathTest
 		final PortfolioSummary s = new PortfolioSummary(10L, 1, 1, null, CASH);
 
 		assertEquals(10L, s.valueStacks());
-		assertEquals(CASH, s.currencyGp());
+		assertEquals(CASH, s.currencyGp);
 		assertEquals(CASH + 10L, s.valueNow());
-		assertTrue(s.toString(), s.toString().contains("currencyGp=" + CASH));
-		assertEquals("a negative fortune is not a thing", 0L, new PortfolioSummary(10L, 1, 1, null, -5L).currencyGp());
+		assertEquals("a negative fortune is not a thing", 0L, new PortfolioSummary(10L, 1, 1, null, -5L).currencyGp);
 		assertEquals(10L, new PortfolioSummary(10L, 1, 1, null, -5L).valueNow());
-		assertEquals("the old arity means no cash", 0L, new PortfolioSummary(10L, 1, 1, null).currencyGp());
+		assertEquals("the old arity means no cash", 0L, new PortfolioSummary(10L, 1, 1, null).currencyGp);
 		assertNotEquals("the same total, different banks", new PortfolioSummary(10L, 1, 1, null, 0L),
 			new PortfolioSummary(0L, 1, 1, null, 10L));
 	}
@@ -550,7 +502,7 @@ public class PortfolioMathTest
 	@Test
 	public void anUntradeableStackCountsInTheTotalButInNoWindowAndIsNotPriced()
 	{
-		final PortfolioSummary s = PortfolioMath.summariseResolved(
+		final PortfolioSummary s = PortfolioShapes.summariseResolved(
 			bankWithUntradeables(), now()::get, thens(), days(), 0L);
 
 		assertEquals("2,030,000 of stacks + 2 x 1,500 + 500", 2_033_500L, s.valueNow());
@@ -559,9 +511,9 @@ public class PortfolioMathTest
 		assertEquals("but all five are stacks", 5, s.itemsTotal());
 
 		final WindowMove d1 = s.move(MovementWindow.D1);
-		assertEquals("the same two covered stacks as without them", 2, d1.itemsCovered());
-		assertEquals(2_007_600L, d1.valueThen());
-		assertEquals(2_020_000L, d1.valueNowCovered());
+		assertEquals("the same two covered stacks as without them", 2, d1.itemsCovered);
+		assertEquals(2_007_600L, d1.valueThen);
+		assertEquals(2_020_000L, d1.valueNowCovered);
 		assertEquals(12_400L, d1.deltaGp());
 		assertEquals("and the percentage is measured against the same basis as before",
 			fixture().move(MovementWindow.D1).deltaPct(), d1.deltaPct(), 1e-12);
@@ -574,7 +526,7 @@ public class PortfolioMathTest
 	@Test
 	public void aBankWithoutUntradeableStacksAnswersExactlyWhatItAnsweredBeforeQ()
 	{
-		assertEquals(fixture(), PortfolioMath.summariseResolved(bank(), now()::get, thens(), days(), 0L));
+		assertEquals(fixture(), PortfolioShapes.summariseResolved(bank(), now()::get, thens(), days(), 0L));
 		assertEquals("2,030,000 over 3 of 3, as it always was", 2_030_000L, fixture().valueNow());
 		assertEquals(3, fixture().itemsTotal());
 	}
@@ -586,7 +538,7 @@ public class PortfolioMathTest
 		final List<BankItem> items = new ArrayList<>(bank());
 		items.add(new BankItem(DRAMEN, 5, "Worthless", false, true, 0));
 
-		final PortfolioSummary s = PortfolioMath.summariseResolved(items, now()::get, thens(), days(), 0L);
+		final PortfolioSummary s = PortfolioShapes.summariseResolved(items, now()::get, thens(), days(), 0L);
 
 		assertEquals(2_030_000L, s.valueNow());
 		assertEquals(3, s.itemsPriced());
@@ -606,12 +558,12 @@ public class PortfolioMathTest
 		final Map<MovementWindow, Function<Integer, Long>> thens = new EnumMap<>(MovementWindow.class);
 		thens.put(MovementWindow.D1, now::get);
 
-		final PortfolioSummary s = PortfolioMath.summariseResolved(items, now::get, thens, days(), 0L);
+		final PortfolioSummary s = PortfolioShapes.summariseResolved(items, now::get, thens, days(), 0L);
 
 		assertEquals(3_000L, s.valueNow());
 		assertEquals(0, s.itemsPriced());
 		assertEquals(1, s.itemsTotal());
-		assertEquals(0, s.move(MovementWindow.D1).itemsCovered());
+		assertEquals(0, s.move(MovementWindow.D1).itemsCovered);
 	}
 
 	// ---------------------------------------------------------------- R3: untradeable stacks valued at their parts
@@ -650,7 +602,7 @@ public class PortfolioMathTest
 		final Map<MovementWindow, Function<Integer, Long>> thens = new EnumMap<>(MovementWindow.class);
 		thens.put(MovementWindow.D1, thenById::get);
 		thens.put(MovementWindow.D7, sevenDaysAgo()::get);
-		return PortfolioMath.summariseResolved(items, nowById::get, thens, days(), 0L);
+		return PortfolioShapes.summariseResolved(items, nowById::get, thens, days(), 0L);
 	}
 
 	/**
@@ -669,9 +621,9 @@ public class PortfolioMathTest
 		assertEquals(4, s.itemsTotal());
 
 		final WindowMove d1 = s.move(MovementWindow.D1);
-		assertEquals("the whip, the sharks and the crystal body", 3, d1.itemsCovered());
-		assertEquals(2_007_600L + 2L * BODY_THEN, d1.valueThen());
-		assertEquals(2_020_000L + 2L * BODY_NOW, d1.valueNowCovered());
+		assertEquals("the whip, the sharks and the crystal body", 3, d1.itemsCovered);
+		assertEquals(2_007_600L + 2L * BODY_THEN, d1.valueThen);
+		assertEquals(2_020_000L + 2L * BODY_NOW, d1.valueNowCovered);
 		assertEquals(12_400L + 2L * (BODY_NOW - BODY_THEN), d1.deltaGp());
 	}
 
@@ -688,7 +640,7 @@ public class PortfolioMathTest
 		assertEquals("2,030,000 + 2 x 900,000", 2_030_000L + 1_800_000L, s.valueNow());
 		assertEquals("an alch value is not a market price", 3, s.itemsPriced());
 		assertEquals(4, s.itemsTotal());
-		assertEquals("and it is in no window", 2, s.move(MovementWindow.D1).itemsCovered());
+		assertEquals("and it is in no window", 2, s.move(MovementWindow.D1).itemsCovered);
 	}
 
 	/** Covered means priced on BOTH days here too: a parts stack with no baseline counts in the total alone. */
@@ -699,7 +651,7 @@ public class PortfolioMathTest
 
 		assertEquals(2_030_000L + BODY_NOW, s.valueNow());
 		assertEquals(4, s.itemsPriced());
-		assertEquals("the whip and the sharks, as without it", 2, s.move(MovementWindow.D1).itemsCovered());
+		assertEquals("the whip and the sharks, as without it", 2, s.move(MovementWindow.D1).itemsCovered);
 		assertEquals(12_400L, s.move(MovementWindow.D1).deltaGp());
 	}
 
@@ -720,7 +672,7 @@ public class PortfolioMathTest
 			return now().get(id);
 		};
 
-		final PortfolioSummary s = PortfolioMath.summariseResolved(items, recording, thens(), days(), 0L);
+		final PortfolioSummary s = PortfolioShapes.summariseResolved(items, recording, thens(), days(), 0L);
 
 		assertFalse("nothing can answer for a stack with no parts", asked.contains(DRAMEN));
 		assertEquals(2_030_000L + 3_000L, s.valueNow());
@@ -736,7 +688,7 @@ public class PortfolioMathTest
 			new BankItem(GRACEFUL, Integer.MAX_VALUE, "Graceful cape", false, true, Integer.MAX_VALUE),
 			new BankItem(GRACEFUL + 2, Integer.MAX_VALUE, "Graceful top", false, true, Integer.MAX_VALUE));
 
-		final PortfolioSummary s = PortfolioMath.summariseResolved(items, now()::get, thens(), days(), 0L);
+		final PortfolioSummary s = PortfolioShapes.summariseResolved(items, now()::get, thens(), days(), 0L);
 
 		assertEquals("three stacks of 4.6 x 10^18 each: clamped, never a negative fortune", Long.MAX_VALUE, s.valueNow());
 		assertTrue(s.valueStacks() > 0L);
@@ -765,11 +717,11 @@ public class PortfolioMathTest
 
 		assertEquals("the total is unchanged: it counts what the rows print", 2_030_000L, s.valueNow());
 		final WindowMove d1 = s.move(MovementWindow.D1);
-		assertEquals("the whip enters 1d at its GUIDE price", 1_500_000L + 500_000L, d1.valueNowCovered());
-		assertEquals("its baseline is untouched", 2_007_600L, d1.valueThen());
+		assertEquals("the whip enters 1d at its GUIDE price", 1_500_000L + 500_000L, d1.valueNowCovered);
+		assertEquals("its baseline is untouched", 2_007_600L, d1.valueThen);
 		assertEquals(-7_600L, d1.deltaGp());
 		assertEquals("and 7d, which has no per-window now, still reads the headline's", 2_030_000L,
-			s.move(MovementWindow.D7).valueNowCovered());
+			s.move(MovementWindow.D7).valueNowCovered);
 	}
 
 	/** A per-window resolver that cannot answer for an id falls back to the headline's "now", never to nothing. */
@@ -782,7 +734,7 @@ public class PortfolioMathTest
 		final PortfolioSummary s = PortfolioMath.summariseResolved(bank(), now()::get, thens(), empty, days(), 0L, 0);
 
 		assertEquals("identical to the fixture, id for id", fixture().move(MovementWindow.D1), s.move(MovementWindow.D1));
-		assertEquals(2, s.move(MovementWindow.D1).itemsCovered());
+		assertEquals(2, s.move(MovementWindow.D1).itemsCovered);
 	}
 
 	/**
@@ -804,8 +756,8 @@ public class PortfolioMathTest
 
 		final WindowMove d1 = s.move(MovementWindow.D1);
 		assertEquals("the alch stack is in the total at its alch value", 2_030_000L + 3_000L, s.valueNow());
-		assertEquals("but in no window: the shared now never priced it", 2, d1.itemsCovered());
-		assertEquals(2_020_000L, d1.valueNowCovered());
+		assertEquals("but in no window: the shared now never priced it", 2, d1.itemsCovered);
+		assertEquals(2_020_000L, d1.valueNowCovered);
 	}
 
 	/** T5: how many stacks the caller priced live, carried through to the card's "N of M stacks live". */
@@ -827,7 +779,7 @@ public class PortfolioMathTest
 	@Test
 	public void theNewArityWithNothingLiveIsTheOldOneExactly()
 	{
-		final PortfolioSummary before = PortfolioMath.summariseResolved(bank(), now()::get, thens(), days(), CASH);
+		final PortfolioSummary before = PortfolioShapes.summariseResolved(bank(), now()::get, thens(), days(), CASH);
 		final PortfolioSummary after = PortfolioMath.summariseResolved(bank(), now()::get, thens(), null, days(),
 			CASH, 0);
 

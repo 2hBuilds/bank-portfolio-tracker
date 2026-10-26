@@ -294,13 +294,13 @@ public class GuideSnapshotTest
 	}
 
 	@Test
-	public void toStringNamesTheRevisionAndTheDay()
+	public void theSnapshotNamesTheRevisionTheDayAndTheNames()
 	{
-		final String text = snapshot(table()).toString();
+		final GuideSnapshot snapshot = snapshot(table());
 
-		assertTrue(text, text.contains("15333448"));
-		assertTrue(text, text.contains("2026-09-07"));
-		assertTrue(text, text.contains("names=3"));
+		assertEquals(15_333_448L, snapshot.revId());
+		assertEquals("2026-09-07", snapshot.dataDay().toString());
+		assertEquals(3, snapshot.size());
 	}
 
 	// ---------------------------------------------------------------- fixtures

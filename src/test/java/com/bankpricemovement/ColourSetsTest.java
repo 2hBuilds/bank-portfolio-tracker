@@ -67,7 +67,7 @@ public class ColourSetsTest
 	private PriceService.Listener listener;
 
 	/** The config as a memory: what the colours are stored as and every other write, so a test sees all of them. */
-	private static final class Memory implements BankPriceMovementPanel.Prefs
+	private static final class Memory extends PrefsDefaults
 	{
 		@Nullable
 		Color up;

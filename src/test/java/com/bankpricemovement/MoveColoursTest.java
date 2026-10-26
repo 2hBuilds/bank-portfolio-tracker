@@ -30,7 +30,13 @@ public class MoveColoursTest
 		Widgets.setMoveColours(null, null);
 	}
 
-	/** {@code from} mixed 55 % of the way into the card's grey, as {@link Widgets.Kind#QUIET} is documented to be. */
+	/**
+	 * The brightness that reproduces the old quiet role (addendum AL, gone in release 1.2.2): the figure mixed 55 % into the
+	 * card, which is {@code quietAt} at 100 - 55. The palette tests read it through {@link Widgets#quietAt}.
+	 */
+	private static final int OLD_QUIET_BRIGHTNESS = 45;
+
+	/** {@code from} mixed 55 % of the way into the card's grey, as the old quiet role was. */
 	private static Color quiet(Color from)
 	{
 		final Color to = ColorScheme.DARKER_GRAY_COLOR;
@@ -50,12 +56,12 @@ public class MoveColoursTest
 		assertEquals(new Color(55, 240, 70), Widgets.move(1, Widgets.Kind.FIGURE));
 		assertEquals(new Color(55, 240, 70), Widgets.move(1, Widgets.Kind.MARK));
 		assertEquals(new Color(38, 168, 49), Widgets.move(1, Widgets.Kind.EDGE));
-		assertEquals(new Color(41, 124, 48), Widgets.move(1, Widgets.Kind.QUIET));
+		assertEquals(new Color(41, 124, 48), Widgets.quietAt(1, OLD_QUIET_BRIGHTNESS));
 		// A fall: the lifted red for the figure, the client's own red for the mark, the darker() of THAT for the edge.
 		assertEquals(new Color(240, 92, 84), Widgets.move(-1, Widgets.Kind.FIGURE));
 		assertEquals(new Color(230, 30, 30), Widgets.move(-1, Widgets.Kind.MARK));
 		assertEquals(new Color(161, 21, 21), Widgets.move(-1, Widgets.Kind.EDGE));
-		assertEquals(new Color(124, 58, 54), Widgets.move(-1, Widgets.Kind.QUIET));
+		assertEquals(new Color(124, 58, 54), Widgets.quietAt(-1, OLD_QUIET_BRIGHTNESS));
 		// Flat or none: the quiet grey, the card's own grey for an edge.
 		for (final Widgets.Kind kind : Widgets.Kind.values())
 		{
@@ -83,12 +89,12 @@ public class MoveColoursTest
 		assertEquals(UP, Widgets.move(1, Widgets.Kind.FIGURE));
 		assertEquals(UP, Widgets.move(1, Widgets.Kind.MARK));
 		assertEquals(UP.darker(), Widgets.move(1, Widgets.Kind.EDGE));
-		assertEquals(quiet(UP), Widgets.move(1, Widgets.Kind.QUIET));
+		assertEquals(quiet(UP), Widgets.quietAt(1, OLD_QUIET_BRIGHTNESS));
 
 		assertEquals(DOWN, Widgets.move(-1, Widgets.Kind.FIGURE));
 		assertEquals("a chosen fall is one colour for the figure AND the mark", DOWN, Widgets.move(-1, Widgets.Kind.MARK));
 		assertEquals(DOWN.darker(), Widgets.move(-1, Widgets.Kind.EDGE));
-		assertEquals(quiet(DOWN), Widgets.move(-1, Widgets.Kind.QUIET));
+		assertEquals(quiet(DOWN), Widgets.quietAt(-1, OLD_QUIET_BRIGHTNESS));
 
 		for (final Widgets.Kind kind : Widgets.Kind.values())
 		{
@@ -120,10 +126,10 @@ public class MoveColoursTest
 		assertSame("a default rise is the very constant: no palette", ColorScheme.PROGRESS_COMPLETE_COLOR,
 			Widgets.move(1, Widgets.Kind.FIGURE));
 		assertEquals(new Color(38, 168, 49), Widgets.move(1, Widgets.Kind.EDGE));
-		assertEquals(new Color(41, 124, 48), Widgets.move(1, Widgets.Kind.QUIET));
+		assertEquals(new Color(41, 124, 48), Widgets.quietAt(1, OLD_QUIET_BRIGHTNESS));
 		assertEquals(new Color(230, 30, 30), Widgets.move(-1, Widgets.Kind.MARK));
 		assertEquals(new Color(161, 21, 21), Widgets.move(-1, Widgets.Kind.EDGE));
-		assertEquals(new Color(124, 58, 54), Widgets.move(-1, Widgets.Kind.QUIET));
+		assertEquals(new Color(124, 58, 54), Widgets.quietAt(-1, OLD_QUIET_BRIGHTNESS));
 		assertEquals(new Color(240, 92, 84), Widgets.move(-1, Widgets.Kind.FIGURE));
 
 		Widgets.setMoveColours(new Color(55, 240, 70, 90), new Color(Widgets.MOVE_DOWN_TEXT.getRGB()));

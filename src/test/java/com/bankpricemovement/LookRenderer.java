@@ -82,13 +82,18 @@ import static org.mockito.Mockito.when;
  * {@code ticker-hidden-2026-09-20-AK.png} to the byte; without it, neither matches while the picture is the
  * same), so a comparison against them has to be taken the same way.
  *
- * <p><b>The current Items pins since release 1.2.1 are {@code docs/handoff/lab/ticker-{,hidden-,options-,amounts-hidden-,live-,live-amounts-hidden-}2026-10-24-S.png}</b>:
- * the L and V pictures below with the gp figures drawn at brightness 55 where they were drawn at 45 (the setting's new default) and
- * nothing else changed - which {@code ChangeSizePicturesTest} measures against the L and V files themselves, pixel by pixel, as
- * "changed only inside a gp figure's box" - plus two pictures of the live sidebar at other sizes, {@code ticker-live-change-large-2026-10-24-S.png}
- * (gp Large, percentage Large) and {@code ticker-live-change-small-2026-10-24-S.png} (gp Largest, percentage Small), drawn through
+ * <p><b>The current Items pins since release 1.2.2 part 4 are {@code docs/handoff/lab/ticker-{,hidden-,options-,amounts-hidden-,live-,live-amounts-hidden-}2026-10-26-O.png}</b>:
+ * the S pictures below with the gp figures drawn at opacity 69 where they were drawn at 55 (the setting's new default, for everyone) and
+ * nothing else changed - which {@code ChangeSizePicturesTest} (local) measures against the S files themselves, pixel by pixel, as
+ * "changed only inside a gp figure's box" - plus the two pictures of the live sidebar at other sizes,
+ * {@code ticker-live-change-large-2026-10-26-O.png} and {@code ticker-live-change-small-2026-10-26-O.png}, each the S picture of the same
+ * name with only its gp figures' boxes changed. The History pins are the O ones below.
+ *
+ * <p><b>The S Items pins are {@code docs/handoff/lab/ticker-{,hidden-,options-,amounts-hidden-,live-,live-amounts-hidden-}2026-10-24-S.png}</b>
+ * (release 1.2.1; kept, and what this class drew until part 4): the L and V pictures below with the gp figures drawn at brightness 55
+ * where they were drawn at 45, plus {@code ticker-live-change-large-2026-10-24-S.png} (gp Large, percentage Large) and
+ * {@code ticker-live-change-small-2026-10-24-S.png} (gp Largest, percentage Small), drawn through
  * {@link #render(HeroVisibility, ViewOptions, ChangeText)} at the height their taller rows need ({@link #height(ViewOptions, ChangeText)}).
- * The History pins are not touched by it.
  *
  * <p><b>The L and V Items pins are {@code docs/handoff/lab/ticker-{,hidden-,options-,amounts-hidden-}2026-10-07-L.png} and
  * {@code docs/handoff/lab/ticker-live-2026-10-08-V.png} with {@code ticker-live-amounts-hidden-2026-10-08-V.png}.</b> The L
@@ -110,12 +115,16 @@ import static org.mockito.Mockito.when;
  * and nothing else changed, which {@code ViewStripPicturesTest} measures against the I files themselves. The History pins
  * are untouched by it.
  *
- * <p><b>The current History pins since release 1.2.1 part 2 are {@code docs/handoff/lab/history{,-one,-empty,-hidden,-amounts-hidden}-2026-10-25-H.png}</b>:
- * the G2 pictures below with the gp figures - the day rows' and the change line's over the chart - drawn at opacity 55 where they were
- * drawn at 45 (the History tab's own setting, its new default) and nothing else changed, which {@code HistoryChangePicturesTest}
- * (local) measures against the G2 files themselves as "changed only inside a gp figure's box"; plus
+ * <p><b>The current History pins since release 1.2.2 part 4 are {@code docs/handoff/lab/history{,-one,-empty,-hidden,-amounts-hidden}-2026-10-26-O.png}</b>:
+ * the H pictures below with the gp figures - the day rows' and the change line's over the chart - drawn at opacity 69 where they were
+ * drawn at 55 (the History tab's own setting, its new default) and nothing else changed, which {@code HistoryChangePicturesTest}
+ * (local) measures against the H files themselves as "changed only inside a gp figure's box"; plus
  * {@link #HISTORY_CHANGE_LARGE_FILE}, the 40-day picture with the History gp figures Large and the percentages Large, drawn through
- * {@link #renderHistory(HeroVisibility, BankHistorySeries, ChangeText)}. The Items pins are the S ones above.
+ * {@link #renderHistory(HeroVisibility, BankHistorySeries, ChangeText)}. The Items pins are the O ones above.
+ *
+ * <p><b>The H History pins are {@code docs/handoff/lab/history{,-one,-empty,-hidden,-amounts-hidden}-2026-10-25-H.png}</b> (release 1.2.1
+ * part 2; kept, and what this class drew until part 4): the G2 pictures below with the gp figures drawn at opacity 55 where they were
+ * drawn at 45, plus {@code history-change-large-2026-10-25-H.png}.
  *
  * <p><b>The G2 History pins are {@code docs/handoff/lab/history{,-one,-empty,-hidden,-amounts-hidden}-2026-10-07-G2.png}</b>
  * (1.1.1 part G2, the two gears on the Net Worth History tab; kept, and what this class drew until release 1.2.1 part 2 - draw
@@ -366,8 +375,6 @@ public final class LookRenderer
 	static final long WHIP_GUIDE_THEN = 1_500_000L;
 	static final long BOW_LIVE_NOW = 1_628_500_000L;
 	static final long BOW_TRADED_THEN = 1_692_000_000L;
-	/** Why the fourth picture's Green hat stayed on the guide price: its 1d grade's word (contract 1.2.0). */
-	static final String THIN_REASON = GradeWords.NO_TRADES;
 	/** How many stacks the live picture's whole-bank sums counted at a traded mid ({@code PortfolioSummary.liveRows}). */
 	static final int LIVE_STACKS = 3;
 	/**
@@ -600,7 +607,7 @@ public final class LookRenderer
 		final PriceService service = mock(PriceService.class);
 		when(service.currentStatus()).thenReturn(status);
 		when(service.currentRows()).thenReturn(rows(view));
-		final BankPriceMovementPanel.Prefs prefs = new BankPriceMovementPanel.Prefs()
+		final BankPriceMovementPanel.Prefs prefs = new PrefsDefaults()
 		{
 			@Override
 			public RowFilter load()
@@ -669,15 +676,15 @@ public final class LookRenderer
 	// ---------------------------------------------------------------- the whole sidebar in History (addendum AU)
 
 	/** The History pictures, by the names they are pinned under in {@code docs/handoff/lab/}. */
-	public static final String HISTORY_FILE = "history-2026-10-25-H.png";
+	public static final String HISTORY_FILE = "history-2026-10-26-O.png";
 	/** Day one: the one reading, today's (plan 7.5 item 3: the one point, its readout, its row, no sentence). */
-	public static final String HISTORY_ONE_FILE = "history-one-2026-10-25-H.png";
+	public static final String HISTORY_ONE_FILE = "history-one-2026-10-26-O.png";
 	/** No reading yet: the card's two History lines a dash each (ruling 9.7), the view its one sentence. */
-	public static final String HISTORY_EMPTY_FILE = "history-empty-2026-10-25-H.png";
+	public static final String HISTORY_EMPTY_FILE = "history-empty-2026-10-26-O.png";
 	/** The 40-day fixture with the card's three figures hidden (O3 in History: the card shrinks exactly as in Items). */
-	public static final String HISTORY_HIDDEN_FILE = "history-hidden-2026-10-25-H.png";
+	public static final String HISTORY_HIDDEN_FILE = "history-hidden-2026-10-26-O.png";
 	/** Release 1.2.1 part 2: the 40-day fixture with the History tab's gp figures Large and its percentages Large, at the default opacity. */
-	public static final String HISTORY_CHANGE_LARGE_FILE = "history-change-large-2026-10-25-H.png";
+	public static final String HISTORY_CHANGE_LARGE_FILE = "history-change-large-2026-10-26-O.png";
 	/** The History settings every picture before release 1.2.1 part 2 was drawn in: both sizes Normal and the opacity 45. */
 	public static final ChangeText HISTORY_OLD_TEXT = ChangeText.of(ChangeSize.NORMAL, ChangeSize.NORMAL, 45);
 	/** The card's lit chip in every History picture: 30d, mock 5's own. */
@@ -1037,7 +1044,7 @@ public final class LookRenderer
 
 	/**
 	 * The twelve rows as the service publishes them with the live switch ON (addendum T, line T8): the same list,
-	 * with three stacks re-priced off the wiki's traded series and one marked as refused by the checks.
+	 * with three stacks re-priced off the wiki's traded series and one left on the guide.
 	 *
 	 * <ul>
 	 * <li><b>Dragon claws</b> - live, and its 1 d window compared against that day's traded average: the picture's
@@ -1047,8 +1054,7 @@ public final class LookRenderer
 	 * live study refused to make the other way round.</li>
 	 * <li><b>Twisted bow</b> - live on a 137-unit day: a stack that is worth more than the rest of the list put
 	 * together and still only just clears the volume check.</li>
-	 * <li><b>Green hat</b> - a GUIDE row while the switch is on, carrying the first check that refused it ("12
-	 * traded yesterday"), which is the line T6 puts on such a row's tooltip.</li>
+	 * <li><b>Green hat</b> - a GUIDE row while the switch is on, which the picture leaves as it is.</li>
 	 * </ul>
 	 *
 	 * <p>The order is still "Percent change", biggest first: each live figure was picked to keep its row
@@ -1061,14 +1067,13 @@ public final class LookRenderer
 		// above the row with no baseline, which leaves the four rows re-priced below where they were.
 		final List<MovementRow> out = withCrystalBody(rows());
 		out.set(0, live(row(13652, "Dragon claws", 1, false, CLAWS_LIVE_NOW, CLAWS_TRADED_THEN), null,
-			MovementRow.PriceSource.LIVE, facts(41_600_000L, 41_360_000L, 12_483L, null)));
+			MovementRow.PriceSource.LIVE));
 		// T4's awkward case, built the way the service builds it: the GUIDE pair carries the move, and the live mid
 		// is what the row prints and what the card counts it at.
 		out.set(1, live(row(4151, "Abyssal whip", 12, false, WHIP_GUIDE_NOW, WHIP_GUIDE_THEN), WHIP_LIVE_NOW,
-			MovementRow.PriceSource.GUIDE, facts(1_540_000L, 1_526_000L, 5_214L, null)));
+			MovementRow.PriceSource.GUIDE));
 		out.set(9, live(row(20997, "Twisted bow", 1, false, BOW_LIVE_NOW, BOW_TRADED_THEN), null,
-			MovementRow.PriceSource.LIVE, facts(1_631_000_000L, 1_626_000_000L, 137L, null)));
-		out.set(5, out.get(5).withLiveRefusal(facts(1_200L, 900L, 12L, THIN_REASON)));
+			MovementRow.PriceSource.LIVE));
 		// 1.2.0 part P2 (L5): the two rows a graded sidebar can show that a solid one cannot, where the three-tier sort puts
 		// them - every solid row first, then the soft ones, then the rows with no figure, which sort with the dashes (by
 		// name, so "Pegasian boots" after the Bandos chestplate that has no baseline at all).
@@ -1106,7 +1111,7 @@ public final class LookRenderer
 				LIVE_PRINT_SECONDS + 600L),
 			LIVE_DAY, THEN_DAY, 38_000_000L);
 		return new MovementRow(SOFT_ROW_ID, "Eye of Ayak", 1, false, then + delta, then, delta, move * 100.0, then + delta,
-			MovementRow.PriceSource.LIVE, null, null, null, null, 0, 0, 0, 0, graded);
+			MovementRow.PriceSource.LIVE, null, null, 0, 0, 0, 0, graded);
 	}
 
 	/**
@@ -1118,15 +1123,14 @@ public final class LookRenderer
 		final GradedMove graded = new GradedMove(Grade.NONE, GradeWords.NO_TRADES, null, null, null, false, null, null,
 			null, null, 38_900_000L);
 		return new MovementRow(NONE_ROW_ID, "Pegasian boots", 1, false, 38_900_000L, null, null, null, 38_900_000L,
-			MovementRow.PriceSource.GUIDE, null, null, null, null, 0, 0, 0, 0, graded);
+			MovementRow.PriceSource.GUIDE, null, null, 0, 0, 0, 0, graded);
 	}
 
 	/** A print of the live day, 2026-09-09 11:00:00 UTC - what the graded fixture rows' last prints carry. */
 	static final long LIVE_PRINT_SECONDS = 1_788_951_600L;
 
 	/**
-	 * A row re-sourced as LIVE, with the series its 1 d window used, the DAY that window compared against (U3) and
-	 * the facts behind its price (T4).
+	 * A row re-sourced as LIVE, with the DAY its 1 d window compared against (U3).
 	 *
 	 * <p>The day is {@link #liveDays}'s own, so the row agrees with the status above it: a live 1 d window compared
 	 * against the traded bucket of {@code LIVE_DAY - 1}, and the one that fell back to the guide compared against
@@ -1135,15 +1139,12 @@ public final class LookRenderer
 	 * @param liveUnit the live mid to print when the row was built from the GUIDE pair, or null when the row is
 	 *                 already the live pair's own
 	 */
-	private static MovementRow live(MovementRow row, @Nullable Long liveUnit, MovementRow.PriceSource windowSource,
-		MovementRow.LiveFacts facts)
+	private static MovementRow live(MovementRow row, @Nullable Long liveUnit, MovementRow.PriceSource windowSource)
 	{
-		final Map<MovementWindow, MovementRow.PriceSource> sources = new EnumMap<>(MovementWindow.class);
-		sources.put(MovementWindow.D1, windowSource);
 		final Map<MovementWindow, LocalDate> days = new EnumMap<>(MovementWindow.class);
 		days.put(MovementWindow.D1, windowSource == MovementRow.PriceSource.LIVE
 			? liveDays().get(MovementWindow.D1) : THEN_DAY);
-		return row.asLive(liveUnit, sources, days, facts);
+		return LiveRows.asLive(row, liveUnit, days);
 	}
 
 	/**
@@ -1158,11 +1159,6 @@ public final class LookRenderer
 			days.put(window, LIVE_DAY.minusDays(window.days()));
 		}
 		return days;
-	}
-
-	private static MovementRow.LiveFacts facts(long buy, long sell, long volume, @Nullable String reason)
-	{
-		return new MovementRow.LiveFacts(buy, sell, volume, reason);
 	}
 
 	/**
@@ -1199,7 +1195,8 @@ public final class LookRenderer
 		final long delta = CRYSTAL_BODY_NOW - then;
 		return new MovementRow(CRYSTAL_BODY_ID, "Crystal body", 1, false, CRYSTAL_BODY_NOW, then, delta,
 			delta * 100.0 / then, CRYSTAL_BODY_NOW, MovementRow.PriceSource.PARTS,
-			Collections.singletonList(new BankItem.Part(CRYSTAL_SEED_ID, CRYSTAL_SEEDS, CRYSTAL_SEED_NAME)));
+			Collections.singletonList(new BankItem.Part(CRYSTAL_SEED_ID, CRYSTAL_SEEDS, CRYSTAL_SEED_NAME)), null, 0, 0,
+				0, 0, null);
 	}
 
 	/** Twelve rows in "Percent change" order, biggest first (the row without a baseline last). */
@@ -1248,10 +1245,10 @@ public final class LookRenderer
 		final Map<MovementWindow, WindowMove> moves = new EnumMap<>(MovementWindow.class);
 		for (WindowMove m : base.moves().values())
 		{
-			final long valueThen = m.valueThen() + bodyThen;
+			final long valueThen = m.valueThen + bodyThen;
 			final long deltaGp = m.deltaGp() + (CRYSTAL_BODY_NOW - bodyThen);
 			moves.put(m.window(), new WindowMove(m.window(), m.thenDay(), valueThen,
-				m.valueNowCovered() + CRYSTAL_BODY_NOW, deltaGp, deltaGp * 100.0 / valueThen, m.itemsCovered() + 1));
+				m.valueNowCovered + CRYSTAL_BODY_NOW, deltaGp, deltaGp * 100.0 / valueThen, m.itemsCovered + 1));
 		}
 		final PortfolioSummary parts = new PortfolioSummary(base.valueStacks() + CRYSTAL_BODY_NOW,
 			base.itemsPriced() + 1, base.itemsTotal() + 1, moves);
@@ -1259,7 +1256,7 @@ public final class LookRenderer
 		{
 			// T5: the same whole-bank figures, with the live count the card's tooltip printed until addendum AF.
 			return new PortfolioSummary(parts.valueStacks(), parts.itemsPriced(), parts.itemsTotal(), parts.moves(),
-				parts.currencyGp(), LIVE_STACKS);
+				parts.currencyGp, LIVE_STACKS);
 		}
 		if (options == null || !options.countUntradeables())
 		{
@@ -1303,18 +1300,13 @@ public final class LookRenderer
 		when(s.loggedIn()).thenReturn(true);
 		when(s.bankLoaded()).thenReturn(true);
 		when(s.bankItems()).thenReturn(BANK_ITEMS);
-		when(s.totalRows()).thenReturn(rows(options).size());
 		when(s.window()).thenReturn(MovementWindow.D1);
 		when(s.problem()).thenReturn(null);
 		// No sentence, so no kind: the panel reads this to colour the problem row, and a real status is never null
 		// here (PriceService.Status normalises it).
 		when(s.problemKind()).thenReturn(PriceService.ProblemKind.NONE);
-		final String header = "Guide prices - 1d vs 08 Sep - Bank as of " + MovementMath.formatTime(BANK_AT_MILLIS);
-		when(s.text()).thenReturn(header);
-		when(s.headerText()).thenReturn(header);
 		when(s.pricesAtMillis()).thenReturn(BANK_AT_MILLIS + 60_000L);
 		when(s.bankAtMillis()).thenReturn(BANK_AT_MILLIS);
-		when(s.baselineLoaded()).thenReturn(true);
 		when(s.thenDay()).thenReturn(THEN_DAY);
 		when(s.portfolio()).thenReturn(summary(options));
 		// U3: with the switch on the card reads its DAY off the live calendar, so the live picture is drawn with one

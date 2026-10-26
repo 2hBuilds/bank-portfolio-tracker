@@ -41,11 +41,11 @@ import java.util.Collections;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.LongSupplier;
 import javax.annotation.Nullable;
@@ -208,11 +208,17 @@ import org.slf4j.LoggerFactory;
  *
  * <p><b>The History tab has gears of its own</b> (1.1.1 part G2). The same two gears the Items tab carries at the search
  * box's right end stand at the right end of the "Bank net worth history" caption ({@link #renderHistoryGears}) and open a
- * small "History options" menu ({@link #buildHistoryMenu}): the hidden-days check item - while such days exist - and "Single
- * chart colour", each the settings menu's own item with the same press. And while the record's early days are hidden for the
- * placeholder bug ({@link #placeholderDays}) with the box off, a small "i" disc stands directly left of the gears
- * ({@link #syncLegacyInfo}, {@link InfoIcon}): its hover says why the days may read high and where to restore them, and a press
- * on it asks the include question as the box does (part I2 - part G2 had said so in three grey lines under the caption).
+ * small "History options" menu ({@link #buildHistoryMenu}): "Single chart colour", the tab's change settings and, last, the row
+ * of "Reset history" and "Restore history" (1.2.2, {@link #buildResetRow}) - Restore being the settings item's own press while the
+ * days hidden are the 1.0.9 / 1.1.1 ones. And while the record's early days are hidden for the placeholder bug ({@link #placeholderDays}) or by the player's
+ * reset and not yet shown again, a small "i" disc stands directly left of the gears
+ * ({@link #syncLegacyInfo}, {@link InfoIcon}): its hover says why the days are hidden and where to restore them, and a press
+ * on it asks the include question as Restore history does (part I2 - part G2 had said so in three grey lines under the caption).
+ *
+ * <p><b>A player's reset is one account's</b> (1.2.2 part 5). Reset history cuts THIS account's record and takes its restore mark
+ * off; Restore history sets that mark ({@link PriceService#restoreHistory}) and asks nothing. Both live in the account's own files,
+ * so another account's reset or restore, and the shared "Include days before ..." box - the 1.0.9 / 1.1.1 reasons' switch alone -
+ * never move them, and {@link #visibleHistory} reads the record's own mark for this reason and the box for the others.
  *
  * <p><b>The colour of a rise and of a fall is the reader's</b> (1.1.0 part B). The settings menu's "Up colour" and "Down
  * colour" rows open a colour picker through the {@link ColourPicker} seam; while it moves, {@link #applyMoveColours} hands
@@ -312,12 +318,12 @@ public class BankPriceMovementPanel extends PluginPanel
 	 * Where the filter and the hero card's three show / hide switches are kept between sessions - the plugin's
 	 * config, or a memory in the tests (contract C28; the hero half is addendum O, line O2).
 	 *
-	 * <p>The two hero methods have defaults so a caller with nothing to remember - the renderer, a throwaway
-	 * test seam - need not care: every figure is then shown and nothing is written. The plugin MUST override
-	 * both over {@code ConfigManager}, so a right-click toggle on the card ({@link #setHeroVisibility}) is
-	 * written where the config panel READS it - this panel follows on the {@code ConfigChanged} that write posts,
-	 * and the settings page shows it the next time it is opened (O4; see the class javadoc) - without them the
-	 * card would repaint and forget the choice on the next launch.
+	 * <p>Every method is the plugin's to answer over {@code ConfigManager}, so a right-click toggle on the card
+	 * ({@link #setHeroVisibility}) is written where the config panel READS it - this panel follows on the
+	 * {@code ConfigChanged} that write posts, and the settings page shows it the next time it is opened (O4; see the
+	 * class javadoc) - or the card would repaint and forget the choice on the next launch. A caller with nothing to
+	 * remember - the renderer, a throwaway test seam - answers null for every load and writes nothing, which shows
+	 * every figure.
 	 */
 	public interface Prefs
 	{
@@ -332,15 +338,10 @@ public class BankPriceMovementPanel extends PluginPanel
 		 * {@code showBankMovePct}); null reads as {@link HeroVisibility#ALL} (O2).
 		 */
 		@Nullable
-		default HeroVisibility loadHero()
-		{
-			return null;
-		}
+		HeroVisibility loadHero();
 
 		/** Writes the three switches the card's right-click menu chose, so the stored config follows (O4). */
-		default void saveHero(HeroVisibility visibility)
-		{
-		}
+		void saveHero(HeroVisibility visibility);
 
 		/**
 		 * The saved view switches - the config's {@code countCash} / {@code countUntradeables} (addendum Q,
@@ -353,19 +354,14 @@ public class BankPriceMovementPanel extends PluginPanel
 		 * AN's three-line row printed both of its readings at once and left it choosing nothing, and release 1.2.0
 		 * deleted {@code showHoverText}, which addendum AH had added, once every hover left was one short line.
 		 *
-		 * <p>Defaulted for the same reason the hero pair is: the renderer and a throwaway test seam have nothing
-		 * to remember, and a plugin that overrides neither draws the sidebar exactly as it drew before addendum Q.
+		 * <p>A seam that remembers nothing - the renderer, a throwaway test seam - answers null, and the sidebar is
+		 * drawn exactly as it was drawn before addendum Q.
 		 */
 		@Nullable
-		default ViewOptions loadOptions()
-		{
-			return null;
-		}
+		ViewOptions loadOptions();
 
 		/** Writes the five switches the gear menu chose, so the stored config follows (Q2, T1, Y1, 1.0.9 part 3). */
-		default void saveOptions(ViewOptions options)
-		{
-		}
+		void saveOptions(ViewOptions options);
 
 		/**
 		 * The saved quick bands - the config's {@code bandPresets}, already read off its shorthand (addendum Z,
@@ -376,20 +372,14 @@ public class BankPriceMovementPanel extends PluginPanel
 		 * so an implementation hands that null straight on and the panel opens on 100k / 1m / 10m. A config value
 		 * is a thing a user can type into, so it is read as a wish and never as a promise.
 		 *
-		 * <p>Defaulted for the same reason the hero and option pairs are: the headless renderer and a throwaway
-		 * test seam have nothing to remember, and a {@code Prefs} that overrides neither draws the fold exactly as
-		 * it drew before addendum Z.
+		 * <p>A seam that remembers nothing - the headless renderer, a throwaway test seam - answers null, and the fold
+		 * is drawn exactly as it was drawn before addendum Z.
 		 */
 		@Nullable
-		default BandPresets loadPresets()
-		{
-			return null;
-		}
+		BandPresets loadPresets();
 
 		/** Writes the three the gear menu's boxes chose, so the stored config follows (Z1, Z2). */
-		default void savePresets(BandPresets presets)
-		{
-		}
+		void savePresets(BandPresets presets);
 
 		/**
 		 * Whether the price fold stands OPEN under the control row - the config's {@code foldOpen} (addendum AA,
@@ -401,19 +391,14 @@ public class BankPriceMovementPanel extends PluginPanel
 		 * rather than a {@code boolean} for exactly that reason - "nothing stored" and "stored false" are different
 		 * answers, and only the first may be overridden by the default.
 		 *
-		 * <p>Defaulted for the same reason every pair since the filter is: the headless renderer and a throwaway
-		 * test seam have nothing to remember, and they get the shipped sidebar.
+		 * <p>A seam that remembers nothing - the headless renderer, a throwaway test seam - answers null and gets the
+		 * shipped sidebar.
 		 */
 		@Nullable
-		default Boolean loadFoldOpen()
-		{
-			return null;
-		}
+		Boolean loadFoldOpen();
 
 		/** Writes the state the band button's press left the fold in, so the stored config follows (AA1). */
-		default void saveFoldOpen(boolean open)
-		{
-		}
+		void saveFoldOpen(boolean open);
 
 		/**
 		 * The tab the sidebar opens on - the config's {@code startTab} (addendum AU), which since 1.1.0 is the tab used
@@ -425,15 +410,10 @@ public class BankPriceMovementPanel extends PluginPanel
 		 * shipped sidebar. The plugin overrides both halves over {@code ConfigManager}.
 		 */
 		@Nullable
-		default SidebarView loadStartTab()
-		{
-			return null;
-		}
+		SidebarView loadStartTab();
 
 		/** Writes the tab the toggle was pressed onto, so the sidebar opens there next time (AU; the toggle's since 1.1.0). */
-		default void saveStartTab(SidebarView tab)
-		{
-		}
+		void saveStartTab(SidebarView tab);
 
 		/**
 		 * Whether the Net Worth History tab shows the days recorded before 1.0.9 - the config's
@@ -441,15 +421,10 @@ public class BankPriceMovementPanel extends PluginPanel
 		 * days before 1.0.9 hidden, and the answer for the headless renderer and a throwaway test seam.
 		 */
 		@Nullable
-		default Boolean loadIncludeLegacy()
-		{
-			return null;
-		}
+		Boolean loadIncludeLegacy();
 
 		/** Writes the state the menu's "Include days before v1.0.9" item was left in, so the stored config follows (1.0.9 part 5). */
-		default void saveIncludeLegacy(boolean include)
-		{
-		}
+		void saveIncludeLegacy(boolean include);
 
 		/**
 		 * The colour of a rise - the config's {@code upColour} (1.1.0 part B), read as the colour to draw it in. Null reads
@@ -457,27 +432,17 @@ public class BankPriceMovementPanel extends PluginPanel
 		 * for the headless renderer and a throwaway test seam, whose sidebar is then drawn exactly as it was before.
 		 */
 		@Nullable
-		default Color loadUpColour()
-		{
-			return null;
-		}
+		Color loadUpColour();
 
 		/** Writes the colour the picker closed on, so the stored config follows (1.1.0 part B). */
-		default void saveUpColour(Color colour)
-		{
-		}
+		void saveUpColour(Color colour);
 
 		/** The colour of a fall - the config's {@code downColour}; null reads as the built-in red ({@link Widgets#MOVE_DOWN_TEXT}). */
 		@Nullable
-		default Color loadDownColour()
-		{
-			return null;
-		}
+		Color loadDownColour();
 
 		/** Writes the colour the picker closed on, so the stored config follows (1.1.0 part B). */
-		default void saveDownColour(Color colour)
-		{
-		}
+		void saveDownColour(Color colour);
 
 		/**
 		 * The rise colour saved in the colour presets' Slot 1 - the config's {@code slotUpColour} (1.1.0 part J). Null reads as
@@ -485,27 +450,17 @@ public class BankPriceMovementPanel extends PluginPanel
 		 * the headless renderer and a throwaway test seam.
 		 */
 		@Nullable
-		default Color loadSlotUpColour()
-		{
-			return null;
-		}
+		Color loadSlotUpColour();
 
 		/** Writes the rise colour "Save current colours to Slot 1" stored, so the stored config follows (1.1.0 part J). */
-		default void saveSlotUpColour(Color colour)
-		{
-		}
+		void saveSlotUpColour(Color colour);
 
 		/** The fall colour saved in Slot 1 - the config's {@code slotDownColour}; null reads as {@link Widgets#MOVE_DOWN_TEXT}. */
 		@Nullable
-		default Color loadSlotDownColour()
-		{
-			return null;
-		}
+		Color loadSlotDownColour();
 
 		/** Writes the fall colour "Save current colours to Slot 1" stored, so the stored config follows (1.1.0 part J). */
-		default void saveSlotDownColour(Color colour)
-		{
-		}
+		void saveSlotDownColour(Color colour);
 
 		/**
 		 * Whether the Net Worth History chart is drawn in one colour - the config's {@code singleChartColour} (1.1.0 part
@@ -513,30 +468,20 @@ public class BankPriceMovementPanel extends PluginPanel
 		 * answer for the headless renderer and a throwaway test seam.
 		 */
 		@Nullable
-		default Boolean loadSingleChartColour()
-		{
-			return null;
-		}
+		Boolean loadSingleChartColour();
 
 		/** Writes the state the menu's "Single chart colour" item was left in, so the stored config follows (1.1.0 part C). */
-		default void saveSingleChartColour(boolean single)
-		{
-		}
+		void saveSingleChartColour(boolean single);
 
 		/**
 		 * The colour that chart is drawn in while it is one colour - the config's {@code chartColour} (1.1.0 part C). Null
 		 * reads as the logo gold ({@link Widgets#CHART_COLOUR_DEFAULT}).
 		 */
 		@Nullable
-		default Color loadChartColour()
-		{
-			return null;
-		}
+		Color loadChartColour();
 
 		/** Writes the colour the picker closed on, so the stored config follows (1.1.0 part C). */
-		default void saveChartColour(Color colour)
-		{
-		}
+		void saveChartColour(Color colour);
 
 		/**
 		 * Whether the sidebar hides every gp amount and item quantity - the config's {@code hideAmounts} (1.1.0 part E).
@@ -544,15 +489,10 @@ public class BankPriceMovementPanel extends PluginPanel
 		 * renderer and a throwaway test seam, whose sidebar is then drawn exactly as it was before the eye existed.
 		 */
 		@Nullable
-		default Boolean loadHideAmounts()
-		{
-			return null;
-		}
+		Boolean loadHideAmounts();
 
 		/** Writes the state the eye's press left the sidebar in, so the stored config follows (1.1.0 part E). */
-		default void saveHideAmounts(boolean hide)
-		{
-		}
+		void saveHideAmounts(boolean hide);
 
 		/**
 		 * Whether the Items list shows its alch rows - the config's {@code showAlchRows} (1.1.0 part G). Null reads as
@@ -560,55 +500,35 @@ public class BankPriceMovementPanel extends PluginPanel
 		 * renderer and a throwaway test seam, whose list is then drawn as it was before the List options menu existed.
 		 */
 		@Nullable
-		default Boolean loadShowAlchRows()
-		{
-			return null;
-		}
+		Boolean loadShowAlchRows();
 
 		/** Writes the tick the List options menu was left in, so the stored config follows (1.1.0 part G). */
-		default void saveShowAlchRows(boolean show)
-		{
-		}
+		void saveShowAlchRows(boolean show);
 
 		/**
 		 * How the Items rows draw their two change figures - the config's {@code gpChangeSize}, {@code pctChangeSize} and
 		 * {@code gpBrightness} (release 1.2.1). Null reads as {@link ChangeText#DEFAULT}: nothing stored is the shipped default,
-		 * both sizes Normal and the brightness 55, and the answer for the headless renderer and a throwaway test seam.
+		 * both sizes Normal and the brightness 69, and the answer for the headless renderer and a throwaway test seam.
 		 */
 		@Nullable
-		default ChangeText loadChangeText()
-		{
-			return null;
-		}
+		ChangeText loadChangeText();
 
 		/** Writes the three settings the List options menu's bars and box (or "Reset to default") left, so the stored config follows (release 1.2.1). */
-		default void saveChangeText(ChangeText text)
-		{
-		}
+		void saveChangeText(ChangeText text);
 
 		/** The Net Worth History tab's own three settings (release 1.2.1 part 2), {@link #loadChangeText}'s twin: null reads as {@link ChangeText#DEFAULT}. */
 		@Nullable
-		default ChangeText loadHistoryText()
-		{
-			return null;
-		}
+		ChangeText loadHistoryText();
 
 		/** Writes the History options menu's three settings (or "Reset to default"), {@link #saveChangeText}'s twin. */
-		default void saveHistoryText(ChangeText text)
-		{
-		}
+		void saveHistoryText(ChangeText text);
 
 		/** The range the History chart was left on (release 1.2.1 part 2); null is "nothing stored", and the card's window picks it. */
 		@Nullable
-		default BankHistoryRange loadHistoryRange()
-		{
-			return null;
-		}
+		BankHistoryRange loadHistoryRange();
 
 		/** Writes the range the History chart now shows - whichever road moved it. */
-		default void saveHistoryRange(BankHistoryRange range)
-		{
-		}
+		void saveHistoryRange(BankHistoryRange range);
 	}
 
 	/**
@@ -623,6 +543,29 @@ public class BankPriceMovementPanel extends PluginPanel
 		 * @return true when the reader chose to go ahead; false for Cancel, Escape or a closed window
 		 */
 		boolean ask(String question);
+
+		/**
+		 * The player's own questions (1.2.2) - "Reset history" and "Reset history from this day" - with their own title and the word
+		 * on the yes button. A prompt that only knows {@link #ask(String)} answers them as it answers that one.
+		 */
+		default boolean ask(String title, String question, String yes)
+		{
+			return ask(question);
+		}
+	}
+
+	/**
+	 * The amount box (1.2.2): what the player typed for a transfer on {@code day}, signed - or null for Cancel. A seam so the tests
+	 * answer without a window; the client's is {@link TransferDialog}, owned by this panel's window.
+	 */
+	interface TransferPrompt
+	{
+		/**
+		 * @param initial the amount on offer, signed; 0 for none
+		 * @param whole   what the day really changed by, signed
+		 */
+		@Nullable
+		Long ask(LocalDate day, long initial, long whole);
 	}
 
 	/** Rows built per page (contract C32, design D11). */
@@ -668,10 +611,29 @@ public class BankPriceMovementPanel extends PluginPanel
 	public static final String LEGACY_PLACEHOLDERS_ASK = "Days before v1.1.1 counted bank placeholders as items, so their"
 		+ " net worth totals may read high. Include them anyway?";
 
+	/**
+	 * The bottom row of the History options menu (1.2.2, layout D): "Reset history" hard left and "Restore history" hard right, their
+	 * hovers, and the question Reset asks, its yes button reading {@link #RESET_YES}. Restore is greyed while no day is hidden.
+	 */
+	public static final String RESET_TEXT = "Reset history";
+	public static final String RESET_TIP = "Start the chart again from today. Nothing is lost.";
+	private static final String RESET_ASK_HEAD = "Reset your history";
+	private static final String RESET_ASK_TAIL = "? You can bring it back with Restore history.";
+	public static final String RESET_ASK = RESET_ASK_HEAD + RESET_ASK_TAIL;
+	public static final String RESET_YES = "Reset";
+	public static final String RESTORE_TEXT = "Restore history";
+	public static final String RESTORE_TIP = "Bring back the days a reset hid.";
+	/** The right-click item of a day row (1.2.2); its question puts "before Sun 20 Sep" between {@link #RESET_ASK}'s two halves. */
+	public static final String RESET_FROM_TEXT = "Reset history from this day";
+	public static final String TRANSFER_TEXT = "This was a transfer";
+	public static final String TRANSFER_OTHER_TEXT = "This was a transfer of another amount...";
+	public static final String NOT_TRANSFER_TEXT = "Not a transfer";
+	public static final String CHANGE_AMOUNT_TEXT = "Change the amount...";
+
 	public static final String TITLE = "2h Bank Portfolio Tracker";
 	public static final String LOGIN_TEXT = "Log in to load your bank";
 	public static final String NO_BANK_TEXT = "Open your bank once to load your items";
-	/** The EMPTY card's title when the gp band matched nothing (N section 3 §6). */
+	/** The EMPTY card's title when the gp band matched nothing (N section 3.6). */
 	public static final String EMPTY_TEXT = "Nothing in this price range";
 	/** The EMPTY card's title when the bank holds no tradeable item at all. */
 	public static final String NO_TRADEABLES_TEXT = "Your bank holds no tradeable items";
@@ -1011,16 +973,16 @@ public class BankPriceMovementPanel extends PluginPanel
 	 * The hover of the "i" icon on the History caption's row (1.1.1 part I2, the user's words), shown only while the record's
 	 * early days are hidden because they counted bank placeholders ({@link #syncLegacyInfo}). Like {@link #HISTORY_OPTIONS_TIP}
 	 * it is on - the icon is the only place the sidebar says why those days are hidden - so it is set on the label
-	 * directly. Said in the user's words ({@link #LEGACY_INFO_TIP_TEXT}) but SET as three
+	 * directly. Said in the user's words ({@link #LEGACY_INFO_TIP_TEXT}) but SET as four
 	 * short rows, because one long line opened far to the right of the pointer, which stands at the sidebar's right edge
 	 * ({@link #legacyInfoTipLocation} opens it leftward under the icon).
 	 */
 	public static final String LEGACY_INFO_TIP =
 		"<html>Days before v1.1.1 counted bank placeholders<br>as items, so they may read high.<br>"
-			+ "Restore them in settings.</html>";
+			+ "Restore history in the History options<br>brings them back.</html>";
 	/** The words of {@link #LEGACY_INFO_TIP} on one line, with no markup: the sentence the user wrote. */
-	public static final String LEGACY_INFO_TIP_TEXT =
-		"Days before v1.1.1 counted bank placeholders as items, so they may read high. Restore them in settings.";
+	public static final String LEGACY_INFO_TIP_TEXT = "Days before v1.1.1 counted bank placeholders as items, so they may read high."
+		+ " Restore history in the History options brings them back.";
 	public static final String SINGLE_CHART_COLOUR_TIP =
 		"Draw the net worth chart in one colour instead of the up and down colours.";
 	/** A swatch row's swatch, in px (1.1.0 part B): wide enough to read as a colour, as tall as the 12 px menu face's caps. */
@@ -1137,8 +1099,6 @@ public class BankPriceMovementPanel extends PluginPanel
 		+ "Grand Exchange guide price.";
 	/** The opening of its third sentence, before the clock; the whole sentence is absent at 0 (S2). */
 	static final String UPDATE_LAST_CHECKED = "Last checked ";
-	/** What separates the three parts of {@link #moveText} ("1d   +12.4m   +1.0%"), kept for the bridge (N §8). */
-	static final String VALUE_SEP = "   ";
 
 	/** The content width every header row is designed at and measured against (contract C28, N6, O6). */
 	static final int W = Widgets.CONTENT_WIDTH;
@@ -1156,7 +1116,7 @@ public class BankPriceMovementPanel extends PluginPanel
 	static final int PRESET_WIDTH = 49;
 	static final int PRESET_GAP = 3;
 	static final int PRESET_HEIGHT = 24;
-	/** The control row's content height (N 3.3) and the gap above it (N section 3 §3). */
+	/** The control row's content height (N 3.3) and the gap above it (N section 3.3). */
 	static final int CONTROL_HEIGHT = 22;
 	static final int ROW_GAP = 6;
 	/**
@@ -1167,7 +1127,7 @@ public class BankPriceMovementPanel extends PluginPanel
 	 * over it is the row's own top padding. The two are equal by value, and the panel's test measures both.
 	 */
 	static final int SEARCH_GAP = 4;
-	/** The "Show n more" row (N section 3 §5). */
+	/** The "Show n more" row (N section 3.5). */
 	static final int SHOW_MORE_HEIGHT = 26;
 	/** The air between two row cells, in px: {@link #rowsColumn}'s gap, and what {@link #fullListNeedsBar} counts. */
 	private static final int ROWS_GAP = 2;
@@ -1254,9 +1214,9 @@ public class BankPriceMovementPanel extends PluginPanel
 	/**
 	 * The tab the sidebar opens on next time: the config's {@code startTab}, which the toggle's press writes (1.1.0
 	 * part A) so it is the tab used LAST. Seeded from the prefs as the panel builds; the bridge's {@code starttab=} can
-	 * set it without switching the tab that is showing.
+	 * set it without switching the tab that is showing. Never null.
 	 */
-	private SidebarView startTab = SidebarView.ITEMS;
+	SidebarView startTab = SidebarView.ITEMS;
 	/** The menu's box row since addendum Z (Z2): the caption over the three preset boxes. */
 	private JPanel presetRow;
 	/** Those boxes, smallest first - the same style, and the same red rule, as the fold's Min / Max fields. */
@@ -1281,28 +1241,28 @@ public class BankPriceMovementPanel extends PluginPanel
 	/** The total's line: the figure WEST and the options gear EAST; the line stays for the gear (Q1). */
 	private JPanel totalRow;
 	private JLabel gearLabel;
-	private JLabel totalLabel;
+	JLabel totalLabel;
 	private JPanel moveLine;
 	private JLabel triangleLabel;
-	private JLabel deltaLabel;
-	private JLabel pctLabel;
+	JLabel deltaLabel;
+	JLabel pctLabel;
 	private JPanel stripHolder;
 	private JLabel footnoteLabel;
 	/** The card's last line: {@link #UPDATE_TEXT}, with its own tooltip rather than the card's (S1, S2). */
-	private JLabel updateLabel;
+	JLabel updateLabel;
 	/** Every hero component the card's tooltip goes on (playbook 7.5). */
 	private final List<JComponent> heroTipTargets = new ArrayList<>();
 	/** The window strip inside the card. */
 	private JPanel chipRow;
 	private final Map<MovementWindow, JLabel> windowChips = new EnumMap<>(MovementWindow.class);
 	private JPanel controlRow;
-	private JLabel sortButton;
-	private JLabel bandTarget;
+	JLabel sortButton;
+	JLabel bandTarget;
 	private JPanel fold;
 	private final JLabel[] presetCells = new JLabel[PRESET_COUNT];
 	private JLabel clearLabel;
-	private final Widgets.PlaceholderField minField;
-	private final Widgets.PlaceholderField maxField;
+	final Widgets.PlaceholderField minField;
+	final Widgets.PlaceholderField maxField;
 	/**
 	 * The box above the item list (1.0.9 part 4), built beside the gp fields above and mounted by {@link #searchRow}.
 	 * Typing narrows the rows this panel already holds ({@link #matching}); nothing here asks the service for anything.
@@ -1312,8 +1272,6 @@ public class BankPriceMovementPanel extends PluginPanel
 	private JPanel searchRow;
 	/** The List options icon at the right end of the search row (1.1.0 part G): two gears, which open {@link #listMenu}. */
 	private JLabel listOptionsLabel;
-	/** Whether the pointer is over the icon, so a hover redraws it white and a leave redraws it grey. */
-	private boolean listOptionsHot;
 	/** The List options menu (1.1.0 part G): the alch tick, a rule and the Up / Down colour rows. */
 	private JPopupMenu listMenu;
 	private JCheckBoxMenuItem showAlchItem;
@@ -1325,8 +1283,8 @@ public class BankPriceMovementPanel extends PluginPanel
 	 * options menu, never null. The rows are built from them ({@link #addPage}, {@link BankHistoryView}); {@link #applyChangeText}
 	 * and {@link #applyHistoryText} are the roads that move them, and never ask the service for anything.
 	 */
-	private final ChangeSettings itemsSettings;
-	private final ChangeSettings historySettings;
+	final ChangeSettings itemsSettings;
+	final ChangeSettings historySettings;
 	/** When the List options menu last became invisible, by {@link #clock}: {@link #menuClosedAtMillis}'s twin. */
 	private long listMenuClosedAtMillis = MENU_NEVER_CLOSED;
 	/**
@@ -1353,15 +1311,12 @@ public class BankPriceMovementPanel extends PluginPanel
 	private JPanel viewCaptionRow;
 	/** The History options icon (1.1.1 part G2): the List options gears again, at the right end of the History caption's row. */
 	private JLabel historyOptionsLabel;
-	/** Whether the pointer is over the icon, so a hover redraws it white and a leave redraws it grey. */
-	private boolean historyOptionsHot;
 	/**
-	 * The History options menu (1.1.1 part G2): "Include days before ..." and a rule while the record holds hidden days,
-	 * then "Single chart colour" - each the same component road as its twin in the settings menu.
+	 * The History options menu (1.1.1 part G2): "Single chart colour", the tab's change settings and (1.2.2) the row of "Reset
+	 * history" and "Restore history" at the bottom, the second greyed while no day is hidden ({@link #renderLegacy}).
 	 */
 	private JPopupMenu historyMenu;
-	private JCheckBoxMenuItem historyLegacyItem;
-	private JPopupMenu.Separator historyLegacyRule;
+	private JButton restoreHistoryButton;
 	private SwatchRow historyChartRow;
 	/** When the History options menu last became invisible, by {@link #clock}: {@link #listMenuClosedAtMillis}'s twin. */
 	private long historyMenuClosedAtMillis = MENU_NEVER_CLOSED;
@@ -1397,15 +1352,15 @@ public class BankPriceMovementPanel extends PluginPanel
 	private final JScrollPane scroll;
 	/** The scroll pane's VIEW: the list column anchored north (see {@link Widgets#north}). */
 	private final JPanel listView;
-	private final JPanel listColumn;
+	final JPanel listColumn;
 	private final JPanel rowsColumn;
-	private final JPanel showMoreRow;
-	private final JLabel showMoreLabel;
+	final JPanel showMoreRow;
+	final JLabel showMoreLabel;
 	/**
 	 * The History view (addendum AU), reached ONLY through its seam - {@code show}, {@code setRange},
-	 * {@code showMore}, {@code describe} (the contract's section 6) - because its inside is another builder's.
+	 * {@code showMore} (the contract's section 6) - because its inside is another builder's.
 	 */
-	private final BankHistoryView historyView;
+	final BankHistoryView historyView;
 	/** Its column, laid out as {@link #listColumn} is (amendment 9.8): the view its only child. */
 	private final JPanel historyColumn;
 	/** {@link #historyColumn} anchored north - the History card's scroll view, and what a shot prints for it. */
@@ -1414,31 +1369,31 @@ public class BankPriceMovementPanel extends PluginPanel
 	private final JScrollPane historyScroll;
 
 	// ---- state (EDT)
-	private RowFilter filter;
-	private HeroVisibility heroVisibility;
+	RowFilter filter;
+	HeroVisibility heroVisibility;
 
 	/** The five view switches (Q3, T1, Y1, 1.0.9 part 3), as the gear menu and the config both hold them; never null. */
-	private ViewOptions options;
+	ViewOptions options;
 	/** The three quick bands the fold's chips offer and the gear menu's boxes edit (Z1); never null. */
-	private BandPresets presets;
-	private List<MovementRow> rows = Collections.emptyList();
+	BandPresets presets;
+	List<MovementRow> rows = Collections.emptyList();
 	/**
 	 * What the reader has typed into the search box, trimmed; never null, "" for no search (1.0.9 part 4). Session state
 	 * and nothing more: it is not a config key and is not remembered, and it is kept across a tab switch and a publish
 	 * because it is the reader's, not the list's.
 	 */
-	private String search = "";
+	String search = "";
 	/**
 	 * {@link #rows} after the search - what the pages are built from and what "n items" counts as shown (1.0.9 part 4).
 	 * The very same list instance while there is no search, so a panel nobody has searched in holds one list and not two.
 	 * {@link #rows} itself stays what the service published: {@code total} still means the bank's rows under the band,
 	 * and a narrowing is never mistaken for the service having sent fewer.
 	 */
-	private List<MovementRow> matching = Collections.emptyList();
+	List<MovementRow> matching = Collections.emptyList();
 	/** Set while {@link #applySearch} writes the box itself, so the document listener does not answer its own write. */
 	private boolean settingSearch;
 	@Nullable
-	private Status status;
+	Status status;
 	/** The sprites this panel has asked for, by {@code ItemManager}'s key; see {@link #image}. */
 	private final Map<Long, AsyncBufferedImage> images = new HashMap<>();
 	/** {@link #pruneImages}' scratch set of the keys still listed; empty between rebuilds, never read outside it. */
@@ -1486,12 +1441,12 @@ public class BankPriceMovementPanel extends PluginPanel
 	 * Whether the plugin says the bank interface is open. Mirrored and never decided here: only the client thread can
 	 * see the widget, and the panel acting on a guess of its own would be a second, disagreeing answer.
 	 */
-	private boolean bankOpen;
+	boolean bankOpen;
 	/** Whether the plugin says the bank on screen is out of date and a read is owed - what the glow announces. */
-	private boolean bankPending;
-	/** The plugin's two counters, kept only so {@link #describe()} can hand a live run the numbers to prove it. */
-	private int bankHeldEvents;
-	private int bankReads;
+	boolean bankPending;
+	/** The plugin's two counters, kept only so the developer bridge's state ({@code PanelState}, in the test tree) can hand a live run the numbers to prove it. */
+	int bankHeldEvents;
+	int bankReads;
 	/**
 	 * The plugin's open-bank Refresh: a local re-read of the bank with no download and no cooldown of its own (section
 	 * 2.3) - the first half of a click on the link while the bank is open, the price re-check being the second (AS8) -
@@ -1526,15 +1481,15 @@ public class BankPriceMovementPanel extends PluginPanel
 
 	/** What the rows on screen were built from; see {@link ListContext}. */
 	private ListContext list;
-	private int shown;
+	int shown;
 	private int rebuilds;
-	private String card = CARD_LOGIN;
-	private boolean foldOpen;
+	String card = CARD_LOGIN;
+	boolean foldOpen;
 	/**
 	 * 1.0.9 part 5: whether the History tab shows the days recorded before 1.0.9. Off unless the reader turned it on;
 	 * {@link #visibleHistory} is the one place that reads it.
 	 */
-	private boolean includeLegacy;
+	boolean includeLegacy;
 	/**
 	 * 1.1.0 part B: the colours a rise and a fall are drawn in - what the settings menu's swatches show, never null; the
 	 * built-in green and red ({@link Widgets#MOVE_UP_DEFAULT}, {@link Widgets#MOVE_DOWN_TEXT}) until the reader chooses
@@ -1581,13 +1536,16 @@ public class BankPriceMovementPanel extends PluginPanel
 	private final LegacyPrompt legacyPrompt;
 	/** Set while the question is open, so a second press (a script's) cannot open a second dialog on top of it. */
 	private boolean askingLegacy;
+	/** The amount box a transfer's "another amount" and "Change the amount" open (1.2.2); the tests put their own answer here. */
+	TransferPrompt transferPrompt = (day, initial, whole) ->
+		TransferDialog.ask(SwingUtilities.getWindowAncestor(this), day, initial, whole, hideAmounts);
 	/**
 	 * 1.1.1 part B: the service's count of placeholder restarts the panel has already answered
 	 * ({@link Status#placeholderRestarts()}) - each new one turns the days switch off once.
 	 */
 	private int placeholderRestartsSeen;
 	/** Which of the two views is showing (addendum AU); never null. */
-	private SidebarView view = SidebarView.ITEMS;
+	SidebarView view = SidebarView.ITEMS;
 	/** Set while {@link #applyFilter} repaints the widgets, so the change is not saved a second time. */
 	private boolean updating;
 	private volatile boolean stopped;
@@ -1615,8 +1573,20 @@ public class BankPriceMovementPanel extends PluginPanel
 		this.itemManager = Objects.requireNonNull(itemManager, "itemManager");
 		this.service = Objects.requireNonNull(service, "service");
 		this.prefs = Objects.requireNonNull(prefs, "prefs");
-		this.legacyPrompt = prompt != null ? prompt
-			: question -> LegacyDialog.ask(SwingUtilities.getWindowAncestor(this), legacyText(), question);
+		this.legacyPrompt = prompt != null ? prompt : new LegacyPrompt()
+		{
+			@Override
+			public boolean ask(String question)
+			{
+				return ask(legacyText(), question, LegacyDialog.INCLUDE_TEXT);
+			}
+
+			@Override
+			public boolean ask(String title, String question, String yes)
+			{
+				return LegacyDialog.ask(SwingUtilities.getWindowAncestor(BankPriceMovementPanel.this), title, question, yes);
+			}
+		};
 		// The panel's own close of the settings menu is the hook a pressed header mark ends with; closeGearMenu reads the
 		// menu lazily, so handing it over before the menu exists is fine.
 		this.support = new SupportLinks(VERSION_NAME_TEXT, Version.CURRENT, GITHUB_URL, browser, this::closeGearMenu);
@@ -1722,7 +1692,7 @@ public class BankPriceMovementPanel extends PluginPanel
 		emptyColumn.add(emptyMessage);
 		emptyCard = Widgets.north(emptyColumn);
 
-		// The 2 px gutter between row cards is the DARK_GRAY ground showing through (N section 3 §4).
+		// The 2 px gutter between row cards is the DARK_GRAY ground showing through (N section 3.4).
 		rowsColumn = Widgets.column(ROWS_GAP);
 		showMoreLabel = Widgets.linkLabel("", Widgets.sans(12), ColorScheme.LIGHT_GRAY_COLOR, Color.WHITE,
 			this::showMore);
@@ -1736,12 +1706,7 @@ public class BankPriceMovementPanel extends PluginPanel
 		listColumn.add(rowsColumn);
 		listView = Widgets.north(listColumn);
 
-		scroll = new JScrollPane(listView);
-		scroll.setBorder(null);
-		scroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
-		scroll.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED);
-		scroll.getVerticalScrollBar().setUnitIncrement(16);
-		scroll.getViewport().setBackground(ColorScheme.DARK_GRAY_COLOR);
+		scroll = scrollOf(listView);
 		// The header is outside the scroll pane, so the bar appearing narrows the LIST and nothing else: without
 		// this the hero card and the control row would paint 7 px wider than the row cards under them, and the
 		// step would come and go as the list crossed the scroll threshold (see syncGutter).
@@ -1801,16 +1766,12 @@ public class BankPriceMovementPanel extends PluginPanel
 		historyView.setChartColour(singleChartColour ? chartColour : null);
 		// 1.1.0 part E: and in the mask the reader left it in (nothing is drawn yet, so this only stores it).
 		historyView.setAmountsHidden(hideAmounts);
+		historyView.setRowMenu(this::historyRowMenu);
 		historyColumn = Widgets.column(0);
 		historyColumn.setBorder(new EmptyBorder(0, MARGIN, MARGIN, MARGIN));
 		historyColumn.add(historyView);
 		historyHolder = Widgets.north(historyColumn);
-		historyScroll = new JScrollPane(historyHolder);
-		historyScroll.setBorder(null);
-		historyScroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
-		historyScroll.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED);
-		historyScroll.getVerticalScrollBar().setUnitIncrement(16);
-		historyScroll.getViewport().setBackground(ColorScheme.DARK_GRAY_COLOR);
+		historyScroll = scrollOf(historyHolder);
 		// The header keeps the SHOWING card's gutter (syncGutter), so this bar is watched exactly as the list's is.
 		historyScroll.getVerticalScrollBar().addComponentListener(gutterWatch);
 
@@ -2245,13 +2206,15 @@ public class BankPriceMovementPanel extends PluginPanel
 	 * which moved the check box out of the History tab's header (every row of which is added and removed, never hidden,
 	 * playbook 7.5) and into this menu. Called with every header sync, so the menu follows the record, and as the menu
 	 * opens, so it is right when it is laid out. It touches the menu only when the answer changed, and never while the
-	 * menu stands open: a reader looking at it keeps the menu they opened, and the next open has the new one.
+	 * menu stands open: a reader looking at it keeps the menu they opened, and the next open has the new one. It also puts
+	 * the History options menu's Restore history right ({@link #renderLegacy}), a button that is never added or removed.
 	 */
 	private void syncLegacyItem()
 	{
 		renderLegacy();
 		renderLegacyWords();
-		final boolean want = legacyDaysPresent();
+		// 1.2.2 part 5: never for a player's reset - Restore history is the player's way back.
+		final boolean want = legacyDaysPresent() && playerCut() == null;
 		final boolean has = legacyItem.getParent() == heroMenu;
 		if (want != has && !heroMenu.isVisible())
 		{
@@ -2262,22 +2225,6 @@ public class BankPriceMovementPanel extends PluginPanel
 			else
 			{
 				heroMenu.remove(legacyItem);
-			}
-		}
-		// 1.1.1 part G2: the History options menu holds the same item - first, with a rule under it - on the same condition and
-		// by the same rule: never changed while that menu stands open.
-		final boolean hasHistory = historyLegacyItem.getParent() == historyMenu;
-		if (want != hasHistory && !historyMenu.isVisible())
-		{
-			if (want)
-			{
-				historyMenu.insert(historyLegacyItem, 0);
-				historyMenu.insert(historyLegacyRule, 1);
-			}
-			else
-			{
-				historyMenu.remove(historyLegacyItem);
-				historyMenu.remove(historyLegacyRule);
 			}
 		}
 	}
@@ -2406,17 +2353,10 @@ public class BankPriceMovementPanel extends PluginPanel
 		// just aligned left, OK button align right as it is currently is". A JMenuItem cannot sit in a BoxLayout
 		// row and still look like one, so it is a small button like OK's, carrying the same text, the same
 		// tooltip and the same action as the menu item it replaces.
-		resetPresetsButton = Widgets.smallButton(RESET_PRESETS_TEXT, null, e -> pressReset());
-		setHover(resetPresetsButton, RESET_PRESETS_TIP);
-		resetPresetsButton.setFont(Widgets.sans(12));
-		resetPresetsButton.setMaximumSize(resetPresetsButton.getPreferredSize());
-		okButton = Widgets.smallButton(OK_TEXT, null, e -> pressOk());
-		setHover(okButton, OK_TIP);
-		okButton.setFont(Widgets.sans(12));
-		// Read AFTER the font is set, and pinned so no ButtonUI can decide to fill the row with a 180 px "OK":
-		// BoxLayout stretches a child up to its MAXIMUM, and the button's must stay the size of the word for the
-		// glue to have anything to push against.
-		okButton.setMaximumSize(okButton.getPreferredSize());
+		resetPresetsButton = rowButton(RESET_PRESETS_TEXT, RESET_PRESETS_TIP, this::pressReset);
+		// Pinned (rowButton) so no ButtonUI can decide to fill the row with a 180 px "OK": BoxLayout stretches a child up to
+		// its MAXIMUM, and the button's must stay the size of the word for the glue to have anything to push against.
+		okButton = rowButton(OK_TEXT, OK_TIP, this::pressOk);
 		// Reset first, then the glue, then OK: BoxLayout hands the row's spare width to the glue, so the one
 		// before it is pinned left and the one after it right, however wide the menu is.
 		row.add(resetPresetsButton);
@@ -2456,20 +2396,38 @@ public class BankPriceMovementPanel extends PluginPanel
 	 */
 	void openGearMenu(final JComponent anchor)
 	{
+		toggleMenu(heroMenu, this::gearPressOpens, anchor, false);
+	}
+
+	/**
+	 * The toggle all three options menus share (AB1): a press while the menu stands takes it down and opens nothing; a
+	 * press that does not open ({@code pressOpens}, asked only now) or an anchor not on any screen opens nothing either;
+	 * otherwise the menu is shown under {@code anchor}, at its left edge or, for the two icons at the sidebar's right,
+	 * with its right edge on the anchor's.
+	 */
+	private void toggleMenu(final JPopupMenu menu, final BooleanSupplier pressOpens, final JComponent anchor,
+		final boolean rightEdge)
+	{
 		if (stopped)
 		{
 			return;
 		}
-		if (heroMenu.isVisible())
+		if (menu.isVisible())
 		{
-			closeGearMenu();
+			menu.setVisible(false);
 			return;
 		}
-		if (!gearPressOpens() || !anchor.isShowing())
+		if (!pressOpens.getAsBoolean() || !anchor.isShowing())
 		{
 			return;
 		}
-		heroMenu.show(anchor, 0, anchor.getHeight());
+		menu.show(anchor, rightEdge ? anchor.getWidth() - menu.getPreferredSize().width : 0, anchor.getHeight());
+	}
+
+	/** Whether a press after the menu closed at {@code closedAt} opens it: not when that was within the guard (AB1). */
+	private boolean pressOpens(final long closedAt)
+	{
+		return closedAt == MENU_NEVER_CLOSED || clock.getAsLong() - closedAt >= GEAR_REOPEN_GUARD_MILLIS;
 	}
 
 	/**
@@ -2483,8 +2441,7 @@ public class BankPriceMovementPanel extends PluginPanel
 	 */
 	boolean gearPressOpens()
 	{
-		return menuClosedAtMillis == MENU_NEVER_CLOSED
-			|| clock.getAsLong() - menuClosedAtMillis >= GEAR_REOPEN_GUARD_MILLIS;
+		return pressOpens(menuClosedAtMillis);
 	}
 
 	/**
@@ -2786,8 +2743,8 @@ public class BankPriceMovementPanel extends PluginPanel
 	 *
 	 * <p><b>The caption stands in a row of its own since 1.1.1 part G2</b>: in History alone, the same two gears the Items
 	 * tab carries at the search box's right end sit at the row's east end ({@link #renderHistoryGears}) and open the History
-	 * options menu ({@link #buildHistoryMenu}); and, while the record's early days are hidden for the placeholder bug, the
-	 * "i" icon stands directly left of them ({@link #syncLegacyInfo}, part I2). The row is as tall as the caption was, so the
+	 * options menu ({@link #buildHistoryMenu}); and, while the record's early days are hidden for the placeholder bug or by the
+	 * player's reset, the "i" icon stands directly left of them ({@link #syncLegacyInfo}, part I2). The row is as tall as the caption was, so the
 	 * strip is exactly the strip it was whichever icons show - the Items tab is untouched, and nothing under the row ever moves.
 	 */
 	private JPanel buildViewStrip()
@@ -2827,8 +2784,8 @@ public class BankPriceMovementPanel extends PluginPanel
 
 	/**
 	 * The "i" icon on the History caption's row (1.1.1 part I2): {@link InfoIcon}'s disc, grey like the gears and white under the
-	 * mouse, with an always-on hover ({@link #LEGACY_INFO_TIP}) and a LEFT press that asks the include question by the box's own
-	 * road ({@link #pressLegacy()}: the {@link LegacyPrompt}, the stored key, the cut). It is exactly the icon's width wide - the
+	 * mouse, with an always-on hover ({@link #LEGACY_INFO_TIP}) and a LEFT press that asks the include question by the road of the
+	 * settings menu's box and of Restore history ({@link #pressLegacy()}: the {@link LegacyPrompt}, the stored key, the cut). It is exactly the icon's width wide - the
 	 * 6 px gap to the gears beside it is the gears' own air ({@link #LIST_OPTIONS_GAP}) - with {@link #VIEW_CAPTION_GAP} of air
 	 * above, the caption's: the row stretches it and the icon is centred in what is left, which is the caption's text line, as
 	 * the gears are.
@@ -2857,12 +2814,13 @@ public class BankPriceMovementPanel extends PluginPanel
 					icon.setToolTipText(null);
 					try
 					{
-						// The settings item's own road: the answer is put right in both menus whichever way the question went.
-						pressLegacy();
+						// Restore history's own road (the icon stands only while days are hidden): the answer is put right in both
+						// menus whichever way the question went.
+						pressLegacy(true);
 					}
 					finally
 					{
-						icon.setToolTipText(LEGACY_INFO_TIP);
+						icon.setToolTipText(legacyInfoTip());
 					}
 					renderLegacy();
 				}
@@ -2891,7 +2849,7 @@ public class BankPriceMovementPanel extends PluginPanel
 	private void renderLegacyInfoIcon()
 	{
 		legacyInfoLabel.setIcon(InfoIcon.icon(legacyInfoHot ? Color.WHITE : Widgets.PLACEHOLDER_COLOR));
-		legacyInfoLabel.setToolTipText(LEGACY_INFO_TIP);
+		legacyInfoLabel.setToolTipText(legacyInfoTip());
 	}
 
 	/**
@@ -2923,8 +2881,18 @@ public class BankPriceMovementPanel extends PluginPanel
 	 */
 	private JLabel buildHistoryOptionsIcon()
 	{
+		return optionsIcon(VIEW_CAPTION_GAP, HISTORY_OPTIONS_TIP, this::openHistoryMenu);
+	}
+
+	/**
+	 * One options icon: {@link GearsIcon}'s two gears, grey at rest and white under the mouse, its hover always on, a LEFT
+	 * press handing the icon to {@code open}; {@code top} is the air above it, the label's own left air being
+	 * {@link #LIST_OPTIONS_GAP}. The icon is redrawn from the pointer alone, so the label keeps no state of its own.
+	 */
+	private static JLabel optionsIcon(final int top, final String tip, final Consumer<JComponent> open)
+	{
 		final JLabel icon = new JLabel();
-		icon.setBorder(new EmptyBorder(VIEW_CAPTION_GAP, LIST_OPTIONS_GAP, 0, 0));
+		icon.setBorder(new EmptyBorder(top, LIST_OPTIONS_GAP, 0, 0));
 		icon.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
 		icon.addMouseListener(new MouseAdapter()
 		{
@@ -2933,34 +2901,43 @@ public class BankPriceMovementPanel extends PluginPanel
 			{
 				if (Widgets.isPress(e))
 				{
-					openHistoryMenu(icon);
+					open.accept(icon);
 				}
 			}
 
 			@Override
 			public void mouseEntered(MouseEvent e)
 			{
-				historyOptionsHot = true;
-				renderHistoryOptionsIcon();
+				paintOptionsIcon(icon, true, tip);
 			}
 
 			@Override
 			public void mouseExited(MouseEvent e)
 			{
-				historyOptionsHot = false;
-				renderHistoryOptionsIcon();
+				paintOptionsIcon(icon, false, tip);
 			}
 		});
-		historyOptionsLabel = icon;
-		renderHistoryOptionsIcon();
+		paintOptionsIcon(icon, false, tip);
 		return icon;
 	}
 
 	/** The icon drawn for the state it is in: grey, or - under the mouse - white; its hover never changes. */
-	private void renderHistoryOptionsIcon()
+	private static void paintOptionsIcon(final JLabel icon, final boolean hot, final String tip)
 	{
-		historyOptionsLabel.setIcon(GearsIcon.icon(historyOptionsHot ? Color.WHITE : Widgets.PLACEHOLDER_COLOR));
-		historyOptionsLabel.setToolTipText(HISTORY_OPTIONS_TIP);
+		icon.setIcon(GearsIcon.icon(hot ? Color.WHITE : Widgets.PLACEHOLDER_COLOR));
+		icon.setToolTipText(tip);
+	}
+
+	/** A vertical-only scroll pane over {@code view}, the list's and the History tab's alike: no border, steps of 16. */
+	private static JScrollPane scrollOf(final JComponent view)
+	{
+		final JScrollPane pane = new JScrollPane(view);
+		pane.setBorder(null);
+		pane.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+		pane.setVerticalScrollBarPolicy(ScrollPaneConstants.VERTICAL_SCROLLBAR_AS_NEEDED);
+		pane.getVerticalScrollBar().setUnitIncrement(16);
+		pane.getViewport().setBackground(ColorScheme.DARK_GRAY_COLOR);
+		return pane;
 	}
 
 	/**
@@ -2968,27 +2945,19 @@ public class BankPriceMovementPanel extends PluginPanel
 	 * header and no OK row. Its items are the settings menu's own twins - a component has one parent, so each is built again
 	 * by the same factory and its press is the same method, never a second implementation:
 	 * <ol>
-	 * <li>{@link #historyLegacyItem}, "Include days before v1.0.9" or "... v1.1.1" with the same hover, whose press is the
-	 * settings item's ({@link #pressLegacy()}: the {@link LegacyPrompt} question, the stored key, the cut), and the rule
-	 * under it - both IN the menu only while the record holds hidden days ({@link #syncLegacyItem}, as for the settings
-	 * menu's item);</li>
 	 * <li>"Single chart colour" ({@link #historyChartRow}), the settings menu's {@link SwatchRow} again: its tick runs
 	 * {@link #pressSingleChartColour} and its swatch {@link #pressChartColour};</li>
-	 * <li>and, since release 1.2.1 part 2, a rule and then this tab's own change settings - the five rows the List options menu
+	 * <li>since release 1.2.1 part 2, a rule and then this tab's own change settings - the five rows the List options menu
 	 * has under its colours, built by the same {@link ChangeSettings} over the tab's own {@link #historySettings}: "GP change
-	 * size", its bar, "Opacity [box] %", "Percent change size", its bar.</li>
+	 * size", its bar, "Opacity [box] %", "Percent change size", its bar;</li>
+	 * <li>and, since 1.2.2, a rule and the one row of "Reset history" and "Restore history" ({@link #buildResetRow}). The
+	 * "Include days before ..." check item that stood first is the settings menu's alone now: Restore history is its press.</li>
 	 * </ol>
 	 */
 	private JPopupMenu buildHistoryMenu()
 	{
 		final JPopupMenu menu = new JPopupMenu();
 		menu.setBorder(new EmptyBorder(5, 5, 5, 5));
-		historyLegacyItem = checkItem(LEGACY_TEXT, LEGACY_TIP, on ->
-		{
-			pressLegacy();
-			renderLegacy();
-		});
-		historyLegacyRule = new JPopupMenu.Separator();
 		historyChartRow = new SwatchRow(SINGLE_CHART_COLOUR_TEXT, () -> chartColour, true, this::pressChartColour);
 		setHover(historyChartRow, SINGLE_CHART_COLOUR_TIP);
 		historyChartRow.setSelected(singleChartColour);
@@ -2996,6 +2965,9 @@ public class BankPriceMovementPanel extends PluginPanel
 		menu.add(historyChartRow);
 		menu.addSeparator();
 		historySettings.addTo(menu);
+		// 1.2.2: and under them, after a rule, the row that resets the history and brings it back.
+		menu.addSeparator();
+		menu.add(buildResetRow());
 		historySettings.wireDrop(menu);
 		menu.addPopupMenuListener(new PopupMenuListener()
 		{
@@ -3030,6 +3002,141 @@ public class BankPriceMovementPanel extends PluginPanel
 	}
 
 	/**
+	 * The History options menu's last row (1.2.2, layout D of the user's picture): {@link #RESET_TEXT} hard left and
+	 * {@link #RESTORE_TEXT} hard right, small buttons in the OK row's own style with the glue between. Restore is greyed while no day
+	 * is hidden or the hidden days are shown ({@link #renderLegacy}). Both take the menu down first: each may put a question to the
+	 * player, and a question is not asked under a menu that stays open.
+	 */
+	private JPanel buildResetRow()
+	{
+		final JPanel row = new JPanel();
+		row.setLayout(new BoxLayout(row, BoxLayout.X_AXIS));
+		row.setOpaque(false);
+		row.setBorder(new EmptyBorder(2, ROW_GAP, 2, ROW_GAP));
+		final JButton reset = rowButton(RESET_TEXT, RESET_TIP, () ->
+		{
+			closeHistoryMenu();
+			startFrom(today(), true);
+		});
+		restoreHistoryButton = rowButton(RESTORE_TEXT, RESTORE_TIP, () ->
+		{
+			closeHistoryMenu();
+			pressLegacy(true);
+		});
+		row.add(reset);
+		row.add(Box.createHorizontalGlue());
+		row.add(restoreHistoryButton);
+		restoreHistoryButton.setEnabled(false);
+		return row;
+	}
+
+	/** A small button of a menu's bottom row: the menu's 12 px face, pinned to the size of its word so the row's glue has room to push. */
+	private JButton rowButton(final String text, final String tip, final Runnable press)
+	{
+		final JButton button = Widgets.smallButton(text, null, e -> press.run());
+		setHover(button, tip);
+		button.setFont(Widgets.sans(12));
+		button.setMaximumSize(button.getPreferredSize());
+		return button;
+	}
+
+	/** One plain item of a menu in the sidebar's face (1.2.2): its press runs {@code press}. */
+	private static JMenuItem menuItem(final JPopupMenu menu, final String text, final Runnable press)
+	{
+		final JMenuItem item = new JMenuItem(text);
+		item.setFont(Widgets.sans(12));
+		item.addActionListener(e -> press.run());
+		menu.add(item);
+		return item;
+	}
+
+	/**
+	 * The right-click menu of a day row (1.2.2), built at the press from the record as it stands now. A day with a reading and a
+	 * reading before it offers the transfer: unmarked, "This was a transfer: -200m" (the amount {@link BankHistoryMath#prefill}
+	 * offers, one click) and "of another amount..." (the amount box); with a note on it - "Not a transfer" and "Change the amount...",
+	 * whether or not the row draws the mark: a coins note draws none while the coins switch is off, and the unmarked items would replace
+	 * it with no word, so that day offers its note's own two items, "Change the amount..." starting from the note. Every day
+	 * offers "Reset history from this day", after a rule where the transfer items stand. Nothing here is a hover: a menu item's
+	 * words are all it has.
+	 */
+	JPopupMenu historyRowMenu(final LocalDate day)
+	{
+		final BankHistorySeries series = drawnHistory(today());
+		final ViewOptions o = status == null || status.options() == null ? ViewOptions.DEFAULT : status.options();
+		final BankHistoryPoint was = series.atOrBefore(day.minusDays(1));
+		final JPopupMenu menu = new JPopupMenu();
+		menu.setBorder(new EmptyBorder(5, 5, 5, 5));
+		if (series.on(day) != null && was != null)
+		{
+			final BankHistorySeries.Transfer note = series.transfers().get(day);
+			// A stored note is the day's own offer even while the coins switch leaves it out (the row then draws no mark): never
+			// replaced by the unmarked items, which would drop it with no word and bring the cliff back with the switch.
+			final BankHistorySeries.Transfer offer = note != null ? note : BankHistoryMath.prefill(series, day, o);
+			final long whole = series.on(day).valueFor(o) - was.valueFor(o);
+			if (note != null)
+			{
+				menuItem(menu, NOT_TRANSFER_TEXT, () -> unmarkTransfer(day));
+				menuItem(menu, CHANGE_AMOUNT_TEXT, () -> askTransfer(day, offer, whole));
+			}
+			else
+			{
+				if (offer != null)
+				{
+					menuItem(menu, TRANSFER_TEXT + ": " + AmountMask.change(hideAmounts, MovementRowPanel.signedGp(offer.gp())),
+						() -> markTransfer(day, offer.gp(), offer.coins()));
+				}
+				menuItem(menu, TRANSFER_OTHER_TEXT, () -> askTransfer(day, offer, whole));
+			}
+			menu.addSeparator();
+		}
+		menuItem(menu, RESET_FROM_TEXT, () -> startFrom(day, false));
+		return menu;
+	}
+
+	/** Puts the amount box to the player and marks {@code day} with what they typed, keeping the offer's coins flag. */
+	private void askTransfer(final LocalDate day, @Nullable final BankHistorySeries.Transfer offer, final long whole)
+	{
+		final Long typed = transferPrompt.ask(day, offer == null ? 0L : offer.gp(), whole);
+		if (typed != null && !stopped)
+		{
+			markTransfer(day, typed, offer != null && offer.coins());
+		}
+	}
+
+	/**
+	 * The reader marks, changes or takes off a transfer (1.2.2). Like every act of theirs the service answers with a publish, so the
+	 * hold is lifted BEFORE the service is told ({@link #liftBankHold}): with the bank open the answer would be stored, and the row
+	 * and the chart would keep their old figures until the bank closed. {@code gp} 0 takes the note off.
+	 */
+	private void markTransfer(final LocalDate day, final long gp, final boolean coins)
+	{
+		liftBankHold();
+		service.markTransfer(day, gp, coins);
+	}
+
+	private void unmarkTransfer(final LocalDate day)
+	{
+		liftBankHold();
+		service.removeTransfer(day);
+	}
+
+	/**
+	 * "Reset history" (from today) and "Reset history from this day" (1.2.2): ask first - nothing is lost, the days only hide, and
+	 * Restore history brings them back - and on a yes cut the history there, for the player's own reason.
+	 */
+	private void startFrom(final LocalDate day, final boolean fresh)
+	{
+		final boolean yes = legacyPrompt.ask(fresh ? RESET_TEXT : RESET_FROM_TEXT,
+			fresh ? RESET_ASK : RESET_ASK_HEAD + " before " + BankHistoryDayRow.weekday(day) + RESET_ASK_TAIL, RESET_YES);
+		if (yes && !stopped)
+		{
+			// The reader's act, answered by a publish: lifted before the service is told (see markTransfer).
+			liftBankHold();
+			service.startHistoryFrom(day);
+		}
+	}
+
+	/**
 	 * Opens the History options menu under {@code anchor}, the icon that was pressed, with the menu's right edge on the icon's
 	 * (1.1.1 part G2) - the icon is at the sidebar's right, so the menu opens leftward, as the List options menu does. A press
 	 * while the menu stands opens nothing and takes it down: the same toggle the List options icon has ({@link #openListMenu}),
@@ -3037,20 +3144,7 @@ public class BankPriceMovementPanel extends PluginPanel
 	 */
 	void openHistoryMenu(final JComponent anchor)
 	{
-		if (stopped)
-		{
-			return;
-		}
-		if (historyMenu().isVisible())
-		{
-			closeHistoryMenu();
-			return;
-		}
-		if (!historyPressOpens() || !anchor.isShowing())
-		{
-			return;
-		}
-		historyMenu().show(anchor, anchor.getWidth() - historyMenu().getPreferredSize().width, anchor.getHeight());
+		toggleMenu(historyMenu(), this::historyPressOpens, anchor, true);
 	}
 
 	/**
@@ -3060,8 +3154,7 @@ public class BankPriceMovementPanel extends PluginPanel
 	 */
 	boolean historyPressOpens()
 	{
-		return historyMenuClosedAtMillis == MENU_NEVER_CLOSED
-			|| clock.getAsLong() - historyMenuClosedAtMillis >= GEAR_REOPEN_GUARD_MILLIS;
+		return pressOpens(historyMenuClosedAtMillis);
 	}
 
 	private void closeHistoryMenu()
@@ -3099,14 +3192,17 @@ public class BankPriceMovementPanel extends PluginPanel
 	/**
 	 * Puts the "i" icon into the caption row, directly left of the gears, or takes it out (1.1.1 part I2; part G2 stood three grey
 	 * lines under the row in its place). It is there exactly while ALL of these hold: the History tab is showing, the record hides
-	 * its early days for the placeholder bug ({@link #placeholderDays} - never for 1.0.9's reason), there ARE hidden days
-	 * ({@link #legacyDaysPresent}), and "Include days before ..." is off. Ticking the box from either menu, or from the icon's own
-	 * press, takes it away and unticking brings it back. Added and removed, never hidden, like every row here; nothing under the row
+	 * its early days for the placeholder bug ({@link #placeholderDays}) or by the player's reset ({@link #playerCut}) - never for
+	 * 1.0.9's reason - and those days are hidden and not shown ({@link #daysHidden}: a player's reset is shown by this account's own
+	 * restore mark, the other reasons by the "Include days before ..." box). Ticking the settings menu's box, pressing Restore
+	 * history, or the icon's own press, takes it away; unticking the box or a new reset brings it back. Added and removed, never hidden, like every row here; nothing under the row
 	 * moves with it, because the row is as tall with it as without it. Touches nothing when the row is already right.
 	 */
 	private void syncLegacyInfo()
 	{
-		final boolean want = view == SidebarView.HISTORY && placeholderDays() && legacyDaysPresent() && !includeLegacy;
+		final boolean want = view == SidebarView.HISTORY && (placeholderDays() || playerCut() != null) && daysHidden();
+		// The words follow the record's reason (and the day the player cut at), so they are put right whether or not the icon moves.
+		renderLegacyInfoIcon();
 		if (want == (legacyInfoLabel.getParent() == viewCaptionRow))
 		{
 			return;
@@ -3397,44 +3493,7 @@ public class BankPriceMovementPanel extends PluginPanel
 	 */
 	private JLabel buildListOptionsIcon()
 	{
-		final JLabel icon = new JLabel();
-		icon.setBorder(new EmptyBorder(0, LIST_OPTIONS_GAP, 0, 0));
-		icon.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-		icon.addMouseListener(new MouseAdapter()
-		{
-			@Override
-			public void mousePressed(MouseEvent e)
-			{
-				if (Widgets.isPress(e))
-				{
-					openListMenu(icon);
-				}
-			}
-
-			@Override
-			public void mouseEntered(MouseEvent e)
-			{
-				listOptionsHot = true;
-				renderListOptionsIcon();
-			}
-
-			@Override
-			public void mouseExited(MouseEvent e)
-			{
-				listOptionsHot = false;
-				renderListOptionsIcon();
-			}
-		});
-		listOptionsLabel = icon;
-		renderListOptionsIcon();
-		return icon;
-	}
-
-	/** The icon drawn for the state it is in: grey, or - under the mouse - white; its hover never changes. */
-	private void renderListOptionsIcon()
-	{
-		listOptionsLabel.setIcon(GearsIcon.icon(listOptionsHot ? Color.WHITE : Widgets.PLACEHOLDER_COLOR));
-		listOptionsLabel.setToolTipText(LIST_OPTIONS_TIP);
+		return optionsIcon(0, LIST_OPTIONS_TIP, this::openListMenu);
 	}
 
 	/**
@@ -3659,20 +3718,7 @@ public class BankPriceMovementPanel extends PluginPanel
 	 */
 	void openListMenu(final JComponent anchor)
 	{
-		if (stopped)
-		{
-			return;
-		}
-		if (listMenu().isVisible())
-		{
-			closeListMenu();
-			return;
-		}
-		if (!listPressOpens() || !anchor.isShowing())
-		{
-			return;
-		}
-		listMenu().show(anchor, anchor.getWidth() - listMenu().getPreferredSize().width, anchor.getHeight());
+		toggleMenu(listMenu(), this::listPressOpens, anchor, true);
 	}
 
 	/**
@@ -3682,8 +3728,7 @@ public class BankPriceMovementPanel extends PluginPanel
 	 */
 	boolean listPressOpens()
 	{
-		return listMenuClosedAtMillis == MENU_NEVER_CLOSED
-			|| clock.getAsLong() - listMenuClosedAtMillis >= GEAR_REOPEN_GUARD_MILLIS;
+		return pressOpens(listMenuClosedAtMillis);
 	}
 
 	private void closeListMenu()
@@ -3870,7 +3915,7 @@ public class BankPriceMovementPanel extends PluginPanel
 	}
 
 	/**
-	 * Puts a {@link PluginErrorPanel}'s two labels into THIS panel's type (N section 3 §2), because it sets
+	 * Puts a {@link PluginErrorPanel}'s two labels into THIS panel's type (N section 3.2), because it sets
 	 * neither: its title inherits the look and feel's default - under {@code RuneLiteLAF} the 16 px bitmap
 	 * RuneScape face ({@code RuneLiteLAF.java:132}) - and its description is
 	 * {@code getRunescapeSmallFont()} in {@code Color.GRAY}, which measures 3.73:1 on the sidebar's ground.
@@ -4446,13 +4491,6 @@ public class BankPriceMovementPanel extends PluginPanel
 		return historySettings.text();
 	}
 
-	/** One tab's change settings as the dev bridge echoes them: {@code {gpSize, pctSize, gpOpacity}}. */
-	private static String textJson(ChangeText text)
-	{
-		return "{\"gpSize\":\"" + text.gp().name() + "\",\"pctSize\":\"" + text.pct().name() + "\",\"gpOpacity\":"
-			+ text.brightness() + "}";
-	}
-
 	// ---------------------------------------------------------------- the rise and fall colours (EDT, 1.1.0 part B)
 
 	/**
@@ -4824,17 +4862,6 @@ public class BankPriceMovementPanel extends PluginPanel
 	String presetLabel(int i)
 	{
 		return i == 0 ? ALL_LABEL : presets.labels()[i - 1];
-	}
-
-	/** The fold's four chip texts in order - {@code describe()}'s {@code presetLabels} (Z4). */
-	public String[] presetLabels()
-	{
-		final String[] out = new String[PRESET_COUNT];
-		for (int i = 0; i < out.length; i++)
-		{
-			out[i] = presetLabel(i);
-		}
-		return out;
 	}
 
 	// ---------------------------------------------------------------- the filter (EDT)
@@ -6102,7 +6129,7 @@ public class BankPriceMovementPanel extends PluginPanel
 	 * the direction are on the button's face and what a press will do is on the menu entry (X1).
 	 *
 	 * <p>The band button's tooltip carries the COUNT: addendum N deleted the count line deliberately
-	 * (section 3 §5), so after setting a band there is otherwise nowhere on the panel that says whether it
+	 * (section 3.5), so after setting a band there is otherwise nowhere on the panel that says whether it
 	 * matched 3 items or 300 - the "Show n more" row is absent whenever the band matched less than a page.
 	 */
 	private void renderControl()
@@ -6157,7 +6184,7 @@ public class BankPriceMovementPanel extends PluginPanel
 	 * inside it), the Items | Net Worth History strip (AU), then - in Items only - the control row and the fold while
 	 * open, and the problem row while there is a problem in both views, and - in Items only, last - the search box
 	 * (1.0.9 part 4) - all of them only while a bank is loaded (N
-	 * section 3 §3: LOGIN and NO_BANK empty the header). Rows are added and removed, never hidden (playbook 7.5), and
+	 * section 3.3: LOGIN and NO_BANK empty the header). Rows are added and removed, never hidden (playbook 7.5), and
 	 * nothing is touched when the set is already right, so a status-only publish causes no flicker (C30).
 	 *
 	 * <p>The History tab's header holds no check box since 1.1.0 part A: "Include days before v1.0.9" is the settings
@@ -6300,12 +6327,6 @@ public class BankPriceMovementPanel extends PluginPanel
 		startTab = next == null ? SidebarView.ITEMS : next;
 	}
 
-	/** The tab the sidebar opens on next time, the one used last (AU; 1.1.0): the bridge's {@code state.startTab}. Never null. */
-	SidebarView startTab()
-	{
-		return startTab;
-	}
-
 	/**
 	 * The toggle's press - and the bridge's {@code view=} (amendment 9.11): shows {@code next} and REMEMBERS it - since
 	 * 1.1.0 part A the sidebar opens on the tab used last, so a press that changes the stored tab writes it through
@@ -6365,12 +6386,6 @@ public class BankPriceMovementPanel extends PluginPanel
 		showCard(chooseCard());
 	}
 
-	/** Which view is showing (AU): the bridge's {@code state.view}. Never null. */
-	public SidebarView view()
-	{
-		return view;
-	}
-
 	/** The toggle lit on {@link #view} and the caption under it. */
 	private void renderView()
 	{
@@ -6395,44 +6410,53 @@ public class BankPriceMovementPanel extends PluginPanel
 	}
 
 	/**
-	 * What the History view says about itself, for the bridge's {@code state.bankHistory} (amendment 9.11), and - 1.0.9
-	 * part 5 - the record's {@code freshFrom}: the ISO date of the first day recorded by 1.0.9, {@code "all"} when every
-	 * day in the file was recorded before it, and null (left out of the answer) when none was.
-	 */
-	public LinkedHashMap<String, Object> bankHistoryState()
-	{
-		final LinkedHashMap<String, Object> map = historyView.describe();
-		final BankHistorySeries record = status == null ? null : status.bankHistory();
-		final LocalDate fresh = record == null ? null : record.freshFrom();
-		map.put("freshFrom", fresh == null ? null : LocalDate.MAX.equals(fresh) ? "all" : fresh.toString());
-		// 1.1.1 part B: why the days before it are hidden (null = 1.0.9's reason) and the day the record was judged for
-		// counted placeholders (null = not yet).
-		map.put("freshWhy", record == null ? null : record.freshWhy());
-		final LocalDate checked = record == null ? null : record.placeholdersChecked();
-		map.put("placeholdersChecked", checked == null ? null : checked.toString());
-		return map;
-	}
-
-	/**
 	 * The series the History tab and the card are drawn from (1.0.9 part 5) - the ONE place the days before 1.0.9 are
 	 * cut away. The last-drawn status's record, without those days unless the reader asked for them; neither the view
 	 * nor the card has a switch of its own, they draw whatever series they are handed. A mocked status answers null,
-	 * which reads as empty (amendment 9.2).
+	 * which reads as empty (amendment 9.2). Since 1.2.2 part 5 the answer is the record's own for a player's reset - whole once
+	 * the player restored it, whatever the shared box says - and the shared box's for the 1.0.9 / 1.1.1 reasons.
 	 */
 	private BankHistorySeries visibleHistory()
 	{
-		final BankHistorySeries record = status == null ? null : status.bankHistory();
+		final BankHistorySeries record = cutRecord();
 		if (record == null)
 		{
 			return BankHistorySeries.EMPTY;
 		}
-		return includeLegacy ? record : record.fromFresh();
+		return hiddenDaysShown(record) ? record : record.fromFresh();
+	}
+
+	/**
+	 * Whether {@code record}'s early days are shown now (1.2.2 part 5): a player's reset by the record's own restore mark - this
+	 * account's, in its notes file - and any other reason by the shared "Include days before ..." box.
+	 */
+	private boolean hiddenDaysShown(final BankHistorySeries record)
+	{
+		return BankHistorySeries.WHY_PLAYER.equals(record.freshWhy()) ? record.restored() : includeLegacy;
+	}
+
+	/**
+	 * The last-drawn status's record as its cut stands ({@link BankHistorySeries#standing}), or null: the one record every reading of
+	 * the cut below goes through, so a player's reset the player has restored, over a 1.0.9 / 1.1.1 cut, reads as that cut again.
+	 */
+	@Nullable
+	private BankHistorySeries cutRecord()
+	{
+		final BankHistorySeries record = status == null ? null : status.bankHistory();
+		return record == null ? null : record.standing();
+	}
+
+	/** Whether days are hidden for the last-drawn status's record and not shown - what Restore history and the "i" icon wait for. */
+	private boolean daysHidden()
+	{
+		final BankHistorySeries record = cutRecord();
+		return record != null && record.hasLegacyDays() && !hiddenDaysShown(record);
 	}
 
 	/** Whether the last-drawn status's record holds a day recorded before 1.0.9 - what puts the check item in the menu. */
-	private boolean legacyDaysPresent()
+	boolean legacyDaysPresent()
 	{
-		final BankHistorySeries record = status == null ? null : status.bankHistory();
+		final BankHistorySeries record = cutRecord();
 		return record != null && record.hasLegacyDays();
 	}
 
@@ -6442,14 +6466,39 @@ public class BankPriceMovementPanel extends PluginPanel
 	 */
 	private boolean placeholderDays()
 	{
-		final BankHistorySeries record = status == null ? null : status.bankHistory();
+		final BankHistorySeries record = cutRecord();
 		return record != null && BankHistorySeries.WHY_PLACEHOLDERS.equals(record.freshWhy());
 	}
 
-	/** The item's words for the record's reason (1.1.1 part B) - also the dialog's title. */
+	/**
+	 * The day the PLAYER cut the record at (1.2.2, "Reset history" or "Reset history from this day"), or null when the record's
+	 * cut - if it has one - is any other one's: the third reason, whose words say the day.
+	 */
+	@Nullable
+	private LocalDate playerCut()
+	{
+		final BankHistorySeries record = cutRecord();
+		return record != null && BankHistorySeries.WHY_PLAYER.equals(record.freshWhy()) ? record.freshFrom() : null;
+	}
+
+	/** The item's words for the record's reason (1.1.1 part B) - also the dialog's title. The item is the 1.0.9 / 1.1.1 reasons' alone. */
 	private String legacyText()
 	{
 		return placeholderDays() ? LEGACY_PLACEHOLDERS_TEXT : LEGACY_TEXT;
+	}
+
+	/** The item's hover for the record's reason, one line. */
+	private String legacyTip()
+	{
+		return placeholderDays() ? LEGACY_PLACEHOLDERS_TIP : LEGACY_TIP;
+	}
+
+	/** The "i" icon's hover for the record's reason: {@link #LEGACY_INFO_TIP}'s four short rows, or the player's own three. */
+	private String legacyInfoTip()
+	{
+		final LocalDate cut = playerCut();
+		return cut == null || placeholderDays() ? LEGACY_INFO_TIP : "<html>Days before " + MovementMath.formatDay(cut)
+			+ " are hidden because<br>you reset your history. Restore history<br>in the History options brings them back.</html>";
 	}
 
 	/** The question for the record's reason (1.1.1 part B). */
@@ -6465,13 +6514,7 @@ public class BankPriceMovementPanel extends PluginPanel
 		if (!text.equals(legacyItem.getText()))
 		{
 			legacyItem.setText(text);
-			setHover(legacyItem, placeholderDays() ? LEGACY_PLACEHOLDERS_TIP : LEGACY_TIP);
-		}
-		// 1.1.1 part G2: and the History options menu's twin of it.
-		if (!text.equals(historyLegacyItem.getText()))
-		{
-			historyLegacyItem.setText(text);
-			setHover(historyLegacyItem, placeholderDays() ? LEGACY_PLACEHOLDERS_TIP : LEGACY_TIP);
+			setHover(legacyItem, legacyTip());
 		}
 	}
 
@@ -6518,37 +6561,90 @@ public class BankPriceMovementPanel extends PluginPanel
 	 * here (1.0.9 part 5). The same state again does nothing. Aiming at ON puts the question to the reader through the
 	 * {@link LegacyPrompt}; "Cancel" leaves the box off and unticked and writes nothing. Whatever is chosen is written
 	 * through {@link Prefs#saveIncludeLegacy}, so the stored config follows - the round trip {@link #pressFold} makes -
-	 * and a stopped panel writes nothing (contract C33).
+	 * and a stopped panel writes nothing (contract C33). When the record's days are hidden by the PLAYER's reset (1.2.2 part 5) there
+	 * is no question and no box: aiming at ON restores them for this account through the service, aiming at OFF does nothing.
 	 */
 	public void pressLegacy(boolean include)
 	{
-		if (stopped || include == includeLegacy || askingLegacy)
+		if (stopped || askingLegacy)
 		{
 			return;
 		}
-		if (include)
+		if (playerCut() != null)
 		{
-			askingLegacy = true;
-			final boolean agreed;
-			try
+			// 1.2.2 part 5: the player hid these days themselves, for this account alone - Restore history brings them back at
+			// once and leaves the shared box, which is the other reasons' switch, as it is. Unless the reset stands over a 1.0.9 /
+			// 1.1.1 cut whose days the box still hides: those days read wrong, so the warning of that reason is asked first, and
+			// a yes puts the box on as well.
+			if (include)
 			{
-				agreed = legacyPrompt.ask(legacyAsk());
+				final String under = underAsk();
+				if (under != null && !askLegacy(under))
+				{
+					renderLegacy();
+					return;
+				}
+				// The reader's act, answered by a publish: lifted before the service is told (see markTransfer).
+				liftBankHold();
+				if (under != null)
+				{
+					setIncludeLegacy(true);
+					if (!updating)
+					{
+						prefs.saveIncludeLegacy(true);
+					}
+				}
+				service.restoreHistory();
 			}
-			finally
-			{
-				askingLegacy = false;
-			}
-			if (!agreed || stopped)
-			{
-				renderLegacy();
-				return;
-			}
+			return;
+		}
+		if (include == includeLegacy)
+		{
+			return;
+		}
+		if (include && !askLegacy(legacyAsk()))
+		{
+			renderLegacy();
+			return;
 		}
 		setIncludeLegacy(include);
 		if (!updating)
 		{
 			prefs.saveIncludeLegacy(include);
 		}
+	}
+
+	/** Puts {@code question} to the reader; true when they chose to go ahead and the panel still runs. A second press is refused meanwhile. */
+	private boolean askLegacy(final String question)
+	{
+		askingLegacy = true;
+		final boolean agreed;
+		try
+		{
+			agreed = legacyPrompt.ask(question);
+		}
+		finally
+		{
+			askingLegacy = false;
+		}
+		return agreed && !stopped;
+	}
+
+	/**
+	 * The question Restore history must put first when the player's reset stands over a 1.0.9 / 1.1.1 cut (1.2.2 verification fix),
+	 * or null when there is none to ask: the record keeps no such cut, the shared box already shows its days, or no day lies before it.
+	 */
+	@Nullable
+	private String underAsk()
+	{
+		final BankHistorySeries record = status == null ? null : status.bankHistory();
+		final BankHistorySeries.AutoCut under = record == null ? null : record.autoCut();
+		final BankHistoryPoint first = record == null ? null : record.first();
+		if (under == null || includeLegacy || first == null || !first.day().isBefore(under.from()))
+		{
+			return null;
+		}
+		return BankHistorySeries.WHY_PLACEHOLDERS.equals(under.why()) ? LEGACY_PLACEHOLDERS_ASK : LEGACY_ASK;
 	}
 
 	/**
@@ -6571,13 +6667,14 @@ public class BankPriceMovementPanel extends PluginPanel
 	}
 
 	/**
-	 * Both menus' items ticked to the switch ({@code setSelected} fires no action, so nothing is written), and - since 1.1.1
-	 * part I2 - the History tab's "i" icon put right with it: every road that moves the box or the record ends here.
+	 * The settings menu's item ticked to the switch ({@code setSelected} fires no action, so nothing is written), the History
+	 * options menu's Restore history greyed unless days are hidden and not shown (1.2.2), and - since 1.1.1 part I2 - the History
+	 * tab's "i" icon put right with it: every road that moves the box or the record ends here.
 	 */
 	private void renderLegacy()
 	{
 		legacyItem.setSelected(includeLegacy);
-		historyLegacyItem.setSelected(includeLegacy);
+		restoreHistoryButton.setEnabled(daysHidden());
 		syncLegacyInfo();
 	}
 
@@ -6633,7 +6730,9 @@ public class BankPriceMovementPanel extends PluginPanel
 	 * {@code " - logged out"}, as the Items footnote does ({@link #provenanceText}), and with no reading at all it
 	 * reads {@code "logged out"} alone. The forms are answered LONGEST FIRST and the card draws the first that fits
 	 * its line ({@link #firstThatFits}): the words "your" and "total" give way first, then - logged out only - the
-	 * span, so neither the span nor "logged out" is ever lost to an ellipsis.
+	 * span, so neither the span nor "logged out" is ever lost to an ellipsis. When a transfer is marked after the reading the
+	 * move used (1.2.2), the "your ... total" form is left out: the move is measured from that day's corrected figure, not
+	 * the total the list prints for it, so the card says {@code "30d vs 27 Aug"}.
 	 *
 	 * @param series the readings cut to {@code today}
 	 * @param change {@link BankHistoryMath#sinceDay} for {@code window}, or null
@@ -6658,7 +6757,12 @@ public class BankPriceMovementPanel extends PluginPanel
 		final String day = MovementMath.formatDay(change.fromDay());
 		final String span = change.fromDay().isBefore(today.minusDays(w.days()))
 			? " (" + change.spanDays() + " days)" : "";
-		forms.add(w.label() + " vs your " + day + " total" + span + tail);
+		// 1.2.2: a transfer marked after that day moves the figure the move is measured from, so it is no longer the total the
+		// list prints for that day - the card then names the day alone (the user's pick, 2026-10-26).
+		if (series.transfers().tailMap(change.fromDay().plusDays(1)).isEmpty())
+		{
+			forms.add(w.label() + " vs your " + day + " total" + span + tail);
+		}
 		forms.add(w.label() + " vs " + day + span + tail);
 		if (loggedOut && !span.isEmpty())
 		{
@@ -7149,7 +7253,7 @@ public class BankPriceMovementPanel extends PluginPanel
 
 	/**
 	 * Adds or removes the "Show &lt;remainder&gt; more" row rather than hiding it - a hidden row still takes
-	 * its place in a column (N section 3 §5: no count line, no "Show all").
+	 * its place in a column (N section 3.5: no count line, no "Show all").
 	 *
 	 * <p>The tooltip is written HERE, beside the text: set once in the constructor from {@link #ROWS_PER_PAGE}
 	 * it said "Build the next 250 rows" under a label reading "Show 12 more" - which is every bank's last click.
@@ -7168,7 +7272,7 @@ public class BankPriceMovementPanel extends PluginPanel
 		listColumn.repaint();
 	}
 
-	/** "Show 279 more" (N section 3 §5). */
+	/** "Show 279 more" (N section 3.5). */
 	public static String showMoreText(int remainder)
 	{
 		return "Show " + remainder + " more";
@@ -7204,7 +7308,7 @@ public class BankPriceMovementPanel extends PluginPanel
 	 * sentence was written. This used to rebuild those two sentences and compare strings, so a reworded one
 	 * silently turned red.
 	 */
-	private boolean isErrorStatus()
+	boolean isErrorStatus()
 	{
 		return status != null && status.problemKind().severe();
 	}
@@ -7216,30 +7320,10 @@ public class BankPriceMovementPanel extends PluginPanel
 		return problem == null ? "" : problem;
 	}
 
-	/**
-	 * The whole status sentence, for the bridge's {@code status} field (N 3.6): {@code Status.text()} plus the
-	 * problem sentence when there is one and the text does not already carry it (contract C29, K7). On the
-	 * screen the sentence is split between the card's tooltip ({@code headerText()}) and the problem row.
-	 */
-	String statusText()
-	{
-		if (status == null)
-		{
-			return "";
-		}
-		final String text = status.text() == null ? "" : status.text();
-		final String problem = status.problem();
-		if (problem == null || problem.isEmpty() || text.contains(problem))
-		{
-			return text;
-		}
-		return text.isEmpty() ? problem : text + " - " + problem;
-	}
-
 	// ---------------------------------------------------------------- pure helpers (for the tests and the bridge)
 
 	/** The last status's summary; {@link PortfolioSummary#EMPTY} before one, or for a status that carries none. */
-	private PortfolioSummary portfolio()
+	PortfolioSummary portfolio()
 	{
 		final PortfolioSummary summary = status == null ? null : status.portfolio();
 		return summary == null ? PortfolioSummary.EMPTY : summary;
@@ -7250,7 +7334,7 @@ public class BankPriceMovementPanel extends PluginPanel
 		return status != null && status.bankLoaded();
 	}
 
-	private boolean bandOn()
+	boolean bandOn()
 	{
 		return filter.gpMin() != 0L || filter.gpMax() != 0L;
 	}
@@ -7267,7 +7351,7 @@ public class BankPriceMovementPanel extends PluginPanel
 		return bandParts(min, max, "", "from %s", "up to %s", "from %s to %s");
 	}
 
-	/** The EMPTY card's description of the band (N section 3 §6): "Your band is 1m and up" / "from 100k to 5m" / "up to 5m". */
+	/** The EMPTY card's description of the band (N section 3.6): "Your band is 1m and up" / "from 100k to 5m" / "up to 5m". */
 	static String bandDescription(long min, long max)
 	{
 		return "Your band is " + bandParts(min, max, "", "%s and up", "up to %s", "from %s to %s");
@@ -7301,23 +7385,6 @@ public class BankPriceMovementPanel extends PluginPanel
 			return String.format(maxOnly, MovementMath.formatGp(max));
 		}
 		return String.format(both, MovementMath.formatGp(min), MovementMath.formatGp(max));
-	}
-
-	/**
-	 * The bridge's old line 2 - "1d   +12.4m   +1.0%", "1d   -   -" without a baseline (M4) - SYNTHESISED for
-	 * {@code describe()} so addendum M's live step 3 keeps reading it (N section 3 §8), whatever the switches
-	 * hide on the card (O3: the bridge still echoes the portfolio in full). The percentage is truncated toward
-	 * zero and signed by the gp figure, like a row's (L2).
-	 */
-	static String moveText(@Nullable MovementWindow window, @Nullable WindowMove move)
-	{
-		final String label = (window == null ? MovementWindow.DEFAULT : window).label();
-		if (move == null)
-		{
-			return label + VALUE_SEP + MovementMath.DASH + VALUE_SEP + MovementMath.DASH;
-		}
-		return label + VALUE_SEP + MovementMath.formatDelta(move.deltaGp()) + VALUE_SEP
-			+ MovementMath.formatPct(move.deltaPct(), move.deltaGp());
 	}
 
 	/** Green for a rise, red for a fall, the dim grey for zero or for no baseline (M4) - the row rule, on the sum. */
@@ -7579,12 +7646,6 @@ public class BankPriceMovementPanel extends PluginPanel
 
 
 
-	/** "+12,400,000", "-3,100,000", "0": the exact gp move with its sign, as the row tooltip prints one. */
-	private static String signedExact(long gp)
-	{
-		return (gp > 0L ? "+" : "") + MovementMath.formatExact(gp);
-	}
-
 	// ---------------------------------------------------------------- the cards (EDT)
 
 	/** Contract C30's state rule; LOGIN until the first publish. */
@@ -7628,7 +7689,7 @@ public class BankPriceMovementPanel extends PluginPanel
 	}
 
 	/**
-	 * The EMPTY card (N section 3 §6): why the list is empty, and - only when a band did it - the one-tap
+	 * The EMPTY card (N section 3.6): why the list is empty, and - only when a band did it - the one-tap
 	 * "Clear price range" under the message, added and removed like every other conditional row. A user is
 	 * never trapped behind a filter.
 	 */
@@ -7733,251 +7794,6 @@ public class BankPriceMovementPanel extends PluginPanel
 		return Arrays.asList(header, body);
 	}
 
-	/**
-	 * One line of JSON describing the visible state, for the bridge's {@code state}: the card, the paging,
-	 * the filter, the two fields' validity, the status sentence and whether the panel is on screen, with the bank
-	 * hold beside it ({@code bank}, addendum AS: {@code open}, {@code pending}, {@code glow}, {@code heldEvents},
-	 * {@code reads} - see {@link #bankJson}) - then the
-	 * five view switches ({@code options}, Q7, T1, Y1 and 1.0.9 part 3 - {@code holding} is gone with addendum AO and
-	 * {@code hover} with release 1.2.0),
-	 * beside them what the TRADED feeds delivered for this
-	 * publish ({@code live}, T8: {@code fetchedAt}, {@code latestItems}, {@code liveRows}, {@code guideRows},
-	 * {@code alchRows}, every figure 0 while the switch is off, then addendum U's {@code liveDay} and
-	 * {@code windowDays} - the live calendar this publish counted back from, both null-valued while there is no
-	 * snapshot), and the three hero switches ({@code hero}, O3),
-	 * each written from its own value's {@code asMap()} in the same shape, the hero as drawn (the old {@code bankMove}
-	 * line synthesised in full for addendum M's scripts; {@code bankValue}, {@code heroGp} and {@code heroPct}
-	 * are "" while their figure is hidden), the card's update line ({@code updateLine}, S4 - beside
-	 * {@code heroSub} because it is the line under it, and always the same sentence, so a script can prove it is
-	 * drawn without a picture), the control row - {@code sortLabel}, the lit COLUMN's label as the button prints
-	 * it (addendum W, line W3; the direction is beside it in {@code descending} and drawn as the arrow, and V2's
-	 * {@code sortHint} is gone with the grey qualifiers it described) - the fold, the problem row and the
-	 * Show-more text (N section 3 §8).
-	 *
-	 * <p>The fold carries the reader's quick bands since addendum Z (line Z4): {@code presets}, the three in force
-	 * as numbers ({@code [100000,1000000,10000000]}), and {@code presetLabels}, the four chip TEXTS as they are
-	 * drawn ({@code ["All","100k+","1m+","10m+"]}) - the numbers so a script can assert what was stored, the
-	 * labels so it can assert what a shot of the fold should read, without a picture.
-	 */
-	public String describe()
-	{
-		final PortfolioSummary summary = portfolio();
-		final WindowMove move = summary.move(filter.window());
-		return "{\"card\":\"" + card
-			+ "\",\"shown\":" + shown
-			+ ",\"total\":" + rows.size()
-			+ ",\"window\":\"" + filter.window().name()
-			+ "\",\"sort\":\"" + filter.sort().name()
-			+ "\",\"descending\":" + filter.descending()
-			+ ",\"gpMin\":" + filter.gpMin()
-			+ ",\"gpMax\":" + filter.gpMax()
-			+ ",\"search\":" + json(search)
-			+ ",\"matching\":" + matching.size()
-			+ ",\"minInvalid\":" + Widgets.isMarkedInvalid(minField)
-			+ ",\"maxInvalid\":" + Widgets.isMarkedInvalid(maxField)
-			+ ",\"status\":" + json(statusText())
-			+ ",\"showing\":" + isShowing()
-			+ ",\"bank\":" + bankJson()
-			+ ",\"options\":" + flags(options.asMap())
-			+ ",\"live\":" + values(liveStatus().asMap())
-			+ ",\"hero\":" + flags(heroVisibility.asMap())
-			+ ",\"bankValueShowing\":" + heroShowing()
-			+ ",\"bankValue\":" + json(shows(totalLabel) ? totalLabel.getText() : "")
-			+ ",\"bankMove\":" + json(moveText(filter.window(), move))
-			+ ",\"bankWindow\":\"" + filter.window().label()
-			+ "\",\"heroGp\":" + json(shows(deltaLabel) ? deltaLabel.getText() : "")
-			+ ",\"heroPct\":" + json(shows(pctLabel) ? pctLabel.getText() : "")
-			+ ",\"heroSub\":" + json(heroSubText())
-			+ ",\"updateLine\":" + json(updateLabel.getText())
-			+ ",\"sortLabel\":" + json(sortButton.getText())
-			+ ",\"countText\":" + json(bandTarget.getText())
-			+ ",\"bandOn\":" + bandOn()
-			+ ",\"foldOpen\":" + foldOpen
-			+ ",\"includeLegacy\":" + includeLegacy
-			+ ",\"legacyDays\":" + legacyDaysPresent()
-			+ ",\"presets\":" + numbers(presets.mins())
-			+ ",\"presetLabels\":" + texts(presetLabels())
-			+ ",\"changeText\":" + textJson(itemsSettings.text())
-			+ ",\"historyChangeText\":" + textJson(historySettings.text())
-			+ ",\"problemText\":" + json(problemText())
-			+ ",\"problemRed\":" + isErrorStatus()
-			+ ",\"showMoreText\":" + json(showMoreVisible() ? showMoreLabel.getText() : "")
-			+ "}";
-	}
-
-	/**
-	 * {@code describe()}'s {@code bank} object (addendum AS, section 7.3): the plugin's four values as this panel last
-	 * mirrored them - {@code open}, {@code pending}, {@code heldEvents}, {@code reads} - with {@code glow}, whether the
-	 * ring is actually lit, between them. It sits beside {@code showing} because the two are what decide whether
-	 * a publish is built, and it is how a live run proves the plan's claims without a picture: one read per visit,
-	 * events held while pending, the ring lit exactly while it should be.
-	 */
-	private String bankJson()
-	{
-		return "{\"open\":" + bankOpen
-			+ ",\"pending\":" + bankPending
-			+ ",\"glow\":" + glowRunning()
-			+ ",\"heldEvents\":" + bankHeldEvents
-			+ ",\"reads\":" + bankReads
-			+ "}";
-	}
-
-	/** The line under the figures as drawn: the provenance footnote. */
-	String heroSubText()
-	{
-		return footnoteLabel.getText();
-	}
-
-	/**
-	 * What the traded feeds delivered for the publish on screen (addendum T, line T8), for {@code describe()}:
-	 * the last status's {@link Status.LiveStatus}, and {@link Status.LiveStatus#OFF} - every figure 0, every day
-	 * null - before the first publish, so {@code state.live} is an object with the same keys in every state a
-	 * script can find the panel in.
-	 */
-	private Status.LiveStatus liveStatus()
-	{
-		final Status.LiveStatus live = status == null ? null : status.live();
-		return live == null ? Status.LiveStatus.OFF : live;
-	}
-
-	/**
-	 * A JSON object of booleans, in the map's own order - the three hero switches, from
-	 * {@link HeroVisibility#asMap()}, which is the same object the dev bridge's {@code state.hero} is built from
-	 * (S2). Written by hand rather than with Gson: this panel is Swing and has no injected Gson, and the bridge's
-	 * one is not the panel's to reach for.
-	 */
-	private static String flags(Map<String, Boolean> values)
-	{
-		final StringBuilder sb = new StringBuilder(48).append('{');
-		for (Map.Entry<String, Boolean> e : values.entrySet())
-		{
-			if (sb.length() > 1)
-			{
-				sb.append(',');
-			}
-			sb.append(json(e.getKey())).append(':').append(Boolean.TRUE.equals(e.getValue()));
-		}
-		return sb.append('}').toString();
-	}
-
-	/**
-	 * {@link #flags} for {@link Status.LiveStatus#asMap()} - the five figures of T8 and addendum U's two calendar
-	 * keys, which together are what {@code state.live} is. Written by hand for the same reason: this panel is Swing
-	 * and has no injected Gson.
-	 *
-	 * <p>Four value shapes, which is every shape that map holds: a {@link Number} prints as a number, a
-	 * {@link String} (an ISO date) as a quoted string, a nested {@link Map} as a nested object - one level, which
-	 * is all {@code windowDays} is - and a null as JSON {@code null}, because "that window has no traded bucket" is
-	 * a fact and not a zero. Anything else would be a new key nobody has taught this to write, so it is refused
-	 * rather than printed as its {@code toString}.
-	 */
-	private static String values(Map<?, ?> map)
-	{
-		final StringBuilder sb = new StringBuilder(160).append('{');
-		for (Map.Entry<?, ?> e : map.entrySet())
-		{
-			if (sb.length() > 1)
-			{
-				sb.append(',');
-			}
-			sb.append(json(String.valueOf(e.getKey()))).append(':').append(value(e.getValue()));
-		}
-		return sb.append('}').toString();
-	}
-
-	/** A JSON array of numbers - the three preset bands, smallest first ({@code presets}, Z4). */
-	private static String numbers(long[] values)
-	{
-		final StringBuilder sb = new StringBuilder(40).append('[');
-		for (int i = 0; i < values.length; i++)
-		{
-			if (i > 0)
-			{
-				sb.append(',');
-			}
-			sb.append(values[i]);
-		}
-		return sb.append(']').toString();
-	}
-
-	/** A JSON array of strings - the fold's four chip texts ({@code presetLabels}, Z4). */
-	private static String texts(String[] values)
-	{
-		final StringBuilder sb = new StringBuilder(40).append('[');
-		for (int i = 0; i < values.length; i++)
-		{
-			if (i > 0)
-			{
-				sb.append(',');
-			}
-			sb.append(json(values[i]));
-		}
-		return sb.append(']').toString();
-	}
-
-	/** One JSON value for {@link #values}: a number, a quoted string, a nested object, or {@code null}. */
-	private static String value(@Nullable Object v)
-	{
-		if (v == null)
-		{
-			return "null";
-		}
-		if (v instanceof Number)
-		{
-			return v.toString();
-		}
-		if (v instanceof Map)
-		{
-			return values((Map<?, ?>) v);
-		}
-		if (v instanceof String)
-		{
-			return json((String) v);
-		}
-		throw new IllegalArgumentException("no JSON shape for " + v.getClass().getSimpleName());
-	}
-
-	private static String json(@Nullable String s)
-	{
-		if (s == null)
-		{
-			return "null";
-		}
-		final StringBuilder sb = new StringBuilder(s.length() + 2).append('"');
-		for (int i = 0; i < s.length(); i++)
-		{
-			final char c = s.charAt(i);
-			switch (c)
-			{
-				case '"':
-					sb.append("\\\"");
-					break;
-				case '\\':
-					sb.append("\\\\");
-					break;
-				case '\n':
-					sb.append("\\n");
-					break;
-				case '\r':
-					sb.append("\\r");
-					break;
-				case '\t':
-					sb.append("\\t");
-					break;
-				default:
-					if (c < 0x20)
-					{
-						sb.append(String.format("\\u%04x", (int) c));
-					}
-					else
-					{
-						sb.append(c);
-					}
-			}
-		}
-		return sb.append('"').toString();
-	}
-
 	/** The rows built so far, in list order - the bridge echoes the first ten. */
 	public List<MovementRowPanel> rowPanels()
 	{
@@ -8020,27 +7836,6 @@ public class BankPriceMovementPanel extends PluginPanel
 	JPanel hero()
 	{
 		return hero;
-	}
-
-	/** Whether the hero card is in the header - true exactly while a bank is loaded (M4, N section 3 §3). */
-	boolean heroShowing()
-	{
-		return hero.getParent() == header;
-	}
-
-	/**
-	 * Whether {@code c} is drawn on the hero card right now - which of the card's parts are IN it (O3), asked
-	 * once instead of a named accessor per part restating {@link #syncHero}'s rules.
-	 *
-	 * <p>The walk up the parent chain is what makes it one question: the total and the move line are children of
-	 * the card, the gp figure and the percentage are children of the move LINE, and a switched-off part is
-	 * removed rather than hidden - so a part is drawn exactly when every link above it is still in place.
-	 * Whether the CARD itself is in the header is a different question ({@link #heroShowing()}): the switches
-	 * hold their answer while there is no bank to draw.
-	 */
-	boolean shows(@Nullable Component c)
-	{
-		return c != null && SwingUtilities.isDescendingFrom(c, hero);
 	}
 
 	/** The gear menu: Refresh, the three show / hide check items (O4) and the four view check items (Q2, T1, Y1). */
@@ -8331,11 +8126,6 @@ public class BankPriceMovementPanel extends PluginPanel
 	JLabel showMoreLabel()
 	{
 		return showMoreLabel;
-	}
-
-	boolean showMoreVisible()
-	{
-		return showMoreRow.getParent() == listColumn;
 	}
 
 	/** The EMPTY card's "Clear price range" button, whether or not it is on the card right now. */

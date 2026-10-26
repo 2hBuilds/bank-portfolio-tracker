@@ -3,8 +3,6 @@ package com.bankpricemovement;
 import java.awt.BasicStroke;
 import java.awt.BorderLayout;
 import java.awt.Color;
-import java.awt.Component;
-import java.awt.Container;
 import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.Font;
@@ -54,16 +52,16 @@ import net.runelite.client.ui.components.FlatTextField;
  * ({@code :39}); the panel's own scroll pane never scrolls sideways, so a row that wants more than the column
  * has is clipped silently, not scrolled. Everything is therefore designed at {@link #CONTENT_WIDTH} = 213 px
  * (225 minus 6 px of margin each side, the same figure Loot and Beam lays out at) and measured against it in
- * the tests with {@link #widest(Container)}; anything that can grow with its text - a name, a status line,
+ * the tests; anything that can grow with its text - a name, a status line,
  * a number - goes through {@link #setFitted} so it shrinks to the room it has instead of pushing the row out.
  *
  * <p><b>Addendum N</b> ({@code docs/bank-price-movement-addendum-N-2026-09-09.md}) added the second half of
- * this file: the sans type scale ({@link #sans}/{@link #sansBold}, N section 3 §2), the segmented chip
+ * this file: the sans type scale ({@link #sans}/{@link #sansBold}, N section 3.2), the segmented chip
  * ({@link #segment}, {@link #chip}, N section 2), the text link ({@link #linkLabel}), the hero card's
  * coloured edge ({@link #card}) and the drawn glyphs ({@link #triangle}, {@link #clearIcon}, N section 7). Two rules run through all of it. Every glyph is DRAWN and never typed,
  * because the bitmap RuneScape faces box a character they lack (playbook 7.5). Every colour is a
  * {@code ColorScheme} constant or its {@code .darker()}, so the sidebar cannot drift away from the client it
- * lives in - with ONE declared exception, {@link #MOVE_DOWN_TEXT}, which addendum N section 3 §2 pre-authorised
+ * lives in - with ONE declared exception, {@link #MOVE_DOWN_TEXT}, which addendum N section 3.2 pre-authorised
  * by name and for a measured reason. <b>Addendum O</b> ({@code docs/bank-price-movement-addendum-O-2026-09-09.md}, O1) made the
  * Ticker look the only one, and the helpers only One Bar used - the solid chip style, the funnel beside the
  * count target, the drawn refresh glyph - went with it; what is left is what the Ticker sidebar draws. The
@@ -92,7 +90,7 @@ final class Widgets
 
 	/**
 	 * The red a FALLING FIGURE'S TEXT is printed in - the one colour in this sidebar that is not a
-	 * {@code ColorScheme} constant, declared here with the reason addendum N section 3 §2 asks for.
+	 * {@code ColorScheme} constant, declared here with the reason addendum N section 3.2 asks for.
 	 *
 	 * <p>{@code ColorScheme.PROGRESS_ERROR_COLOR} is (230, 30, 30), which measures <b>3.63:1</b> against the
 	 * {@code DARKER_GRAY} card (30, 30, 30) it is drawn on. That clears the 3:1 bar for the 3 px rail and the
@@ -122,7 +120,7 @@ final class Widgets
 	/** The hero card's inner padding (N 3.1): 213 - 3 (edge) - 9 - 10 = 191 px of usable width. */
 	private static final Insets CARD_INSETS = new Insets(8, 9, 8, 10);
 
-	/** The chip face size, T5 of addendum N section 3 §2: "180d" measures 29 px bold, inside a 38 px cell. */
+	/** The chip face size, T5 of addendum N section 3.2: "180d" measures 29 px bold, inside a 38 px cell. */
 	private static final int CHIP_FONT_SIZE = 13;
 
 	/**
@@ -167,7 +165,7 @@ final class Widgets
 	{
 	}
 
-	// ------------------------------------------------------- addendum N: the sans scale (N section 3 §2, §7)
+	// ------------------------------------------------------- addendum N: the sans scale (N section 3.2, 3.7)
 
 	/**
 	 * The plain Swing sans at {@code size} px: {@code FontManager.getDefaultFont()} - the logical
@@ -226,19 +224,11 @@ final class Widgets
 	}
 
 	/**
-	 * {@code text} cut to what {@code width} px of {@code font} can hold, ending in {@link #ELLIPSIS} when it
-	 * had to be cut; the whole text when it fits. Measured with the same {@link FontMetrics} a label paints
-	 * with, so "fits" here is "fits on the screen".
-	 */
-	static String fit(Font font, @Nullable String text, int width)
-	{
-		return fit(metrics(font), text, width);
-	}
-
-	/**
-	 * {@link #fit(Font, String, int)} against metrics the caller already holds. Every label owns the metrics it
-	 * will paint with ({@link JComponent#getFontMetrics}), so the fitters take a {@link FontMetrics} rather than
-	 * building a throwaway {@link JLabel} per call - {@link #fitName} used to build three for one name.
+	 * {@code text} cut to what {@code width} px of the face {@code fm} measures can hold, ending in {@link #ELLIPSIS}
+	 * when it had to be cut; the whole text when it fits. Every label owns the metrics it will paint with
+	 * ({@link JComponent#getFontMetrics}), so the fitters take a {@link FontMetrics} rather than building a throwaway
+	 * {@link JLabel} per call - {@link #fitName} used to build three for one name - and "fits" here is "fits on the
+	 * screen".
 	 */
 	private static String fit(FontMetrics fm, @Nullable String text, int width)
 	{
@@ -260,12 +250,6 @@ final class Widgets
 			}
 		}
 		return ELLIPSIS;
-	}
-
-	/** The metrics a plain label of {@code font} paints with, for a caller that has no label to ask. */
-	private static FontMetrics metrics(Font font)
-	{
-		return new JLabel().getFontMetrics(font);
 	}
 
 	/**
@@ -292,12 +276,6 @@ final class Widgets
 	 * plain cut, where losing it costs nothing a reader needs. A name that fits is untouched, and a name whose
 	 * stem cannot survive the cut at all falls back to {@link #fit} rather than printing "...(4)".
 	 */
-	static String fitName(Font font, @Nullable String text, int width)
-	{
-		return fitName(metrics(font), text, width);
-	}
-
-	/** {@link #fitName(Font, String, int)} against metrics the caller already holds; see {@link #fit}. */
 	private static String fitName(FontMetrics fm, @Nullable String text, int width)
 	{
 		final String full = text == null ? "" : text;
@@ -387,7 +365,12 @@ final class Widgets
 
 	// ---------------------------------------------------------------- the move colours (N sections 2 and 3.1, B045)
 
-	/** What a move colour is FOR - the three roles the one sign rule is painted in; see {@link #move}. */
+	/**
+	 * What a move colour is FOR - the three roles the one sign rule is painted in; see {@link #move}. (Addendum AL's
+	 * fourth, QUIET, was the figure's colour mixed 55 percent into the row's own background; it went in release 1.2.2,
+	 * since {@link #quietAt} has drawn the gp change at the brightness the player chose from 1.2.1 on, and a brightness
+	 * of 45 is exactly the old quiet mix.)
+	 */
 	enum Kind
 	{
 		/**
@@ -401,25 +384,8 @@ final class Widgets
 		 * A coloured edge: the hero card's left border and a row's 3 px rail. The constants DARKENED, and the
 		 * card's own grey for a flat or absent move - an edge that is invisible without changing any width.
 		 */
-		EDGE,
-		/**
-		 * A number that must not out-shout the one beside it: a row's gp change, which shares its line with the
-		 * percentage (addendum AL). {@link #FIGURE}'s colour mixed {@value #QUIET_MIX_PERCENT}% into the row's
-		 * own background - still plainly green or red, so the figure keeps saying which way the price went, but
-		 * no longer competing with the percentage for the same glance.
-		 *
-		 * <p>A FLAT move takes the quiet grey UNDIMMED, exactly as {@link #FIGURE} does: there is nothing there
-		 * to out-shout, and pushing a dash toward the background only makes it hard to read.
-		 */
-		QUIET
+		EDGE
 	}
-
-	/**
-	 * How far {@link Kind#QUIET} is pushed toward the background, as a percentage (addendum AL). Measured by
-	 * eye against the real list at 213 px: below about 40 the two figures still read as one, and above about 70
-	 * the gp figure stops reading as green at all and the row loses half its direction cue.
-	 */
-	static final int QUIET_MIX_PERCENT = 55;
 
 	/**
 	 * The colour of a rise the reader chose (1.1.0 part B), or null for the built-in green. One palette for the whole
@@ -485,8 +451,7 @@ final class Widgets
 	 * for an {@link Kind#EDGE}, the card grey - for a flat move or none at all. Every colour in this sidebar that
 	 * says which way a price went comes from here, so a row's rail, its figures and the hero card's edge cannot
 	 * drift apart. Since 1.1.0 part B the green and the red are the reader's to choose ({@link #setMoveColours}); with a
-	 * colour chosen for a direction its figure and its mark ARE that colour, its quiet figure is that colour mixed
-	 * {@value #QUIET_MIX_PERCENT}% into the card, and its edge is {@code darker()} of it.
+	 * colour chosen for a direction its figure and its mark ARE that colour, and its edge is {@code darker()} of it.
 	 *
 	 * @param signum which way it went: +1 up, -1 down, 0 for a flat move or no baseline at all - the caller reads
 	 *               it off its own gp figure ({@code Long.signum}), which is what signs the percentage too (L2)
@@ -505,8 +470,6 @@ final class Widgets
 			// darker() - the same three relations the built-in green and red stand in.
 			switch (kind)
 			{
-				case QUIET:
-					return towards(chosen, ColorScheme.DARKER_GRAY_COLOR, QUIET_MIX_PERCENT / 100.0);
 				case EDGE:
 					return chosen.darker();
 				default:
@@ -518,8 +481,6 @@ final class Widgets
 		{
 			case FIGURE:
 				return liftRed(colour);
-			case QUIET:
-				return towards(liftRed(colour), ColorScheme.DARKER_GRAY_COLOR, QUIET_MIX_PERCENT / 100.0);
 			case EDGE:
 				return colour.darker();
 			default:
@@ -530,8 +491,8 @@ final class Widgets
 	/**
 	 * The colour of a gp figure on an Items row at the brightness the player chose (release 1.2.1): the figure colour -
 	 * {@link Kind#FIGURE}, the colour of the percentage beside it - mixed {@code 100 - brightness} percent of the way into the
-	 * card's own grey, so 100 is the percentage's colour exactly and 55, the default, is a little brighter than {@link Kind#QUIET},
-	 * which mixes a figure {@value #QUIET_MIX_PERCENT} percent into the card and so draws it at 45. A flat move or none takes the quiet grey undimmed, as it does
+	 * card's own grey, so 100 is the percentage's colour exactly and 69, the default (55 in release 1.2.1), is brighter than the 45 the
+	 * figure was drawn at before release 1.2.1 (the old quiet role mixed it 55 percent into the card). A flat move or none takes the quiet grey undimmed, as it does
 	 * in {@link #move}. Both tabs read it, each at its own opacity setting: the Items rows, and the Net Worth History tab's day
 	 * rows and the change line above its chart.
 	 */
@@ -1162,18 +1123,6 @@ final class Widgets
 			new EmptyBorder(1, 9, 1, 3)));
 	}
 
-	/** Whether {@link #markInvalid} last painted {@code f} red. */
-	static boolean isMarkedInvalid(FlatTextField f)
-	{
-		final Border b = f.getBorder();
-		if (!(b instanceof CompoundBorder))
-		{
-			return false;
-		}
-		final Border outer = ((CompoundBorder) b).getOutsideBorder();
-		return outer instanceof LineBorder && ColorScheme.PROGRESS_ERROR_COLOR.equals(((LineBorder) outer).getLineColor());
-	}
-
 	/**
 	 * A {@link FlatTextField} that paints a grey placeholder over its (transparent) text field while the text
 	 * is empty and the field is not focused. Painted in {@code paintChildren} after the children, so it sits
@@ -1470,28 +1419,5 @@ final class Widgets
 		holder.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		holder.add(c, BorderLayout.NORTH);
 		return holder;
-	}
-
-	/**
-	 * The width the widest row inside {@code c} asks for, in px: the width rule measured rather than trusted.
-	 * Descends into nested columns (their own preferred width is only their widest row) and takes every other
-	 * child at its preferred width - a chip row counts as its three chips plus gaps, which is exactly the
-	 * width its cells need.
-	 */
-	static int widest(Container c)
-	{
-		int w = 0;
-		for (Component child : c.getComponents())
-		{
-			if (child instanceof JPanel && ((JPanel) child).getLayout() instanceof DynamicGridLayout)
-			{
-				w = Math.max(w, widest((Container) child));
-			}
-			else
-			{
-				w = Math.max(w, child.getPreferredSize().width);
-			}
-		}
-		return w;
 	}
 }

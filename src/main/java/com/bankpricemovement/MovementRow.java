@@ -60,11 +60,8 @@ public final class MovementRow
 		 *
 		 * <p>A different series from {@link #GUIDE}, and the only one in this plugin that moves between two Jagex
 		 * days. A LIVE row paints exactly as a GUIDE row does (T6) and carries a real {@link MovementRow#thenPrice()},
-		 * {@link MovementRow#deltaGp()} and {@link MovementRow#deltaPct()}; which SERIES the two ends of a given
-		 * window came from is {@link MovementRow#windowSource(MovementWindow)}, because a window whose traded bucket
-		 * is missing or thin falls back to the guide's own two ends (T4) while the row still prints the live unit
-		 * price. Everything a reader needs to see why - the two sides, yesterday's volume, or the check that
-		 * refused - is on {@link MovementRow#liveFacts()}.
+		 * {@link MovementRow#deltaGp()} and {@link MovementRow#deltaPct()}; the day its figure compared against is
+		 * {@link MovementRow#windowDay(MovementWindow)}, and the figure itself is {@link MovementRow#graded()}.
 		 *
 		 * <p>Never produced while the switch is off: that is exactly the guide-only behaviour of addenda K to S.
 		 */
@@ -110,113 +107,6 @@ public final class MovementRow
 		NONE
 	}
 
-	/**
-	 * What a row can say about the TRADED series (addendum T, lines T3 and T6, with addendum V's two extra
-	 * checks), carried only while the
-	 * {@code livePrices} switch is on and null on every row computed without it - which is what keeps a row built
-	 * with the switch off byte-identical to the pre-T one.
-	 *
-	 * <p>Two shapes, told apart by {@link #live()}:
-	 * <ul>
-	 * <li>a LIVE row: {@link #reason()} null, and the two sides and yesterday's volume behind the price the row is
-	 * printing - the tooltip's "Live traded price: 63,437,264 gp (buy 63.6m, sell 63.3m; 517 traded yesterday)";</li>
-	 * <li>a row that stayed on the guide: {@link #reason()} is why - since contract 1.2.0 the 1d grade's word, which
-	 * for a row priced at the guide is "no trades" ({@link GradeWords#NO_TRADES}); before it, the first of addendum T's
-	 * five checks that refused it. The sides and the volume are whatever WAS known.</li>
-	 * </ul>
-	 *
-	 * <p>Immutable, like the row that holds it.
-	 */
-	public static final class LiveFacts
-	{
-		@Nullable
-		private final Long buy;
-		@Nullable
-		private final Long sell;
-		private final long volumeYesterday;
-		@Nullable
-		private final String reason;
-
-		/**
-		 * @param buy             the newest instant-buy price from {@code /latest}, or null when there was none
-		 * @param sell            the newest instant-sell price, or null
-		 * @param volumeYesterday units traded in yesterday's bulk bucket, both sides; 0 when none or unknown
-		 * @param reason          why the live price was NOT used, or null for a live row
-		 */
-		public LiveFacts(@Nullable final Long buy, @Nullable final Long sell, final long volumeYesterday,
-			@Nullable final String reason)
-		{
-			this.buy = buy;
-			this.sell = sell;
-			this.volumeYesterday = Math.max(0L, volumeYesterday);
-			this.reason = reason;
-		}
-
-		/** The newest instant-buy price ({@code high}), or null when the feed had none for this item. */
-		@Nullable
-		public Long buy()
-		{
-			return buy;
-		}
-
-		/** The newest instant-sell price ({@code low}), or null. */
-		@Nullable
-		public Long sell()
-		{
-			return sell;
-		}
-
-		/** Units traded in yesterday's bulk bucket, both sides added; 0 when the bucket named none. */
-		public long volumeYesterday()
-		{
-			return volumeYesterday;
-		}
-
-		/** Why the live price was not used, one short phrase; null exactly when the row IS live. */
-		@Nullable
-		public String reason()
-		{
-			return reason;
-		}
-
-		/** True when this row's unit price is the live traded mid - equivalently, when {@link #reason()} is null. */
-		public boolean live()
-		{
-			return reason == null;
-		}
-
-		@Override
-		public boolean equals(final Object o)
-		{
-			if (this == o)
-			{
-				return true;
-			}
-			if (!(o instanceof LiveFacts))
-			{
-				return false;
-			}
-			final LiveFacts other = (LiveFacts) o;
-			return Objects.equals(buy, other.buy)
-				&& Objects.equals(sell, other.sell)
-				&& volumeYesterday == other.volumeYesterday
-				&& Objects.equals(reason, other.reason);
-		}
-
-		@Override
-		public int hashCode()
-		{
-			return Objects.hash(buy, sell, volumeYesterday, reason);
-		}
-
-		@Override
-		public String toString()
-		{
-			return "LiveFacts{buy=" + buy + ", sell=" + sell + ", volumeYesterday=" + volumeYesterday
-				+ (reason == null ? ", live" : ", reason='" + reason + '\'') + '}';
-		}
-	}
-
 	private final int id;
 	private final String name;
 	private final int quantity;
@@ -230,12 +120,6 @@ public final class MovementRow
 	@Nullable
 	private final List<BankItem.Part> parts;
 	/**
-	 * Which SERIES each window's two ends came from (T4), for a row the traded prices touched; null on every row
-	 * computed with the switch off, and read through {@link #windowSource(MovementWindow)} rather than directly.
-	 */
-	@Nullable
-	private final Map<MovementWindow, PriceSource> windowSources;
-	/**
 	 * Which calendar DAY each window's "then" was actually taken from (addendum U, line U3) - the traded bucket's
 	 * own day for a live window, that window's guide baseline day for one that fell back - for a row the traded
 	 * prices touched; null on every row computed with the switch off, and read through
@@ -243,8 +127,6 @@ public final class MovementRow
 	 */
 	@Nullable
 	private final Map<MovementWindow, LocalDate> windowDays;
-	@Nullable
-	private final LiveFacts liveFacts;
 	/**
 	 * Where the {@link #quantity} is (addendum Y, line Y3): how many of it the BANK holds, how many are in the
 	 * INVENTORY, how many are WORN, and - since 1.0.9 part 3 - how many are in the Grand Exchange OFFERS. All four are
@@ -280,114 +162,32 @@ public final class MovementRow
 		final Long unitPrice, final Long thenPrice, final Long deltaGp, final Double deltaPct,
 		final long holdingValue, final PriceSource source)
 	{
-		this(id, name, quantity, stackable, unitPrice, thenPrice, deltaGp, deltaPct, holdingValue, source, null);
+		this(id, name, quantity, stackable, unitPrice, thenPrice, deltaGp, deltaPct, holdingValue, source, null, null,
+			0, 0, 0, 0, null);
 	}
 
 	/**
-	 * The same, carrying the tradeable parts the price was summed from (addendum R, line R2). The arity above is
-	 * the pre-R one, kept so every caller that knows nothing of parts keeps compiling AND keeps its meaning: it
-	 * delegates with no parts, which is what every row but a {@link PriceSource#PARTS} one has.
+	 * The full form: the ten above, then
 	 *
-	 * @param parts the parts, or null for any other row; copied into an unmodifiable list, and an empty list is
-	 *              stored as null - a row cannot be "valued as its parts" and name none
-	 */
-	public MovementRow(final int id, final String name, final int quantity, final boolean stackable,
-		final Long unitPrice, final Long thenPrice, final Long deltaGp, final Double deltaPct,
-		final long holdingValue, final PriceSource source, @Nullable final List<BankItem.Part> parts)
-	{
-		this(id, name, quantity, stackable, unitPrice, thenPrice, deltaGp, deltaPct, holdingValue, source, parts,
-			null, null);
-	}
-
-	/**
-	 * The same, carrying what the TRADED series had to say about this row (addendum T, lines T4 and T6). The
-	 * arity above is the pre-T one, kept so every caller that knows nothing of live prices keeps compiling AND
-	 * keeps its meaning: it delegates with no window sources and no facts, which is exactly what a row computed
-	 * with the {@code livePrices} switch off carries.
-	 *
-	 * @param windowSources which series each window's two ends came from; copied into an unmodifiable
-	 *                      {@link EnumMap}, null keys or values dropped, and an empty map stored as null
-	 * @param liveFacts     the live sides and volume, or the reason the live price was refused; null when the
-	 *                      switch was off
-	 */
-	public MovementRow(final int id, final String name, final int quantity, final boolean stackable,
-		final Long unitPrice, final Long thenPrice, final Long deltaGp, final Double deltaPct,
-		final long holdingValue, final PriceSource source, @Nullable final List<BankItem.Part> parts,
-		@Nullable final Map<MovementWindow, PriceSource> windowSources, @Nullable final LiveFacts liveFacts)
-	{
-		this(id, name, quantity, stackable, unitPrice, thenPrice, deltaGp, deltaPct, holdingValue, source, parts,
-			windowSources, null, liveFacts);
-	}
-
-	/**
-	 * The same, carrying the calendar DAY each window's "then" came from (addendum U, line U3). The arity above is
-	 * the pre-U one, kept so every caller that knows nothing of the live calendar keeps compiling AND keeps its
-	 * meaning: it delegates with no days, which is exactly what a row built before addendum U carried.
-	 *
-	 * @param windowDays the day each window was actually compared against; copied into an unmodifiable
-	 *                   {@link EnumMap}, null keys or values dropped, and an empty map stored as null
-	 */
-	public MovementRow(final int id, final String name, final int quantity, final boolean stackable,
-		final Long unitPrice, final Long thenPrice, final Long deltaGp, final Double deltaPct,
-		final long holdingValue, final PriceSource source, @Nullable final List<BankItem.Part> parts,
-		@Nullable final Map<MovementWindow, PriceSource> windowSources,
-		@Nullable final Map<MovementWindow, LocalDate> windowDays, @Nullable final LiveFacts liveFacts)
-	{
-		this(id, name, quantity, stackable, unitPrice, thenPrice, deltaGp, deltaPct, holdingValue, source, parts,
-			windowSources, windowDays, liveFacts, 0, 0, 0);
-	}
-
-	/**
-	 * The same, saying where the quantity IS (addendum Y, line Y3). The arity above is the pre-Y one, kept so every
-	 * caller that knows nothing of the inventory keeps compiling AND keeps its meaning: it delegates with three
-	 * zeros, which is exactly what a row computed with "Include inventory and worn items" off carries.
-	 *
-	 * @param bankQuantity      how many of {@code quantity} the bank holds; 0 while the switch is off
+	 * @param parts             the tradeable parts the price was summed from (addendum R, line R2), or null for any
+	 *                          other row; copied into an unmodifiable list, and an empty list is stored as null - a
+	 *                          row cannot be "valued as its parts" and name none
+	 * @param windowDays        the calendar DAY each window's "then" was actually taken from (addendum U, line U3);
+	 *                          copied into an unmodifiable {@link EnumMap}, null keys or values dropped, and an empty
+	 *                          map stored as null
+	 * @param bankQuantity      how many of {@code quantity} the bank holds (addendum Y, line Y3); 0 while the
+	 *                          inventory and Grand Exchange switches are off
 	 * @param inventoryQuantity how many are in the inventory; 0 while the switch is off
 	 * @param wornQuantity      how many are worn; 0 while the switch is off
+	 * @param exchangeQuantity  how many are in the Grand Exchange offers (1.0.9 part 3); 0 while the switch is off
+	 * @param graded            the graded live figure of the row's window (contract 1.2.0, L2-L4), or null for an
+	 *                          ungraded row
 	 */
 	public MovementRow(final int id, final String name, final int quantity, final boolean stackable,
 		final Long unitPrice, final Long thenPrice, final Long deltaGp, final Double deltaPct,
 		final long holdingValue, final PriceSource source, @Nullable final List<BankItem.Part> parts,
-		@Nullable final Map<MovementWindow, PriceSource> windowSources,
-		@Nullable final Map<MovementWindow, LocalDate> windowDays, @Nullable final LiveFacts liveFacts,
-		final int bankQuantity, final int inventoryQuantity, final int wornQuantity)
-	{
-		this(id, name, quantity, stackable, unitPrice, thenPrice, deltaGp, deltaPct, holdingValue, source, parts,
-			windowSources, windowDays, liveFacts, bankQuantity, inventoryQuantity, wornQuantity, 0);
-	}
-
-	/**
-	 * The same, also saying how many are in the Grand Exchange offers (1.0.9 part 3). The arity above is the
-	 * pre-part-3 one, kept so every caller that knows nothing of the offers keeps compiling AND keeps its meaning: it
-	 * delegates with 0 there, which is exactly what a row computed with "Include Grand Exchange offers" off carries.
-	 *
-	 * @param exchangeQuantity how many are in the Grand Exchange offers; 0 while the switch is off
-	 */
-	public MovementRow(final int id, final String name, final int quantity, final boolean stackable,
-		final Long unitPrice, final Long thenPrice, final Long deltaGp, final Double deltaPct,
-		final long holdingValue, final PriceSource source, @Nullable final List<BankItem.Part> parts,
-		@Nullable final Map<MovementWindow, PriceSource> windowSources,
-		@Nullable final Map<MovementWindow, LocalDate> windowDays, @Nullable final LiveFacts liveFacts,
-		final int bankQuantity, final int inventoryQuantity, final int wornQuantity, final int exchangeQuantity)
-	{
-		this(id, name, quantity, stackable, unitPrice, thenPrice, deltaGp, deltaPct, holdingValue, source, parts,
-			windowSources, windowDays, liveFacts, bankQuantity, inventoryQuantity, wornQuantity, exchangeQuantity, null);
-	}
-
-	/**
-	 * The same, carrying the graded live figure of the row's window (contract 1.2.0, L2-L4). The arity above is the
-	 * pre-1.2.0 one, kept so every caller that knows nothing of grades keeps compiling AND keeps its meaning: it
-	 * delegates with no grade, which is what a row computed with live prices off carries.
-	 *
-	 * @param graded the window's graded figure, or null for an ungraded row
-	 */
-	public MovementRow(final int id, final String name, final int quantity, final boolean stackable,
-		final Long unitPrice, final Long thenPrice, final Long deltaGp, final Double deltaPct,
-		final long holdingValue, final PriceSource source, @Nullable final List<BankItem.Part> parts,
-		@Nullable final Map<MovementWindow, PriceSource> windowSources,
-		@Nullable final Map<MovementWindow, LocalDate> windowDays, @Nullable final LiveFacts liveFacts,
-		final int bankQuantity, final int inventoryQuantity, final int wornQuantity, final int exchangeQuantity,
+		@Nullable final Map<MovementWindow, LocalDate> windowDays, final int bankQuantity,
+		final int inventoryQuantity, final int wornQuantity, final int exchangeQuantity,
 		@Nullable final GradedMove graded)
 	{
 		this.id = id;
@@ -403,9 +203,7 @@ public final class MovementRow
 		this.parts = parts == null || parts.isEmpty()
 			? null
 			: Collections.unmodifiableList(new ArrayList<>(parts));
-		this.windowSources = copyByWindow(windowSources);
 		this.windowDays = copyByWindow(windowDays);
-		this.liveFacts = liveFacts;
 		this.bankQuantity = Math.max(0, bankQuantity);
 		this.inventoryQuantity = Math.max(0, inventoryQuantity);
 		this.wornQuantity = Math.max(0, wornQuantity);
@@ -456,8 +254,8 @@ public final class MovementRow
 	 *
 	 * <p>The four split figures are what the row's hover names ("3 in bank, 1 in inventory, 1 worn, 2 in the Grand
 	 * Exchange"), and they add up to {@link #quantity()} whenever any of them is non-zero. A stack the player only
-	 * WEARS answers 0 here, and that is not the same answer as the switch being off - {@link #split()} is the test for
-	 * that.
+	 * WEARS answers 0 here, and that is not the same answer as the switch being off - any of the four figures above 0
+	 * says the row knows where its quantity is.
 	 */
 	public int bankQuantity()
 	{
@@ -483,17 +281,6 @@ public final class MovementRow
 	public int exchangeQuantity()
 	{
 		return exchangeQuantity;
-	}
-
-	/**
-	 * Whether this row knows where its quantity is - true exactly when it was computed with "Include inventory and
-	 * worn gear" or "Include Grand Exchange offers" on and something was merged. A row without the split prints no
-	 * hover line about it (Y3), which is what a bank-only row did before addendum Y and what one still does with the
-	 * switches off.
-	 */
-	public boolean split()
-	{
-		return bankQuantity > 0 || inventoryQuantity > 0 || wornQuantity > 0 || exchangeQuantity > 0;
 	}
 
 	/**
@@ -610,8 +397,8 @@ public final class MovementRow
 		}
 
 		return new MovementRow(id, name, quantity, stackable, unitPrice, thenPrice, deltaGp, deltaPct, holdingValue,
-			PriceSource.PARTS, parts, windowSources, windowDays, liveFacts, bankQuantity, inventoryQuantity,
-			wornQuantity, exchangeQuantity, graded);
+			PriceSource.PARTS, parts, windowDays, bankQuantity, inventoryQuantity, wornQuantity, exchangeQuantity,
+			graded);
 	}
 
 	/**
@@ -635,41 +422,14 @@ public final class MovementRow
 		}
 
 		return new MovementRow(id, name, quantity, stackable, unitPrice, thenPrice, deltaGp, deltaPct, holdingValue,
-			source, parts, windowSources, windowDays, liveFacts, bankQuantity, inventoryQuantity, wornQuantity,
-			exchangeQuantity, graded);
-	}
-
-	/**
-	 * Which price series the two ends of ONE window came from (addendum T, line T4): {@link PriceSource#LIVE} when
-	 * that window compared the live traded mid against that day's traded average, and {@link PriceSource#GUIDE}
-	 * when it fell back to the guide's own two ends - which is what a window does when its traded bucket is
-	 * missing, thin, or simply not this plugin's business (every window of a row the switch left on the guide).
-	 *
-	 * <p>The answer for a row the traded feeds never touched is the row's own {@link #source()}, so a GUIDE row
-	 * answers GUIDE, an ALCH row ALCH and a PARTS row PARTS for every window - each of which is the truth about
-	 * where that window's numbers came from. The one case that is NOT the row's own source is a LIVE row with no
-	 * record for the window asked about: that answers GUIDE rather than claiming a live comparison nothing made.
-	 *
-	 * @param window the window; null answers the row's own source
-	 */
-	public PriceSource windowSource(@Nullable final MovementWindow window)
-	{
-		if (windowSources != null && window != null)
-		{
-			final PriceSource recorded = windowSources.get(window);
-			if (recorded != null)
-			{
-				return recorded;
-			}
-		}
-		return source == PriceSource.LIVE ? PriceSource.GUIDE : source;
+			source, parts, windowDays, bankQuantity, inventoryQuantity, wornQuantity, exchangeQuantity, graded);
 	}
 
 	/**
 	 * The calendar DAY this row's "then" for ONE window was actually taken from (addendum U, line U3) - the day the
 	 * window's figure is a comparison against, and the day its tooltip line prints: "1d ago (11 Sep): 103,214 gp".
 	 *
-	 * <p>Which day that is depends on the series the window used ({@link #windowSource(MovementWindow)}):
+	 * <p>Which day that is depends on the series the window used:
 	 * <ul>
 	 * <li>a LIVE window: the day of the traded bucket the comparison was made against - {@code liveDay - N} counted
 	 * back from the live snapshot's own UTC date, or one day further back when that day had not closed yet (U2).
@@ -690,99 +450,6 @@ public final class MovementRow
 	public LocalDate windowDay(@Nullable final MovementWindow window)
 	{
 		return windowDays == null || window == null ? null : windowDays.get(window);
-	}
-
-	/**
-	 * What the traded series had to say about this row (addendum T, lines T4 and T6) - the two live sides and
-	 * yesterday's volume for a live row, the first failing check for one that stayed on the guide - or NULL on
-	 * every row computed while the {@code livePrices} switch was off, which is every row of addenda K to S.
-	 */
-	@Nullable
-	public LiveFacts liveFacts()
-	{
-		return liveFacts;
-	}
-
-	/**
-	 * Whether this row's unit price is the live traded mid (T4). True for a {@link PriceSource#LIVE} row and for a
-	 * {@link PriceSource#PARTS} row whose every part passed the checks - a parts stack keeps the PARTS source so
-	 * the tooltip can still name what it was valued from, and this is the one test that covers both.
-	 */
-	public boolean isLive()
-	{
-		return liveFacts != null && liveFacts.live();
-	}
-
-	/**
-	 * This same row, re-sourced as {@link PriceSource#LIVE} and carrying its window sources and live facts (T4).
-	 *
-	 * <p>It exists for the same reason {@link #asParts(List)} does: the service builds a live row by handing the
-	 * live mid to {@code MovementMath.row} as an ordinary "now" - so every rule about gp, percent, holdings and
-	 * the dash stays in one place - and then says here which series the numbers came from. A row that already
-	 * says {@link PriceSource#PARTS} keeps that source, because "valued as its parts" is what a reader has to be
-	 * told first and {@link #isLive()} still answers true for it.
-	 *
-	 * <p><b>The unit price is a parameter, and that is T4's one awkward case.</b> A live row whose traded bucket
-	 * for the CURRENT window was missing or thin compares the guide's two ends for that window - "never live-now
-	 * against guide-then" - and is therefore built from the guide pair, so that its gp and percent are the guide's
-	 * move. It still PRINTS the live traded price, because that is what the item costs right now and what the rest
-	 * of the card counts it at. {@code liveUnit} is how those two facts live on one row: the move stays as it was
-	 * built, the unit price (and the holding that follows from it) become the live mid, and
-	 * {@link #windowSource(MovementWindow)} tells a reader which window did which.
-	 *
-	 * @param liveUnit      the live traded mid to print, or null to keep the unit price this row was built with -
-	 *                      which is the ordinary case, where the row was built from the live pair already
-	 * @param windowSources which series each window used; see {@link #windowSource(MovementWindow)}
-	 * @param facts         the live sides and yesterday's volume, with a null reason
-	 * @return this row unchanged when it has no price at all, or when {@code facts} is null or says the row is not
-	 *         live - a row cannot be "the live traded price" and name the check that refused it
-	 */
-	public MovementRow asLive(@Nullable final Long liveUnit,
-		@Nullable final Map<MovementWindow, PriceSource> windowSources, @Nullable final LiveFacts facts)
-	{
-		return asLive(liveUnit, windowSources, null, facts);
-	}
-
-	/**
-	 * The same, carrying the DAY each window was compared against (addendum U, line U3;
-	 * {@link #windowDay(MovementWindow)}). The arity above is the pre-U one and delegates with no days.
-	 *
-	 * @param windowDays the day each window's "then" came from - the traded bucket's own day for a live window,
-	 *                   the guide baseline day for one that fell back
-	 */
-	public MovementRow asLive(@Nullable final Long liveUnit,
-		@Nullable final Map<MovementWindow, PriceSource> windowSources,
-		@Nullable final Map<MovementWindow, LocalDate> windowDays, @Nullable final LiveFacts facts)
-	{
-		if (unitPrice == null || facts == null || !facts.live())
-		{
-			return this;
-		}
-
-		final Long unit = liveUnit == null || liveUnit <= 0L ? unitPrice : liveUnit;
-		return new MovementRow(id, name, quantity, stackable, unit, thenPrice, deltaGp, deltaPct,
-			MovementMath.holdingValue(unit, quantity),
-			source == PriceSource.PARTS ? PriceSource.PARTS : PriceSource.LIVE, parts, windowSources, windowDays,
-			facts, bankQuantity, inventoryQuantity, wornQuantity, exchangeQuantity, graded);
-	}
-
-	/**
-	 * This same row with the reason the live price was NOT used (T6: a guide row gains one tooltip line while the
-	 * switch is on). The source and every figure are untouched - only the explanation rides along.
-	 *
-	 * @param facts the sides and volume that were known, with the first failing check as the reason; null, or a
-	 *              {@code facts} that says the row IS live, answers this row unchanged
-	 */
-	public MovementRow withLiveRefusal(@Nullable final LiveFacts facts)
-	{
-		if (facts == null || facts.live())
-		{
-			return this;
-		}
-
-		return new MovementRow(id, name, quantity, stackable, unitPrice, thenPrice, deltaGp, deltaPct, holdingValue,
-			source, parts, windowSources, windowDays, facts, bankQuantity, inventoryQuantity, wornQuantity,
-			exchangeQuantity, graded);
 	}
 
 	/**
@@ -834,13 +501,10 @@ public final class MovementRow
 			&& Objects.equals(deltaPct, other.deltaPct)
 			&& source == other.source
 			&& Objects.equals(parts, other.parts)
-			// Part of the value, not decoration: two rows with the same figures but different series behind them
-			// are two different rows, and the "the switch off is byte-identical" test compares whole rows.
-			&& Objects.equals(windowSources, other.windowSources)
-			// The same reasoning for the DAYS (U3): two rows that compared against different days are two
-			// different rows, whatever their figures look like.
+			// Part of the value, not decoration (U3): two rows that compared against different days are two
+			// different rows, whatever their figures look like, and the "the switch off is byte-identical" test
+			// compares whole rows.
 			&& Objects.equals(windowDays, other.windowDays)
-			&& Objects.equals(liveFacts, other.liveFacts)
 			// And for the SPLIT (Y3): a stack of five in the bank and a stack of four plus one worn are two
 			// different rows, and the "the switch off is byte-identical" test compares whole rows.
 			&& bankQuantity == other.bankQuantity
@@ -855,30 +519,7 @@ public final class MovementRow
 	public int hashCode()
 	{
 		return Objects.hash(id, name, quantity, stackable, unitPrice, thenPrice, deltaGp, deltaPct,
-			holdingValue, source, parts, windowSources, windowDays, liveFacts, bankQuantity, inventoryQuantity,
-			wornQuantity, exchangeQuantity, graded);
-	}
-
-	@Override
-	public String toString()
-	{
-		return "MovementRow{id=" + id
-			+ ", name='" + name + '\''
-			+ ", quantity=" + quantity
-			+ ", unitPrice=" + unitPrice
-			+ ", thenPrice=" + thenPrice
-			+ ", deltaGp=" + deltaGp
-			+ ", deltaPct=" + deltaPct
-			+ ", holdingValue=" + holdingValue
-			+ ", source=" + source
-			+ (parts == null ? "" : ", parts=" + parts)
-			+ (windowSources == null ? "" : ", windowSources=" + windowSources)
-			+ (windowDays == null ? "" : ", windowDays=" + windowDays)
-			+ (liveFacts == null ? "" : ", live=" + liveFacts)
-			// Printed only when there IS a split, so a row computed with the switch off reads exactly as it did.
-			+ (split() ? ", bank=" + bankQuantity + ", inventory=" + inventoryQuantity + ", worn=" + wornQuantity
-				+ (exchangeQuantity > 0 ? ", exchange=" + exchangeQuantity : "") : "")
-			+ (graded == null ? "" : ", graded=" + graded)
-			+ '}';
+			holdingValue, source, parts, windowDays, bankQuantity, inventoryQuantity, wornQuantity,
+			exchangeQuantity, graded);
 	}
 }

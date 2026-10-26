@@ -16,26 +16,13 @@ public enum Grade
 	 * price of at least 100 gp, and the two sides agreeing to within ten points ({@link GradeMath} has every line of
 	 * the test). Drawn exactly as every figure was before 1.2.0.
 	 */
-	SOLID("solid"),
+	SOLID,
 	/**
 	 * A figure, but one fact of the solid test failed - and {@link GradedMove#word()} names the first that did, in the
 	 * contract's order ({@link GradeWords}). Drawn with the same digits as a solid figure; only the word beside it
 	 * differs (the user's pick, L5).
 	 */
-	SOFT("soft"),
+	SOFT,
 	/** No trade today and nothing for a fallback to compare: no figure at all - the dash, with "no trades". */
-	NONE("none");
-
-	private final String label;
-
-	Grade(final String label)
-	{
-		this.label = label;
-	}
-
-	/** The lower-case word the dev bridge echoes as {@code state.rows[].grade}: "solid", "soft" or "none". */
-	public String label()
-	{
-		return label;
-	}
+	NONE
 }

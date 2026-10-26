@@ -275,13 +275,6 @@ public class BankReader
 		{
 			return Objects.hash(inventory, worn, exchange, carriedGp, exchangeGp, readAtMillis);
 		}
-
-		@Override
-		public String toString()
-		{
-			return "Carried{inventory=" + inventory.size() + ", worn=" + worn.size() + ", exchange=" + exchange.size()
-				+ ", carriedGp=" + carriedGp + ", exchangeGp=" + exchangeGp + ", readAtMillis=" + readAtMillis + '}';
-		}
 	}
 
 	private final ItemManager itemManager;
@@ -481,9 +474,8 @@ public class BankReader
 	 * what the client's bundled Bank plugin counts them as in the bank title bar.
 	 *
 	 * <p>Public and static because two callers need the identical rule and neither should own a second copy of
-	 * it: {@link #accept} on the live container, and the dev bridge's synthetic {@code bank=} verb
-	 * ({@code BpmCommands}), whose made-up banks would otherwise be able to hold a coin ROW that no real bank
-	 * can produce.
+	 * it: {@link #accept} on the live container, and the dev bridge's synthetic {@code bank=} verb (in the test
+	 * source set), whose made-up banks would otherwise be able to hold a coin ROW that no real bank can produce.
 	 *
 	 * <p>No clamp is needed here: the biggest stack the game can hold is {@link Integer#MAX_VALUE} platinum
 	 * tokens, which is 2.1 x 10^12 gp - four million times short of a long. Summing MANY slots is where a clamp

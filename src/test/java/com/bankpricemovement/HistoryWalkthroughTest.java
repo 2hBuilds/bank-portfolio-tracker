@@ -122,12 +122,21 @@ public class HistoryWalkthroughTest
 	private ItemManager sprites;
 	/** The plugin's bank-read counter, as addendum AS hands it to the panel. */
 	private int reads;
+	/** The answer to the questions the panel puts (the cuts); null builds the panel with its real dialog. */
+	@Nullable
+	private BankPriceMovementPanel.LegacyPrompt prompt;
+	/** How many questions {@link #answerYes}'s prompt has been put. */
+	private int questions;
+	/** The text of each question {@link #answerYes}'s prompt has been put, in order. */
+	private final List<String> asks = new ArrayList<>();
+	/** While set, {@link #answerYes}'s prompt answers no. */
+	private boolean refuse;
 
 	/**
 	 * RuneLite's config for the plugin, kept across launches: the filter, the switches and the view the panel writes,
 	 * and the road the plugin's {@code saveOptions} takes on to the service.
 	 */
-	private final class Config implements BankPriceMovementPanel.Prefs
+	private final class Config extends PrefsDefaults
 	{
 		@Nullable
 		RowFilter filter;
@@ -232,6 +241,13 @@ public class HistoryWalkthroughTest
 		when(f.store.recordBankHistory(anyLong(), any(), any(), any(), any())).thenAnswer(i ->
 			disk.recordBankHistory(i.<Long>getArgument(0), i.<String>getArgument(1), i.<BankHistoryPoint>getArgument(2),
 				i.<LocalDate>getArgument(3), i.<BankHistorySeries.PlaceholderCheck>getArgument(4)));
+		when(f.store.recordTransfer(anyLong(), any(), any(), any())).thenAnswer(i ->
+			disk.recordTransfer(i.<Long>getArgument(0), i.<String>getArgument(1), i.<LocalDate>getArgument(2),
+				i.<BankHistorySeries.Transfer>getArgument(3)));
+		when(f.store.recordFreshStart(anyLong(), any(), any())).thenAnswer(i ->
+			disk.recordFreshStart(i.<Long>getArgument(0), i.<String>getArgument(1), i.<LocalDate>getArgument(2)));
+		when(f.store.recordRestored(anyLong(), any(), any())).thenAnswer(i ->
+			disk.recordRestored(i.<Long>getArgument(0), i.<String>getArgument(1), i.<LocalDate>getArgument(2)));
 		when(f.store.loadBank(anyLong(), anyString())).thenAnswer(i ->
 			disk.loadBank(i.<Long>getArgument(0), i.<String>getArgument(1)));
 		doAnswer(i ->
@@ -284,7 +300,7 @@ public class HistoryWalkthroughTest
 		login(MAIN);
 		openSidebar();
 
-		assertEquals("the sidebar opens on Items", SidebarView.ITEMS, panel.view());
+		assertEquals("the sidebar opens on Items", SidebarView.ITEMS, panel.view);
 		assertEquals(BankPriceMovementPanel.CARD_LIST, panel.card());
 		assertEquals("Item price changes", caption());
 		assertNotNull("AV: the Crystal body is a row with untradeables off",
@@ -580,7 +596,8 @@ public class HistoryWalkthroughTest
 		liveDay(PriceServiceTest.bank(f.clock.get()), SEP_7);
 		pressView(SidebarView.HISTORY);
 		final BankHistoryPoint tue = panel.status().bankHistory().on(SEP_8);
-		assertTrue("the whip is live", PriceServiceTest.rowFor(f.lastRows(), WHIP).isLive());
+		assertSame("the whip is live", MovementRow.PriceSource.LIVE,
+			PriceServiceTest.rowFor(f.lastRows(), WHIP).source());
 		assertTrue("so the reading keeps a guide figure beside the card's", tue.hasGuide());
 		final ViewOptions liveOn = ViewOptions.DEFAULT;
 		final ViewOptions liveOff = ViewOptions.DEFAULT.withLivePrices(false);
@@ -605,7 +622,7 @@ public class HistoryWalkthroughTest
 		f.clock.set(PriceServiceTest.T0 + 2L * DAY);
 		liveDay(PriceServiceTest.bank(f.clock.get()), SEP_9);
 		final BankHistoryPoint thu = panel.status().bankHistory().on(SEP_10);
-		assertTrue(PriceServiceTest.rowFor(f.lastRows(), WHIP).isLive());
+		assertSame(MovementRow.PriceSource.LIVE, PriceServiceTest.rowFor(f.lastRows(), WHIP).source());
 		assertTrue(thu.hasGuide());
 		assertHistoryIsTheCard();
 		final long tueLive = tue.valueFor(liveOn);
@@ -630,7 +647,7 @@ public class HistoryWalkthroughTest
 
 		clickMenu(panel.livePricesItem());
 		assertTrue(panel.status().options().livePrices());
-		assertTrue(PriceServiceTest.rowFor(f.lastRows(), WHIP).isLive());
+		assertSame(MovementRow.PriceSource.LIVE, PriceServiceTest.rowFor(f.lastRows(), WHIP).source());
 		assertEquals("back to the live figures", Arrays.asList(MovementMath.formatExact(thuLive),
 			MovementMath.formatExact(wedGuide), MovementMath.formatExact(tueLive)), exactColumn());
 		assertHistoryIsTheCard();
@@ -664,7 +681,7 @@ public class HistoryWalkthroughTest
 		f.answerLatest(recheck);
 		settle();
 		final BankHistoryPoint moved = panel.status().bankHistory().on(SEP_8);
-		assertTrue(PriceServiceTest.rowFor(f.lastRows(), WHIP).isLive());
+		assertSame(MovementRow.PriceSource.LIVE, PriceServiceTest.rowFor(f.lastRows(), WHIP).source());
 		assertNotEquals("the live price moved today's reading", first.card(BankHistoryPoint.BANK_TRADEABLE),
 			moved.card(BankHistoryPoint.BANK_TRADEABLE));
 		assertEquals("the guide did not move", first.guide(BankHistoryPoint.BANK_TRADEABLE),
@@ -804,7 +821,7 @@ public class HistoryWalkthroughTest
 		final long jump = tue - mon;
 		assertTrue("about 1.2b: " + jump, jump > 1_150_000_000L && jump < 1_250_000_000L);
 
-		assertEquals(SidebarView.HISTORY, panel.view());
+		assertEquals(SidebarView.HISTORY, panel.view);
 		Card card = card();
 		assertEquals(card.toString(), MovementMath.formatGp(tue), card.total);
 		assertEquals(card.toString(), MovementMath.formatDelta(jump), card.move);
@@ -1568,6 +1585,408 @@ public class HistoryWalkthroughTest
 		assertEquals(0, panel.status().placeholderRestarts());
 	}
 
+	/**
+	 * 21 (1.2.2, part 5). The player starts the history from a day. It is no restart - the count the shared "Include days before
+	 * ..." box answers stays where it was - and the cut shows whatever that box says: a player's reset has its own switch,
+	 * "Restore history", which is this account's and asks nothing. Nothing is deleted: the file holds every day, with the cut and
+	 * the reason {@code "player"}, and the account's notes file holds the restore.
+	 */
+	@Test
+	public void s21_aPlayersCutShowsWhateverTheSharedBoxSaysAndIsNoRestart() throws Exception
+	{
+		seedMonToWed();
+		config.view = SidebarView.HISTORY;
+		f.clock.set(at(THU, 12, 0));
+		launch(false);
+		login(MAIN);
+		openSidebar();
+		assertEquals("Mon to Thu, nothing hidden", 4, hist("readings"));
+		assertEquals(0, panel.status().placeholderRestarts());
+
+		assertTrue(service.startHistoryFrom(TUE_29));
+		settle();
+		assertEquals("no automatic restart", 0, panel.status().placeholderRestarts());
+		assertEquals("2026-09-29", hist("freshFrom"));
+		assertEquals("player", hist("freshWhy"));
+		assertEquals("Monday is hidden", 3, hist("readings"));
+		assertEquals("nothing was written to the shared box", 0, config.legacySaves);
+
+		// The reader ticks the shared box (the dialog answered Include; the config's road hands it back to the panel): it is the
+		// 1.0.9 / 1.1.1 reasons' switch, so a player's cut does not move.
+		config.includeLegacy = Boolean.TRUE;
+		onEdt(() -> panel.setIncludeLegacy(true));
+		settle();
+		assertEquals("the cut still shows", 3, hist("readings"));
+
+		assertTrue(service.startHistoryFrom(WED_30));
+		settle();
+		assertEquals(0, panel.status().placeholderRestarts());
+		assertEquals("the box is left as the reader left it", Boolean.TRUE, config.includeLegacy);
+		assertEquals(0, config.legacySaves);
+		assertEquals("the cut shows: Wednesday and Thursday", 2, hist("readings"));
+		assertEquals("nothing deleted", Arrays.asList(MON_28, TUE_29, WED_30, THU), days(onDisk(MAIN)));
+		assertEquals(WED_30, onDisk(MAIN).freshFrom());
+		assertEquals(BankHistorySeries.WHY_PLAYER, onDisk(MAIN).freshWhy());
+		assertFalse(onDisk(MAIN).restored());
+		assertEquals("the series in memory is the file's", onDisk(MAIN), panel.status().bankHistory());
+
+		// Restore history: every day again, for this account, at once; the shared box is still not the one that did it.
+		pressHistoryButton(BankPriceMovementPanel.RESTORE_TEXT);
+		assertEquals("every day again", 4, hist("readings"));
+		assertTrue("and the account's own notes file says so", onDisk(MAIN).restored());
+		assertEquals("the series in memory is the file's", onDisk(MAIN), panel.status().bankHistory());
+		assertEquals(0, config.legacySaves);
+
+		// The same cut again: it hides the days again, and takes the restore off.
+		assertTrue(service.startHistoryFrom(WED_30));
+		settle();
+		assertEquals(2, hist("readings"));
+		assertFalse(onDisk(MAIN).restored());
+		assertEquals(0, panel.status().placeholderRestarts());
+	}
+
+	/**
+	 * 22 (1.2.2). A transfer marked from the day row's own right-click menu, through the real panel and the real service: the one-click
+	 * amount is the day's change, the row reads as the user's mock draws it, the chart is drawn on the shifted totals while the list
+	 * keeps the real ones, "Not a transfer" puts it all back, and the amount box's answer is marked as typed. The notes are on disk
+	 * beside the readings, and the readings are not touched. (The menu's cut asks a modal question, which this harness's client would
+	 * really show: it is pinned in {@link TransferMenuTest} with the question answered by a stand-in.)
+	 */
+	@Test
+	public void s22_aTransferMarkedFromTheRowsMenuCorrectsTheChangesAndKeepsTheTotals() throws Exception
+	{
+		seedMonToWed();
+		config.view = SidebarView.HISTORY;
+		f.clock.set(at(THU, 12, 0));
+		launch(false);
+		login(MAIN);
+		openSidebar();
+		assertEquals(4, hist("readings"));
+		final BankHistorySeries before = onDisk(MAIN);
+		final long monday = before.on(MON_28).valueFor(ViewOptions.DEFAULT);
+		final long tuesday = before.on(TUE_29).valueFor(ViewOptions.DEFAULT);
+		assertEquals("the day's change is what the menu offers", 50_000L, tuesday - monday);
+		final String[] items = new String[2];
+		onEdt(() ->
+		{
+			final javax.swing.JPopupMenu menu = panel.historyRowMenu(TUE_29);
+			items[0] = ((javax.swing.JMenuItem) menu.getComponent(0)).getText();
+			((javax.swing.JMenuItem) menu.getComponent(0)).doClick();
+		});
+		settle();
+		assertEquals("This was a transfer: +50k", items[0]);
+		assertEquals(new BankHistorySeries.Transfer(50_000L, false), onDisk(MAIN).transfers().get(TUE_29));
+		assertEquals("the readings are untouched", before.points(), onDisk(MAIN).points());
+		assertEquals("the series in memory is the file's", onDisk(MAIN), panel.status().bankHistory());
+
+		final List<String> marked = row("Tue 29 Sep");
+		assertEquals(Arrays.asList("Tue 29 Sep", "vs 28 Sep,", "6.15m", "6,150,000", "0.0%", "+50k", "transfer"), marked);
+		assertEquals("the day before keeps its real total", "6,100,000", row("Mon 28 Sep").get(3));
+		final BankHistoryChart chart = find(BankHistoryChart.class);
+		final long[] drawn = new long[2];
+		onEdt(() ->
+		{
+			drawn[0] = chart.value(chart.days().get(0));
+			drawn[1] = chart.days().get(0).valueGp();
+		});
+		assertEquals("Monday is drawn 50k higher: the line is smooth into Tuesday", monday + 50_000L, drawn[0]);
+		assertEquals(monday, drawn[1]);
+
+		onEdt(() -> ((javax.swing.JMenuItem) panel.historyRowMenu(TUE_29).getComponent(0)).doClick());
+		settle();
+		assertTrue("Not a transfer", onDisk(MAIN).transfers().isEmpty());
+		assertEquals(Arrays.asList("Tue 29 Sep", "vs 28 Sep", "6.15m", "6,150,000", "+0.8%", "+50k"), row("Tue 29 Sep"));
+
+		final long[] offered = new long[2];
+		onEdt(() ->
+		{
+			panel.transferPrompt = (day, initial, whole) ->
+			{
+				offered[0] = initial;
+				offered[1] = whole;
+				return 20_000L;
+			};
+			((javax.swing.JMenuItem) panel.historyRowMenu(TUE_29).getComponent(1)).doClick();
+		});
+		settle();
+		assertEquals("offered the day's own change", 50_000L, offered[0]);
+		assertEquals(50_000L, offered[1]);
+		assertEquals("marked as typed", new BankHistorySeries.Transfer(20_000L, false), onDisk(MAIN).transfers().get(TUE_29));
+		assertEquals("30k of it is still a real change", "+0.4%", row("Tue 29 Sep").get(4));
+		assertNull("no cut was made", onDisk(MAIN).freshFrom());
+		assertEquals(4, hist("readings"));
+	}
+
+	/**
+	 * 23 (1.2.2). Every act of the reader's on the notes and the cut is ANSWERED by a status-only publish, which the panel stores
+	 * rather than draws while the bank is open - unless the act lifted the hold, as a filter, a switch and the Refresh link do. Each
+	 * is run here with the bank open (a fresh visit for each, since a lift lasts until the plugin reports a change or the bank
+	 * closes), and the History tab must show the answer before the bank is closed.
+	 */
+	@Test
+	public void s23a_markingATransferIsDrawnWhileTheBankIsOpen() throws Exception
+	{
+		openHistoryWithTheBankOpen(false);
+		onEdt(() -> menuItem(panel.historyRowMenu(TUE_29), 0).doClick());
+		settle();
+		assertEquals(new BankHistorySeries.Transfer(50_000L, false), onDisk(MAIN).transfers().get(TUE_29));
+		assertEquals("drawn at once, with the bank still open",
+			Arrays.asList("Tue 29 Sep", "vs 28 Sep,", "6.15m", "6,150,000", "0.0%", "+50k", "transfer"), row("Tue 29 Sep"));
+	}
+
+	@Test
+	public void s23b_takingATransferOffIsDrawnWhileTheBankIsOpen() throws Exception
+	{
+		openHistoryWithTheBankOpen(true);
+		onEdt(() -> assertEquals("Not a transfer", menuItem(panel.historyRowMenu(TUE_29), 0).getText()));
+		onEdt(() -> menuItem(panel.historyRowMenu(TUE_29), 0).doClick());
+		settle();
+		assertTrue(onDisk(MAIN).transfers().isEmpty());
+		assertEquals(Arrays.asList("Tue 29 Sep", "vs 28 Sep", "6.15m", "6,150,000", "+0.8%", "+50k"), row("Tue 29 Sep"));
+	}
+
+	@Test
+	public void s23c_changingTheAmountIsDrawnWhileTheBankIsOpen() throws Exception
+	{
+		openHistoryWithTheBankOpen(true);
+		onEdt(() ->
+		{
+			panel.transferPrompt = (day, initial, whole) -> 20_000L;
+			menuItem(panel.historyRowMenu(TUE_29), 1).doClick();
+		});
+		settle();
+		assertEquals(new BankHistorySeries.Transfer(20_000L, false), onDisk(MAIN).transfers().get(TUE_29));
+		assertEquals("30k of it is a real change again", "+0.4%", row("Tue 29 Sep").get(4));
+	}
+
+	@Test
+	public void s23d_startingTheHistoryFromADayIsDrawnWhileTheBankIsOpen() throws Exception
+	{
+		openHistoryWithTheBankOpen(false);
+		onEdt(() ->
+		{
+			final javax.swing.JPopupMenu menu = panel.historyRowMenu(WED_30);
+			menuItem(menu, menu.getComponentCount() - 1).doClick();
+		});
+		settle();
+		assertEquals(WED_30, onDisk(MAIN).freshFrom());
+		assertEquals("Wednesday and Thursday are all that is left on the tab", 2, hist("readings"));
+		assertEquals(Arrays.asList("Thu 01 Oct", "Wed 30 Sep"), firstWords(rows()));
+	}
+
+	@Test
+	public void s23e_resetHistoryIsDrawnWhileTheBankIsOpen() throws Exception
+	{
+		openHistoryWithTheBankOpen(false);
+		onEdt(() -> SidebarViewPanelTest.historyButton(panel, BankPriceMovementPanel.RESET_TEXT).doClick());
+		settle();
+		assertEquals(THU, onDisk(MAIN).freshFrom());
+		assertEquals("only today is left on the tab", 1, hist("readings"));
+		assertEquals(Collections.singletonList("Thu 01 Oct"), firstWords(rows()));
+	}
+
+	/**
+	 * 24 (1.2.2 part 5). A player's reset and its Restore belong to ONE account. Two accounts in one client, each reset from Wed 30
+	 * Sep, the main then restored: its Monday and Tuesday are back and nothing was asked, while the alt keeps them hidden and
+	 * Restore stays on for it; the shared "Include days before ..." box is never touched.
+	 */
+	@Test
+	public void s24a_aRestoreBringsBackTheDaysOfTheAccountThatPressedItAlone() throws Exception
+	{
+		bothAccountsReset();
+		final int asked = questions;
+		pressHistoryButton(BankPriceMovementPanel.RESTORE_TEXT);
+		assertEquals("the main's days are back", 4, hist("readings"));
+		assertEquals("no question: the player hid them themselves", asked, questions);
+		assertFalse("nothing left to restore on the main", restoreEnabled());
+
+		logout(MAIN);
+		f.clock.set(at(THU, 12, 30));
+		login(ALT);
+		assertEquals("the alt's Monday and Tuesday stay hidden", 2, hist("readings"));
+		assertTrue("Restore is still on for the alt", restoreEnabled());
+		assertEquals("the shared box is not touched", 0, config.legacySaves);
+		assertNull(config.includeLegacy);
+
+		// On disk: the main's restore is in the main's own notes file, and the alt has none.
+		assertTrue(onDisk(MAIN).restored());
+		assertFalse(onDisk(ALT).restored());
+		assertEquals("{\"schema\":1,\"transfers\":[],\"restoredFrom\":\"2026-09-30\"}", TestFilepaths.read(store().notesFile(MAIN, PROFILE)));
+		assertFalse("the alt pressed nothing: no notes file", store().notesFile(ALT, PROFILE).exists());
+		assertEquals("both resets are in their own history files", WED_30, onDisk(ALT).freshFrom());
+		assertEquals(WED_30, onDisk(MAIN).freshFrom());
+	}
+
+	/**
+	 * 24b (1.2.2 part 5). The alt's later reset leaves the main restored, and a client restart finds each account as it was left:
+	 * the main whole, the alt reset from today with Restore still on for it.
+	 */
+	@Test
+	public void s24b_aResetOnTheOtherAccountLeavesARestoreAloneAndARestartKeepsBoth() throws Exception
+	{
+		bothAccountsReset();
+		pressHistoryButton(BankPriceMovementPanel.RESTORE_TEXT);
+		assertEquals(4, hist("readings"));
+		logout(MAIN);
+		f.clock.set(at(THU, 12, 30));
+		login(ALT);
+		// (s24a pins what the alt shows here: its own two days.)
+		pressHistoryButton(BankPriceMovementPanel.RESET_TEXT);
+		assertEquals("the alt, reset from today", 1, hist("readings"));
+		logout(ALT);
+		f.clock.set(at(THU, 12, 40));
+		login(MAIN);
+		assertEquals("the alt's reset did not hide the main's days again", 4, hist("readings"));
+		assertFalse(restoreEnabled());
+		assertEquals(0, config.legacySaves);
+		assertNull(config.includeLegacy);
+
+		launch(false);
+		openSidebar();
+		login(MAIN);
+		assertEquals("after a restart the main is still whole", 4, hist("readings"));
+		assertFalse(restoreEnabled());
+		logout(MAIN);
+		f.clock.set(at(THU, 13, 0));
+		login(ALT);
+		assertEquals("and the alt still reset", 1, hist("readings"));
+		assertTrue(restoreEnabled());
+		assertTrue("the main's restore survived the alt's reset on disk", onDisk(MAIN).restored());
+		assertFalse(onDisk(ALT).restored());
+		assertEquals(THU, onDisk(ALT).freshFrom());
+		assertEquals(WED_30, onDisk(MAIN).freshFrom());
+		assertEquals("no reset or restore counted as a restart", 0, panel.status().placeholderRestarts());
+	}
+
+	/**
+	 * The main and the alt, each with Monday to Wednesday on file and reset from Wed 30 Sep through the History row's own menu
+	 * (the questions answered yes), ending logged in as the main with Monday and Tuesday hidden on both.
+	 */
+	private void bothAccountsReset() throws Exception
+	{
+		answerYes();
+		seedTwoAccounts();
+		config.view = SidebarView.HISTORY;
+		f.clock.set(at(THU, 12, 0));
+		launch(false);
+		openSidebar();
+		login(MAIN);
+		assertEquals("the main: Monday to Thursday", 4, hist("readings"));
+		resetFrom(WED_30);
+		assertEquals("Monday and Tuesday are hidden", 2, hist("readings"));
+		assertTrue(restoreEnabled());
+
+		logout(MAIN);
+		f.clock.set(at(THU, 12, 10));
+		login(ALT);
+		assertEquals("the alt's own four days", 4, hist("readings"));
+		resetFrom(WED_30);
+		assertEquals("the alt's Monday and Tuesday are hidden", 2, hist("readings"));
+
+		logout(ALT);
+		f.clock.set(at(THU, 12, 20));
+		login(MAIN);
+		assertEquals("the main is still reset", 2, hist("readings"));
+	}
+
+	/** Two accounts' files and stored banks: Monday to Wednesday on each. */
+	private void seedTwoAccounts() throws IOException
+	{
+		seedMonToWed();
+		final BankSnapshot altBank = PriceServiceTest.bank(at(WED_30, 20, 0), ALT);
+		altBank.items.removeIf(item -> item.id == WHIP);
+		store().saveBank(altBank);
+		seed(ALT, MON_28, 5_100_000L);
+		seed(ALT, TUE_29, 5_150_000L);
+		seed(ALT, WED_30, 5_200_000L);
+	}
+
+	/** "Reset history from this day" on {@code day}'s row, the question answered yes. */
+	private void resetFrom(LocalDate day) throws Exception
+	{
+		onEdt(() ->
+		{
+			final javax.swing.JPopupMenu menu = panel.historyRowMenu(day);
+			menuItem(menu, menu.getComponentCount() - 1).doClick();
+		});
+		settle();
+	}
+
+	private void pressHistoryButton(String text) throws Exception
+	{
+		onEdt(() -> SidebarViewPanelTest.historyButton(panel, text).doClick());
+		settle();
+	}
+
+	private boolean restoreEnabled() throws Exception
+	{
+		final boolean[] out = new boolean[1];
+		onEdt(() -> out[0] = SidebarViewPanelTest.historyButton(panel, BankPriceMovementPanel.RESTORE_TEXT).isEnabled());
+		return out[0];
+	}
+
+	/**
+	 * Monday to Wednesday on file, Thursday's login, the History tab showing, the questions answered yes and the bank open - with
+	 * Tuesday already marked a transfer when {@code marked}.
+	 */
+	private void openHistoryWithTheBankOpen(boolean marked) throws Exception
+	{
+		answerYes();
+		seedMonToWed();
+		config.view = SidebarView.HISTORY;
+		f.clock.set(at(THU, 12, 0));
+		launch(false);
+		login(MAIN);
+		openSidebar();
+		assertEquals(4, hist("readings"));
+		if (marked)
+		{
+			assertTrue(service.markTransfer(TUE_29, 50_000L, false));
+			settle();
+			assertEquals("transfer", row("Tue 29 Sep").get(6));
+		}
+		hold(true, false, 0);
+	}
+
+	/** The panel's questions (the resets, the old days' warnings) answered yes - and counted, in {@link #questions}. */
+	private void answerYes()
+	{
+		prompt = new BankPriceMovementPanel.LegacyPrompt()
+		{
+			@Override
+			public boolean ask(String question)
+			{
+				questions++;
+				asks.add(question);
+				return !refuse;
+			}
+
+			@Override
+			public boolean ask(String title, String question, String yes)
+			{
+				questions++;
+				asks.add(question);
+				return !refuse;
+			}
+		};
+	}
+
+	private static javax.swing.JMenuItem menuItem(javax.swing.JPopupMenu menu, int i)
+	{
+		return (javax.swing.JMenuItem) menu.getComponent(i);
+	}
+
+	/** Each row's first label (its date), in the rows' order. */
+	private static List<String> firstWords(List<List<String>> rows)
+	{
+		final List<String> out = new ArrayList<>();
+		for (List<String> r : rows)
+		{
+			out.add(r.get(0));
+		}
+		return out;
+	}
+
 	// ================================================================================================ scenario bodies
 
 	private void nightOwl(ZoneId owlZone) throws Exception
@@ -1679,7 +2098,8 @@ public class HistoryWalkthroughTest
 	{
 		onEdt(() ->
 		{
-			panel = new BankPriceMovementPanel(sprites, service, config);
+			panel = prompt == null ? new BankPriceMovementPanel(sprites, service, config)
+				: new BankPriceMovementPanel(sprites, service, config, text -> { }, prompt);
 			panel.setClock(f.clock::get);
 			// The panel opens on Items; the scenario's hand presses History again if it had.
 			if (config.view != null)
@@ -1766,7 +2186,7 @@ public class HistoryWalkthroughTest
 		onEdt(() -> press(((Container) LookRenderer.find(panel, Widgets.Toggle.class)).getComponent(v.ordinal()),
 			MouseEvent.BUTTON1));
 		settle();
-		assertEquals(v, panel.view());
+		assertEquals(v, panel.view);
 		config.view = v;
 	}
 
@@ -1847,7 +2267,7 @@ public class HistoryWalkthroughTest
 	private Object hist(String key) throws Exception
 	{
 		final Object[] out = new Object[1];
-		onEdt(() -> out[0] = panel.bankHistoryState().get(key));
+		onEdt(() -> out[0] = PanelState.bankHistoryState(panel).get(key));
 		return out[0];
 	}
 
@@ -2216,5 +2636,243 @@ public class HistoryWalkthroughTest
 		onEdt(() -> out[0] = ColorScheme.MEDIUM_GRAY_COLOR.equals(
 			BankHistoryViewTest.rangeCell(view(), range).getForeground()));
 		return out[0];
+	}
+
+	// ================================================================================================ 1.2.2 verification fixes
+
+	private void seedCash(long account, LocalDate day, long bank, long cash)
+	{
+		final long[] cells = new long[BankHistoryPoint.CELLS];
+		cells[BankHistoryPoint.BANK_TRADEABLE] = bank;
+		cells[BankHistoryPoint.BANK_CASH] = cash;
+		final long noon = at(day, 12, 0);
+		assertTrue(store().recordBankHistory(account, PROFILE, new BankHistoryPoint(day, noon, noon, cells, null), SEEDING, null));
+	}
+
+	private static List<String> menuWords(javax.swing.JPopupMenu menu)
+	{
+		final List<String> out = new ArrayList<>();
+		for (java.awt.Component c : menu.getComponents())
+		{
+			out.add(c instanceof javax.swing.JMenuItem ? ((javax.swing.JMenuItem) c).getText() : "-");
+		}
+		return out;
+	}
+
+	/**
+	 * 25a. A coins transfer, then the coins switch off. The note no longer counts (the row draws no mark), but it is still the day's note:
+	 * its menu is the marked one, so the player cannot replace it with an items amount without saying so, and "Change the amount..." starts
+	 * from the note. Before the fix the unmarked "This was a transfer: +200k" overwrote the coins note, and with the coins back on the
+	 * 100m cliff came back under a "transfer" tag on the wrong amount.
+	 */
+	@Test
+	public void s25a_aCoinsNoteIsNotReplacedByTheMenuWhileTheCoinsSwitchIsOff() throws Exception
+	{
+		store().saveBank(PriceServiceTest.bank(at(WED_30, 20, 0)));
+		seedCash(MAIN, MON_28, 10_000_000L, 100_000_000L);
+		seedCash(MAIN, TUE_29, 10_200_000L, 0L);      // 100m coins sent, the items up 200k
+		seedCash(MAIN, WED_30, 10_300_000L, 0L);
+		config.view = SidebarView.HISTORY;
+		f.clock.set(at(THU, 12, 0));
+		launch(false);
+		login(MAIN);
+		openSidebar();
+
+		final List<String> first = new ArrayList<>();
+		onEdt(() ->
+		{
+			final javax.swing.JPopupMenu menu = panel.historyRowMenu(TUE_29);
+			first.addAll(menuWords(menu));
+			menuItem(menu, 0).doClick();
+		});
+		settle();
+		assertEquals("coins on: the one click offers the coins that left", "This was a transfer: -100m", first.get(0));
+		final BankHistorySeries.Transfer note = new BankHistorySeries.Transfer(-100_000_000L, true);
+		assertEquals(note, onDisk(MAIN).transfers().get(TUE_29));
+		assertEquals("transfer", row("Tue 29 Sep").get(6));
+
+		config.saveOptions(config.options.withCountCash(false));
+		settle();
+		assertEquals("coins off: the row draws no mark", 6, row("Tue 29 Sep").size());
+		final long[] offered = new long[1];
+		onEdt(() ->
+		{
+			final javax.swing.JPopupMenu menu = panel.historyRowMenu(TUE_29);
+			assertEquals(Arrays.asList("Not a transfer", "Change the amount...", "-", "Reset history from this day"), menuWords(menu));
+			panel.transferPrompt = (day, initial, whole) ->
+			{
+				offered[0] = initial;
+				return null;
+			};
+			menuItem(menu, 1).doClick();
+		});
+		settle();
+		assertEquals("the box starts on the note nobody can see", -100_000_000L, offered[0]);
+		assertEquals("nothing replaced it", note, onDisk(MAIN).transfers().get(TUE_29));
+
+		config.saveOptions(config.options.withCountCash(true));
+		settle();
+		final List<String> again = row("Tue 29 Sep");
+		assertEquals("the coins back on: the cliff is corrected again, under the right amount", "transfer", again.get(6));
+		assertEquals("-100m", again.get(5));
+		assertEquals(note, onDisk(MAIN).transfers().get(TUE_29));
+	}
+
+	/**
+	 * 25b. An alt holding 1m receives a 200m item that rose 2m, and the player types 200m: the marked row reads +0.9% and +2m - the share
+	 * the change line over the same day reads - and not +200% on the 1m from before the gold arrived.
+	 */
+	@Test
+	public void s25b_aReceivedTransferRowReadsTheShareOfTheTotalItArrivedIn() throws Exception
+	{
+		store().saveBank(PriceServiceTest.bank(at(WED_30, 20, 0)));
+		seed(MAIN, MON_28, 1_000_000L);
+		seed(MAIN, TUE_29, 203_000_000L);
+		seed(MAIN, WED_30, 203_100_000L);
+		config.view = SidebarView.HISTORY;
+		f.clock.set(at(THU, 12, 0));
+		launch(false);
+		login(MAIN);
+		openSidebar();
+		onEdt(() ->
+		{
+			panel.transferPrompt = (day, initial, whole) -> 200_000_000L;
+			menuItem(panel.historyRowMenu(TUE_29), 1).doClick();
+		});
+		settle();
+		assertEquals(new BankHistorySeries.Transfer(200_000_000L, false), onDisk(MAIN).transfers().get(TUE_29));
+		final List<String> marked = row("Tue 29 Sep");
+		assertEquals("a share of the 201m the row's own figures start from, not +200% of the 1m", "+0.9%", marked.get(4));
+		assertEquals("the note stands where the gp change does", "+200m", marked.get(5));
+		assertEquals("transfer", marked.get(6));
+		assertEquals("the real total is kept", "203,000,000", marked.get(3));
+	}
+
+	/** The real 1.1.1 judgement: Thu to Sat read from the stored bank (placeholders counted), then Sunday's fresh read finds 5 placeholders. */
+	private void placeholderRestartOnSunday() throws Exception
+	{
+		store().saveBank(PriceServiceTest.bank(at(WED_30, 19, 0)));
+		for (LocalDate day : Arrays.asList(THU, FRI, SAT))
+		{
+			f.clock.set(at(day, 18, 0));
+			launch(false);
+			login(MAIN);
+			openSidebar();
+		}
+		f.clock.set(at(SUN, 18, 0));
+		launch(false);
+		login(MAIN);
+		openSidebar();
+		f.clock.set(at(SUN, 18, 30));
+		final BankSnapshot fresh = PriceServiceTest.bank(f.clock.get());
+		fresh.placeholderSlots = 5;
+		bankVisit(fresh);
+		pressView(SidebarView.HISTORY);
+		assertEquals(BankHistorySeries.WHY_PLACEHOLDERS, onDisk(MAIN).freshWhy());
+		assertEquals(SUN, onDisk(MAIN).freshFrom());
+		assertEquals("only Sunday is drawn", 1, hist("readings"));
+	}
+
+	private boolean legacyItemInGearMenu() throws Exception
+	{
+		final boolean[] out = new boolean[1];
+		onEdt(() ->
+		{
+			for (java.awt.Component c : panel.heroMenu().getComponents())
+			{
+				if (c instanceof javax.swing.JMenuItem && ((javax.swing.JMenuItem) c).getText() != null
+					&& ((javax.swing.JMenuItem) c).getText().startsWith("Include days before"))
+				{
+					out[0] = true;
+				}
+			}
+		});
+		return out[0];
+	}
+
+	/**
+	 * 26a. The 1.1.1 placeholder restart hid Thu to Sat, whose totals counted placeholders. The player resets, then presses Restore history.
+	 * The reset used to REPLACE the restart's cut and reason, so Restore brought those days back with no word, the 1.1.1 tick left the
+	 * settings menu and the judgement never ran again. Now the cut the reset stands over stays with the account: Restore asks the 1.1.1
+	 * warning first (no answer changes nothing), a yes shows every day and puts the shared box on, and the tick is back.
+	 */
+	@Test
+	public void s26a_resetOverThePlaceholderCutThenRestoreAsksTheWarningFirst() throws Exception
+	{
+		answerYes();
+		placeholderRestartOnSunday();
+		assertTrue("the 1.1.1 tick is there", legacyItemInGearMenu());
+		pressHistoryButton(BankPriceMovementPanel.RESET_TEXT);
+		assertEquals(BankHistorySeries.WHY_PLAYER, onDisk(MAIN).freshWhy());
+		assertEquals("it keeps what it stands over", new BankHistorySeries.AutoCut(SUN, BankHistorySeries.WHY_PLACEHOLDERS),
+			onDisk(MAIN).autoCut());
+		assertFalse("the tick belongs to the automatic reasons alone while the player's reset hides", legacyItemInGearMenu());
+		assertTrue(restoreEnabled());
+
+		refuse = true;
+		asks.clear();
+		pressHistoryButton(BankPriceMovementPanel.RESTORE_TEXT);
+		assertEquals("the 1.1.1 warning, first", Arrays.asList(BankPriceMovementPanel.LEGACY_PLACEHOLDERS_ASK), asks);
+		assertEquals("answered no: nothing came back", 1, hist("readings"));
+		assertTrue(restoreEnabled());
+		assertFalse(onDisk(MAIN).restored());
+		assertNull("the shared box is not touched", config.includeLegacy);
+
+		refuse = false;
+		asks.clear();
+		pressHistoryButton(BankPriceMovementPanel.RESTORE_TEXT);
+		assertEquals(Arrays.asList(BankPriceMovementPanel.LEGACY_PLACEHOLDERS_ASK), asks);
+		assertEquals("every day: Thu, Fri, Sat and Sun", 4, hist("readings"));
+		assertTrue(onDisk(MAIN).restored());
+		assertEquals(Boolean.TRUE, config.includeLegacy);
+		assertFalse("nothing left to restore", restoreEnabled());
+		assertTrue("the 1.1.1 tick is back, as the record stands as that cut again", legacyItemInGearMenu());
+
+		// The tick unticked hides Thu to Sat again - the days that read high - and Restore asks the same warning for them.
+		onEdt(() -> panel.pressLegacy(false));
+		settle();
+		assertEquals("only Sunday: the placeholder cut", 1, hist("readings"));
+		assertTrue(restoreEnabled());
+		asks.clear();
+		pressHistoryButton(BankPriceMovementPanel.RESTORE_TEXT);
+		assertEquals(Arrays.asList(BankPriceMovementPanel.LEGACY_PLACEHOLDERS_ASK), asks);
+		assertEquals(4, hist("readings"));
+	}
+
+	/**
+	 * 26b. A reset from the FIRST day shown hides nothing, so nothing changes on screen - but the restart's days before it are still the
+	 * ones that read wrong. Restore asks the warning, not a silent restore of days the player never hid.
+	 */
+	@Test
+	public void s26b_resetFromTheFirstShownDayHidesNothingYetRestoreStillAsksTheWarning() throws Exception
+	{
+		answerYes();
+		placeholderRestartOnSunday();
+		resetFrom(SUN);
+		assertEquals(BankHistorySeries.WHY_PLAYER, onDisk(MAIN).freshWhy());
+		assertEquals(SUN, onDisk(MAIN).freshFrom());
+		assertEquals(1, hist("readings"));
+		asks.clear();
+		pressHistoryButton(BankPriceMovementPanel.RESTORE_TEXT);
+		assertEquals(Arrays.asList(BankPriceMovementPanel.LEGACY_PLACEHOLDERS_ASK), asks);
+		assertEquals(4, hist("readings"));
+	}
+
+	/** 26c. A client restart keeps what the reset stands over: the account's notes carry it, and the warning is still asked. */
+	@Test
+	public void s26c_aRestartKeepsWhatTheResetStandsOver() throws Exception
+	{
+		answerYes();
+		placeholderRestartOnSunday();
+		pressHistoryButton(BankPriceMovementPanel.RESET_TEXT);
+		launch(false);
+		openSidebar();
+		login(MAIN);
+		assertEquals("after a restart the reset is still there", 1, hist("readings"));
+		assertEquals(new BankHistorySeries.AutoCut(SUN, BankHistorySeries.WHY_PLACEHOLDERS), panel.status().bankHistory().autoCut());
+		asks.clear();
+		pressHistoryButton(BankPriceMovementPanel.RESTORE_TEXT);
+		assertEquals(Arrays.asList(BankPriceMovementPanel.LEGACY_PLACEHOLDERS_ASK), asks);
+		assertEquals(4, hist("readings"));
 	}
 }

@@ -1,8 +1,5 @@
 package com.bankpricemovement;
 
-import java.util.Locale;
-import javax.annotation.Nullable;
-
 /**
  * How big the gp change and the percentage change are drawn on an Items row or a Net Worth History day row (release 1.2.1): the
  * four steps of the two size bars in a tab's options menu, one value for the gp figures and one for the percentage, each stored
@@ -57,24 +54,5 @@ public enum ChangeSize
 	public String toString()
 	{
 		return label;
-	}
-
-	/** The step a word names (its label or constant, any case), or null for anything else - the dev bridge's reading. */
-	@Nullable
-	public static ChangeSize parse(@Nullable final String word)
-	{
-		if (word == null)
-		{
-			return null;
-		}
-		final String w = word.trim().toLowerCase(Locale.ROOT);
-		for (final ChangeSize size : values())
-		{
-			if (size.label.toLowerCase(Locale.ROOT).equals(w))
-			{
-				return size;
-			}
-		}
-		return null;
 	}
 }

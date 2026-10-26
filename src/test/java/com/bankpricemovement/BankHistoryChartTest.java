@@ -127,7 +127,7 @@ public class BankHistoryChartTest
 				{
 					assertEquals(n, drawn.size());
 				}
-				assertEquals("the list is not thinned: one page of it", Math.min(n, 250), view.describe().get("rows"));
+				assertEquals("the list is not thinned: one page of it", Math.min(n, 250), PanelState.describe(view).get("rows"));
 			}
 		});
 	}
@@ -177,7 +177,7 @@ public class BankHistoryChartTest
 			assertEquals(TODAY.minusDays(1), last.day());
 			for (BankHistoryMath.Day d : chart.days())
 			{
-				assertTrue("every bucket here holds a reading: " + d, !d.carried());
+				assertTrue("every bucket here holds a reading: " + d.day(), !d.carried());
 			}
 
 			hover(chart, x(chart, 3));
@@ -195,31 +195,31 @@ public class BankHistoryChartTest
 			final BankHistoryView view = view(fixture(), BankHistoryRange.D30);
 			layOut(view, 213);
 			final BankHistoryChart chart = chart(view);
-			assertNull(view.describe().get("hoverDay"));
+			assertNull(PanelState.describe(view).get("hoverDay"));
 			assertNotNull("with no hover, the latest reading", label(view, "Sat 26 Sep"));
 			assertNotNull(label(view, "736,412,683 gp"));
 
 			final LocalDate sep9 = LocalDate.of(2026, 9, 9);
 			hover(chart, x(chart, indexOf(chart, sep9)));
-			assertEquals("2026-09-09", view.describe().get("hoverDay"));
+			assertEquals("2026-09-09", PanelState.describe(view).get("hoverDay"));
 			assertNotNull(label(view, "Wed 09 Sep"));
 			final long v = fixture().on(sep9).valueFor(ViewOptions.DEFAULT);
 			assertNotNull(label(view, MovementMath.formatExact(v) + " gp"));
 
 			// The nearest point by x: a pointer 2 px right of the 9th is still the 9th.
 			hover(chart, x(chart, indexOf(chart, sep9)) + 2);
-			assertEquals("2026-09-09", view.describe().get("hoverDay"));
+			assertEquals("2026-09-09", PanelState.describe(view).get("hoverDay"));
 
 			// A carried day can be hovered: its readout names it, at the carried total.
 			final LocalDate sep8 = LocalDate.of(2026, 9, 8);
 			hover(chart, x(chart, indexOf(chart, sep8)));
-			assertEquals("2026-09-08", view.describe().get("hoverDay"));
+			assertEquals("2026-09-08", PanelState.describe(view).get("hoverDay"));
 			// Found by its place: the list's own row for the 8th reads "Tue 08 Sep" too, its date alone.
 			assertEquals("Tue 08 Sep", BankHistoryViewTest.chartLabel(view, BankHistoryViewTest.READOUT_DAY));
 			assertNotNull(label(view, MovementMath.formatExact(fixture().on(sep8.minusDays(1)).valueFor(null)) + " gp"));
 
 			leave(chart);
-			assertNull(view.describe().get("hoverDay"));
+			assertNull(PanelState.describe(view).get("hoverDay"));
 			assertNotNull(label(view, "Sat 26 Sep"));
 			assertNotNull(label(view, "736,412,683 gp"));
 			assertEquals("Sat 26 Sep", BankHistoryViewTest.chartLabel(view, BankHistoryViewTest.READOUT_DAY));
@@ -246,9 +246,24 @@ public class BankHistoryChartTest
 			leave(chart);
 			leave(chart);
 			assertEquals(3, told.get());
-			assertTrue("one listener serves both roles", chart.getMouseListeners().length == 1
-				&& chart.getMouseMotionListeners().length == 1
-				&& (Object) chart.getMouseListeners()[0] == chart.getMouseMotionListeners()[0]);
+			// The tooltip manager is registered beside it (1.2.2's hover on a shifted point); the chart's OWN listener is the one left.
+			final java.util.List<Object> own = new java.util.ArrayList<>();
+			for (java.awt.event.MouseListener l : chart.getMouseListeners())
+			{
+				if (!(l instanceof javax.swing.ToolTipManager))
+				{
+					own.add(l);
+				}
+			}
+			final java.util.List<Object> ownMotion = new java.util.ArrayList<>();
+			for (java.awt.event.MouseMotionListener l : chart.getMouseMotionListeners())
+			{
+				if (!(l instanceof javax.swing.ToolTipManager))
+				{
+					ownMotion.add(l);
+				}
+			}
+			assertTrue("one listener serves both roles", own.size() == 1 && ownMotion.size() == 1 && own.get(0) == ownMotion.get(0));
 		});
 	}
 
@@ -265,10 +280,10 @@ public class BankHistoryChartTest
 				assertEquals("the chart spans the block's whole width", width, chart.getWidth());
 				final int last = chart.days().size() - 1;
 				hover(chart, chart.getWidth() - 1);
-				assertEquals(width + ": the right edge is today", TODAY.toString(), view.describe().get("hoverDay"));
+				assertEquals(width + ": the right edge is today", TODAY.toString(), PanelState.describe(view).get("hoverDay"));
 				hover(chart, 0);
 				assertEquals(width + ": the left edge is the range's first day", "2026-08-27",
-					view.describe().get("hoverDay"));
+					PanelState.describe(view).get("hoverDay"));
 				assertEquals(last, chart.indexAt(chart.getWidth()));
 			}
 		});

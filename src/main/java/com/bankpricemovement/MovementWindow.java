@@ -1,7 +1,5 @@
 package com.bankpricemovement;
 
-import java.util.Locale;
-
 /**
  * How far back a bank row's movement is measured, in the five spans the Grand Exchange item pages themselves
  * show - "today", 1 month, 3 months, 6 months - rewritten to 1d / 7d / 30d / 90d / 180d (contract K4, restated
@@ -86,51 +84,6 @@ public enum MovementWindow
 	public long targetSeconds(final long nowSeconds)
 	{
 		return nowSeconds <= 0L ? 0L : nowSeconds - days * DAY_SECONDS;
-	}
-
-	/**
-	 * Reads a window out of user text, a dev-bridge verb or a stored config value: the label ("1d", "30d"), the
-	 * constant name ("D1", "D30"), or one of the pre-addendum-K spellings, trimmed and case-insensitive.
-	 *
-	 * <p>The legacy spellings matter because a user who ran the first build has {@code window=H24} written into
-	 * their RuneLite profile ({@code ConfigManager} stores an enum by {@code name()}), and {@code H1} / {@code H24}
-	 * / {@code 1h} / {@code 24h} no longer name anything. They all collapse onto {@link #D1}: an hour is below
-	 * the resolution of the guide series, and 24 h IS the new 1d. Without this, the stored value would fail
-	 * {@code Enum.valueOf} and the config panel would NPE on the way in (the flat-config trap this workspace
-	 * already hit - CLAUDE.md "Config interfaces must be FLAT"); K9 also unsets an unparseable value at startUp,
-	 * so the two guards overlap on purpose.
-	 *
-	 * @param text anything, including null
-	 * @return the window, or null when the text names none (the caller keeps its current window)
-	 */
-	public static MovementWindow parse(final String text)
-	{
-		if (text == null)
-		{
-			return null;
-		}
-
-		final String key = text.trim().toLowerCase(Locale.ENGLISH);
-		if (key.isEmpty())
-		{
-			return null;
-		}
-
-		for (final MovementWindow window : values())
-		{
-			if (key.equals(window.label) || key.equals(window.name().toLowerCase(Locale.ENGLISH)))
-			{
-				return window;
-			}
-		}
-
-		// Pre-addendum-K windows, in both the spelling the chips used and the spelling ConfigManager stored.
-		if (key.equals("1h") || key.equals("h1") || key.equals("24h") || key.equals("h24"))
-		{
-			return D1;
-		}
-
-		return null;
 	}
 
 	@Override

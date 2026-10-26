@@ -993,8 +993,9 @@ public class PriceStoreTest
 	}
 
 	/**
-	 * {@code baseline-H24.json} must NOT be matched with {@code MovementWindow.parse}, which maps the legacy
-	 * spelling "H24" onto D1 and would keep a trade file alive under a window it was never measured for.
+	 * {@code baseline-H24.json} must NOT be matched through a generous reading of the window's name (the dev bridge's
+	 * window parser maps the legacy spelling "H24" onto D1), which would keep a trade file alive under a window it
+	 * was never measured for.
 	 */
 	@Test
 	public void theSweepMatchesWindowNamesExactlyRatherThanThroughTheLegacyParse() throws IOException
@@ -1002,8 +1003,6 @@ public class PriceStoreTest
 		final PriceStore store = store();
 		write(TestFilepaths.at(tmp.getRoot(), "baseline-H24.json"), "{\"points\":{\"658\":[11,-1]}}");
 
-		assertSame("parse() would answer D1 here - the sweep must not use it",
-			MovementWindow.D1, MovementWindow.parse("H24"));
 		assertEquals(1, store.deleteStaleFiles());
 		assertFalse(TestFilepaths.at(tmp.getRoot(), "baseline-H24.json").exists());
 	}
@@ -1513,10 +1512,10 @@ public class PriceStoreTest
 		assertEquals(SEP_11, read.day());
 		assertEquals(1_789_128_500_000L, read.fetchedAtMillis());
 		assertFalse(read.isEmpty());
-		assertEquals(517L, read.get(WHIP).volume());
+		assertEquals(517L, read.get(WHIP).highVolume() + read.get(WHIP).lowVolume());
 		assertEquals(Long.valueOf(1_699_000L), read.get(WHIP).avgHigh());
 		assertNull("a bucket with a volume and no price keeps both facts", read.get(SHARK).avgHigh());
-		assertEquals(41_000L, read.get(SHARK).volume());
+		assertEquals(41_000L, read.get(SHARK).highVolume() + read.get(SHARK).lowVolume());
 	}
 
 	/**
@@ -1534,7 +1533,7 @@ public class PriceStoreTest
 
 		final PriceStore.TradedDay read = store.loadTradedDay(MovementWindow.D1);
 		assertEquals("the day in the document, whatever window's file it is", SEP_10, read.day());
-		assertEquals(517L, read.get(WHIP).volume());
+		assertEquals(517L, read.get(WHIP).highVolume() + read.get(WHIP).lowVolume());
 	}
 
 	/** The day is part of the document: a bucket whose day cannot be read can never be paired with a baseline. */

@@ -105,11 +105,11 @@ public class GradedRowDisplayTest
 		if (!graded.hasFigure())
 		{
 			return new MovementRow(5001, "Test item", quantity, false, 38_900L, null, null, null, 38_900L * quantity,
-				MovementRow.PriceSource.GUIDE, null, null, null, null, 0, 0, 0, 0, graded);
+				MovementRow.PriceSource.GUIDE, null, null, 0, 0, 0, 0, graded);
 		}
 		final long price = graded.price();
 		return new MovementRow(5001, "Test item", quantity, false, price, graded.thenMark(), graded.deltaGp(),
-			graded.move() * 100.0d, price * quantity, MovementRow.PriceSource.LIVE, null, null, null, null, 0, 0, 0, 0,
+			graded.move() * 100.0d, price * quantity, MovementRow.PriceSource.LIVE, null, null, 0, 0, 0, 0,
 			graded);
 	}
 
@@ -119,7 +119,7 @@ public class GradedRowDisplayTest
 		final GradedMove graded = new GradedMove(Grade.SOFT, GradeWords.volume(1L), move, 50L, Math.round(50L * move),
 			false, side(50L, 50L, 1, 50L, TODAY_1340), side(50L, 50L, 1, 50L, TODAY_1340), TODAY, YESTERDAY, 50L);
 		return new MovementRow(5002, "Cheap item", 10, false, 50L + Math.round(50L * move), 50L, Math.round(50L * move),
-			move * 100.0d, 500L, MovementRow.PriceSource.LIVE, null, null, null, null, 0, 0, 0, 0, graded);
+			move * 100.0d, 500L, MovementRow.PriceSource.LIVE, null, null, 0, 0, 0, 0, graded);
 	}
 
 	/** Builds a row on the EDT, the way every Swing component here must be. */
@@ -129,7 +129,7 @@ public class GradedRowDisplayTest
 		LookRenderer.onEdt(() -> out.set(new MovementRowPanel(row, null, MovementWindow.D1, null, 0L, ViewOptions.DEFAULT,
 			url ->
 			{
-			}, null, hide)));
+			}, null, hide, ChangeText.DEFAULT)));
 		return out.get();
 	}
 
@@ -344,7 +344,7 @@ public class GradedRowDisplayTest
 		assertEquals("", MovementRowPanel.slotWord(new MovementRow(5003, "Plain", 5, false, 1_520L, 1_500L, 20L, 1.3d,
 			7_600L, null)));
 		assertEquals("", MovementRowPanel.slotWord(new MovementRow(5004, "Hood", 1, false, 20_000L, null, null, null,
-			20_000L, MovementRow.PriceSource.ALCH, null, null, null, null, 0, 0, 0, 0,
+			20_000L, MovementRow.PriceSource.ALCH, null, null, 0, 0, 0, 0,
 			new GradedMove(Grade.NONE, GradeWords.NO_TRADES, null, null, null, false, null, null, null, null, null))));
 		assertEquals("a SOLID figure prints no word even if its move carries one", "",
 			MovementRowPanel.slotWord(rowOf(measured(Grade.SOLID, "low vol 3"), 1)));
@@ -476,9 +476,9 @@ public class GradedRowDisplayTest
 					final BufferedImage image = onEdt(() -> paint(panel, height));
 					final int workingBottom = inkBottom(image, boxIn(panel, working));
 					final int wordBottom = inkBottom(image, aboveTheBaseline(wordLabel, word, boxIn(panel, wordLabel)));
-					assertTrue(style + " " + word + ": the working is drawn", workingBottom >= 0);
-					assertEquals(style + " " + word + ": ink bottom of the word is the working's", workingBottom, wordBottom);
-					assertTrue(style + " " + word + ": the slot is at least 54 px", wordLabel.getWidth() >= 54);
+					assertTrue(PanelState.text(style) + " " + word + ": the working is drawn", workingBottom >= 0);
+					assertEquals(PanelState.text(style) + " " + word + ": ink bottom of the word is the working's", workingBottom, wordBottom);
+					assertTrue(PanelState.text(style) + " " + word + ": the slot is at least 54 px", wordLabel.getWidth() >= 54);
 				}
 			}
 		}
@@ -690,7 +690,7 @@ public class GradedRowDisplayTest
 		}
 		assertEquals("", MovementRowPanel.lastPrints(parts, false));
 		final MovementRow crystal = new MovementRow(23975, "Crystal body", 1, false, 14_902_000L, 14_440_000L, 462_000L, 3.2d,
-			14_902_000L, MovementRow.PriceSource.PARTS, null, null, null, null, 0, 0, 0, 0, parts);
+			14_902_000L, MovementRow.PriceSource.PARTS, null, null, 0, 0, 0, 0, parts);
 		for (boolean hide : new boolean[]{false, true})
 		{
 			final String block = blockOf(crystal, MovementWindow.D1, hide);

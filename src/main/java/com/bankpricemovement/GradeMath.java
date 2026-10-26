@@ -93,14 +93,6 @@ final class GradeMath
 	 */
 	private static final double SIDE_GAP_TOLERANCE_POINTS = 1e-9d;
 
-	// ---------------------------------------------------------------- L3: the card
-
-	/** The card is SOFT when its solid rows hold less than this percentage of the counted value (L3). */
-	static final int CARD_SOLID_VALUE_PCT = 90;
-
-	/** ... or when its soft rows supply more than this percentage of its gp move (L3). */
-	static final int CARD_SOFT_MOVE_PCT = 10;
-
 	// ---------------------------------------------------------------- L1: the inputs' cadence
 
 	/**
@@ -611,38 +603,6 @@ final class GradeMath
 			return null;
 		}
 		return percentOf(Math.abs(buy - sell), halfUpMean(buy, sell));
-	}
-
-	/**
-	 * Whether {@code part} is under {@code pct} percent of {@code whole} - {@code part x 100 < whole x pct} - in longs,
-	 * and in doubles only when a product would overflow. The card's two shares (L3).
-	 */
-	static boolean underShare(final long part, final long whole, final int pct)
-	{
-		try
-		{
-			return Math.multiplyExact(part, 100L) < Math.multiplyExact(whole, (long) pct);
-		}
-		catch (final ArithmeticException overflow)
-		{
-			return part * 100.0d < whole * (double) pct;
-		}
-	}
-
-	/**
-	 * Whether {@code part} is over {@code pct} percent of {@code whole} - {@code part x 100 > whole x pct} - in longs,
-	 * and in doubles only when a product would overflow. The card's soft-move share (L3).
-	 */
-	static boolean overShare(final long part, final long whole, final int pct)
-	{
-		try
-		{
-			return Math.multiplyExact(part, 100L) > Math.multiplyExact(whole, (long) pct);
-		}
-		catch (final ArithmeticException overflow)
-		{
-			return part * 100.0d > whole * (double) pct;
-		}
 	}
 
 	/**

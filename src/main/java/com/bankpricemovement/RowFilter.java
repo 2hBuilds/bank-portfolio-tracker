@@ -138,14 +138,4 @@ public final class RowFilter
 	{
 		return Objects.hash(gpMin, gpMax, sort, descending, window);
 	}
-
-	@Override
-	public String toString()
-	{
-		return "RowFilter{gpMin=" + gpMin
-			+ ", gpMax=" + gpMax
-			+ ", sort=" + sort.name()
-			+ ", descending=" + descending
-			+ ", window=" + window.name() + '}';
-	}
 }

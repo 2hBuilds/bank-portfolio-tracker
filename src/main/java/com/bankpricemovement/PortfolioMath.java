@@ -70,9 +70,9 @@ import javax.annotation.Nullable;
  * {@code Function<Integer, Long>}, one for "now" and one per window for "then", so the portfolio for the current
  * window is exactly the sum of the rows it is published beside (unfiltered), and the other windows get the identical
  * treatment without a second projection. A resolver keyed by item ID loses nothing: a normalised snapshot has one
- * stack per canonical id, and every input the service resolves from is itself per id. The overload taking
- * {@code Map<MovementWindow, PriceMap>} is the contract's literal shape for a caller that holds only projections
- * (the checker's independent computation); it reads each map's {@link PricePoint#mid()} and delegates.
+ * stack per canonical id, and every input the service resolves from is itself per id. (The contract's literal shape,
+ * the baselines as projected {@code Map<MovementWindow, PriceMap>}s, was an overload that only tests called; release
+ * 1.2.2 took it out, and the tests build the resolvers themselves.)
  */
 public final class PortfolioMath
 {
@@ -81,63 +81,14 @@ public final class PortfolioMath
 	}
 
 	/**
-	 * The contract's literal shape (M2): the baselines as the projected {@link PriceMap}s, each window's "then" for an
-	 * id being that map's point (its {@link PricePoint#mid()}); a window is included when it has a map. No name
-	 * fallback is applied here - the service's overload carries it - so this is exactly "the persisted projection
-	 * against the bank", which is what an independent check computes.
-	 *
-	 * @param items      the bank; null reads as empty, null entries are skipped
-	 * @param nowPrice   the guide price now for a canonical id, null or non-positive = no price
-	 * @param baselines  one projected map per window with a baseline; null reads as none
-	 * @param thenDays   the day each of those maps belongs to (its own {@code %LAST_UPDATE%} day, L7); null reads as none
-	 * @param currencyGp the bank's coins and platinum tokens in gp ({@link BankSnapshot#currencyGp}, P1); 0 is the
-	 *                   pre-P1 behaviour exactly
-	 */
-	public static PortfolioSummary summarise(@Nullable final List<BankItem> items, final Function<Integer, Long> nowPrice,
-		@Nullable final Map<MovementWindow, PriceMap> baselines, @Nullable final Map<MovementWindow, LocalDate> thenDays,
-		final long currencyGp)
-	{
-		final Map<MovementWindow, Function<Integer, Long>> resolvers = new EnumMap<>(MovementWindow.class);
-		if (baselines != null)
-		{
-			for (final Map.Entry<MovementWindow, PriceMap> entry : baselines.entrySet())
-			{
-				if (entry.getKey() != null && entry.getValue() != null)
-				{
-					resolvers.put(entry.getKey(), resolver(entry.getValue()));
-				}
-			}
-		}
-		return summariseResolved(items, nowPrice, resolvers, thenDays, currencyGp);
-	}
-
-	/**
-	 * The service's shape (see the class comment): one id-keyed resolver for "now" and one per window for "then".
-	 * A window is included iff {@code thenPrices} holds a resolver for it; its day comes from {@code thenDays} and
-	 * may be null.
+	 * The service's shape (see the class comment): one id-keyed resolver for "now" and one per window for "then", with
+	 * a "now" resolver PER WINDOW and the live-row count (addendum T, line T5). A window is included iff
+	 * {@code thenPrices} holds a resolver for it; its day comes from {@code thenDays} and may be null. With no
+	 * per-window resolvers and 0 live rows every window reads the same {@code nowPrice}, to the gp - what every caller
+	 * did before addendum T.
 	 *
 	 * <p>The bank's cash (P1) lands in {@link PortfolioSummary#valueNow()} and on both sides of every window that
 	 * covers a stack - see the class comment for the four rules.
-	 *
-	 * @param items      the bank; null reads as empty, null entries are skipped
-	 * @param nowPrice   the guide price now for a canonical id, null or non-positive = no price
-	 * @param thenPrices the baseline price for a canonical id, per window with a baseline; null reads as none
-	 * @param thenDays   the day each window's baseline belongs to; null reads as none
-	 * @param currencyGp the bank's coins and platinum tokens in gp ({@link BankSnapshot#currencyGp}, P1); 0 is the
-	 *                   pre-P1 behaviour exactly
-	 */
-	public static PortfolioSummary summariseResolved(@Nullable final List<BankItem> items,
-		final Function<Integer, Long> nowPrice, @Nullable final Map<MovementWindow, Function<Integer, Long>> thenPrices,
-		@Nullable final Map<MovementWindow, LocalDate> thenDays, final long currencyGp)
-	{
-		return summariseResolved(items, nowPrice, thenPrices, null, thenDays, currencyGp, 0);
-	}
-
-	/**
-	 * The same, with a "now" resolver PER WINDOW and the live-row count (addendum T, line T5). The arity above is
-	 * the pre-T one, kept so every caller that knows nothing of live prices keeps compiling AND keeps its figures:
-	 * it delegates with no per-window resolvers and 0 live rows, and then every window reads the same
-	 * {@code nowPrice} it always did, to the gp.
 	 *
 	 * <p><b>Why a window needs its own "now".</b> With live prices on, a stack's two ends must come from ONE
 	 * series (T4: "never live-now against guide-then"). A stack priced live today whose traded bucket for 30d ago
@@ -150,8 +101,14 @@ public final class PortfolioMath
 	 * prices it and that window's "then" names it, so an untradeable stack on the alch rule stays out of every
 	 * window exactly as before, and a per-window "now" can only change the number, never the basis.
 	 *
+	 * @param items           the bank; null reads as empty, null entries are skipped
+	 * @param nowPrice        the guide price now for a canonical id, null or non-positive = no price
+	 * @param thenPrices      the baseline price for a canonical id, per window with a baseline; null reads as none
 	 * @param windowNowPrices the "now" price for a canonical id per window, where that window's series differs
 	 *                        from the headline's; null reads as none
+	 * @param thenDays        the day each window's baseline belongs to; null reads as none
+	 * @param currencyGp      the bank's coins and platinum tokens in gp ({@link BankSnapshot#currencyGp}, P1); 0 is the
+	 *                        pre-P1 behaviour exactly
 	 * @param liveRows        how many stacks the caller priced from the live traded series ({@link
 	 *                        PortfolioSummary#liveRows()}); 0 when the switch is off
 	 */
@@ -265,17 +222,6 @@ public final class PortfolioMath
 	private static Long orElse(@Nullable final Long value, @Nullable final Long fallback)
 	{
 		return value == null ? fallback : value;
-	}
-
-	/** A projected map as an id-keyed resolver: the point's {@link PricePoint#mid()}, or null when the map lacks the id. */
-	public static Function<Integer, Long> resolver(final PriceMap map)
-	{
-		final PriceMap used = map == null ? PriceMap.EMPTY : map;
-		return id ->
-		{
-			final PricePoint point = id == null ? null : used.get(id);
-			return point == null ? null : point.mid();
-		};
 	}
 
 	/**

@@ -12,7 +12,7 @@ import net.runelite.client.ui.ColorScheme;
  * colour or clear, no anti-aliasing, no blend - so it is as sharp as the game's own sprites at any display scale, and nothing
  * about it depends on a font or a look and feel. There is no image file.
  *
- * <p>The disc is the gears' grey at rest and white under the mouse ({@link BankPriceMovementPanel#legacyInfoIcon}); the "i" -
+ * <p>The disc is the gears' grey at rest and white under the mouse ({@link BankPriceMovementPanel#buildLegacyInfoIcon}); the "i" -
  * a one-pixel dot, a one-pixel gap and a seven-pixel stem - is cut out in the caption row's own background, so it reads as a
  * hole in the disc. The disc stands against the box's right edge and top, which is where the sheet drew it: the gap to the
  * gears beside it is then the gears' own {@link BankPriceMovementPanel#LIST_OPTIONS_GAP}, to the pixel.

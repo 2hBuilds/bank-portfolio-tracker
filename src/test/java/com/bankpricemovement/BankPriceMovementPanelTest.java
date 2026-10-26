@@ -169,7 +169,7 @@ public class BankPriceMovementPanelTest
 	 * the view switches since addendum Q, the three price presets since addendum Z and the fold's own state since
 	 * addendum AA.
 	 */
-	private static final class RecordingPrefs implements BankPriceMovementPanel.Prefs
+	private static final class RecordingPrefs extends PrefsDefaults
 	{
 		@Nullable
 		RowFilter stored;
@@ -328,8 +328,8 @@ public class BankPriceMovementPanelTest
 	 * {@code Status} is a mock, not a real one, on purpose: every addendum so far has added fields to its
 	 * constructor and another agent owns that class, so a test that named the constructor would pin an argument
 	 * list this file has no business pinning. Every getter the panel reads is stubbed here instead.
-	 * ({@code Status} is deliberately NOT final for exactly this - see its javadoc.) {@code headerText()} answers
-	 * the same sentence as {@code text()}, which is what the hero card's tooltip carries (N 3.1).
+	 * ({@code Status} is deliberately NOT final for exactly this - see its javadoc.) The status sentence the bridge's
+	 * echo prints is told to {@link PanelState#told}, which is where a mocked status gets it from.
 	 */
 	private static PriceService.Status status(boolean loggedIn, boolean bankLoaded, int bankItems, int totalRows,
 		MovementWindow window, @Nullable String problem, String text, long pricesAtMillis,
@@ -348,15 +348,12 @@ public class BankPriceMovementPanelTest
 		when(s.loggedIn()).thenReturn(loggedIn);
 		when(s.bankLoaded()).thenReturn(bankLoaded);
 		when(s.bankItems()).thenReturn(bankItems);
-		when(s.totalRows()).thenReturn(totalRows);
 		when(s.window()).thenReturn(window);
 		when(s.problem()).thenReturn(problem);
 		when(s.problemKind()).thenReturn(kind);
-		when(s.text()).thenReturn(text);
-		when(s.headerText()).thenReturn(text);
+		PanelState.told(s, text);
 		when(s.pricesAtMillis()).thenReturn(pricesAtMillis);
 		when(s.bankAtMillis()).thenReturn(pricesAtMillis == 0L ? 0L : pricesAtMillis - 60_000L);
-		when(s.baselineLoaded()).thenReturn(true);
 		when(s.thenDay()).thenReturn(thenDay);
 		return s;
 	}
@@ -502,7 +499,7 @@ public class BankPriceMovementPanelTest
 	{
 		final PortfolioSummary base = summary();
 		return new PortfolioSummary(base.valueStacks(), base.itemsPriced(), base.itemsTotal(), base.moves(),
-			base.currencyGp(), liveRows);
+			base.currencyGp, liveRows);
 	}
 
 	/** The widest figures N6 names for the card: a 12-digit total and "-99.9%", with "-999.9m"-class gp moves. */
@@ -582,7 +579,7 @@ public class BankPriceMovementPanelTest
 			assertEquals("100", panel.minField().getText());
 			assertEquals("5,000,000", panel.maxField().getText());
 			assertEquals("LOGIN: the header is emptied (N section 3 §3)", 0, panel.header().getComponentCount());
-			assertFalse(panel.heroShowing());
+			assertFalse(PanelState.heroShowing(panel));
 			assertFalse(panel.foldOpen());
 			assertTrue("construction saves nothing", prefs.saves.isEmpty());
 			assertTrue(prefs.heroSaves.isEmpty());
@@ -606,7 +603,7 @@ public class BankPriceMovementPanelTest
 			assertEquals("max gp", panel.maxField().placeholder());
 			assertTrue(panel.minField().placeholderShowing());
 			assertTrue(panel.maxField().placeholderShowing());
-			assertFalse(Widgets.isMarkedInvalid(panel.minField()));
+			assertFalse(PanelState.isMarkedInvalid(panel.minField()));
 			assertEquals("the fields are 90 px", BankPriceMovementPanel.FIELD_WIDTH, panel.minField().getPreferredSize().width);
 		});
 	}
@@ -621,14 +618,14 @@ public class BankPriceMovementPanelTest
 		onEdt(() ->
 		{
 			assertEquals(HeroVisibility.of(false, true, false), panel.heroVisibility());
-			assertFalse("the total is off the card", panel.shows(panel.totalLabel()));
-			assertTrue(panel.shows(panel.moveLine()));
-			assertTrue(panel.shows(panel.deltaLabel()));
-			assertFalse("the percent is off the move line", panel.shows(panel.pctLabel()));
+			assertFalse("the total is off the card", PanelState.shows(panel, panel.totalLabel()));
+			assertTrue(PanelState.shows(panel, panel.moveLine()));
+			assertTrue(PanelState.shows(panel, panel.deltaLabel()));
+			assertFalse("the percent is off the move line", PanelState.shows(panel, panel.pctLabel()));
 			assertFalse(panel.showValueItem().isSelected());
 			assertTrue(panel.showGpItem().isSelected());
 			assertFalse(panel.showPctItem().isSelected());
-			assertTrue(panel.describe(), panel.describe().contains("\"hero\":{\"value\":false,\"gp\":true,\"pct\":false}"));
+			assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains("\"hero\":{\"value\":false,\"gp\":true,\"pct\":false}"));
 			assertTrue("nothing is written back on construction", prefs.heroSaves.isEmpty());
 		});
 	}
@@ -647,7 +644,7 @@ public class BankPriceMovementPanelTest
 			assertEquals(BankPriceMovementPanel.CARD_LIST, panel.card());
 			assertEquals(2, panel.rowPanels().size());
 			assertEquals(2, panel.totalRows());
-			assertTrue(panel.heroShowing());
+			assertTrue(PanelState.heroShowing(panel));
 		});
 	}
 
@@ -681,7 +678,7 @@ public class BankPriceMovementPanelTest
 		publish(Collections.emptyList(), listed(0, 0));
 		assertTrue(texts(panel.shotComponents().get(1)).toString().contains(BankPriceMovementPanel.NO_TRADEABLES_TEXT));
 		assertFalse("no band, no button", panel.clearBandShowing());
-		assertTrue("the header stays whole on EMPTY", panel.heroShowing());
+		assertTrue("the header stays whole on EMPTY", PanelState.heroShowing(panel));
 
 		publish(Collections.emptyList(), listed(10, 0));
 		assertTrue(texts(panel.shotComponents().get(1)).toString().contains(BankPriceMovementPanel.NO_PRICES_TEXT));
@@ -868,7 +865,7 @@ public class BankPriceMovementPanelTest
 
 		publish(Collections.emptyList(), status(true, false, 0, 0, MovementWindow.D1, null, "No bank yet", 0L));
 		assertEquals("NO_BANK: nothing to value or order", 0, panel.header().getComponentCount());
-		assertFalse(panel.heroShowing());
+		assertFalse(PanelState.heroShowing(panel));
 
 		publish(Collections.emptyList(), listed(10, 0));
 		assertEquals(BankPriceMovementPanel.CARD_EMPTY, panel.card());
@@ -876,7 +873,7 @@ public class BankPriceMovementPanelTest
 		// 1.0.9 part 4: and the search box, last, in Items.
 		assertEquals(Arrays.asList(panel.hero(), viewStrip(), panel.controlRow(), searchRow()),
 			Arrays.asList(panel.header().getComponents()));
-		assertTrue(panel.heroShowing());
+		assertTrue(PanelState.heroShowing(panel));
 
 		final JPanel hero = panel.hero();
 		publish(rows(3), listed(3, 3));
@@ -1164,12 +1161,12 @@ public class BankPriceMovementPanelTest
 				lines.add(panel.footnoteLabel());
 				// S1: the update line is in every one of the eight, last of all.
 				lines.add(panel.updateLabel());
-				assertEquals(v.toString(), lines, Arrays.asList(panel.hero().getComponents()));
-				assertEquals(v.value(), panel.shows(panel.totalLabel()));
-				assertTrue(v + ": the gear is drawn whatever the switches say (Q1)", panel.shows(panel.gearLabel()));
-				assertEquals(v.moveLine(), panel.shows(panel.moveLine()));
-				assertEquals(v.gp(), panel.shows(panel.deltaLabel()));
-				assertEquals(v.pct(), panel.shows(panel.pctLabel()));
+				assertEquals(PanelState.asMap(v).toString(), lines, Arrays.asList(panel.hero().getComponents()));
+				assertEquals(v.value(), PanelState.shows(panel, panel.totalLabel()));
+				assertTrue(PanelState.asMap(v) + ": the gear is drawn whatever the switches say (Q1)", PanelState.shows(panel, panel.gearLabel()));
+				assertEquals(v.moveLine(), PanelState.shows(panel, panel.moveLine()));
+				assertEquals(v.gp(), PanelState.shows(panel, panel.deltaLabel()));
+				assertEquals(v.pct(), PanelState.shows(panel, panel.pctLabel()));
 				final List<Component> parts = new ArrayList<>();
 				parts.add(panel.triangleLabel());
 				if (v.gp())
@@ -1180,7 +1177,7 @@ public class BankPriceMovementPanelTest
 				{
 					parts.add(panel.pctLabel());
 				}
-				assertEquals(v + ": the move line's parts", parts, Arrays.asList(panel.moveLine().getComponents()));
+				assertEquals(PanelState.asMap(v) + ": the move line's parts", parts, Arrays.asList(panel.moveLine().getComponents()));
 				assertEquals("the edge is a direction hint, not a figure, and stays", ColorScheme.PROGRESS_COMPLETE_COLOR.darker(), edgeOf(panel.hero()));
 				assertEquals("the menu ticks follow", v.value(), panel.showValueItem().isSelected());
 				assertEquals(v.gp(), panel.showGpItem().isSelected());
@@ -1195,28 +1192,28 @@ public class BankPriceMovementPanelTest
 				{
 					sum += line.getPreferredSize().height;
 				}
-				report.append("\n  ").append(v).append(" -> ").append(height).append(" px");
-				assertEquals(v + ": the card is the full card less the lines removed", expected, height);
-				assertEquals(v + ": the card is exactly its lines", sum, height);
+				report.append("\n  ").append(PanelState.asMap(v)).append(" -> ").append(height).append(" px");
+				assertEquals(PanelState.asMap(v) + ": the card is the full card less the lines removed", expected, height);
+				assertEquals(PanelState.asMap(v) + ": the card is exactly its lines", sum, height);
 
 				// The hover (AF): the exact total while the total is drawn, and nothing at all when it is not.
 				// It follows v.value() ALONE - the gp and percent switches decide what is on the move line, and
 				// the move line's figures were never what this hover explained.
 				final String tip = panel.hero().getToolTipText();
-				assertEquals(v.toString(), v.value() ? VALUE_TIP : null, tip);
-				assertEquals(v.toString(), v.value() ? VALUE_TIP : "",
+				assertEquals(PanelState.asMap(v).toString(), v.value() ? VALUE_TIP : null, tip);
+				assertEquals(PanelState.asMap(v).toString(), v.value() ? VALUE_TIP : "",
 					BankPriceMovementPanel.valueTooltip(summary(), v, null));
 				for (JComponent c : new JComponent[]{panel.captionRow(), panel.captionLabel(), panel.totalRow(),
 					panel.totalLabel(), panel.moveLine(), panel.deltaLabel(), panel.pctLabel(), panel.stripHolder(),
 					panel.footnoteLabel()})
 				{
-					assertEquals(v + ": " + c.getClass().getSimpleName(), tip, c.getToolTipText());
+					assertEquals(PanelState.asMap(v) + ": " + c.getClass().getSimpleName(), tip, c.getToolTipText());
 				}
-				assertEquals(v + ": the gear keeps its own word", SupportLinks.SETTINGS_TIP,
+				assertEquals(PanelState.asMap(v) + ": the gear keeps its own word", SupportLinks.SETTINGS_TIP,
 					panel.gearLabel().getToolTipText());
-				assertEquals(v + ": the update line keeps its own hover (S2)", UPDATE_TIP,
+				assertEquals(PanelState.asMap(v) + ": the update line keeps its own hover (S2)", UPDATE_TIP,
 					panel.updateLabel().getToolTipText());
-				assertTrue(panel.describe(), panel.describe().contains("\"hero\":{\"value\":" + v.value() + ",\"gp\":" + v.gp() + ",\"pct\":" + v.pct() + "}"));
+				assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains("\"hero\":{\"value\":" + v.value() + ",\"gp\":" + v.gp() + ",\"pct\":" + v.pct() + "}"));
 			});
 
 			// The width rule (N6 / O6) with the widest figures, in this combination.
@@ -1227,15 +1224,15 @@ public class BankPriceMovementPanelTest
 				for (Component line : panel.hero().getComponents())
 				{
 					final int lw = line.getPreferredSize().width;
-					assertTrue(v + ": a hero line asks for " + lw + " px, more than the card's " + inner, lw <= inner);
+					assertTrue(PanelState.asMap(v) + ": a hero line asks for " + lw + " px, more than the card's " + inner, lw <= inner);
 				}
-				assertTrue(v + ": the card asks for " + panel.hero().getPreferredSize().width, panel.hero().getPreferredSize().width <= W);
-				assertTrue(Widgets.widest(panel.header()) <= W);
+				assertTrue(PanelState.asMap(v) + ": the card asks for " + panel.hero().getPreferredSize().width, panel.hero().getPreferredSize().width <= W);
+				assertTrue(WidgetsProbe.widest(panel.header()) <= W);
 				assertFalse("the total is whole", panel.totalLabel().getText().endsWith(Widgets.ELLIPSIS));
 				assertEquals("-99.9%", panel.pctLabel().getText());
 				assertFalse(panel.deltaLabel().getText().endsWith(Widgets.ELLIPSIS));
 				// The widest total there is: the hover spells all twelve digits, however the card had to fit it.
-				assertEquals(v.toString(), v.value() ? "999,999,999,999 gp" : null, panel.hero().getToolTipText());
+				assertEquals(PanelState.asMap(v).toString(), v.value() ? "999,999,999,999 gp" : null, panel.hero().getToolTipText());
 			});
 			publish(rows(3), listedWith(summary()));
 		}
@@ -1272,7 +1269,7 @@ public class BankPriceMovementPanelTest
 			assertEquals("the edge stays", ColorScheme.PROGRESS_COMPLETE_COLOR.darker(), edgeOf(panel.hero()));
 			assertNull("AF: no figure under the pointer, so no hover to explain one", panel.hero().getToolTipText());
 			assertEquals(BankPriceMovementPanel.UPDATE_TEXT, panel.updateLabel().getText());
-			final String d = panel.describe();
+			final String d = PanelState.describe(panel);
 			assertTrue(d, d.contains("\"hero\":{\"value\":false,\"gp\":false,\"pct\":false},\"bankValueShowing\":true,\"bankValue\":\"\",\"bankMove\":\"1d   +12.4m   +1.0%\",\"bankWindow\":\"1d\",\"heroGp\":\"\",\"heroPct\":\"\",\"heroSub\":\"1d vs 07 Sep - bank "));
 
 			// A window with no baseline while everything is hidden: still nothing on the card but the four.
@@ -1284,7 +1281,6 @@ public class BankPriceMovementPanelTest
 		// Nothing ever fetched and everything hidden: no tooltip at all rather than an empty box - and the update
 		// line still carries its own, because its first two sentences are true before any fetch (S2).
 		final PriceService.Status bare = status(true, true, 3, 3, MovementWindow.D1, null, "", 0L);
-		when(bare.headerText()).thenReturn("");
 		publish(rows(3), bare);
 		assertNull(panel.hero().getToolTipText());
 		assertNull(panel.footnoteLabel().getToolTipText());
@@ -1293,7 +1289,6 @@ public class BankPriceMovementPanelTest
 		// ...and once prices have been read, the card says no more than it did - the clock is the update line's
 		// business (S3), and the hover is the total's, which is hidden.
 		final PriceService.Status fetched = status(true, true, 3, 3, MovementWindow.D1, null, "", PRICES_AT);
-		when(fetched.headerText()).thenReturn("");
 		publish(rows(3), fetched);
 		assertNull("S3: the card has nothing left to say when every figure is hidden", panel.hero().getToolTipText());
 		assertEquals(UPDATE_TIP, panel.updateLabel().getToolTipText());
@@ -1332,12 +1327,12 @@ public class BankPriceMovementPanelTest
 	public void bankValueTextsAreThePureHelpers()
 	{
 		final PortfolioSummary s = summary();
-		assertEquals("1d   +12.4m   +1.0%", BankPriceMovementPanel.moveText(MovementWindow.D1, s.move(MovementWindow.D1)));
-		assertEquals("30d   -3.1m   -0.2%", BankPriceMovementPanel.moveText(MovementWindow.D30, s.move(MovementWindow.D30)));
-		assertEquals("90d   -   -", BankPriceMovementPanel.moveText(MovementWindow.D90, null));
-		assertEquals("null window reads as the default", "1d   -   -", BankPriceMovementPanel.moveText(null, null));
+		assertEquals("1d   +12.4m   +1.0%", PanelState.moveText(MovementWindow.D1, s.move(MovementWindow.D1)));
+		assertEquals("30d   -3.1m   -0.2%", PanelState.moveText(MovementWindow.D30, s.move(MovementWindow.D30)));
+		assertEquals("90d   -   -", PanelState.moveText(MovementWindow.D90, null));
+		assertEquals("null window reads as the default", "1d   -   -", PanelState.moveText(null, null));
 		assertEquals("a window whose covered stacks were worth nothing then: a gp move and no percent", "1d   0   -",
-			BankPriceMovementPanel.moveText(MovementWindow.D1, new WindowMove(MovementWindow.D1, THEN_DAY, 0L, 0L, 0L, null, 0)));
+			PanelState.moveText(MovementWindow.D1, new WindowMove(MovementWindow.D1, THEN_DAY, 0L, 0L, 0L, null, 0)));
 		assertEquals(ColorScheme.PROGRESS_COMPLETE_COLOR, BankPriceMovementPanel.moveColor(s.move(MovementWindow.D1)));
 		assertEquals(ColorScheme.PROGRESS_ERROR_COLOR, BankPriceMovementPanel.moveColor(s.move(MovementWindow.D30)));
 		assertEquals(ColorScheme.LIGHT_GRAY_COLOR, BankPriceMovementPanel.moveColor(s.move(MovementWindow.D7)));
@@ -1348,7 +1343,7 @@ public class BankPriceMovementPanelTest
 		assertEquals(ColorScheme.DARKER_GRAY_COLOR, BankPriceMovementPanel.edgeColor(null));
 		// L2 on the sum: a fall too small to survive truncation still reads "-0.0%" and paints red.
 		final WindowMove tiny = new WindowMove(MovementWindow.D1, THEN_DAY, 1_000_000_000L, 999_999_990L, -10L, -0.000001d, 3);
-		assertEquals("1d   -10   -0.0%", BankPriceMovementPanel.moveText(MovementWindow.D1, tiny));
+		assertEquals("1d   -10   -0.0%", PanelState.moveText(MovementWindow.D1, tiny));
 		assertEquals(ColorScheme.PROGRESS_ERROR_COLOR, BankPriceMovementPanel.moveColor(tiny));
 		assertEquals(ColorScheme.PROGRESS_ERROR_COLOR.darker(), BankPriceMovementPanel.edgeColor(tiny));
 	}
@@ -1529,14 +1524,14 @@ public class BankPriceMovementPanelTest
 				+ line.getPreferredSize().height + " px of " + BankPriceMovementPanel.CARD_INNER);
 
 			// S4: a script can read it without a picture.
-			assertTrue(panel.describe(), panel.describe().contains("\"updateLine\":\"Guide prices update every few hours\","));
+			assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains("\"updateLine\":\"Guide prices update every few hours\","));
 		});
 
 		// Every state keeps it: no baseline, logged out, a degraded status, a bank that is nothing but cash.
 		onEdt(() -> panel.selectWindow(MovementWindow.D180));
 		assertEquals(BankPriceMovementPanel.UPDATE_TEXT, panel.updateLabel().getText());
 		publish(rows(3), status(false, true, 3, 3, MovementWindow.D1, null, STATUS_TEXT, PRICES_AT));
-		assertTrue(panel.shows(panel.updateLabel()));
+		assertTrue(PanelState.shows(panel, panel.updateLabel()));
 		assertEquals(BankPriceMovementPanel.UPDATE_TEXT, panel.updateLabel().getText());
 	}
 
@@ -1781,7 +1776,7 @@ public class BankPriceMovementPanelTest
 		publish(rows(3), status(true, true, 3, 3, MovementWindow.D1, null, STATUS_TEXT, 0L));
 		assertEquals(BankPriceMovementPanel.UPDATE_LIVE_TEXT, panel.updateLabel().getText());
 		assertFalse(panel.updateLabel().getToolTipText(), panel.updateLabel().getToolTipText().contains("Last checked"));
-		assertTrue(panel.describe(), panel.describe().contains(
+		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains(
 			"\"updateLine\":\"Live prices on - others from the guide\","));
 	}
 
@@ -1801,7 +1796,7 @@ public class BankPriceMovementPanelTest
 		assertEquals("the switch is drawn on the line under the figure, not in the hover over it",
 			BankPriceMovementPanel.UPDATE_LIVE_TEXT, panel.updateLabel().getText());
 		assertTrue("and the count is still readable from a terminal",
-			panel.describe().contains("\"liveRows\":123"));
+			PanelState.describe(panel).contains("\"liveRows\":123"));
 
 		onEdt(() -> panel.applyOptions(LIVE_OFF));
 		assertEquals("the same bank, live or not: the hover is the total", VALUE_TIP, panel.hero().getToolTipText());
@@ -1832,7 +1827,7 @@ public class BankPriceMovementPanelTest
 		assertFalse("the guide's own day is not the day those rows used",
 			panel.footnoteLabel().getText().contains("07 Sep"));
 		assertFalse("and it still fits the card", panel.footnoteLabel().getText().endsWith(Widgets.ELLIPSIS));
-		assertTrue(panel.describe(), panel.describe().contains("\"heroSub\":\"1d vs 08 Sep - bank "));
+		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains("\"heroSub\":\"1d vs 08 Sep - bank "));
 
 		// The SWITCH, without a publish: off is the guide day at once, on is the live day again - the same beat the
 		// update line changes on, so the card can never name a series it is no longer drawing.
@@ -1903,12 +1898,12 @@ public class BankPriceMovementPanelTest
 		verify(service).setFilter(RowFilter.DEFAULT.withGpMin(1_000_000L));
 		assertEquals("1.23b", panel.totalLabel().getText());
 		assertEquals("+1.0%", panel.pctLabel().getText());
-		assertTrue(panel.heroShowing());
+		assertTrue(PanelState.heroShowing(panel));
 
 		// ...and the EMPTY card a tight band brings still carries the card with the same figures.
 		publish(Collections.emptyList(), listedWith(summary()));
 		assertEquals(BankPriceMovementPanel.CARD_EMPTY, panel.card());
-		assertTrue(panel.heroShowing());
+		assertTrue(PanelState.heroShowing(panel));
 		assertEquals("1.23b", panel.totalLabel().getText());
 		assertEquals("+1.0%", panel.pctLabel().getText());
 	}
@@ -1980,7 +1975,7 @@ public class BankPriceMovementPanelTest
 		onEdt(() -> panel.showValueItem().doClick(0));
 		assertEquals(HeroVisibility.of(false, true, true), panel.heroVisibility());
 		assertFalse("the tick follows the click", panel.showValueItem().isSelected());
-		assertFalse("the total left the card at once", panel.shows(panel.totalLabel()));
+		assertFalse("the total left the card at once", PanelState.shows(panel, panel.totalLabel()));
 		assertNull("AF: the hover goes with the figure it explains", panel.hero().getToolTipText());
 		assertEquals("the pref is written so the config panel follows", Arrays.asList(HeroVisibility.of(false, true, true)), prefs.heroSaves);
 		assertTrue("the filter is not touched", prefs.saves.isEmpty());
@@ -1989,13 +1984,13 @@ public class BankPriceMovementPanelTest
 
 		onEdt(() -> panel.showGpItem().doClick(0));
 		assertEquals(HeroVisibility.of(false, false, true), panel.heroVisibility());
-		assertTrue(panel.shows(panel.moveLine()));
-		assertFalse(panel.shows(panel.deltaLabel()));
-		assertTrue(panel.shows(panel.pctLabel()));
+		assertTrue(PanelState.shows(panel, panel.moveLine()));
+		assertFalse(PanelState.shows(panel, panel.deltaLabel()));
+		assertTrue(PanelState.shows(panel, panel.pctLabel()));
 
 		onEdt(() -> panel.showPctItem().doClick(0));
 		assertEquals(HeroVisibility.NONE, panel.heroVisibility());
-		assertFalse("both off: the move line and the triangle go", panel.shows(panel.moveLine()));
+		assertFalse("both off: the move line and the triangle go", PanelState.shows(panel, panel.moveLine()));
 		assertEquals(3, prefs.heroSaves.size());
 
 		// The config's ConfigChanged comes back through applyHeroVisibility and writes nothing more.
@@ -2004,7 +1999,7 @@ public class BankPriceMovementPanelTest
 
 		onEdt(() -> panel.showValueItem().doClick(0));
 		assertEquals(HeroVisibility.of(true, false, false), panel.heroVisibility());
-		assertTrue(panel.shows(panel.totalLabel()));
+		assertTrue(PanelState.shows(panel, panel.totalLabel()));
 		assertTrue(panel.showValueItem().isSelected());
 		assertEquals(Arrays.asList(HeroVisibility.of(false, true, true), HeroVisibility.of(false, false, true), HeroVisibility.NONE,
 			HeroVisibility.of(true, false, false)), prefs.heroSaves);
@@ -2020,9 +2015,9 @@ public class BankPriceMovementPanelTest
 		onEdt(() ->
 		{
 			assertEquals(HeroVisibility.of(false, true, false), panel.heroVisibility());
-			assertFalse(panel.shows(panel.totalLabel()));
-			assertTrue(panel.shows(panel.deltaLabel()));
-			assertFalse(panel.shows(panel.pctLabel()));
+			assertFalse(PanelState.shows(panel, panel.totalLabel()));
+			assertTrue(PanelState.shows(panel, panel.deltaLabel()));
+			assertFalse(PanelState.shows(panel, panel.pctLabel()));
 			assertFalse(panel.showValueItem().isSelected());
 			assertTrue(panel.showGpItem().isSelected());
 			assertFalse(panel.showPctItem().isSelected());
@@ -2035,8 +2030,8 @@ public class BankPriceMovementPanelTest
 		assertTrue("the same value again is harmless", prefs.heroSaves.isEmpty());
 		onEdt(() -> panel.applyHeroVisibility(null));
 		assertEquals("null reads as every figure shown", HeroVisibility.ALL, panel.heroVisibility());
-		assertTrue(panel.shows(panel.totalLabel()));
-		assertTrue(panel.shows(panel.pctLabel()));
+		assertTrue(PanelState.shows(panel, panel.totalLabel()));
+		assertTrue(PanelState.shows(panel, panel.pctLabel()));
 		assertTrue(prefs.heroSaves.isEmpty());
 
 		// The switches survive a publish and a window change: they are the panel's, not the status's.
@@ -2045,8 +2040,8 @@ public class BankPriceMovementPanelTest
 		publish(new ArrayList<>(rows(3)), listedWithProblem(COOLDOWN, MovementWindow.D1, THEN_DAY));
 		onEdt(() -> panel.selectWindow(MovementWindow.D30));
 		assertEquals(HeroVisibility.NONE, panel.heroVisibility());
-		assertFalse(panel.shows(panel.totalLabel()));
-		assertFalse(panel.shows(panel.moveLine()));
+		assertFalse(PanelState.shows(panel, panel.totalLabel()));
+		assertFalse(PanelState.shows(panel, panel.moveLine()));
 	}
 
 	/** O4: setHeroVisibility applies at once AND writes the pref; a repeat, and the round trip, write nothing. */
@@ -2066,10 +2061,10 @@ public class BankPriceMovementPanelTest
 		assertEquals(Arrays.asList(HeroVisibility.NONE, HeroVisibility.ALL), prefs.heroSaves);
 		assertTrue(prefs.saves.isEmpty());
 		// Before a bank is loaded the card is not in the header, but the switches are kept for when it is.
-		assertFalse(panel.heroShowing());
+		assertFalse(PanelState.heroShowing(panel));
 		publish(rows(1), listedWith(summary()));
-		assertTrue(panel.heroShowing());
-		assertTrue(panel.shows(panel.totalLabel()));
+		assertTrue(PanelState.heroShowing(panel));
+		assertTrue(PanelState.shows(panel, panel.totalLabel()));
 	}
 
 	// ---- addendum Q: the gear (Q1), its menu's view switches (Q2) and what they draw (Q4-Q6)
@@ -2097,7 +2092,7 @@ public class BankPriceMovementPanelTest
 			final Container trio = (Container) line.getLayoutComponent(BorderLayout.EAST);
 			assertSame("...and the pair is the right-most thing of the trio", pair,
 				trio.getComponent(trio.getComponentCount() - 1));
-			assertTrue("on the card", panel.shows(panel.gearLabel()));
+			assertTrue("on the card", PanelState.shows(panel, panel.gearLabel()));
 			assertEquals(SupportLinks.SETTINGS_TIP, panel.gearLabel().getToolTipText());
 			assertEquals("Settings", SupportLinks.SETTINGS_TIP);
 			assertEquals("a 12 px glyph", Widgets.GEAR_SIZE, panel.gearLabel().getIcon().getIconWidth());
@@ -2144,7 +2139,7 @@ public class BankPriceMovementPanelTest
 				sameIcon(GearGlyph.icon(Widgets.GEAR_SIZE, ColorScheme.BRAND_ORANGE), gear.getIcon()));
 			hover(gear, false);
 			assertNotSame("not the hero card's gear", panel.gearLabel(), gear);
-			assertFalse("and not on the hero card", panel.shows(gear));
+			assertFalse("and not on the hero card", PanelState.shows(panel, gear));
 		});
 		final AtomicReference<JLabel> loginGear = new AtomicReference<>();
 		onEdt(() -> loginGear.set(gearIn(panel.shotComponents().get(1))));
@@ -2800,7 +2795,7 @@ public class BankPriceMovementPanelTest
 		verify(service, never()).setFilter(any());
 		// Y1: the key of state.options named "inventory" - the fourth since addendum AO took "holding" out from
 		// between the untradeables and the live switch. Release 1.2.0 took the sixth, "hover", out of the echo.
-		assertTrue(panel.describe(), panel.describe().contains(
+		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains(
 			",\"options\":{\"cash\":true,\"untradeables\":false,\"live\":true,\"inventory\":false,\"ge\":true}"));
 
 		// The settings page's own change comes back through applyOptions: it ticks and writes nothing more.
@@ -2808,7 +2803,7 @@ public class BankPriceMovementPanelTest
 		assertTrue("the tick follows the config", panel.countInventoryItem().isSelected());
 		assertEquals(1, prefs.optionSaves.size());
 		assertEquals(rebuilds, panel.rebuilds());
-		assertTrue(panel.describe(), panel.describe().contains(
+		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains(
 			",\"options\":{\"cash\":true,\"untradeables\":false,\"live\":true,\"inventory\":true,\"ge\":true}"));
 	}
 
@@ -2850,7 +2845,7 @@ public class BankPriceMovementPanelTest
 		assertTrue("the filter and the hero switches are untouched", prefs.saves.isEmpty());
 		assertTrue(prefs.heroSaves.isEmpty());
 		verify(service, never()).setFilter(any());
-		assertTrue(panel.describe(), panel.describe().contains(
+		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains(
 			",\"options\":{\"cash\":true,\"untradeables\":false,\"live\":true,\"inventory\":true,\"ge\":false}"));
 		assertEquals("the card's hover is the same exact-gp string as before (AF)", VALUE_TIP,
 			panel.hero().getToolTipText());
@@ -3430,7 +3425,7 @@ public class BankPriceMovementPanelTest
 			assertTrue(panel.foldOpen());
 			assertEquals("1m", panel.minField().getText());
 		});
-		assertTrue(panel.describe(), panel.describe().contains("\"bandOn\":true,\"foldOpen\":true"));
+		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains("\"bandOn\":true,\"foldOpen\":true"));
 	}
 
 	// ---- addendum AA: the fold stands open, and remembers
@@ -3455,7 +3450,7 @@ public class BankPriceMovementPanelTest
 			assertSame("directly under the control row", panel.fold(), panel.header().getComponent(3));
 			assertTrue("construction writes nothing back", prefs.foldSaves.isEmpty());
 		});
-		assertTrue(panel.describe(), panel.describe().contains("\"foldOpen\":true"));
+		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains("\"foldOpen\":true"));
 	}
 
 	/**
@@ -3564,8 +3559,8 @@ public class BankPriceMovementPanelTest
 			assertTrue(SwingUtilities.isDescendingFrom(panel.clearBoundsLabel(), panel.fold()));
 			assertTrue(panel.minField().placeholderShowing());
 			assertTrue(panel.maxField().placeholderShowing());
-			assertFalse(Widgets.isMarkedInvalid(panel.minField()));
-			assertFalse(Widgets.isMarkedInvalid(panel.maxField()));
+			assertFalse(PanelState.isMarkedInvalid(panel.minField()));
+			assertFalse(PanelState.isMarkedInvalid(panel.maxField()));
 			assertEquals("All items", panel.bandTarget().getText());
 			assertEquals(ColorScheme.DARKER_GRAY_COLOR, panel.fold().getBackground());
 		});
@@ -3881,7 +3876,7 @@ public class BankPriceMovementPanelTest
 			assertTrue("box " + i + " is in the row", SwingUtilities.isDescendingFrom(panel.presetField(i), panel.presetRow()));
 			assertEquals(BankPriceMovementPanel.PRESET_FIELD_WIDTH, panel.presetField(i).getPreferredSize().width);
 			assertNotNull("box " + i + " says what it is", panel.presetField(i).getToolTipText());
-			assertFalse(Widgets.isMarkedInvalid(panel.presetField(i)));
+			assertFalse(PanelState.isMarkedInvalid(panel.presetField(i)));
 		}
 		assertEquals("the boxes open on the bands in force, in gp shorthand", Arrays.asList("100k", "1m", "10m"),
 			presetTexts());
@@ -3954,7 +3949,7 @@ public class BankPriceMovementPanelTest
 			assertEquals("the boxes re-print in ascending order", Arrays.asList("100k", "1m", "10m"), presetTexts());
 			for (int i = 0; i < BankPriceMovementPanel.BANDS; i++)
 			{
-				assertFalse("box " + i + " read", Widgets.isMarkedInvalid(panel.presetField(i)));
+				assertFalse("box " + i + " read", PanelState.isMarkedInvalid(panel.presetField(i)));
 			}
 			assertTrue("the same trio again is not a change", prefs.presetSaves.isEmpty());
 
@@ -4023,9 +4018,9 @@ public class BankPriceMovementPanelTest
 
 			type(0, "abc");
 			enter(0);
-			assertTrue("the box that cannot be read is the one that reddens", Widgets.isMarkedInvalid(panel.presetField(0)));
-			assertFalse(Widgets.isMarkedInvalid(panel.presetField(1)));
-			assertFalse(Widgets.isMarkedInvalid(panel.presetField(2)));
+			assertTrue("the box that cannot be read is the one that reddens", PanelState.isMarkedInvalid(panel.presetField(0)));
+			assertFalse(PanelState.isMarkedInvalid(panel.presetField(1)));
+			assertFalse(PanelState.isMarkedInvalid(panel.presetField(2)));
 			assertEquals("the presets in force stay", big, panel.presets());
 			assertEquals("the fold still reads the last good three", Arrays.asList("All", "1m+", "10m+", "100m+"), cellTexts());
 			assertEquals(1, prefs.presetSaves.size());
@@ -4033,9 +4028,9 @@ public class BankPriceMovementPanelTest
 
 			type(0, "10m");
 			enter(0);
-			assertTrue("a duplicate reddens BOTH boxes that name it", Widgets.isMarkedInvalid(panel.presetField(0)));
-			assertTrue(Widgets.isMarkedInvalid(panel.presetField(1)));
-			assertFalse(Widgets.isMarkedInvalid(panel.presetField(2)));
+			assertTrue("a duplicate reddens BOTH boxes that name it", PanelState.isMarkedInvalid(panel.presetField(0)));
+			assertTrue(PanelState.isMarkedInvalid(panel.presetField(1)));
+			assertFalse(PanelState.isMarkedInvalid(panel.presetField(2)));
 			assertEquals(big, panel.presets());
 			assertEquals(1, prefs.presetSaves.size());
 
@@ -4045,7 +4040,7 @@ public class BankPriceMovementPanelTest
 			assertEquals(Arrays.asList("All", "500k+", "10m+", "100m+"), cellTexts());
 			for (int i = 0; i < BankPriceMovementPanel.BANDS; i++)
 			{
-				assertFalse("the red is gone with the reason for it", Widgets.isMarkedInvalid(panel.presetField(i)));
+				assertFalse("the red is gone with the reason for it", PanelState.isMarkedInvalid(panel.presetField(i)));
 			}
 			assertEquals(2, prefs.presetSaves.size());
 
@@ -4054,14 +4049,14 @@ public class BankPriceMovementPanelTest
 			{
 				type(1, nothing);
 				enter(1);
-				assertTrue("'" + nothing + "' is not a band", Widgets.isMarkedInvalid(panel.presetField(1)));
+				assertTrue("'" + nothing + "' is not a band", PanelState.isMarkedInvalid(panel.presetField(1)));
 				assertEquals(2, prefs.presetSaves.size());
 			}
 			assertEquals(BandPresets.of(500_000L, 10_000_000L, 100_000_000L), panel.presets());
 
 			// Opening the menu again asks the question afresh: the refused text goes, the bands in force come back.
 			gearMenuOpening();
-			assertFalse(Widgets.isMarkedInvalid(panel.presetField(1)));
+			assertFalse(PanelState.isMarkedInvalid(panel.presetField(1)));
 			assertEquals(Arrays.asList("500k", "10m", "100m"), presetTexts());
 			assertEquals(2, prefs.presetSaves.size());
 		});
@@ -4090,9 +4085,9 @@ public class BankPriceMovementPanelTest
 			// ...but it still clears a refused edit, which is the other thing a reader presses it for.
 			type(2, "abc");
 			enter(2);
-			assertTrue(Widgets.isMarkedInvalid(panel.presetField(2)));
+			assertTrue(PanelState.isMarkedInvalid(panel.presetField(2)));
 			panel.resetPresetsButton().doClick(0);
-			assertFalse(Widgets.isMarkedInvalid(panel.presetField(2)));
+			assertFalse(PanelState.isMarkedInvalid(panel.presetField(2)));
 			assertEquals(Arrays.asList("100k", "1m", "10m"), presetTexts());
 			assertEquals(2, prefs.presetSaves.size());
 		});
@@ -4144,12 +4139,12 @@ public class BankPriceMovementPanelTest
 		{
 			type(0, "abc");
 			enter(0);
-			assertTrue(Widgets.isMarkedInvalid(panel.presetField(0)));
+			assertTrue(PanelState.isMarkedInvalid(panel.presetField(0)));
 
 			panel.applyPresets(BandPresets.of(2_000_000L, 20_000_000L, 200_000_000L));
 			assertEquals(BandPresets.of(2_000_000L, 20_000_000L, 200_000_000L), panel.presets());
 			assertEquals(Arrays.asList("2m", "20m", "200m"), presetTexts());
-			assertFalse("the config's answer clears a refused edit", Widgets.isMarkedInvalid(panel.presetField(0)));
+			assertFalse("the config's answer clears a refused edit", PanelState.isMarkedInvalid(panel.presetField(0)));
 			assertEquals(Arrays.asList("All", "2m+", "20m+", "200m+"), cellTexts());
 			assertTrue("no save loop", prefs.presetSaves.isEmpty());
 			assertTrue(prefs.saves.isEmpty());
@@ -4198,12 +4193,12 @@ public class BankPriceMovementPanelTest
 	public void describeCarriesTheThreeBandsAndTheFourChipTexts() throws Exception
 	{
 		build();
-		assertTrue(panel.describe(), panel.describe().contains(
+		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains(
 			",\"presets\":[100000,1000000,10000000],\"presetLabels\":[\"All\",\"100k+\",\"1m+\",\"10m+\"]"));
 		onEdt(() -> panel.setPresets(BandPresets.of(100_000_000L, 1_000_000L, 10_000_000L)));
-		assertTrue(panel.describe(), panel.describe().contains(
+		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains(
 			",\"presets\":[1000000,10000000,100000000],\"presetLabels\":[\"All\",\"1m+\",\"10m+\",\"100m+\"]"));
-		assertTrue("the fold's own keys are unmoved", panel.describe().contains("\"bandOn\":false,\"foldOpen\":false"));
+		assertTrue("the fold's own keys are unmoved", PanelState.describe(panel).contains("\"bandOn\":false,\"foldOpen\":false"));
 	}
 
 	/**
@@ -4476,12 +4471,12 @@ public class BankPriceMovementPanelTest
 			// the next open.
 			type(1, "abc");
 			panel.okButton().doClick(0);
-			assertTrue(Widgets.isMarkedInvalid(panel.presetField(1)));
+			assertTrue(PanelState.isMarkedInvalid(panel.presetField(1)));
 			assertEquals("nothing was saved over the last good three", big, panel.presets());
 			assertEquals(1, prefs.presetSaves.size());
 			assertFalse(menu.isVisible());
 			gearMenuOpening();
-			assertFalse("the red went with the reason for it", Widgets.isMarkedInvalid(panel.presetField(1)));
+			assertFalse("the red went with the reason for it", PanelState.isMarkedInvalid(panel.presetField(1)));
 			assertEquals(Arrays.asList("1m", "10m", "100m"), presetTexts());
 		});
 	}
@@ -4572,18 +4567,18 @@ public class BankPriceMovementPanelTest
 		onEdt(() -> panel.applyMin("100k"));
 		assertTrue("min= opens the fold so a shot shows what happened", panel.foldOpen());
 		onEdt(() -> assertFalse(panel.applyMin("abc")));
-		assertTrue(Widgets.isMarkedInvalid(panel.minField()));
+		assertTrue(PanelState.isMarkedInvalid(panel.minField()));
 		assertEquals("abc", panel.minField().getText());
 		assertEquals("the filter is unchanged", 100_000L, panel.filter().gpMin());
 		assertEquals(1, prefs.saves.size());
 		verify(service, times(1)).setFilter(any());
-		assertTrue(panel.describe(), panel.describe().contains("\"minInvalid\":true"));
+		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains("\"minInvalid\":true"));
 
 		onEdt(() -> assertFalse(panel.applyMin("-5")));
-		assertTrue("a negative is invalid too", Widgets.isMarkedInvalid(panel.minField()));
+		assertTrue("a negative is invalid too", PanelState.isMarkedInvalid(panel.minField()));
 
 		onEdt(() -> assertTrue(panel.applyMin("")));
-		assertFalse("an empty field is no bound, and clears the red", Widgets.isMarkedInvalid(panel.minField()));
+		assertFalse("an empty field is no bound, and clears the red", PanelState.isMarkedInvalid(panel.minField()));
 		assertEquals(0L, panel.filter().gpMin());
 		assertEquals(2, prefs.saves.size());
 		assertTrue(panel.minField().placeholderShowing());
@@ -4596,7 +4591,7 @@ public class BankPriceMovementPanelTest
 		onEdt(() -> assertTrue(panel.applyMin("100k")));
 		assertEquals(100_000L, panel.filter().gpMin());
 		assertEquals("100k", panel.minField().getText());
-		assertFalse(Widgets.isMarkedInvalid(panel.minField()));
+		assertFalse(PanelState.isMarkedInvalid(panel.minField()));
 		assertFalse(panel.minField().placeholderShowing());
 
 		onEdt(() -> assertTrue(panel.applyMax("1.5m")));
@@ -4641,7 +4636,7 @@ public class BankPriceMovementPanelTest
 
 			assertFalse(panel.applyMax("abc"));
 			assertEquals("what did not parse reaches the field as typed", "abc", panel.maxField().getText());
-			assertTrue(Widgets.isMarkedInvalid(panel.maxField()));
+			assertTrue(PanelState.isMarkedInvalid(panel.maxField()));
 			assertEquals("...and the filter is untouched", 0L, panel.filter().gpMax());
 		});
 	}
@@ -4725,7 +4720,7 @@ public class BankPriceMovementPanelTest
 		onEdt(() -> panel.applyMin("abc"));
 		onEdt(() -> panel.applyFilter(RowFilter.DEFAULT.withGpMin(100_000L)));
 		assertEquals("an invalid text is replaced by the config's value", "100,000", panel.minField().getText());
-		assertFalse(Widgets.isMarkedInvalid(panel.minField()));
+		assertFalse(PanelState.isMarkedInvalid(panel.minField()));
 
 		onEdt(() -> panel.applyFilter(RowFilter.DEFAULT.withGpMin(250_000L)));
 		assertEquals("250,000", panel.minField().getText());
@@ -4752,7 +4747,7 @@ public class BankPriceMovementPanelTest
 		assertEquals("the whole sentence is the tooltip", COOLDOWN, panel.problemLabel().getToolTipText());
 		assertEquals(ColorScheme.PROGRESS_ERROR_COLOR, panel.problemLabel().getForeground());
 		assertEquals(12f, panel.problemLabel().getFont().getSize2D(), 0f);
-		assertTrue(panel.describe(), panel.describe().contains("\"problemText\":\"" + COOLDOWN + "\",\"problemRed\":true"));
+		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains("\"problemText\":\"" + COOLDOWN + "\",\"problemRed\":true"));
 
 		publish(rows(1), listedWithProblem(UNAVAILABLE, MovementWindow.D1, THEN_DAY));
 		assertEquals(ColorScheme.PROGRESS_ERROR_COLOR, panel.problemLabel().getForeground());
@@ -4767,14 +4762,14 @@ public class BankPriceMovementPanelTest
 		publish(rows(1), listedWithProblem(pending, MovementWindow.D180, null));
 		assertEquals(pending, panel.problemLabel().getText());
 		assertEquals("a fetch in flight is not a fault", ColorScheme.LIGHT_GRAY_COLOR, panel.problemLabel().getForeground());
-		assertTrue(panel.describe(), panel.describe().contains("\"problemRed\":false"));
+		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains("\"problemRed\":false"));
 
 		final String noHistory = PriceService.problemNoHistory(MovementWindow.D180);
 		publish(rows(1), listedWithProblem(noHistory, MovementWindow.D180, null));
 		assertTrue(panel.problemShowing());
 		assertEquals(noHistory, panel.problemLabel().getText());
 		assertEquals("L11: a fact about the wiki page, not a failure", ColorScheme.LIGHT_GRAY_COLOR, panel.problemLabel().getForeground());
-		assertTrue(panel.describe(), panel.describe().contains("\"problemRed\":false"));
+		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains("\"problemRed\":false"));
 
 		publish(rows(1), listed(1, 1));
 		assertFalse("removed when clear", panel.problemShowing());
@@ -4796,13 +4791,13 @@ public class BankPriceMovementPanelTest
 			MovementWindow.D180, null));
 		assertEquals("No 180d history", panel.problemLabel().getText());
 		assertEquals(ColorScheme.PROGRESS_ERROR_COLOR, panel.problemLabel().getForeground());
-		assertTrue(panel.describe(), panel.describe().contains("\"problemRed\":true"));
+		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains("\"problemRed\":true"));
 
 		// ...and an absent-not-broken kind is grey under the loudest.
 		publish(rows(1), listedWithProblem(UNAVAILABLE, PriceService.ProblemKind.PENDING, MovementWindow.D180, null));
 		assertEquals(UNAVAILABLE, panel.problemLabel().getText());
 		assertEquals(ColorScheme.LIGHT_GRAY_COLOR, panel.problemLabel().getForeground());
-		assertTrue(panel.describe(), panel.describe().contains("\"problemRed\":false"));
+		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains("\"problemRed\":false"));
 
 		// The four kinds a sentence can carry, as the service pairs them (K7, L11, K5).
 		assertTrue(PriceService.ProblemKind.HISTORY_DOWN.severe());
@@ -4824,7 +4819,7 @@ public class BankPriceMovementPanelTest
 		publish(new ArrayList<>(rows(3)), listedWithProblem(COOLDOWN, MovementWindow.D1, THEN_DAY));
 		assertEquals("C30: no rebuild for a status-only publish", 1, panel.rebuilds());
 		assertEquals(first, panel.rowPanels());
-		assertTrue(panel.statusText(), panel.statusText().contains(COOLDOWN));
+		assertTrue(PanelState.statusText(panel), PanelState.statusText(panel).contains(COOLDOWN));
 		assertTrue(panel.problemShowing());
 		assertEquals(ColorScheme.PROGRESS_ERROR_COLOR, panel.problemLabel().getForeground());
 
@@ -4851,20 +4846,20 @@ public class BankPriceMovementPanelTest
 	public void statusTextStillJoinsTheProblemOnce() throws Exception
 	{
 		build();
-		assertEquals("", panel.statusText());
+		assertEquals("", PanelState.statusText(panel));
 		publish(rows(1), listed(1, 1));
-		assertEquals(STATUS_TEXT, panel.statusText());
+		assertEquals(STATUS_TEXT, PanelState.statusText(panel));
 
 		publish(rows(1), status(true, true, 1, 1, MovementWindow.D1, UNAVAILABLE, STATUS_TEXT, PRICES_AT));
-		assertEquals(STATUS_TEXT + " - " + UNAVAILABLE, panel.statusText());
-		assertTrue(panel.describe(), panel.describe().contains("\"status\":\"" + STATUS_TEXT + " - " + UNAVAILABLE + "\""));
+		assertEquals(STATUS_TEXT + " - " + UNAVAILABLE, PanelState.statusText(panel));
+		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains("\"status\":\"" + STATUS_TEXT + " - " + UNAVAILABLE + "\""));
 
 		publish(rows(1), status(true, true, 1, 1, MovementWindow.D30, "No 30d history yet",
 			"Guide prices - No 30d history yet", PRICES_AT));
-		assertEquals("a problem already in the text is not doubled", "Guide prices - No 30d history yet", panel.statusText());
+		assertEquals("a problem already in the text is not doubled", "Guide prices - No 30d history yet", PanelState.statusText(panel));
 
 		publish(rows(1), status(true, true, 1, 1, MovementWindow.D1, "Only the problem", "", 0L));
-		assertEquals("Only the problem", panel.statusText());
+		assertEquals("Only the problem", PanelState.statusText(panel));
 		assertEquals("Only the problem", panel.problemLabel().getText());
 	}
 
@@ -4891,7 +4886,7 @@ public class BankPriceMovementPanelTest
 			assertEquals(3, panel.shownRows());
 			assertEquals(3, panel.totalRows());
 			assertEquals(BankPriceMovementPanel.CARD_LIST, panel.card());
-			assertFalse(panel.showMoreVisible());
+			assertFalse(PanelState.showMoreVisible(panel));
 			assertEquals("All items", panel.bandTarget().getText());
 		});
 		verify(itemManager).getImage(1, 1, false);
@@ -4909,7 +4904,7 @@ public class BankPriceMovementPanelTest
 	 * painted one twice before, and the difference is the whole change - hence the {@code assertNotEquals}.
 	 *
 	 * <p><b>Asked of {@link Widgets} and never of a hex value.</b> The palette is one source - {@code Widgets.move}
-	 * mixes QUIET from FIGURE, and FIGURE lifts the falling red (B045) - so a test carrying its own copies of the
+	 * mixes the quiet figure from FIGURE, and FIGURE lifts the falling red (B045) - so a test carrying its own copies of the
 	 * numbers would pin the mix as it stands today and fail the next time the user's eye moves it, which is the
 	 * one kind of change this pair must survive. What is pinned is the RELATIONSHIP: which role each figure
 	 * takes.
@@ -4969,9 +4964,9 @@ public class BankPriceMovementPanelTest
 			}
 			assertEquals("the percentage is the quiet grey", Widgets.move(0, Widgets.Kind.FIGURE),
 				flat.changeColor());
-			assertEquals("and QUIET takes it UNDIMMED: a grey dash pushed toward the background only reads worse",
-				Widgets.move(0, Widgets.Kind.FIGURE), Widgets.move(0, Widgets.Kind.QUIET));
-			assertEquals(Widgets.move(0, Widgets.Kind.QUIET), MovementRowPanel.quietChangeColor(flat.row(), ChangeText.DEFAULT_BRIGHTNESS));
+			assertEquals("and the quiet figure takes it UNDIMMED: a grey dash pushed toward the background only reads worse",
+				Widgets.move(0, Widgets.Kind.FIGURE), Widgets.quietAt(0, ChangeText.DEFAULT_BRIGHTNESS));
+			assertEquals(Widgets.quietAt(0, ChangeText.DEFAULT_BRIGHTNESS), MovementRowPanel.quietChangeColor(flat.row(), ChangeText.DEFAULT_BRIGHTNESS));
 		});
 	}
 
@@ -5573,11 +5568,11 @@ public class BankPriceMovementPanelTest
 			assertEquals(250, panel.shownRows());
 			assertEquals(600, panel.totalRows());
 			assertEquals(250, panel.rowPanels().size());
-			assertTrue(panel.showMoreVisible());
+			assertTrue(PanelState.showMoreVisible(panel));
 			assertEquals("Show 350 more", panel.showMoreLabel().getText());
 			assertEquals(ColorScheme.LIGHT_GRAY_COLOR, panel.showMoreLabel().getForeground());
 			assertEquals(new Dimension(W, BankPriceMovementPanel.SHOW_MORE_HEIGHT), panel.showMoreLabel().getParent().getPreferredSize());
-			assertTrue(panel.describe(), panel.describe().contains("\"showMoreText\":\"Show 350 more\""));
+			assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains("\"showMoreText\":\"Show 350 more\""));
 			hover(panel.showMoreLabel(), true);
 			assertEquals(Color.WHITE, panel.showMoreLabel().getForeground());
 			hover(panel.showMoreLabel(), false);
@@ -5586,12 +5581,12 @@ public class BankPriceMovementPanelTest
 			press(panel.showMoreLabel());
 			assertEquals(500, panel.shownRows());
 			assertEquals("Show 100 more", panel.showMoreLabel().getText());
-			assertTrue(panel.showMoreVisible());
+			assertTrue(PanelState.showMoreVisible(panel));
 
 			panel.showMore();
 			assertEquals(600, panel.shownRows());
-			assertFalse(panel.showMoreVisible());
-			assertTrue(panel.describe(), panel.describe().contains("\"showMoreText\":\"\""));
+			assertFalse(PanelState.showMoreVisible(panel));
+			assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains("\"showMoreText\":\"\""));
 
 			panel.showMore();
 			assertEquals("nothing more to add is not an error", 600, panel.shownRows());
@@ -5748,7 +5743,7 @@ public class BankPriceMovementPanelTest
 		assertTrue(panel.rowPanels().isEmpty());
 		assertEquals(0, panel.shownRows());
 		assertEquals(0, panel.totalRows());
-		assertFalse(panel.showMoreVisible());
+		assertFalse(PanelState.showMoreVisible(panel));
 		assertEquals("All items", panel.bandTarget().getText());
 
 		publish(rows(5), listed(5, 5));
@@ -5802,7 +5797,7 @@ public class BankPriceMovementPanelTest
 		build();
 		publish(rows(3), status(true, true, 3, 3, MovementWindow.D1, null, "Prices \"14:05\"", 1L));
 		onEdt(() -> panel.clickSort(SortMode.GP_MOVE));
-		final String d = panel.describe();
+		final String d = PanelState.describe(panel);
 		assertFalse(d, d.contains("\n"));
 		assertTrue(d, d.startsWith("{\"card\":\"LIST\",\"shown\":3,\"total\":3,\"window\":\"D1\",\"sort\":\"GP_MOVE\",\"descending\":true,\"gpMin\":0,\"gpMax\":0,\"search\":\"\",\"matching\":3,\"minInvalid\":false,\"maxInvalid\":false,\"status\":\"Prices \\\"14:05\\\"\",\"showing\":false"));
 		// M4/M5/O3: the switches, then the card as drawn - in the header (a bank is loaded), the total, and the old
@@ -5830,31 +5825,31 @@ public class BankPriceMovementPanelTest
 			+ ",\"presets\":[100000,1000000,10000000],\"presetLabels\":[\"All\",\"100k+\",\"1m+\",\"10m+\"]"
 			// Release 1.2.1: the change settings ride after the chips - both sizes and the gp opacity in force, then (part 2) the
 			// History tab's own three.
-			+ ",\"changeText\":{\"gpSize\":\"NORMAL\",\"pctSize\":\"NORMAL\",\"gpOpacity\":55}"
-			+ ",\"historyChangeText\":{\"gpSize\":\"NORMAL\",\"pctSize\":\"NORMAL\",\"gpOpacity\":55}"
+			+ ",\"changeText\":{\"gpSize\":\"NORMAL\",\"pctSize\":\"NORMAL\",\"gpOpacity\":69}"
+			+ ",\"historyChangeText\":{\"gpSize\":\"NORMAL\",\"pctSize\":\"NORMAL\",\"gpOpacity\":69}"
 			+ ",\"problemText\":\"\",\"problemRed\":false,\"showMoreText\":\"\"}"));
 		assertFalse(d, d.contains("sortHint"));
 
 		publish(rows(3), listedWith(summary()));
-		final String withSummary = panel.describe();
+		final String withSummary = PanelState.describe(panel);
 		assertTrue(withSummary, withSummary.contains("\"bankValue\":\"1.23b\",\"bankMove\":\"1d   +12.4m   +1.0%\",\"bankWindow\":\"1d\",\"heroGp\":\"+12.4m\",\"heroPct\":\"+1.0%\",\"heroSub\":\"1d vs 07 Sep - bank "));
 
 		onEdt(() -> panel.applyHeroVisibility(HeroVisibility.of(true, false, true)));
-		final String noGp = panel.describe();
+		final String noGp = PanelState.describe(panel);
 		assertTrue(noGp, noGp.contains("\"hero\":{\"value\":true,\"gp\":false,\"pct\":true},\"bankValueShowing\":true,\"bankValue\":\"1.23b\",\"bankMove\":\"1d   +12.4m   +1.0%\",\"bankWindow\":\"1d\",\"heroGp\":\"\",\"heroPct\":\"+1.0%\""));
 
-		// Q7: the view switches ride beside the hero's, written from ViewOptions.asMap() in the same shape - five
+		// Q7: the view switches ride beside the hero's, written from PanelState.asMap(ViewOptions) in the same shape - five
 		// of them since addendum AO took "holding" out from between the untradeables and the live switch, in that
 		// value's own order (release 1.2.0 took the sixth, "hover", out).
 		onEdt(() -> panel.applyOptions(new ViewOptions(false, true, true, true, true)));
-		assertTrue(panel.describe(), panel.describe().contains(
+		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains(
 			",\"options\":{\"cash\":false,\"untradeables\":true,\"live\":true,\"inventory\":true,\"ge\":true}"));
-		assertFalse("AO1: and the key it echoed is gone", panel.describe().contains("\"holding\":"));
+		assertFalse("AO1: and the key it echoed is gone", PanelState.describe(panel).contains("\"holding\":"));
 		onEdt(() -> panel.applyOptions(LIVE_OFF.withCountInventory(false)));
-		assertTrue(panel.describe(), panel.describe().contains(
+		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains(
 			",\"options\":{\"cash\":true,\"untradeables\":false,\"live\":false,\"inventory\":false,\"ge\":true}"
 				+ ",\"live\":{"));
-		assertTrue(panel.describe(), panel.describe().contains(
+		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains(
 			",\"updateLine\":\"Guide prices update every few hours\","));
 
 		// T8: state.live is what the traded feeds delivered for the publish on screen, beside the switch that asked
@@ -5862,7 +5857,7 @@ public class BankPriceMovementPanelTest
 		final PriceService.Status withLive = listedWith(summary());
 		when(withLive.live()).thenReturn(new PriceService.Status.LiveStatus(1_788_959_760_000L, 4_312, 123, 396, 20));
 		publish(rows(3), withLive);
-		assertTrue(panel.describe(), panel.describe().contains(
+		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains(
 			",\"live\":{\"fetchedAt\":1788959760000,\"latestItems\":4312,\"liveRows\":123,\"guideRows\":396,"
 				+ "\"alchRows\":20,\"liveDay\":null,\"windowDays\":{\"1d\":null,\"7d\":null,\"30d\":null,\"90d\":null,"
 				+ "\"180d\":null},\"hourAt\":null},\"hero\":{"));
@@ -5876,7 +5871,7 @@ public class BankPriceMovementPanelTest
 		when(withDays.live()).thenReturn(new PriceService.Status.LiveStatus(1_788_959_760_000L, 4_312, 123, 396, 20,
 			LocalDate.of(2026, 9, 12), days));
 		publish(rows(3), withDays);
-		assertTrue(panel.describe(), panel.describe().contains(
+		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains(
 			",\"alchRows\":20,\"liveDay\":\"2026-09-12\",\"windowDays\":{\"1d\":\"2026-09-11\",\"7d\":\"2026-09-05\","
 				+ "\"30d\":null,\"90d\":null,\"180d\":null},\"hourAt\":null},\"hero\":{"));
 	}
@@ -5901,7 +5896,7 @@ public class BankPriceMovementPanelTest
 		onEdt(() ->
 		{
 			panel.toggleFold();
-			assertTrue(panel.heroShowing());
+			assertTrue(PanelState.heroShowing(panel));
 			assertTrue(panel.problemShowing());
 			final StringBuilder report = new StringBuilder("header rows at " + W + " px:");
 			int i = 0;
@@ -5921,8 +5916,8 @@ public class BankPriceMovementPanelTest
 					}
 				}
 			}
-			report.append("\n  widest: ").append(Widgets.widest(panel.header())).append(" px");
-			assertTrue(Widgets.widest(panel.header()) <= W);
+			report.append("\n  widest: ").append(WidgetsProbe.widest(panel.header())).append(" px");
+			assertTrue(WidgetsProbe.widest(panel.header()) <= W);
 
 			// The chips: each label's text inside its cell, at the face the lit chip is painted in.
 			final int cell = BankPriceMovementPanel.CHIP_WIDTH;
@@ -5971,7 +5966,7 @@ public class BankPriceMovementPanelTest
 				assertEquals(W, row.getPreferredSize().width);
 				report.append("\n  row [").append(row.nameText()).append("] ").append(row.getPreferredSize().width).append(" px");
 			}
-			assertTrue("the widest row column line asks for " + Widgets.widest(panel.rowsColumn()), Widgets.widest(panel.rowsColumn()) <= W);
+			assertTrue("the widest row column line asks for " + WidgetsProbe.widest(panel.rowsColumn()), WidgetsProbe.widest(panel.rowsColumn()) <= W);
 			final MovementRowPanel longName = rowPanels.get(0);
 			assertTrue(longName.nameText(), longName.nameText().endsWith(Widgets.ELLIPSIS));
 			System.out.println(report);
@@ -6144,7 +6139,7 @@ public class BankPriceMovementPanelTest
 			final int orange = count(image, ColorScheme.BRAND_ORANGE);
 			final int cardGrey = count(image, ColorScheme.DARKER_GRAY_COLOR);
 			final int reddish = countReddish(image);
-			System.out.println(shown + " " + options + " -> " + png.getAbsolutePath() + ": orange " + orange
+			System.out.println(shown + " " + PanelState.asMap(options) + " -> " + png.getAbsolutePath() + ": orange " + orange
 				+ " px, card grey " + cardGrey + " px, red " + reddish + " px");
 			assertTrue(shown + ": the lit chip's orange is there", orange > 40);
 			assertTrue(shown + ": the cards are there", cardGrey > 20_000);
@@ -6172,7 +6167,7 @@ public class BankPriceMovementPanelTest
 		for (WindowMove move : counted.moves().values())
 		{
 			assertEquals(move.window().name() + ": the parts row has a baseline, so every window covers it",
-				LookRenderer.BANK_ITEMS + 1, move.itemsCovered());
+				LookRenderer.BANK_ITEMS + 1, move.itemsCovered);
 		}
 
 		// R5: it sits among the movers - a parts row is an ordinary priced row - two rows above the alch pair,
@@ -6195,17 +6190,16 @@ public class BankPriceMovementPanelTest
 		int liveCount = 0;
 		for (MovementRow r : live)
 		{
-			if (r.isLive())
+			// The status's three stacks; the soft row P2 added prints a live price too, but is not one of the three.
+			if (r.source() == MovementRow.PriceSource.LIVE && r.id() != LookRenderer.SOFT_ROW_ID)
 			{
 				liveCount++;
 			}
 		}
 		assertEquals(LookRenderer.LIVE_STACKS, liveCount);
 		assertEquals(MovementRow.PriceSource.LIVE, live.get(0).source());
-		assertEquals(MovementRow.PriceSource.LIVE, live.get(0).windowSource(MovementWindow.D1));
-		assertEquals("the whip prints the live mid and compares the guide's two ends (T4)",
-			MovementRow.PriceSource.GUIDE, live.get(1).windowSource(MovementWindow.D1));
-		assertEquals(LookRenderer.WHIP_LIVE_NOW, live.get(1).unitPrice().longValue());
+		assertEquals("the whip prints the live mid (T4)", LookRenderer.WHIP_LIVE_NOW,
+			live.get(1).unitPrice().longValue());
 		assertEquals("Green hat", live.get(5).name());
 		assertEquals(LookRenderer.LIVE_STACKS, LookRenderer.summary(LookRenderer.LIVE).liveRows());
 		assertEquals("the guide-only list is untouched by any of it: the twelve and, since AV, the Crystal body",
@@ -6231,7 +6225,7 @@ public class BankPriceMovementPanelTest
 		assertNull("the guide-only fixtures are untouched", LookRenderer.status(LookRenderer.GUIDE_ONLY).live());
 		final PriceService.Status.LiveStatus liveFixture = LookRenderer.status(LookRenderer.LIVE).live();
 		assertEquals(LookRenderer.LIVE_STACKS, liveFixture.liveRows());
-		assertEquals(LookRenderer.LIVE_DAY, liveFixture.liveDay());
+		assertEquals(LookRenderer.LIVE_DAY, liveFixture.liveDay);
 		onEdt(() ->
 		{
 			final BankPriceMovementPanel drawn = LookRenderer.build(HeroVisibility.ALL, LookRenderer.LIVE);
@@ -6823,14 +6817,14 @@ public class BankPriceMovementPanelTest
 		assertEquals("a real status draws the mocked one's hover (AF) with its baseline table's time under the figure"
 				+ " (contract 1.1.2; a mock's baselineRevisionSeconds is 0, so it has none)",
 			"<html>" + VALUE_TIP + "<br>1d vs 07 Sep 00:00 UTC (table)</html>", panel.hero().getToolTipText());
-		assertEquals("no problem: the sentence is the header line", real.text(), panel.statusText());
+		assertEquals("no problem: the sentence is the header line", PanelState.text(real), PanelState.statusText(panel));
 		assertFalse(panel.problemShowing());
 
 		// ...and with a problem, the real class answers it from text() too, so the panel prints it once.
 		final PriceService.Status problem = StatusFixtures.listed(PRICES_AT, PRICES_AT - 60_000L, MovementWindow.D1,
 			UNAVAILABLE, THEN_DAY, summary(), 538, 519);
 		publish(rows(3), problem);
-		assertEquals(UNAVAILABLE, panel.statusText());
+		assertEquals(UNAVAILABLE, PanelState.statusText(panel));
 		assertEquals(UNAVAILABLE, panel.problemLabel().getToolTipText());
 		assertTrue(panel.problemShowing());
 		assertEquals(ColorScheme.PROGRESS_ERROR_COLOR, panel.problemLabel().getForeground());
@@ -7095,7 +7089,7 @@ public class BankPriceMovementPanelTest
 			assertEquals("Search items", BankPriceMovementPanel.SEARCH_PLACEHOLDER);
 			assertEquals(BankPriceMovementPanel.SEARCH_PLACEHOLDER, box.placeholder());
 			assertTrue("grey on its placeholder while empty and not being typed in", box.placeholderShowing());
-			assertFalse("nothing to be red about", Widgets.isMarkedInvalid(box));
+			assertFalse("nothing to be red about", PanelState.isMarkedInvalid(box));
 			assertEquals(panel.minField().getBackground(), box.getBackground());
 			assertEquals(panel.minField().getTextField().getFont(), box.getTextField().getFont());
 			assertEquals(panel.minField().getTextField().getForeground(), box.getTextField().getForeground());
@@ -7224,7 +7218,7 @@ public class BankPriceMovementPanelTest
 		});
 		assertEquals("Escape empties the box", "", panel.searchField().getText());
 		assertEquals("...which clears the search", 6, panel.rowPanels().size());
-		assertTrue(panel.describe(), panel.describe().contains("\"search\":\"\",\"matching\":6"));
+		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains("\"search\":\"\",\"matching\":6"));
 	}
 
 	/**
@@ -7331,7 +7325,7 @@ public class BankPriceMovementPanelTest
 		});
 		assertEquals("every fixture row shows again", 6, panel.rowPanels().size());
 		assertEquals(6, panel.shownRows());
-		assertTrue(panel.describe(), panel.describe().contains("\"search\":\"\",\"matching\":6"));
+		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains("\"search\":\"\",\"matching\":6"));
 		assertTrue(panel.bandTarget().getToolTipText(), panel.bandTarget().getToolTipText().endsWith("6 of 13 items"));
 		verify(service, never()).setFilter(any());
 		assertTrue("a search is not a filter: nothing is saved", prefs.saves.isEmpty());
@@ -7431,13 +7425,13 @@ public class BankPriceMovementPanelTest
 	{
 		build();
 		publish(searchBank(), listed(13, 6));
-		assertTrue(panel.describe(), panel.describe().contains("\"gpMax\":0,\"search\":\"\",\"matching\":6,\"minInvalid\""));
+		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains("\"gpMax\":0,\"search\":\"\",\"matching\":6,\"minInvalid\""));
 		type("  Rune ");
-		final String d = panel.describe();
+		final String d = PanelState.describe(panel);
 		assertTrue(d, d.contains("\"total\":6"));
 		assertTrue(d, d.contains("\"gpMax\":0,\"search\":\"Rune\",\"matching\":1,\"minInvalid\""));
 		onEdt(() -> panel.applySearch("a \"quoted\" word"));
-		assertTrue(panel.describe(), panel.describe().contains("\"search\":\"a \\\"quoted\\\" word\",\"matching\":0"));
+		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains("\"search\":\"a \\\"quoted\\\" word\",\"matching\":0"));
 	}
 
 	/**
@@ -7487,7 +7481,7 @@ public class BankPriceMovementPanelTest
 			assertEquals("rune", panel.searchField().getText());
 		});
 		assertEquals("...and so does the narrowed list", Arrays.asList("Rune platebody"), shownNames());
-		assertTrue(panel.describe(), panel.describe().contains("\"search\":\"rune\",\"matching\":1"));
+		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains("\"search\":\"rune\",\"matching\":1"));
 	}
 
 	/**
@@ -7653,18 +7647,18 @@ public class BankPriceMovementPanelTest
 			for (SortMode column : SortMode.values())
 			{
 				panel.setSort(column, true);
-				assertTrue(panel.describe(), panel.describe().contains("\"sortLabel\":\"" + column.label() + "\","));
+				assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains("\"sortLabel\":\"" + column.label() + "\","));
 				assertEquals(column.label(), panel.sortButton().getText());
-				assertFalse(panel.describe(), panel.describe().contains("sortHint"));
+				assertFalse(PanelState.describe(panel), PanelState.describe(panel).contains("sortHint"));
 			}
 
 			// A view switch moves no label, so it moves no sortLabel either (and since X2, no hover). The one
 			// that came nearest to moving this label was the row switch, and addendum AO1 deleted it.
 			panel.setSort(SortMode.GP_MOVE, true);
-			assertTrue(panel.describe(), panel.describe().contains("\"sortLabel\":\"gp change\","));
+			assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains("\"sortLabel\":\"gp change\","));
 			panel.applyOptions(ViewOptions.DEFAULT.withLivePrices(false));
-			assertTrue(panel.describe(), panel.describe().contains("\"sortLabel\":\"gp change\","));
-			assertFalse(panel.describe(), panel.describe().contains("sortHint"));
+			assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains("\"sortLabel\":\"gp change\","));
+			assertFalse(PanelState.describe(panel), PanelState.describe(panel).contains("sortHint"));
 		});
 	}
 
@@ -8580,7 +8574,7 @@ public class BankPriceMovementPanelTest
 		assertFalse("stop() puts the light out", panel.glowRunning());
 		assertFalse(panel.refreshTimersRunning());
 		final String echo = "\"bank\":{\"open\":true,\"pending\":true,\"glow\":false,\"heldEvents\":2,\"reads\":1}";
-		assertTrue(panel.describe(), panel.describe().contains(echo));
+		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains(echo));
 
 		final AtomicInteger reads = new AtomicInteger();
 		bank(false, false, 9, 9);
@@ -8606,7 +8600,7 @@ public class BankPriceMovementPanelTest
 			assertTrue("a queued frame repaints nothing: " + recorder.dirty, recorder.dirty.isEmpty());
 			assertEquals("and the ring stays dark", 0d, panel.glowLevel(), 0d);
 		});
-		assertTrue("a late word is not mirrored: " + panel.describe(), panel.describe().contains(echo));
+		assertTrue("a late word is not mirrored: " + PanelState.describe(panel), PanelState.describe(panel).contains(echo));
 		assertFalse("and starts nothing", panel.refreshTimersRunning());
 		assertEquals("a hook handed to a dead panel is not run", 0, reads.get());
 		verifyNoPriceCheck();
@@ -8641,7 +8635,7 @@ public class BankPriceMovementPanelTest
 			assertTrue("the EDT is held", busy.await(10, TimeUnit.SECONDS));
 			assertFalse(SwingUtilities.isEventDispatchThread());
 			panel.setBankHold(true, true, 5, 6);
-			assertTrue("nothing changed on the calling thread: " + panel.describe(), panel.describe().contains(
+			assertTrue("nothing changed on the calling thread: " + PanelState.describe(panel), PanelState.describe(panel).contains(
 				"\"bank\":{\"open\":false,\"pending\":false,\"glow\":false,\"heldEvents\":0,\"reads\":0}"));
 		}
 		finally
@@ -8653,7 +8647,7 @@ public class BankPriceMovementPanelTest
 			onEdt(() ->
 			{
 			});
-			assertTrue(panel.describe(), panel.describe().contains(
+			assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains(
 				"\"bank\":{\"open\":true,\"pending\":true,\"glow\":true,\"heldEvents\":5,\"reads\":6}"));
 		}
 		finally
@@ -8675,17 +8669,17 @@ public class BankPriceMovementPanelTest
 		build();
 		try
 		{
-			assertTrue(panel.describe(), panel.describe().contains(",\"showing\":false,\"bank\":{\"open\":false,"
+			assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains(",\"showing\":false,\"bank\":{\"open\":false,"
 				+ "\"pending\":false,\"glow\":false,\"heldEvents\":0,\"reads\":0},\"options\":{"));
 			bank(true, true, 3, 2);
-			assertTrue(panel.describe(), panel.describe().contains(
+			assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains(
 				",\"bank\":{\"open\":true,\"pending\":true,\"glow\":true,\"heldEvents\":3,\"reads\":2},"));
 			onEdt(() -> panel.onDeactivate());
-			assertTrue(panel.describe(), panel.describe().contains(
+			assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains(
 				",\"bank\":{\"open\":true,\"pending\":true,\"glow\":false,\"heldEvents\":3,\"reads\":2},"));
 			onEdt(() -> panel.onActivate());
 			bank(false, false, 7, 3);
-			assertTrue(panel.describe(), panel.describe().contains(
+			assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains(
 				",\"bank\":{\"open\":false,\"pending\":false,\"glow\":false,\"heldEvents\":7,\"reads\":3},"));
 		}
 		finally

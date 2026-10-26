@@ -28,6 +28,11 @@ import static org.junit.Assert.assertTrue;
  */
 public class BankPriceMovementConfigTest
 {
+	/** Addendum N's look switch, deleted by addendum O before the first build the Hub served. */
+	private static final String LEGACY_LOOK_KEY = "look";
+	/** Addendum Q's stack-value switch, deleted by addendum AO before the first build the Hub served. */
+	private static final String LEGACY_HOLDING_KEY = "holdingOnRows";
+
 	private static final List<String> EXPECTED_KEYS = Arrays.asList(
 		"gpMin",
 		"gpMax",
@@ -43,7 +48,7 @@ public class BankPriceMovementConfigTest
 		"sortDescending",
 		"window",
 		// Addendum O line O2: the bank value card's three show/hide switches. Addendum N's "look" was deleted
-		// with the One Bar design (O1) - BankPriceMovementPlugin.unstickLook() sweeps it off old profiles.
+		// with the One Bar design (O1); no build the Hub served ever stored it, so nothing sweeps it off profiles.
 		"showBankValue",
 		"showBankMoveGp",
 		"showBankMovePct",
@@ -143,9 +148,9 @@ public class BankPriceMovementConfigTest
 	 * (addendum AH) went because every hover left in the sidebar is one short line, so the hovers are always on and a
 	 * switch to hide them was one setting more than the plugin needs (the user, 2026-10-08). Before it, addendum AO
 	 * took {@code holdingOnRows} away (AO1) because addendum AN's three-line row prints the stack and the item both,
-	 * so that switch reached nothing drawn. Both deleted keys are swept off old profiles rather than migrated
-	 * ({@link BankPriceMovementPlugin#unstickHolding()}, {@link BankPriceMovementPlugin#unstickShowHoverText()}),
-	 * because nothing survives them to migrate INTO.
+	 * so that switch reached nothing drawn. The hover key is swept off old profiles rather than migrated
+	 * ({@link BankPriceMovementPlugin#unstickShowHoverText()}), because nothing survives it to migrate INTO; the holding
+	 * key's sweep was taken out in release 1.2.2, no build the Hub served ever having stored it.
 	 */
 	@Test
 	public void declaresExactlyTheExpectedItems()
@@ -165,6 +170,8 @@ public class BankPriceMovementConfigTest
 		// between the Grand Exchange switch and "livePrices", and everything from "livePrices" down moved up by one. Release
 		// 1.2.1 added the three hidden change settings "gpChangeSize", "pctChangeSize" and "gpBrightness" at 25 to 27.
 		// Release 1.2.1 part 2 added the History tab's three change settings and the chart's range at 28 to 31.
+		// Release 1.2.2 part 4's marker "opacity69Done" is no item at all (verification fix): a declared item is written back by
+		// RuneLite's own Reset, which would re-arm the one-time opacity move.
 		assertEquals("unexpected number of config items", 32, methods.size());
 	}
 
@@ -474,7 +481,8 @@ public class BankPriceMovementConfigTest
 		assertEquals(14, live.position());
 		// Only addendum AU's startTab (15), 1.0.9 part 5's hidden includeLegacyHistory (16), 1.1.0 part B's two colours
 		// (17 and 18), part C's chart switch and colour (19 and 20), part E's hideAmounts (21), part G's showAlchRows (22),
-		// part J's two hidden slot colours (23 and 24) and release 1.2.1's three hidden change settings (25 to 27) sit below it.
+		// part J's two hidden slot colours (23 and 24), release 1.2.1's three hidden change settings (25 to 27), its part 2's four
+		// (28 to 31) sit below it.
 		for (Method m : itemMethods())
 		{
 			final ConfigItem other = m.getAnnotation(ConfigItem.class);
@@ -838,21 +846,25 @@ public class BankPriceMovementConfigTest
 		assertEquals(new BankPriceMovementConfig() {}.downColour(), new BankPriceMovementConfig() {}.slotDownColour());
 	}
 
-	/** Whether {@code key} is one of release 1.2.1's three change settings. */
+	/**
+	 * Whether {@code key} is one of release 1.2.1's change settings (the Items three and the History four) or release 1.2.2's hidden
+	 * marker of the one-time opacity move, which sits among them on the page: hidden, and after them.
+	 */
 	private static boolean isChangeKey(String key)
 	{
 		return key.equals("gpChangeSize") || key.equals("pctChangeSize") || key.equals("gpBrightness")
-			|| BankPriceMovementPlugin.isHistoryKey(key);
+			|| BankPriceMovementPlugin.isHistoryKey(key) || key.equals(BankPriceMovementPlugin.OPACITY_69_DONE_KEY);
 	}
 
 	/**
 	 * S1 (release 1.2.1): the three change settings - {@code gpChangeSize} and {@code pctChangeSize} (the enum
-	 * {@link ChangeSize}, default Normal) and {@code gpBrightness} (an int, default 55) - are HIDDEN from the settings page, at
-	 * positions 25 to 27, and the keys the plugin's road and prefs name; the value the sidebar is drawn from reads them whole
-	 * ({@link BankPriceMovementPlugin#changeTextFromConfig}), and a stored brightness outside 20 to 100 reads as the default.
+	 * {@link ChangeSize}, default Normal) and {@code gpBrightness} (an int, default 69 since release 1.2.2, 55 before it) - are
+	 * HIDDEN from the settings page, at positions 25 to 27, and the keys the plugin's road and prefs name; the value the sidebar is
+	 * drawn from reads them whole ({@link BankPriceMovementPlugin#changeTextFromConfig}), and a stored brightness outside 20 to 100
+	 * reads as the default.
 	 */
 	@Test
-	public void s1_theThreeChangeSettingsAreHiddenAndDefaultToNormalNormalAndFiftyFive()
+	public void s1_theThreeChangeSettingsAreHiddenAndDefaultToNormalNormalAndSixtyNine()
 	{
 		final ConfigItem gp = item("gpChangeSize");
 		assertEquals("GP change size", gp.name());
@@ -875,7 +887,8 @@ public class BankPriceMovementConfigTest
 		assertEquals(27, bright.position());
 		assertTrue("hidden from the settings page", bright.hidden());
 		assertEquals(Integer.TYPE, itemMethod("gpBrightness").getReturnType());
-		assertEquals(55, new BankPriceMovementConfig() {}.gpBrightness());
+		assertEquals("release 1.2.2: 69 for everyone", 69, new BankPriceMovementConfig() {}.gpBrightness());
+		assertEquals(69, ChangeText.DEFAULT_BRIGHTNESS);
 		assertEquals(BankPriceMovementPlugin.GP_BRIGHTNESS_KEY, bright.keyName());
 
 		assertEquals("the defaults are the rows as they were drawn", ChangeText.DEFAULT,
@@ -892,7 +905,7 @@ public class BankPriceMovementConfigTest
 
 	/**
 	 * P2 and P3 (release 1.2.1 part 2): the History tab's three change settings are the Items keys' twins - the same types and
-	 * defaults (Normal, Normal, 55), hidden, at positions 28 to 30 - and {@code historyRange} is a hidden String that is empty
+	 * defaults (Normal, Normal, 69), hidden, at positions 28 to 30 - and {@code historyRange} is a hidden String that is empty
 	 * ("nothing stored": the card's window picks the range) until the chart's range is stored as one of the four labels. The plugin's
 	 * road names all four keys, and reads a stored word that is not a label as nothing.
 	 */
@@ -913,7 +926,7 @@ public class BankPriceMovementConfigTest
 		assertEquals("History GP change opacity", opacity.name());
 		assertTrue(opacity.hidden());
 		assertEquals(Integer.TYPE, itemMethod("historyGpOpacity").getReturnType());
-		assertEquals("History starts at 55, as Items does now", 55, new BankPriceMovementConfig() {}.historyGpOpacity());
+		assertEquals("History starts at 69, as Items does", 69, new BankPriceMovementConfig() {}.historyGpOpacity());
 		final ConfigItem range = item("historyRange");
 		assertEquals("History chart range", range.name());
 		assertTrue(range.hidden());
@@ -935,6 +948,29 @@ public class BankPriceMovementConfigTest
 		assertNull("nothing stored", BankHistoryRange.parse(""));
 		assertNull("a word that is no range", BankHistoryRange.parse("1y"));
 		assertNull(BankHistoryRange.parse(null));
+	}
+
+	/**
+	 * Release 1.2.2 part 4 (R2), verification fix: {@code opacity69Done}, the marker of the one-time move of a stored opacity of 55 to the
+	 * new default of 69, is a RAW key and no {@code @ConfigItem} - RuneLite's own Reset on the plugin's page ({@code ConfigManager.
+	 * setDefaultConfiguration} with override on) writes every declared item's default back, which would put a declared marker back to
+	 * false and move the next 55 the player picks. The move itself is pinned in {@code BankPriceMovementWiringTest}, and RuneLite's
+	 * real Reset in {@code OpacityResetRuneLiteTest}.
+	 */
+	@Test
+	public void theOpacityMarkerIsARawKeyAndNoConfigItem()
+	{
+		assertEquals("opacity69Done", BankPriceMovementPlugin.OPACITY_69_DONE_KEY);
+		for (Method m : itemMethods())
+		{
+			assertFalse("the marker is no declared item: " + m.getName(),
+				m.getAnnotation(ConfigItem.class).keyName().equals(BankPriceMovementPlugin.OPACITY_69_DONE_KEY));
+			assertFalse(m.getName().equals("opacity69Done"));
+		}
+		assertFalse(BankPriceMovementPlugin.isChangeTextKey("opacity69Done"));
+		assertFalse(BankPriceMovementPlugin.isHistoryKey("opacity69Done"));
+		assertFalse(BankPriceMovementPlugin.isOptionKey("opacity69Done"));
+		assertFalse(BankPriceMovementPlugin.isLegacyKey("opacity69Done"));
 	}
 
 	private static Method itemMethod(String keyName)
@@ -1005,8 +1041,8 @@ public class BankPriceMovementConfigTest
 
 	/**
 	 * O1: the {@code look} item is gone with the One Bar design, and so is its enum. A profile written by the
-	 * addendum-N build may still hold the KEY - {@link BankPriceMovementPlugin#unstickLook()} sweeps it at
-	 * startUp - but no item here may ever declare it again, or a stale design name would be read back into
+	 * addendum-N build may still hold the KEY - nothing sweeps it since release 1.2.2, no build the Hub served ever
+	 * having stored it - but no item here may ever declare it again, or a stale design name would be read back into
 	 * something new.
 	 */
 	@Test
@@ -1015,7 +1051,7 @@ public class BankPriceMovementConfigTest
 		for (Method m : itemMethods())
 		{
 			assertFalse("the look config item was deleted by addendum O (O1)",
-				BankPriceMovementPlugin.LEGACY_LOOK_KEY.equals(m.getAnnotation(ConfigItem.class).keyName()));
+				LEGACY_LOOK_KEY.equals(m.getAnnotation(ConfigItem.class).keyName()));
 		}
 	}
 
@@ -1026,10 +1062,9 @@ public class BankPriceMovementConfigTest
 	 * nothing drawn and the user, asked whether to keep it, answered "if it doesnt do anything anymore then
 	 * remove it".
 	 *
-	 * <p>A profile written before addendum AO may still hold the KEY -
-	 * {@link BankPriceMovementPlugin#unstickHolding()} sweeps it at startUp, exactly as
-	 * {@link BankPriceMovementPlugin#unstickLook()} sweeps addendum N's - but no item here may ever declare it
-	 * again. This file is where a deleted key coming back by a merge is caught: the set assertion above would
+	 * <p>A profile written before addendum AO may still hold the KEY - the sweep that removed it, and addendum N's
+	 * {@code look} with it, was taken out in release 1.2.2, no build the Hub served ever having stored either - but no
+	 * item here may ever declare it again. This file is where a deleted key coming back by a merge is caught: the set assertion above would
 	 * fail too, and would be read as "somebody forgot to update the list", which is the wrong reading and the
 	 * reason this test says which addendum took it and why.
 	 *
@@ -1044,9 +1079,9 @@ public class BankPriceMovementConfigTest
 		for (Method m : itemMethods())
 		{
 			assertFalse("the holdingOnRows config item was deleted by addendum AO (AO1)",
-				BankPriceMovementPlugin.LEGACY_HOLDING_KEY.equals(m.getAnnotation(ConfigItem.class).keyName()));
+				LEGACY_HOLDING_KEY.equals(m.getAnnotation(ConfigItem.class).keyName()));
 		}
 		assertFalse("...and no item may declare it under the old name either",
-			EXPECTED_KEYS.contains(BankPriceMovementPlugin.LEGACY_HOLDING_KEY));
+			EXPECTED_KEYS.contains(LEGACY_HOLDING_KEY));
 	}
 }

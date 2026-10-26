@@ -10,6 +10,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 /**
@@ -135,7 +136,7 @@ public class BankHistoryInvariantTest
 		assertTrue("a live row", f.lastStatus().live().liveRows() >= 1);
 		final MovementRow whip = PriceServiceTest.rowFor(f.lastRows(), PriceServiceTest.WHIP);
 		assertNotNull(whip);
-		assertTrue("the whip is the live row", whip.isLive());
+		assertSame("the whip is the live row", MovementRow.PriceSource.LIVE, whip.source());
 		assertNotEquals("so the card figures and the guide figures differ", point.card(BankHistoryPoint.BANK_TRADEABLE),
 			point.guide(BankHistoryPoint.BANK_TRADEABLE));
 		assertTrue(point.hasGuide());

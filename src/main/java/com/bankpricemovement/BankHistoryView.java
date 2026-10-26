@@ -25,18 +25,20 @@ import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.LongSupplier;
 import javax.annotation.Nullable;
 import javax.swing.Icon;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
 import javax.swing.SwingConstants;
 import javax.swing.border.EmptyBorder;
 import net.runelite.client.ui.ColorScheme;
@@ -59,6 +61,11 @@ import net.runelite.client.ui.ColorScheme;
  * range ({@link BankHistoryDayRow}), in pages of {@link BankPriceMovementPanel#ROWS_PER_PAGE} with a "Show n more" row
  * in the Items list's manner.
  *
+ * <p><b>Transfers</b> (1.2.2). Every change here is taken between the days' {@link BankHistoryMath.Day#drawnGp() drawn} totals, so a
+ * day the player marked as a transfer stops counting; every total printed stays the real one, except the readout, which names the
+ * figure the hovered point is drawn at ({@link BankHistoryChart#value}). A right-click on a day row asks the panel for that day's menu
+ * through {@link #setRowMenu}.
+ *
  * <p><b>The range.</b> The view starts at {@code forWindow(MovementWindow.DEFAULT)} (D7). The card's chip sets it
  * through {@link #setRange}; the view's OWN chips move the chart the same way, and the next {@link #setRange} with a different
  * range overrules them (amendment 9.10). Every change of the range, by any of those roads, is told to the listener the panel
@@ -72,7 +79,7 @@ import net.runelite.client.ui.ColorScheme;
  * today all equal what is drawn. Otherwise the chart is re-fed and the list re-used row by row: a row is rebuilt only
  * when the strings it prints differ, so a new total for today rebuilds today's row and nothing else. No label here
  * carries {@code <html>}, and no component here calls {@code setToolTipText} (amendment 9.13) - the chart paints its
- * own readout.
+ * own readout, and answers a hover of its own on a point drawn at a shifted total only ({@link BankHistoryChart#tipAt}).
  *
  * <p><b>Width</b> (amendment 9.8): no outer side margin; every part lays itself out from its own width, so the view
  * is right at any width from 213 px to 230 px; its preferred height is its true content height, and it revalidates
@@ -102,19 +109,22 @@ public final class BankHistoryView extends JPanel
 	private final LongSupplier clockMillis;
 	private final ZoneId zone;
 
-	private BankHistoryRange range = BankHistoryRange.forWindow(MovementWindow.DEFAULT);
+	BankHistoryRange range = BankHistoryRange.forWindow(MovementWindow.DEFAULT);
 	/** Told every new range, after it is drawn; the panel stores it. */
 	private Consumer<BankHistoryRange> rangeListener = r ->
 	{
 	};
 	/** The History tab's own sizes and opacity: what a day row is built from, and the colour of the change line's gp figure. */
 	private ChangeText text = ChangeText.DEFAULT;
+	/** The menu of a day, built by the panel at each right-click (1.2.2); every row reaches it through {@link #menuOf}. */
+	private Function<LocalDate, JPopupMenu> rowMenu = day -> null;
+	private final Function<LocalDate, JPopupMenu> menuOf = day -> rowMenu.apply(day);
 
 	// ---- what is drawn: null before the first show
 	@Nullable
 	private LocalDate drawnToday;
 	/** The last show's series cut to its today; EMPTY before the first. */
-	private BankHistorySeries shown = BankHistorySeries.EMPTY;
+	BankHistorySeries shown = BankHistorySeries.EMPTY;
 	private ViewOptions drawnOptions = ViewOptions.DEFAULT;
 	/**
 	 * 1.1.0 part E: whether every gp amount here reads its mask ({@link AmountMask}) - the change line's gp figure, the
@@ -132,7 +142,7 @@ public final class BankHistoryView extends JPanel
 	private final Ring ring = new Ring();
 	private final JLabel readoutDay;
 	private final JLabel readoutTotal;
-	private final BankHistoryChart chart;
+	final BankHistoryChart chart;
 	private final Sentence empty;
 
 	// ---- the list
@@ -143,7 +153,7 @@ public final class BankHistoryView extends JPanel
 	/** Every day from the first reading to today, NEWEST first. */
 	private List<BankHistoryMath.Day> listDays = Collections.emptyList();
 	/** The rows in the list now, newest first. */
-	private final List<BankHistoryDayRow> rows = new ArrayList<>();
+	final List<BankHistoryDayRow> rows = new ArrayList<>();
 	/** How many rows the pager allows: one page, plus a page per {@link #showMore}. */
 	private int pageLimit = BankPriceMovementPanel.ROWS_PER_PAGE;
 
@@ -281,6 +291,12 @@ public final class BankHistoryView extends JPanel
 		text = next;
 	}
 
+	/** Who builds a day's right-click menu (1.2.2): the panel, which knows the record, the switches and the questions. */
+	void setRowMenu(final Function<LocalDate, JPopupMenu> menus)
+	{
+		rowMenu = menus;
+	}
+
 	/** Who is told when the chart's range changes, by any road (release 1.2.1 part 2): the panel, which stores it. */
 	void setRangeListener(final Consumer<BankHistoryRange> listener)
 	{
@@ -335,37 +351,6 @@ public final class BankHistoryView extends JPanel
 		revalidate();
 		repaint();
 		return true;
-	}
-
-	/**
-	 * The dev bridge's view of the History card (amendment 9.11), exactly these seven keys and only String,
-	 * Integer and null values: {@code readings} (the last show's {@code upTo(today).size()}), {@code first} and
-	 * {@code last} (ISO {@code yyyy-MM-dd}, or null), {@code range} ({@link BankHistoryRange#label()}),
-	 * {@code rows} and {@code carriedRows} (day rows built so far, carried ones among them) and {@code hoverDay}
-	 * (the hovered point's day, ISO, or null).
-	 */
-	public LinkedHashMap<String, Object> describe()
-	{
-		final LinkedHashMap<String, Object> map = new LinkedHashMap<>();
-		final BankHistoryPoint first = shown.first();
-		final BankHistoryPoint last = shown.last();
-		int carried = 0;
-		for (BankHistoryDayRow row : rows)
-		{
-			if (row.model().carried())
-			{
-				carried++;
-			}
-		}
-		final BankHistoryMath.Day hovered = chart.hoverDay();
-		map.put("readings", shown.size());
-		map.put("first", first == null ? null : first.day().toString());
-		map.put("last", last == null ? null : last.day().toString());
-		map.put("range", range.label());
-		map.put("rows", rows.size());
-		map.put("carriedRows", carried);
-		map.put("hoverDay", hovered == null ? null : hovered.day().toString());
-		return map;
 	}
 
 	// ------------------------------------------------------------------------------------------ drawing
@@ -460,7 +445,20 @@ public final class BankHistoryView extends JPanel
 		changeGp.setForeground(Widgets.quietAt(sign, text.brightness()));
 		changePct.setForeground(Widgets.move(sign, Widgets.Kind.FIGURE));
 
-		chart.setData(days, shown.size() > 1, sign);
+		// 1.2.2: shifting the days would draw one below zero - draw the real totals and mark the notes instead.
+		Set<LocalDate> marked = null;
+		if (BankHistoryMath.drawsBelowZero(shown, drawnOptions))
+		{
+			marked = new TreeSet<>();
+			for (Map.Entry<LocalDate, BankHistorySeries.Transfer> note : shown.transfers().entrySet())
+			{
+				if (note.getValue().counts(drawnOptions.countCash()))
+				{
+					marked.add(note.getKey());
+				}
+			}
+		}
+		chart.setData(days, shown.size() > 1, sign, marked);
 		renderReadout();
 	}
 
@@ -480,7 +478,7 @@ public final class BankHistoryView extends JPanel
 		final BankHistoryMath.Day day = days.get(i);
 		ring.colour = chart.lineColour();
 		readoutDay.setText(BankHistoryDayRow.dayText(day.day(), drawnToday));
-		readoutTotal.setText(AmountMask.amount(hideAmounts, MovementMath.formatExact(day.valueGp())) + " gp");
+		readoutTotal.setText(AmountMask.amount(hideAmounts, MovementMath.formatExact(chart.value(day))) + " gp");
 		readoutDay.repaint();
 		block.doLayout();
 	}
@@ -514,7 +512,7 @@ public final class BankHistoryView extends JPanel
 			final BankHistoryDayRow.Model model = BankHistoryDayRow.model(shown, listDays.get(i), drawnToday, drawnOptions,
 				hideAmounts);
 			final BankHistoryDayRow kept = old.get(model.day());
-			next.add(kept != null && kept.model().equals(model) ? kept : new BankHistoryDayRow(model, text));
+			next.add(kept != null && kept.model().equals(model) ? kept : new BankHistoryDayRow(model, text, menuOf));
 		}
 
 		// The list's children: the header, the rows, and the pager row when more are left.

@@ -462,7 +462,7 @@ public class WidgetsTest
 	}
 
 	/**
-	 * B040: {@link Widgets#fitName} is {@link Widgets#fit} with one exception - a trailing dose bracket survives
+	 * B040: {@link WidgetsProbe#fitName} is {@link WidgetsProbe#fit} with one exception - a trailing dose bracket survives
 	 * the cut, because the four doses of a potion differ only in those three characters and the plain cut throws
 	 * exactly them away. The rule is narrow on purpose: a dose has NO space before its bracket, a qualifier does.
 	 */
@@ -479,7 +479,7 @@ public class WidgetsTest
 			for (int dose = 1; dose <= 4; dose++)
 			{
 				final String name = "Super combat potion(" + dose + ")";
-				final String cut = Widgets.fitName(face, name, block);
+				final String cut = WidgetsProbe.fitName(face, name, block);
 				assertNotEquals("the fixture has to be too wide, or this proves nothing", name, cut);
 				assertTrue(cut, cut.endsWith("(" + dose + ")"));
 				assertFits(cut, face, block);
@@ -488,14 +488,14 @@ public class WidgetsTest
 			assertEquals("four doses, four headlines", 4, shown.size());
 
 			// Everything else is exactly fit(): a name that fits, a qualifier, a null and an empty text.
-			assertEquals("Abyssal whip", Widgets.fitName(face, "Abyssal whip", block));
-			assertEquals(Widgets.fit(face, "Karambwan vessel (baited)", block),
-				Widgets.fitName(face, "Karambwan vessel (baited)", block));
-			assertEquals(Widgets.fit(face, "Ancient ceremonial legs", block),
-				Widgets.fitName(face, "Ancient ceremonial legs", block));
-			assertEquals("", Widgets.fitName(face, null, block));
-			assertEquals("", Widgets.fitName(face, "", block));
-			assertEquals("(4)", Widgets.fitName(face, "(4)", block));
+			assertEquals("Abyssal whip", WidgetsProbe.fitName(face, "Abyssal whip", block));
+			assertEquals(WidgetsProbe.fit(face, "Karambwan vessel (baited)", block),
+				WidgetsProbe.fitName(face, "Karambwan vessel (baited)", block));
+			assertEquals(WidgetsProbe.fit(face, "Ancient ceremonial legs", block),
+				WidgetsProbe.fitName(face, "Ancient ceremonial legs", block));
+			assertEquals("", WidgetsProbe.fitName(face, null, block));
+			assertEquals("", WidgetsProbe.fitName(face, "", block));
+			assertEquals("(4)", WidgetsProbe.fitName(face, "(4)", block));
 
 			// setFittedName is setFitted through it: the label is cut, the tooltip is whole.
 			final JLabel label = Widgets.label("", face, Color.WHITE);
@@ -579,9 +579,10 @@ public class WidgetsTest
 	 * darkened and with the card's own grey where there is no move to point at. Six methods across the panel and
 	 * the row read it, so the rule itself is pinned here, once.
 	 *
-	 * <p>Addendum AL's fourth role, {@link Widgets.Kind#QUIET}, has its own two tests below: it is the only one
-	 * whose colour is DERIVED from another role's rather than stated, so it is measured against the constants it
-	 * is derived from instead of being listed here beside three flat answers.
+	 * <p>Addendum AL's fourth role, the quiet figure (since release 1.2.2 {@link Widgets#quietAt} at 45, the old mix),
+	 * has its own two tests below: it is the only one whose colour is DERIVED from another role's rather than stated,
+	 * so it is measured against the constants it is derived from instead of being listed here beside three flat
+	 * answers.
 	 */
 	@Test
 	public void theMoveRuleIsGreenUpRedDownAndQuietFlatAsAMarkAFigureAndAnEdge()
@@ -617,10 +618,17 @@ public class WidgetsTest
 	// ---------------------------------------------------------------- the quiet gp figure (addendum AL)
 
 	/**
+	 * The old quiet role's mix (addendum AL, {@code Widgets.QUIET_MIX_PERCENT} until release 1.2.2): the figure mixed this many
+	 * percent of the way into the row's ground, which {@link Widgets#quietAt} answers at a brightness of 100 minus it.
+	 */
+	private static final int QUIET_MIX_PERCENT = 55;
+	private static final int QUIET_BRIGHTNESS = 100 - QUIET_MIX_PERCENT;
+
+	/**
 	 * AL: the gp change and the percentage share a row's second line, and the user picked the variant that lets
-	 * the percentage be read on its own by taking the gp figure DOWN rather than by moving either of them. So
-	 * {@link Widgets.Kind#QUIET} is not a new colour - it is exactly what {@link Widgets.Kind#FIGURE} would have
-	 * painted, mixed {@link Widgets#QUIET_MIX_PERCENT}% of the way into the row's own {@code DARKER_GRAY} ground.
+	 * the percentage be read on its own by taking the gp figure DOWN rather than by moving either of them. So the quiet
+	 * figure ({@link Widgets#quietAt} at the old 45) is not a new colour - it is exactly what {@link Widgets.Kind#FIGURE}
+	 * would have painted, mixed {@link #QUIET_MIX_PERCENT}% of the way into the row's own {@code DARKER_GRAY} ground.
 	 *
 	 * <p>The expectation is COMPUTED from those two colours and that percentage rather than copied out as a hex,
 	 * so the day somebody tunes the mix by eye against the real list this test follows it instead of failing on a
@@ -636,18 +644,12 @@ public class WidgetsTest
 	@Test
 	public void theQuietFigureIsTheFigureColourMixedTowardTheRowsOwnGround()
 	{
-		// A mix of none or of all is not a mix, and "strictly between" below would be vacuous against either.
-		// WHERE between the two it sits is deliberately not pinned - the constant's own javadoc measured that by
-		// eye at 213 px, and this file has no eye.
-		assertTrue("a QUIET that is not a mix says nothing: " + Widgets.QUIET_MIX_PERCENT,
-			Widgets.QUIET_MIX_PERCENT > 0 && Widgets.QUIET_MIX_PERCENT < 100);
-
 		final Color ground = ColorScheme.DARKER_GRAY_COLOR;
 		for (int signum : new int[]{1, -1})
 		{
 			final Color figure = Widgets.move(signum, Widgets.Kind.FIGURE);
-			final Color quiet = Widgets.move(signum, Widgets.Kind.QUIET);
-			assertEquals("signum " + signum, mixed(figure, ground, Widgets.QUIET_MIX_PERCENT), quiet);
+			final Color quiet = Widgets.quietAt(signum, QUIET_BRIGHTNESS);
+			assertEquals("signum " + signum, mixed(figure, ground, QUIET_MIX_PERCENT), quiet);
 
 			// Strictly between, in both directions: quieter than the figure it copies, and still plainly there.
 			assertNotEquals("signum " + signum + ": a QUIET that is the loud figure is not quiet", figure, quiet);
@@ -664,11 +666,11 @@ public class WidgetsTest
 		// implementation dimmed the raw constant, the first assertion fails; if the two mixes were somehow the
 		// same colour - a fixture that would prove nothing - the second one does.
 		assertEquals("QUIET dims the LIFTED red",
-			mixed(Widgets.MOVE_DOWN_TEXT, ground, Widgets.QUIET_MIX_PERCENT),
-			Widgets.move(-1, Widgets.Kind.QUIET));
+			mixed(Widgets.MOVE_DOWN_TEXT, ground, QUIET_MIX_PERCENT),
+			Widgets.quietAt(-1, QUIET_BRIGHTNESS));
 		assertNotEquals("...and never the raw constant the lift exists to replace",
-			mixed(ColorScheme.PROGRESS_ERROR_COLOR, ground, Widgets.QUIET_MIX_PERCENT),
-			Widgets.move(-1, Widgets.Kind.QUIET));
+			mixed(ColorScheme.PROGRESS_ERROR_COLOR, ground, QUIET_MIX_PERCENT),
+			Widgets.quietAt(-1, QUIET_BRIGHTNESS));
 	}
 
 	/**
@@ -685,13 +687,13 @@ public class WidgetsTest
 	public void aFlatMoveIsTheQuietGreyUndimmed()
 	{
 		assertEquals("a flat QUIET is the flat FIGURE, undimmed", Widgets.move(0, Widgets.Kind.FIGURE),
-			Widgets.move(0, Widgets.Kind.QUIET));
-		assertEquals(ColorScheme.LIGHT_GRAY_COLOR, Widgets.move(0, Widgets.Kind.QUIET));
+			Widgets.quietAt(0, QUIET_BRIGHTNESS));
+		assertEquals(ColorScheme.LIGHT_GRAY_COLOR, Widgets.quietAt(0, QUIET_BRIGHTNESS));
 		assertNotEquals("a dash must not be mixed into the row it stands on",
-			mixed(ColorScheme.LIGHT_GRAY_COLOR, ColorScheme.DARKER_GRAY_COLOR, Widgets.QUIET_MIX_PERCENT),
-			Widgets.move(0, Widgets.Kind.QUIET));
+			mixed(ColorScheme.LIGHT_GRAY_COLOR, ColorScheme.DARKER_GRAY_COLOR, QUIET_MIX_PERCENT),
+			Widgets.quietAt(0, QUIET_BRIGHTNESS));
 		assertTrue("...so it still clears the small-text bar on the row",
-			contrast(Widgets.move(0, Widgets.Kind.QUIET), ColorScheme.DARKER_GRAY_COLOR) >= 4.5d);
+			contrast(Widgets.quietAt(0, QUIET_BRIGHTNESS), ColorScheme.DARKER_GRAY_COLOR) >= 4.5d);
 	}
 
 	/**
@@ -699,7 +701,7 @@ public class WidgetsTest
 	 * {@code Long.signum} in, but a role that read a raw gp figure would paint a 1 gp fall and a 4.6m one alike
 	 * only by accident.
 	 *
-	 * <p>The loop is over {@code values()} and the count is pinned beside it, so a fifth role cannot be added
+	 * <p>The loop is over {@code values()} and the count is pinned beside it, so a fourth role cannot be added
 	 * without this file noticing: a new constant that nobody writes a branch for falls into {@link Widgets#move}'s
 	 * {@code default} and silently paints the undimmed {@code ColorScheme} pair, which is a plausible-looking
 	 * answer and the reason the count is worth failing on.
@@ -707,7 +709,7 @@ public class WidgetsTest
 	@Test
 	public void everyRoleAnswersForEverySignumAndReadsItAsASign()
 	{
-		assertEquals("a new Kind needs its own rule pinned in this file", 4, Widgets.Kind.values().length);
+		assertEquals("a new Kind needs its own rule pinned in this file", 3, Widgets.Kind.values().length);
 		for (Widgets.Kind kind : Widgets.Kind.values())
 		{
 			assertNotNull(kind + " has no flat colour", Widgets.move(0, kind));
@@ -723,8 +725,8 @@ public class WidgetsTest
 	}
 
 	/**
-	 * {@code from} mixed {@code percent}% of the way into {@code to} - the arithmetic {@link Widgets#move} does
-	 * for {@link Widgets.Kind#QUIET}, written out here rather than reached for. The rounding is the same
+	 * {@code from} mixed {@code percent}% of the way into {@code to} - the arithmetic {@link Widgets#quietAt} does
+	 * for the quiet figure, written out here rather than reached for. The rounding is the same
 	 * {@code Math.round} per channel, so this is an independent statement of the rule and not a second reference
 	 * to the same code.
 	 */
@@ -1078,12 +1080,12 @@ public class WidgetsTest
 			assertEquals("...", Widgets.ELLIPSIS);
 
 			final Font face = Widgets.sansBold(14);
-			assertEquals("Abyssal whip", Widgets.fit(face, "Abyssal whip", 200));
-			assertTrue(Widgets.fit(face, "Karambwan vessel (baited)", 60).endsWith(Widgets.ELLIPSIS));
+			assertEquals("Abyssal whip", WidgetsProbe.fit(face, "Abyssal whip", 200));
+			assertTrue(WidgetsProbe.fit(face, "Karambwan vessel (baited)", 60).endsWith(Widgets.ELLIPSIS));
 
 			final JLabel name = Widgets.label("", face, Color.WHITE);
 			Widgets.setFitted(name, "Karambwan vessel (baited)", 60);
-			assertEquals("the label is cut to its room", Widgets.fit(face, "Karambwan vessel (baited)", 60),
+			assertEquals("the label is cut to its room", WidgetsProbe.fit(face, "Karambwan vessel (baited)", 60),
 				name.getText());
 			assertEquals("the whole name stays on the tooltip", "Karambwan vessel (baited)",
 				name.getToolTipText());
@@ -1134,7 +1136,7 @@ public class WidgetsTest
 	/** The fitter brings a sentence inside its room, whether by fitting it whole or by cutting it. */
 	private static void assertFitted(String text, Font font, int width)
 	{
-		final String shown = Widgets.fit(font, text, width);
+		final String shown = WidgetsProbe.fit(font, text, width);
 		assertFits(shown, font, width);
 		assertTrue("\"" + text + "\" came back longer than it went in", shown.length() <= text.length()
 			+ Widgets.ELLIPSIS.length());

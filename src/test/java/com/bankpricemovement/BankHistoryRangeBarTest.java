@@ -219,7 +219,7 @@ public class BankHistoryRangeBarTest
 		{
 			final BankHistoryView view = view(fixture(), BankHistoryRange.D7);
 			layOut(view, 213);
-			final int rows = (Integer) view.describe().get("rows");
+			final int rows = (Integer) PanelState.describe(view).get("rows");
 			final int[] drawn = {31, 40, 40, 8};
 			final BankHistoryRange[] order = {BankHistoryRange.D30, BankHistoryRange.D90, BankHistoryRange.ALL,
 				BankHistoryRange.D7};
@@ -227,10 +227,10 @@ public class BankHistoryRangeBarTest
 			{
 				final BankHistoryRange r = order[k];
 				press(rangeCell(view, r));
-				assertEquals(r.label(), view.describe().get("range"));
+				assertEquals(r.label(), PanelState.describe(view).get("range"));
 				assertTrue(r + " is lit", lit(rangeCell(view, r)));
 				assertEquals(r + ": the chart's days", drawn[k], chart(view).days().size());
-				assertEquals("the list does not move with the chart", rows, view.describe().get("rows"));
+				assertEquals("the list does not move with the chart", rows, PanelState.describe(view).get("rows"));
 			}
 
 			// The lit cell again: nothing - the chart is not even re-fed.
@@ -242,12 +242,12 @@ public class BankHistoryRangeBarTest
 			final JLabel d30 = rangeCell(view, BankHistoryRange.D30);
 			d30.dispatchEvent(new MouseEvent(d30, MouseEvent.MOUSE_PRESSED, System.currentTimeMillis(),
 				InputEvent.BUTTON3_DOWN_MASK, 5, 5, 1, false, MouseEvent.BUTTON3));
-			assertEquals("7d", view.describe().get("range"));
+			assertEquals("7d", PanelState.describe(view).get("range"));
 
 			// The card's range overrules the bar's.
 			press(d30);
 			view.setRange(BankHistoryRange.ALL);
-			assertEquals("all", view.describe().get("range"));
+			assertEquals("all", PanelState.describe(view).get("range"));
 			assertTrue(lit(rangeCell(view, BankHistoryRange.ALL)));
 			assertFalse(lit(d30));
 		});
@@ -329,7 +329,7 @@ public class BankHistoryRangeBarTest
 			final JLabel d30 = rangeCell(view, BankHistoryRange.D30);
 			assertEquals(ColorScheme.MEDIUM_GRAY_COLOR, d30.getForeground());
 			press(d30);
-			assertEquals("30d", view.describe().get("range"));
+			assertEquals("30d", PanelState.describe(view).get("range"));
 			assertEquals(MovementMath.formatDay(TODAY.minusDays(10)) + " - " + MovementMath.formatDay(TODAY),
 				BankHistoryViewTest.chartLabel(view, CHANGE_DAYS));
 			assertEquals(LocalDate.of(2026, 9, 16), chart(view).days().get(0).day());

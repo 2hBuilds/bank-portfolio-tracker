@@ -5,9 +5,9 @@ import java.util.Objects;
 /**
  * The card's grade (contract 1.2.0, line L3): how the counted rows of one computation split between SOLID, SOFT and
  * NONE for the window on screen, how much of the bank's value the solid ones hold, and how much of its gp move the soft
- * ones supply. The card is SOFT ({@link #soft()}) when the solid rows hold less than
- * {@value GradeMath#CARD_SOLID_VALUE_PCT} % of the counted value or the soft rows supply more than
- * {@value GradeMath#CARD_SOFT_MOVE_PCT} % of the gp move; its hover then says "n of m rows solid" (L5).
+ * ones supply. The card counts as SOFT (L3) when the solid rows hold less than 90 % of the counted value or the soft
+ * rows supply more than 10 % of the gp move; nothing in the plugin judges that any more, only the developer bridge's
+ * state does.
  *
  * <p>The counted value is every stack the bank value adds up, cash left out; the gp move is the sum of every counted
  * row's stack move taken WITHOUT its sign, so a rise and a fall cannot cancel into a soft share of nothing. Immutable;
@@ -22,10 +22,14 @@ public final class GradeSummary
 	private final int solidRows;
 	private final int softRows;
 	private final int noneRows;
-	private final long solidValue;
-	private final long countedValue;
-	private final long softMoveGp;
-	private final long totalMoveGp;
+	/** What the SOLID rows' stacks are worth, gp. */
+	final long solidValue;
+	/** What every counted stack is worth, gp, cash left out - the bank value's stacks. */
+	final long countedValue;
+	/** The SOFT rows' stack moves, summed without their signs, gp. */
+	final long softMoveGp;
+	/** Every counted row's stack move, summed without its sign, gp. */
+	final long totalMoveGp;
 
 	GradeSummary(final boolean graded, final int solidRows, final int softRows, final int noneRows,
 		final long solidValue, final long countedValue, final long softMoveGp, final long totalMoveGp)
@@ -137,48 +141,6 @@ public final class GradeSummary
 		return solidRows + softRows + noneRows;
 	}
 
-	/** What the SOLID rows' stacks are worth, gp. */
-	public long solidValue()
-	{
-		return solidValue;
-	}
-
-	/** What every counted stack is worth, gp, cash left out - the bank value's stacks. */
-	public long countedValue()
-	{
-		return countedValue;
-	}
-
-	/** The SOFT rows' stack moves, summed without their signs, gp. */
-	public long softMoveGp()
-	{
-		return softMoveGp;
-	}
-
-	/** Every counted row's stack move, summed without its sign, gp. */
-	public long totalMoveGp()
-	{
-		return totalMoveGp;
-	}
-
-	/**
-	 * Whether the CARD is soft (L3): graded, and either the solid rows hold under
-	 * {@value GradeMath#CARD_SOLID_VALUE_PCT} % of the counted value or the soft rows supply over
-	 * {@value GradeMath#CARD_SOFT_MOVE_PCT} % of the gp move. Integer arithmetic.
-	 */
-	public boolean soft()
-	{
-		if (!graded)
-		{
-			return false;
-		}
-		final boolean solidShort = countedValue > 0L
-			&& GradeMath.underShare(solidValue, countedValue, GradeMath.CARD_SOLID_VALUE_PCT);
-		final boolean softHeavy = totalMoveGp > 0L
-			&& GradeMath.overShare(softMoveGp, totalMoveGp, GradeMath.CARD_SOFT_MOVE_PCT);
-		return solidShort || softHeavy;
-	}
-
 	@Override
 	public boolean equals(final Object o)
 	{
@@ -200,13 +162,5 @@ public final class GradeSummary
 	public int hashCode()
 	{
 		return Objects.hash(graded, solidRows, softRows, noneRows, solidValue, countedValue, softMoveGp, totalMoveGp);
-	}
-
-	@Override
-	public String toString()
-	{
-		return graded ? "GradeSummary{solid=" + solidRows + ", soft=" + softRows + ", none=" + noneRows
-			+ ", solidValue=" + solidValue + "/" + countedValue + ", softMove=" + softMoveGp + "/" + totalMoveGp
-			+ (soft() ? ", SOFT" : "") + '}' : "GradeSummary{not graded}";
 	}
 }

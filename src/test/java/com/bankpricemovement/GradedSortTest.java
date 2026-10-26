@@ -73,7 +73,7 @@ public class GradedSortTest
 		final Double deltaPct, final GradedMove graded)
 	{
 		return new MovementRow(90_000 + id, name, 1, false, unit, deltaGp == null ? null : unit - deltaGp, deltaGp,
-			deltaPct, unit, MovementRow.PriceSource.LIVE, null, null, null, null, 0, 0, 0, 0, graded);
+			deltaPct, unit, MovementRow.PriceSource.LIVE, null, null, 0, 0, 0, 0, graded);
 	}
 
 	/** Two prints a side today against a busy yesterday: a SOLID figure. */

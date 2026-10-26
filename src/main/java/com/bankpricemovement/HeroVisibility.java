@@ -1,9 +1,5 @@
 package com.bankpricemovement;
 
-import java.util.LinkedHashMap;
-import java.util.Locale;
-import javax.annotation.Nullable;
-
 /**
  * Which of the hero card's three figures the sidebar prints: the whole-bank TOTAL, its gp move for the lit
  * window, and that move as a percentage (addendum O line O2;
@@ -103,24 +99,6 @@ public final class HeroVisibility
 		return value || gp || pct;
 	}
 
-	/**
-	 * The three switches as an ordered map - {@code value}, {@code gp}, {@code pct} - which is the shape both
-	 * JSON answers about them are built from: the dev bridge's {@code state.hero} ({@code BpmCommands.heroJson})
-	 * and the panel's own {@code describe()} echo of it (O3). Two writers of one object used to spell the same
-	 * three names twice, and a switch renamed in one of them would have quietly split the two answers apart.
-	 *
-	 * <p>A fresh {@link LinkedHashMap} per call, so a caller may hand it to Gson, add to it or keep it; the
-	 * insertion order IS the field order those answers print in.
-	 */
-	public LinkedHashMap<String, Boolean> asMap()
-	{
-		final LinkedHashMap<String, Boolean> m = new LinkedHashMap<>(4);
-		m.put("value", value);
-		m.put("gp", gp);
-		m.put("pct", pct);
-		return m;
-	}
-
 	public HeroVisibility withValue(boolean shown)
 	{
 		return shown == value ? this : of(shown, gp, pct);
@@ -134,67 +112,6 @@ public final class HeroVisibility
 	public HeroVisibility withPct(boolean shown)
 	{
 		return shown == pct ? this : of(value, gp, shown);
-	}
-
-	/**
-	 * The dev bridge's {@code hero=} verb (O5), as a pure function of the visibility it is applied to: one of
-	 * the three field words TOGGLES that figure, {@code all} shows every figure and {@code none} hides every
-	 * figure. So {@code hero=value} flips the total, {@code hero=none} empties the card's headline block and
-	 * {@code hero=all} puts it back.
-	 *
-	 * <p>The spellings are generous because the verb is typed by hand into a URL query: the field words take
-	 * their obvious synonyms ({@code total}, {@code move}, {@code pnl}, {@code percent}, {@code %}) and the
-	 * whole text is trimmed and case-folded first.
-	 *
-	 * @param text the verb's value; anything, including null
-	 * @return the visibility to apply, or null when the text names none of the five - the caller then answers
-	 *         {@code ok:false} and leaves the card exactly as it was, rather than guessing at a figure
-	 */
-	@Nullable
-	public HeroVisibility applyVerb(@Nullable String text)
-	{
-		if (text == null)
-		{
-			return null;
-		}
-		final String key = text.trim().toLowerCase(Locale.ENGLISH);
-		switch (key)
-		{
-			case "value":
-			case "total":
-			case "bankvalue":
-			case "bank value":
-			case "v":
-				return withValue(!value);
-			case "gp":
-			case "move":
-			case "movegp":
-			case "amount":
-			case "pnl":
-				return withGp(!gp);
-			case "pct":
-			case "percent":
-			case "percentage":
-			case "movepct":
-			case "%":
-				return withPct(!pct);
-			case "all":
-			case "on":
-			case "show":
-				return ALL;
-			case "none":
-			case "off":
-			case "hide":
-				return NONE;
-			default:
-				return null;
-		}
-	}
-
-	/** The five words {@link #applyVerb(String)} takes, for a refusal that says what to type instead. */
-	public static String verbs()
-	{
-		return "value, gp, pct, all or none";
 	}
 
 	@Override
@@ -216,11 +133,5 @@ public final class HeroVisibility
 	public int hashCode()
 	{
 		return (value ? 4 : 0) | (gp ? 2 : 0) | (pct ? 1 : 0);
-	}
-
-	@Override
-	public String toString()
-	{
-		return "HeroVisibility{value=" + value + ", gp=" + gp + ", pct=" + pct + '}';
 	}
 }

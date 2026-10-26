@@ -48,7 +48,8 @@ import static org.mockito.Mockito.when;
  * {@link PriceStore} on a temporary folder, records today's reading beside it and publishes {@code Status} objects of
  * its own making - no mocked status anywhere. Every act goes through the road the client uses: the toggle's press, a
  * card chip's press, the view's own chip, the settings menu's check item (whose saved choice reaches the service
- * exactly as the plugin's {@code saveOptions} hands it on), the bank hold of addendum AS, and the dev bridge's words.
+ * exactly as the plugin's {@code saveOptions} hands it on) and the bank hold of addendum AS; the echoes the dev bridge
+ * reads back ({@code state.panel}, {@code state.bankHistory}, {@code state.view}) are read here from the panel itself.
  *
  * <p>The service publishes through {@link SwingUtilities#invokeLater}, as the plugin wires it, so a publish lands on
  * the Swing thread AFTER the act that caused it - {@link #settle()} waits for it. The service and the panel share one
@@ -77,7 +78,7 @@ public class SidebarHistorySeamTest
 	private LocalDate today;
 
 	/** The config as the plugin's prefs keep it: a saved switch set reaches the service, as saveOptions hands it on. */
-	private final class Prefs implements BankPriceMovementPanel.Prefs
+	private final class Prefs extends PrefsDefaults
 	{
 		final List<RowFilter> filterSaves = new ArrayList<>();
 		final List<ViewOptions> optionSaves = new ArrayList<>();
@@ -212,7 +213,7 @@ public class SidebarHistorySeamTest
 		final Object[] out = new Object[1];
 		try
 		{
-			onEdt(() -> out[0] = panel.bankHistoryState().get(key));
+			onEdt(() -> out[0] = PanelState.bankHistoryState(panel).get(key));
 		}
 		catch (Exception e)
 		{
@@ -281,7 +282,7 @@ public class SidebarHistorySeamTest
 		assertNotNull(status);
 		final BankHistorySeries series = status.bankHistory();
 		assertEquals("the forty seeded days less the gaps, and today's", SEEDED_DAYS - GAPS.size() + 1, series.size());
-		assertEquals(SidebarView.ITEMS, panel.view());
+		assertEquals(SidebarView.ITEMS, panel.view);
 		assertEquals(BankPriceMovementPanel.CARD_LIST, panel.card());
 		assertEquals("not fed while Items shows", 0, state("readings"));
 
@@ -379,8 +380,8 @@ public class SidebarHistorySeamTest
 		final LocalDate past = today.minusDays(9);
 		final BankHistoryPoint pastPoint = before.bankHistory().on(past);
 		assertNotNull(pastPoint);
-		onEdt(() -> assertTrue(rowOf(past).model().toString(),
-			rowOf(past).model().toString().contains(MovementMath.formatExact(pastPoint.valueFor(before.options())))));
+		onEdt(() -> assertTrue(rowOf(past).model().exact,
+			rowOf(past).model().exact.contains(MovementMath.formatExact(pastPoint.valueFor(before.options())))));
 
 		for (String which : new String[]{"cash", "inventory"})
 		{
@@ -403,10 +404,10 @@ public class SidebarHistorySeamTest
 				assertEquals(which, MovementMath.formatExact(total) + " gp", chartLabel(view(), READOUT_TOTAL));
 				assertEquals(which + ": the card's move and the chart's change", panel.pctLabel().getText(),
 					chartLabel(view(), CHANGE_PCT));
-				final String row = rowOf(past).model().toString();
+				final String row = rowOf(past).model().exact;
 				assertTrue(which + ": a past day redrawn under the switch: " + row,
 					row.contains(MovementMath.formatExact(pastPoint.valueFor(options))));
-				final String todayRow = rowOf(today).model().toString();
+				final String todayRow = rowOf(today).model().exact;
 				assertTrue(which + ": today's row: " + todayRow, todayRow.contains(MovementMath.formatExact(total)));
 			});
 		}
@@ -512,8 +513,7 @@ public class SidebarHistorySeamTest
 		assertEquals(series, disk.loadBankHistory(ACCOUNT, PROFILE).series());
 
 		pressHistory();
-		final BpmCommands dev = new BpmCommands(panel, service, new Gson());
-		JsonObject state = new Gson().fromJson(dev.apply("state"), JsonObject.class);
+		JsonObject state = echo(null);
 		assertEquals("only the first reading of this build", 1, state.getAsJsonObject("bankHistory").get("readings").getAsInt());
 		assertEquals(today.toString(), state.getAsJsonObject("bankHistory").get("first").getAsString());
 		assertEquals(today.toString(), state.getAsJsonObject("bankHistory").get("freshFrom").getAsString());
@@ -532,7 +532,7 @@ public class SidebarHistorySeamTest
 			assertEquals("1 day recorded", panel.updateLabel().getText());
 		});
 
-		state = new Gson().fromJson(dev.apply("legacy=on"), JsonObject.class);
+		state = echo(() -> panel.pressLegacy(true));
 		settle();
 		assertEquals("asked once, in the words", java.util.Arrays.asList(BankPriceMovementPanel.LEGACY_ASK), asked);
 		assertTrue(state.getAsJsonObject("panel").get("includeLegacy").getAsBoolean());
@@ -543,7 +543,7 @@ public class SidebarHistorySeamTest
 		onEdt(() -> assertEquals("9 days recorded since " + MovementMath.formatDay(today.minusDays(9)),
 			panel.updateLabel().getText()));
 
-		state = new Gson().fromJson(dev.apply("legacy=off"), JsonObject.class);
+		state = echo(() -> panel.pressLegacy(false));
 		assertEquals(1, state.getAsJsonObject("bankHistory").get("readings").getAsInt());
 		assertEquals("turning it off asked nothing", 1, asked.size());
 		assertEquals("the file was not touched by any of it", series, disk.loadBankHistory(ACCOUNT, PROFILE).series());
@@ -558,21 +558,47 @@ public class SidebarHistorySeamTest
 
 	// ---------------------------------------------------------------- the dev bridge
 
-	/** {@code bpm view=}, {@code range=} and {@code state.bankHistory} through BpmCommands, the real panel and view. */
+	/**
+	 * What a script reads as {@code state} off the sidebar - the panel's own line, the History view's echo and the view
+	 * showing - taken on the Swing thread, straight after {@code act} (the road a dev-bridge verb presses) when there is
+	 * one. Gson leaves a null out, as the bridge's answer does.
+	 */
+	private JsonObject echo(@Nullable Runnable act) throws Exception
+	{
+		final JsonObject out = new JsonObject();
+		final Gson gson = new Gson();
+		onEdt(() ->
+		{
+			if (act != null)
+			{
+				act.run();
+			}
+			out.add("panel", gson.fromJson(PanelState.describe(panel), JsonObject.class));
+			out.add("bankHistory", gson.toJsonTree(PanelState.bankHistoryState(panel)));
+			final SidebarView view = panel.view;
+			if (view != null)
+			{
+				out.addProperty("view", view.name());
+			}
+		});
+		return out;
+	}
+
+	/**
+	 * The toggle, the chart's range and the card's window pressed on the real panel - the roads the dev bridge's
+	 * {@code view=}, {@code range=} and {@code window=} press - and the echoes read back from the real view.
+	 */
 	@Test
-	public void theDevBridgeDrivesTheRealPanelAndReadsTheRealView() throws Exception
+	public void theRealPanelAndViewAnswerTheEchoesTheDevBridgeReads() throws Exception
 	{
 		login();
-		final Gson gson = new Gson();
-		final BpmCommands dev = new BpmCommands(panel, service, gson);
 
-		JsonObject state = gson.fromJson(dev.apply("state"), JsonObject.class);
+		JsonObject state = echo(null);
 		assertEquals("ITEMS", state.get("view").getAsString());
 		assertEquals(0, state.getAsJsonObject("bankHistory").get("readings").getAsInt());
 
-		state = gson.fromJson(dev.apply("view=history"), JsonObject.class);
+		state = echo(() -> panel.pressView(SidebarView.HISTORY));
 		settle();
-		assertTrue(state.get("ok").getAsBoolean());
 		assertEquals("HISTORY", state.get("view").getAsString());
 		assertTrue("the toggle writes nothing", prefs.filterSaves.isEmpty() && prefs.optionSaves.isEmpty());
 		JsonObject history = state.getAsJsonObject("bankHistory");
@@ -585,23 +611,19 @@ public class SidebarHistorySeamTest
 		assertTrue("no hover", history.get("hoverDay") == null || history.get("hoverDay").isJsonNull());
 		assertEquals(BankPriceMovementPanel.CARD_HISTORY, state.getAsJsonObject("panel").get("card").getAsString());
 
-		state = gson.fromJson(dev.apply("range=all"), JsonObject.class);
+		state = echo(() -> panel.setHistoryRange(BankHistoryRange.ALL));
 		assertEquals("all", state.getAsJsonObject("bankHistory").get("range").getAsString());
 		assertEquals("the card's window is untouched", "D1", state.getAsJsonObject("panel").get("window").getAsString());
 		assertEquals(MovementWindow.D1, service.filter().window());
 
-		dev.apply("window=90d");
+		onEdt(() -> panel.selectWindow(MovementWindow.D90));
 		settle();
-		state = gson.fromJson(dev.apply("state"), JsonObject.class);
+		state = echo(null);
 		assertEquals("the card's window moves the chart", "90d",
 			state.getAsJsonObject("bankHistory").get("range").getAsString());
 		assertEquals(MovementWindow.D90, service.filter().window());
 
-		final JsonObject refused = gson.fromJson(dev.apply("range=1d"), JsonObject.class);
-		assertFalse(refused.get("ok").getAsBoolean());
-		assertEquals("range= wants 7d, 30d, 90d or all, not '1d'", refused.get("error").getAsString());
-
-		state = gson.fromJson(dev.apply("view=items"), JsonObject.class);
+		state = echo(() -> panel.pressView(SidebarView.ITEMS));
 		settle();
 		assertEquals("ITEMS", state.get("view").getAsString());
 		assertEquals(BankPriceMovementPanel.CARD_LIST, state.getAsJsonObject("panel").get("card").getAsString());

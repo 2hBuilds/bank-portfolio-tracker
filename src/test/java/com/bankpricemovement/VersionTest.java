@@ -56,7 +56,7 @@ public class VersionTest
 		final PluginDescriptor d = BankPriceMovementPlugin.class.getAnnotation(PluginDescriptor.class);
 		assertNotNull(d);
 		assertTrue(d.description(), d.description().endsWith(" (v" + Version.CURRENT + ")"));
-		assertTrue("and this build is the one the contract names", d.description().endsWith("(v1.2.1)"));
+		assertTrue("and this build is the one the contract names", d.description().endsWith("(v1.2.2)"));
 	}
 
 	@Test
@@ -118,7 +118,7 @@ public class VersionTest
 	{
 		final AtomicReference<BankPriceMovementPanel> built = new AtomicReference<>();
 		SwingUtilities.invokeAndWait(() -> built.set(new BankPriceMovementPanel(mock(ItemManager.class),
-			mock(PriceService.class), new BankPriceMovementPanel.Prefs()
+			mock(PriceService.class), new PrefsDefaults()
 			{
 				@Nullable
 				@Override

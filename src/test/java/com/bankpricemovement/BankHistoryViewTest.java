@@ -71,12 +71,12 @@ public class BankHistoryViewTest
 			final AtomicLong clock = new AtomicLong(noon(TODAY));
 			final BankHistoryView view = new BankHistoryView(clock::get, ZONE);
 			view.show(fixture(), ViewOptions.DEFAULT);
-			assertEquals(40, view.describe().get("rows"));
+			assertEquals(40, PanelState.describe(view).get("rows"));
 
 			clock.set(noon(TODAY.plusDays(1)));
 			view.show(fixture(), ViewOptions.DEFAULT);
-			assertEquals("tomorrow is a carried row of its own", 41, view.describe().get("rows"));
-			assertEquals(5, view.describe().get("carriedRows"));
+			assertEquals("tomorrow is a carried row of its own", 41, PanelState.describe(view).get("rows"));
+			assertEquals(5, PanelState.describe(view).get("carriedRows"));
 		});
 	}
 
@@ -110,7 +110,7 @@ public class BankHistoryViewTest
 			assertNotNull("the change follows the switch too: 710m against 700m", label(view, "+10m"));
 			assertNotNull(label(view, "+1.4%"));
 			assertNotSame("today's row was rebuilt", todayRowBefore, rows(view).get(0));
-			assertEquals("the count is unchanged", 2, view.describe().get("rows"));
+			assertEquals("the count is unchanged", 2, PanelState.describe(view).get("rows"));
 		});
 	}
 
@@ -142,22 +142,22 @@ public class BankHistoryViewTest
 				view.show(s, o);
 				layOut(view, 213);
 				final long now = s.last().valueFor(o);
-				assertTrue(o + ": the switch changes today's total", now != lastToday);
+				assertTrue(PanelState.asMap(o) + ": the switch changes today's total", now != lastToday);
 				lastToday = now;
-				assertNotSame(o + ": today's row was rebuilt", todayRow, rows(view).get(0));
+				assertNotSame(PanelState.asMap(o) + ": today's row was rebuilt", todayRow, rows(view).get(0));
 				todayRow = rows(view).get(0);
 				for (BankHistoryDayRow row : rows(view))
 				{
-					assertEquals(o + ": " + row.model().day() + "'s exact total is valueFor",
+					assertEquals(PanelState.asMap(o) + ": " + row.model().day() + "'s exact total is valueFor",
 						MovementMath.formatExact(s.on(row.model().day()).valueFor(o)), text(row, 3));
 				}
-				assertEquals(o + ": the readout", MovementMath.formatExact(now) + " gp", chartLabel(view, READOUT_TOTAL));
+				assertEquals(PanelState.asMap(o) + ": the readout", MovementMath.formatExact(now) + " gp", chartLabel(view, READOUT_TOTAL));
 				final BankHistoryMath.Change c = BankHistoryMath.overDays(s, TODAY, 7, o);
 				assertEquals(TODAY.minusDays(7), c.fromDay());
-				assertEquals(o + ": the change line's days", "19 Sep - 26 Sep", chartLabel(view, CHANGE_DAYS));
-				assertEquals(o + ": the change line's gp", MovementRowPanel.signedGp(c.deltaGp()),
+				assertEquals(PanelState.asMap(o) + ": the change line's days", "19 Sep - 26 Sep", chartLabel(view, CHANGE_DAYS));
+				assertEquals(PanelState.asMap(o) + ": the change line's gp", MovementRowPanel.signedGp(c.deltaGp()),
 					chartLabel(view, CHANGE_GP));
-				assertEquals(o + ": the change line's %", MovementMath.formatPctCompact(c.pct(), c.deltaGp()),
+				assertEquals(PanelState.asMap(o) + ": the change line's %", MovementMath.formatPctCompact(c.pct(), c.deltaGp()),
 					chartLabel(view, CHANGE_PCT));
 			}
 			// Guide and card differ, so the last step really printed the guide sums.
@@ -326,7 +326,7 @@ public class BankHistoryViewTest
 	{
 		final List<BankHistoryDayRow> rows = rows(view);
 		assertEquals(n, rows.size());
-		assertEquals(n, view.describe().get("rows"));
+		assertEquals(n, PanelState.describe(view).get("rows"));
 		for (int i = 0; i < n; i++)
 		{
 			assertEquals("row " + i, newest.minusDays(i), rows.get(i).model().day());
@@ -350,7 +350,7 @@ public class BankHistoryViewTest
 		onEdt(() ->
 		{
 			final BankHistoryView view = view(fixture(), BankHistoryRange.D7);
-			final LinkedHashMap<String, Object> d = view.describe();
+			final LinkedHashMap<String, Object> d = PanelState.describe(view);
 			assertEquals("the list ignores the chart's range: all 40 days", 40, d.get("rows"));
 			assertEquals("30 Aug, 8 Sep, 21 and 22 Sep", 4, d.get("carriedRows"));
 			assertEquals(36, d.get("readings"));
@@ -361,7 +361,7 @@ public class BankHistoryViewTest
 
 			// 22 Sep and 21 Sep had no reading: grey and thin, the date alone.
 			final BankHistoryDayRow sep22 = rows.get(4);
-			assertTrue(sep22.model().carried());
+			assertTrue(sep22.model().carried);
 			assertEquals(BankHistoryDayRow.CARRIED_HEIGHT, sep22.getPreferredSize().height);
 			assertEquals(ColorScheme.DARK_GRAY_HOVER_COLOR, sep22.getBackground());
 			final JLabel words = (JLabel) sep22.getComponent(0);
@@ -386,7 +386,7 @@ public class BankHistoryViewTest
 			final long sep20 = fixture().on(LocalDate.of(2026, 9, 20)).valueFor(ViewOptions.DEFAULT);
 			final BankHistoryDayRow sep22 = rows(view).get(4);
 			assertEquals(LocalDate.of(2026, 9, 22), sep22.model().day());
-			assertTrue(sep22.model().carried());
+			assertTrue(sep22.model().carried);
 			assertEquals("one label: the date", 1, sep22.getComponentCount());
 			final String text = ((JLabel) sep22.getComponent(0)).getText();
 			assertEquals("Tue 22 Sep", text);
@@ -472,12 +472,12 @@ public class BankHistoryViewTest
 			final BankHistorySeries s = BankHistorySeries.of(Arrays.asList(point(old, 100_000_000L),
 				point(TODAY, 120_000_000L)));
 			final BankHistoryView view = view(s, BankHistoryRange.ALL);
-			assertEquals(250, view.describe().get("rows"));
-			assertEquals(249, view.describe().get("carriedRows"));
+			assertEquals(250, PanelState.describe(view).get("rows"));
+			assertEquals(249, PanelState.describe(view).get("carriedRows"));
 			assertNotNull("the pager row, in the Items list's words", label(view, "Show 151 more"));
 
 			assertTrue(view.showMore());
-			assertEquals(401, view.describe().get("rows"));
+			assertEquals(401, PanelState.describe(view).get("rows"));
 			assertNull(label(view, "Show 151 more"));
 			assertFalse("nothing more to show", view.showMore());
 			assertFalse(view.showMore());
@@ -506,16 +506,16 @@ public class BankHistoryViewTest
 				point(TODAY, 2L)));
 			final BankHistoryView view = view(a, BankHistoryRange.ALL);
 			assertTrue(view.showMore());
-			assertEquals(401, view.describe().get("rows"));
+			assertEquals(401, PanelState.describe(view).get("rows"));
 
 			// Today's total moves: still that bank - the pages stay open.
 			view.show(a.with(point(TODAY, 3L)), ViewOptions.DEFAULT);
-			assertEquals(401, view.describe().get("rows"));
+			assertEquals(401, PanelState.describe(view).get("rows"));
 
 			// Another bank's history, first read on another day: one page again.
 			view.show(BankHistorySeries.of(Arrays.asList(point(TODAY.minusDays(399), 1L), point(TODAY, 2L))),
 				ViewOptions.DEFAULT);
-			assertEquals(250, view.describe().get("rows"));
+			assertEquals(250, PanelState.describe(view).get("rows"));
 		});
 	}
 
@@ -539,8 +539,8 @@ public class BankHistoryViewTest
 				assertEquals(BankHistoryView.NO_READINGS, String.join(" ", lines));
 				assertTrue("wrapped to the width", lines.size() >= 2);
 				assertNull("no chart", chart(view));
-				assertEquals(0, view.describe().get("rows"));
-				assertEquals(0, view.describe().get("readings"));
+				assertEquals(0, PanelState.describe(view).get("rows"));
+				assertEquals(0, PanelState.describe(view).get("readings"));
 				assertEquals("its height is its lines", sentence.getPreferredSize().height, view.getHeight());
 			}
 		});
@@ -558,7 +558,7 @@ public class BankHistoryViewTest
 			assertFalse(view.getComponent(0) instanceof BankHistoryView.Sentence);
 			assertNotNull(label(view, "Sat 26 Sep"));
 			assertNotNull(label(view, "736,412,683 gp"));
-			assertEquals(1, view.describe().get("rows"));
+			assertEquals(1, PanelState.describe(view).get("rows"));
 			assertEquals("first reading", text(rows(view).get(0), 1));
 			assertEquals(1, chart(view).days().size());
 			for (Component c : tree(view))
@@ -580,14 +580,14 @@ public class BankHistoryViewTest
 		{
 			final BankHistoryView view = view(fixture(), BankHistoryRange.D7);
 			layOut(view, 213);
-			assertEquals("7d", view.describe().get("range"));
+			assertEquals("7d", PanelState.describe(view).get("range"));
 			assertEquals("today and the seven days before it", 8, chart(view).days().size());
-			final int rows = (Integer) view.describe().get("rows");
+			final int rows = (Integer) PanelState.describe(view).get("rows");
 
 			press(label(view, "30d"));
-			assertEquals("30d", view.describe().get("range"));
+			assertEquals("30d", PanelState.describe(view).get("range"));
 			assertEquals(31, chart(view).days().size());
-			assertEquals("the list does not move with the chart", rows, view.describe().get("rows"));
+			assertEquals("the list does not move with the chart", rows, PanelState.describe(view).get("rows"));
 			assertTrue(lit(label(view, "30d")));
 			assertFalse(lit(label(view, "7d")));
 
@@ -598,7 +598,7 @@ public class BankHistoryViewTest
 
 			// The card's chip overrules the view's own.
 			view.setRange(BankHistoryRange.D7);
-			assertEquals("7d", view.describe().get("range"));
+			assertEquals("7d", PanelState.describe(view).get("range"));
 			assertEquals(8, chart(view).days().size());
 		});
 	}
@@ -622,7 +622,7 @@ public class BankHistoryViewTest
 			assertEquals(ColorScheme.MEDIUM_GRAY_COLOR, ninety.getForeground());
 
 			press(ninety);
-			assertEquals("90d", view.describe().get("range"));
+			assertEquals("90d", PanelState.describe(view).get("range"));
 			assertEquals("the chart draws what there is: all 40 days", 40, chart(view).days().size());
 			assertNotNull("the change line names the days it can show", label(view, "18 Aug - 26 Sep"));
 			assertTrue("lit, it is filled orange", lit(ninety));
@@ -765,20 +765,20 @@ public class BankHistoryViewTest
 		{
 			final AtomicLong clock = new AtomicLong(noon(LocalDate.of(2026, 9, 20)));
 			final BankHistoryView view = new BankHistoryView(clock::get, ZONE);
-			assertEquals("7d", view.describe().get("range"));
-			assertEquals(0, view.describe().get("readings"));
-			assertNull(view.describe().get("first"));
-			assertNull(view.describe().get("last"));
+			assertEquals("7d", PanelState.describe(view).get("range"));
+			assertEquals(0, PanelState.describe(view).get("readings"));
+			assertNull(PanelState.describe(view).get("first"));
+			assertNull(PanelState.describe(view).get("last"));
 			view.setRange(BankHistoryRange.D90);
-			assertEquals("before any show", "90d", view.describe().get("range"));
+			assertEquals("before any show", "90d", PanelState.describe(view).get("range"));
 
 			view.show(fixture(), null);
 			assertEquals("readings up to the 20th", fixture().upTo(LocalDate.of(2026, 9, 20)).size(),
-				view.describe().get("readings"));
-			assertEquals("2026-08-18", view.describe().get("first"));
-			assertEquals("2026-09-20", view.describe().get("last"));
+				PanelState.describe(view).get("readings"));
+			assertEquals("2026-08-18", PanelState.describe(view).get("first"));
+			assertEquals("2026-09-20", PanelState.describe(view).get("last"));
 			assertEquals(Arrays.asList("readings", "first", "last", "range", "rows", "carriedRows", "hoverDay"),
-				new ArrayList<>(view.describe().keySet()));
+				new ArrayList<>(PanelState.describe(view).keySet()));
 		});
 	}
 

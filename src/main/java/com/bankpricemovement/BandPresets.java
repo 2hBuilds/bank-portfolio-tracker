@@ -228,14 +228,4 @@ public final class BandPresets
 		hash = 31 * hash + Long.hashCode(large);
 		return hash;
 	}
-
-	/**
-	 * A debugging line, in gp rather than in shorthand: {@link #format()} is the text the user sees, and a log
-	 * that rounded 1,234,567 to "1.23m" would hide the very difference one would be reading a log to find.
-	 */
-	@Override
-	public String toString()
-	{
-		return "BandPresets{" + small + ", " + middle + ", " + large + '}';
-	}
 }

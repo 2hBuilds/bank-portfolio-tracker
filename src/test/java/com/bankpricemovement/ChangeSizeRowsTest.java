@@ -76,7 +76,7 @@ public class ChangeSizeRowsTest
 		final GradedMove graded = new GradedMove(Grade.SOFT, word, 0.013d, 1_500_000L, 20_000L, false, null, null, null, null,
 			1_500_000L);
 		return new MovementRow(4151, "Abyssal whip", 12, false, 1_520_000L, 1_500_000L, 20_000L, 1.3d, 18_240_000L,
-			MovementRow.PriceSource.LIVE, null, null, null, null, 0, 0, 0, 0, graded);
+			MovementRow.PriceSource.LIVE, null, null, 0, 0, 0, 0, graded);
 	}
 
 	@After
@@ -258,17 +258,17 @@ public class ChangeSizeRowsTest
 		for (ChangeText style : everyPairOfSizes())
 		{
 			final MovementRowPanel one = layOut(build(crystal, style));
-			assertEquals(style + ": nothing on the right", null, part(line3(one), BorderLayout.EAST));
-			assertEquals(style + ": the working whole", "1 x 14.9m", working(one).getText());
+			assertEquals(PanelState.text(style) + ": nothing on the right", null, part(line3(one), BorderLayout.EAST));
+			assertEquals(PanelState.text(style) + ": the working whole", "1 x 14.9m", working(one).getText());
 
 			final MovementRowPanel worded = layOut(build(new MovementRow(4151, "Abyssal whip", 1, false, 1_520_000L, 1_500_000L,
-				20_000L, 1.3d, 1_520_000L, MovementRow.PriceSource.LIVE, null, null, null, null, 0, 0, 0, 0,
+				20_000L, 1.3d, 1_520_000L, MovementRow.PriceSource.LIVE, null, null, 0, 0, 0, 0,
 				soft(GradeWords.volume(3L)).graded()), style));
-			assertTrue(style + ": the word keeps its slot", slot(worded).getWidth() >= MovementRowPanel.WORD_SLOT);
-			assertEquals(style + ": the working whole beside a word", "1 x 1.52m", working(worded).getText());
+			assertTrue(PanelState.text(style) + ": the word keeps its slot", slot(worded).getWidth() >= MovementRowPanel.WORD_SLOT);
+			assertEquals(PanelState.text(style) + ": the working whole beside a word", "1 x 1.52m", working(worded).getText());
 
 			final MovementRowPanel twelve = layOut(build(whips(), style));
-			assertEquals(style + ": a gp figure keeps its column", MovementRowPanel.fit(style.gp(), style.pct()).gpColumn,
+			assertEquals(PanelState.text(style) + ": a gp figure keeps its column", MovementRowPanel.fit(style.gp(), style.pct()).gpColumn,
 				gp3(twelve).getWidth());
 		}
 	}
@@ -391,12 +391,12 @@ public class ChangeSizeRowsTest
 				final MovementRowPanel p = layOut(build(r, style));
 				for (JLabel gp : Arrays.asList(gp2(p), gp3(p)))
 				{
-					assertFalse(style + " " + r.name() + ": the gp figure is not cut", gp.getText().endsWith("..."));
-					assertTrue(style + " " + r.name() + ": '" + gp.getText() + "' fits its column",
+					assertFalse(PanelState.text(style) + " " + r.name() + ": the gp figure is not cut", gp.getText().endsWith("..."));
+					assertTrue(PanelState.text(style) + " " + r.name() + ": '" + gp.getText() + "' fits its column",
 						gpm.stringWidth(gp.getText()) + 6 <= gp.getWidth());
 				}
-				assertFalse(style + " " + r.name() + ": the percentage is not cut", pct(p).getText().endsWith("..."));
-				assertTrue(style + " " + r.name() + ": '" + pct(p).getText() + "' fits its column",
+				assertFalse(PanelState.text(style) + " " + r.name() + ": the percentage is not cut", pct(p).getText().endsWith("..."));
+				assertTrue(PanelState.text(style) + " " + r.name() + ": '" + pct(p).getText() + "' fits its column",
 					pctm.stringWidth(pct(p).getText()) <= pct(p).getWidth());
 			}
 		}
@@ -418,31 +418,31 @@ public class ChangeSizeRowsTest
 		for (ChangeText style : everyPairOfSizes())
 		{
 			final int height = MovementRowPanel.rowHeight(style);
-			assertTrue(style + ": never shorter than every earlier release's row", height >= MovementRowPanel.ROW_HEIGHT);
+			assertTrue(PanelState.text(style) + ": never shorter than every earlier release's row", height >= MovementRowPanel.ROW_HEIGHT);
 			table.append(style.gp()).append('/').append(style.pct()).append('=').append(height).append(' ');
 			for (MovementRow r : Arrays.asList(whips(), sharks(), claws(), flat(), single(), soft("low vol 3")))
 			{
 				final MovementRowPanel p = layOut(build(r, style));
-				assertEquals(style + " " + r.name() + ": the row's height", height, p.getPreferredSize().height);
-				assertEquals(style + " " + r.name() + ": and its width", 213, p.getPreferredSize().width);
+				assertEquals(PanelState.text(style) + " " + r.name() + ": the row's height", height, p.getPreferredSize().height);
+				assertEquals(PanelState.text(style) + " " + r.name() + ": and its width", 213, p.getPreferredSize().width);
 				final Rectangle n = box(name(p), p);
 				final Rectangle two = box(line2(p), p);
 				final Rectangle three = box(line3(p), p);
-				assertTrue(style + " " + r.name() + ": the name is above line 2: " + n + " " + two, n.y + n.height <= two.y);
-				assertTrue(style + " " + r.name() + ": line 2 is above line 3: " + two + " " + three,
+				assertTrue(PanelState.text(style) + " " + r.name() + ": the name is above line 2: " + n + " " + two, n.y + n.height <= two.y);
+				assertTrue(PanelState.text(style) + " " + r.name() + ": line 2 is above line 3: " + two + " " + three,
 					two.y + two.height <= three.y);
-				assertTrue(style + " " + r.name() + ": line 3 is inside the card: " + three + " of " + height,
+				assertTrue(PanelState.text(style) + " " + r.name() + ": line 3 is inside the card: " + three + " of " + height,
 					three.y + three.height <= height - 2);
 				// Every label on line 2 and line 3 is whole inside its line: no figure is taller than the line it stands on.
 				for (JLabel gp : Arrays.asList(gp2(p), pct(p)))
 				{
 					final int need = metricsHeight(gp);
-					assertTrue(style + " " + r.name() + ": '" + gp.getText() + "' is " + need + " px tall in a line "
+					assertTrue(PanelState.text(style) + " " + r.name() + ": '" + gp.getText() + "' is " + need + " px tall in a line "
 						+ two.height, need <= two.height);
 				}
 				if (gp3(p) != null)
 				{
-					assertTrue(style + " " + r.name() + ": the one-item gp figure fits line 3",
+					assertTrue(PanelState.text(style) + " " + r.name() + ": the one-item gp figure fits line 3",
 						metricsHeight(gp3(p)) <= three.height);
 				}
 			}
@@ -490,29 +490,29 @@ public class ChangeSizeRowsTest
 				final MovementRowPanel p = layOut(build(r, style));
 				final Rectangle one = box(gp2(p), p);
 				final Rectangle two = box(gp3(p), p);
-				assertEquals(style + " " + r.name() + ": line 2's gp figure is over line 3's", one.x + one.width, two.x + two.width);
+				assertEquals(PanelState.text(style) + " " + r.name() + ": line 2's gp figure is over line 3's", one.x + one.width, two.x + two.width);
 				gpRight.add(one.x + one.width);
 				final Rectangle percentage = box(pct(p), p);
 				pctRight.add(percentage.x + percentage.width);
 				final Rectangle slotBox = box(slot(p), p);
 				slotRight.add(slotBox.x + slotBox.width);
-				assertEquals(style + " " + r.name() + ": the percentage ends where the slot under it ends",
+				assertEquals(PanelState.text(style) + " " + r.name() + ": the percentage ends where the slot under it ends",
 					percentage.x + percentage.width, slotBox.x + slotBox.width);
-				assertEquals(style + " " + r.name() + ": the slot is at least 54 px wide",
+				assertEquals(PanelState.text(style) + " " + r.name() + ": the slot is at least 54 px wide",
 					Math.max(54, MovementRowPanel.fit(style.gp(), style.pct()).pctColumn), slotBox.width);
 				left.add(box(price(p), p).x);
-				assertEquals(style + " " + r.name() + ": the stack value and the working begin together", box(price(p), p).x,
+				assertEquals(PanelState.text(style) + " " + r.name() + ": the stack value and the working begin together", box(price(p), p).x,
 					box(working(p), p).x);
 				// The percentage's text is right-aligned in its own column: its last glyph is at the row's right edge.
-				assertEquals(style + " " + r.name() + ": the percentage is right-aligned", javax.swing.SwingConstants.RIGHT,
+				assertEquals(PanelState.text(style) + " " + r.name() + ": the percentage is right-aligned", javax.swing.SwingConstants.RIGHT,
 					pct(p).getHorizontalAlignment());
-				assertEquals(style + " " + r.name() + ": the right edge is the text block's, 6 px in from the card's",
+				assertEquals(PanelState.text(style) + " " + r.name() + ": the right edge is the text block's, 6 px in from the card's",
 					213 - 6, percentage.x + percentage.width);
 			}
-			assertEquals(style + ": every row's gp figures end at one x", 1, new java.util.HashSet<>(gpRight).size());
-			assertEquals(style + ": every row's percentage ends at one x", 1, new java.util.HashSet<>(pctRight).size());
-			assertEquals(style + ": every row's slot ends at one x", 1, new java.util.HashSet<>(slotRight).size());
-			assertEquals(style + ": every row's text begins at one x", 1, new java.util.HashSet<>(left).size());
+			assertEquals(PanelState.text(style) + ": every row's gp figures end at one x", 1, new java.util.HashSet<>(gpRight).size());
+			assertEquals(PanelState.text(style) + ": every row's percentage ends at one x", 1, new java.util.HashSet<>(pctRight).size());
+			assertEquals(PanelState.text(style) + ": every row's slot ends at one x", 1, new java.util.HashSet<>(slotRight).size());
+			assertEquals(PanelState.text(style) + ": every row's text begins at one x", 1, new java.util.HashSet<>(left).size());
 		}
 	}
 
@@ -533,21 +533,21 @@ public class ChangeSizeRowsTest
 				{
 					final MovementRowPanel p = layOut(build(soft(word), style));
 					final JComponent slot = slot(p);
-					assertTrue(style + ": the word '" + word + "' has its label", slot instanceof JLabel);
+					assertTrue(PanelState.text(style) + ": the word '" + word + "' has its label", slot instanceof JLabel);
 					final JLabel label = (JLabel) slot;
 					assertEquals(word, label.getText());
-					assertTrue(style + ": the slot is at least 54 px: " + label.getWidth(), label.getWidth() >= 54);
+					assertTrue(PanelState.text(style) + ": the slot is at least 54 px: " + label.getWidth(), label.getWidth() >= 54);
 					final Rectangle word2 = box(label, p);
 					final Rectangle percentage = box(pct(p), p);
-					assertEquals(style + ": right-aligned under the percentage", percentage.x + percentage.width,
+					assertEquals(PanelState.text(style) + ": right-aligned under the percentage", percentage.x + percentage.width,
 						word2.x + word2.width);
 					assertEquals(javax.swing.SwingConstants.RIGHT, label.getHorizontalAlignment());
 					final int px = label.getFont().getSize();
-					assertTrue(style + ": the word is 11, 10 or 9 px, whatever the sizes: " + px, px == 11 || px == 10 || px == 9);
-					assertTrue(style + ": the word '" + word + "' fits its slot whole",
+					assertTrue(PanelState.text(style) + ": the word is 11, 10 or 9 px, whatever the sizes: " + px, px == 11 || px == 10 || px == 9);
+					assertTrue(PanelState.text(style) + ": the word '" + word + "' fits its slot whole",
 						metrics(label.getFont()).stringWidth(word) <= label.getWidth());
-					assertFalse(style + ": and is never cut", label.getText().endsWith("..."));
-					assertTrue(style + ": the word is whole inside the card", word2.x >= 0);
+					assertFalse(PanelState.text(style) + ": and is never cut", label.getText().endsWith("..."));
+					assertTrue(PanelState.text(style) + ": the word is whole inside the card", word2.x >= 0);
 				}
 			}
 		}
@@ -565,13 +565,13 @@ public class ChangeSizeRowsTest
 		for (ChangeText style : everyPairOfSizes())
 		{
 			final MovementRowPanel p = layOut(build(whips(), style));
-			assertEquals(style + ": line 2's gp figure", Widgets.sans(style.gp().gpPx()), gp2(p).getFont());
-			assertEquals(style + ": line 3's gp figure", Widgets.sans(style.gp().gpPx()), gp3(p).getFont());
-			assertEquals(style + ": the percentage", Widgets.sansBold(style.pct().pctPx()), pct(p).getFont());
-			assertEquals(style + ": the name", Widgets.sansBold(14), name(p).getFont());
-			assertEquals(style + ": the stack value", Widgets.sans(13), price(p).getFont());
-			assertEquals(style + ": the working", Widgets.sans(11), working(p).getFont());
-			assertEquals(style + ": the text block", MovementRowPanel.TEXT_WIDTH, text(p).getWidth());
+			assertEquals(PanelState.text(style) + ": line 2's gp figure", Widgets.sans(style.gp().gpPx()), gp2(p).getFont());
+			assertEquals(PanelState.text(style) + ": line 3's gp figure", Widgets.sans(style.gp().gpPx()), gp3(p).getFont());
+			assertEquals(PanelState.text(style) + ": the percentage", Widgets.sansBold(style.pct().pctPx()), pct(p).getFont());
+			assertEquals(PanelState.text(style) + ": the name", Widgets.sansBold(14), name(p).getFont());
+			assertEquals(PanelState.text(style) + ": the stack value", Widgets.sans(13), price(p).getFont());
+			assertEquals(PanelState.text(style) + ": the working", Widgets.sans(11), working(p).getFont());
+			assertEquals(PanelState.text(style) + ": the text block", MovementRowPanel.TEXT_WIDTH, text(p).getWidth());
 		}
 		// The steps are the contract's: gp 8 / 10 / 12 / 13 and percentage 12 / 15 / 17 / 18.
 		assertEquals(Arrays.asList(8, 10, 12, 13), Arrays.asList(ChangeSize.SMALL.gpPx(), ChangeSize.NORMAL.gpPx(),
@@ -605,10 +605,11 @@ public class ChangeSizeRowsTest
 
 	/**
 	 * S2 and S4: the brightness is how far the gp figure's colour is from the card's grey to the percentage's colour: at 100 it
-	 * IS the percentage's colour, exactly, in the built-in colours and in the reader's own; at 20 and 55 it is that colour mixed
-	 * 80 and 45 percent into the card; a stored 5 or 150 reads 55; a flat row's grey is the quiet grey whatever the setting. The
-	 * Net Worth History tab's quiet colour ({@link Widgets.Kind#QUIET}) is the 45 percent strength it always was - it is not
-	 * this setting's.
+	 * IS the percentage's colour, exactly, in the built-in colours and in the reader's own; at 20 and 69 (the default since release
+	 * 1.2.2) it is that colour mixed 80 and 31 percent into the card; a stored 5 or 150 reads 69; a flat row's grey is the quiet grey
+	 * whatever the setting. The
+	 * Net Worth History tab's quiet colour ({@code Widgets.quietAt(signum, 45)}, the old quiet role's mix) is the 45 percent
+	 * strength it always was - it is not this setting's.
 	 */
 	@Test
 	public void theBrightnessIsHowFarTheGpFigureIsFromTheCardToThePercentagesColour() throws Exception
@@ -626,7 +627,7 @@ public class ChangeSizeRowsTest
 				assertEquals(r.name() + " custom=" + custom + ": 100 is the percentage's colour exactly", pct(at100).getForeground(),
 					gp2(at100).getForeground());
 				assertEquals(pct(at100).getForeground(), gp3(at100).getForeground());
-				for (int b : new int[]{20, 55, 100})
+				for (int b : new int[]{20, 69, 100})
 				{
 					final MovementRowPanel p = layOut(build(r, ChangeText.DEFAULT.withBrightness(b)));
 					final Color figure = pct(p).getForeground();
@@ -637,8 +638,8 @@ public class ChangeSizeRowsTest
 					assertEquals(r.name() + " custom=" + custom + " at " + b, want, gp2(p).getForeground());
 					assertEquals(want, gp3(p).getForeground());
 				}
-				// 55 is brighter than the 45 percent every release before 1.2.1 drew a gp figure at.
-				final Color old = Widgets.move(Long.signum(r.deltaGp()), Widgets.Kind.QUIET);
+				// 69 is brighter than the 45 percent every release before 1.2.1 drew a gp figure at (and than 1.2.1's own 55).
+				final Color old = Widgets.quietAt(Long.signum(r.deltaGp()), 45);
 				final Color now = gp2(layOut(build(r, ChangeText.DEFAULT))).getForeground();
 				assertNotEquals(old, now);
 				assertTrue("the default is nearer the percentage's colour than the old quiet was",
@@ -647,28 +648,28 @@ public class ChangeSizeRowsTest
 			}
 			Widgets.setMoveColours(null, null);
 		}
-		// Stored values outside 20..100 read as 55; the limits themselves are readings.
-		assertEquals(55, ChangeText.of(null, null, 5).brightness());
-		assertEquals(55, ChangeText.of(null, null, 150).brightness());
-		assertEquals(55, ChangeText.of(null, null, 19).brightness());
-		assertEquals(55, ChangeText.of(null, null, 101).brightness());
-		assertEquals(55, ChangeText.of(null, null, 0).brightness());
-		assertEquals(55, ChangeText.of(null, null, -1).brightness());
+		// Stored values outside 20..100 read as 69; the limits themselves are readings.
+		assertEquals(69, ChangeText.of(null, null, 5).brightness());
+		assertEquals(69, ChangeText.of(null, null, 150).brightness());
+		assertEquals(69, ChangeText.of(null, null, 19).brightness());
+		assertEquals(69, ChangeText.of(null, null, 101).brightness());
+		assertEquals(69, ChangeText.of(null, null, 0).brightness());
+		assertEquals(69, ChangeText.of(null, null, -1).brightness());
+		assertEquals("1.2.1's old default is a reading too: the one-time move at start-up is what takes it to 69", 55,
+			ChangeText.of(null, null, 55).brightness());
 		assertEquals(20, ChangeText.of(null, null, 20).brightness());
 		assertEquals(100, ChangeText.of(null, null, 100).brightness());
 		assertTrue(ChangeText.isBrightness(20) && ChangeText.isBrightness(100));
 		assertFalse(ChangeText.isBrightness(19) || ChangeText.isBrightness(101));
 		// A flat move is the quiet grey whatever the setting; the History tab's own quiet colour is the old 45 percent strength.
-		for (int b : new int[]{20, 55, 100})
+		for (int b : new int[]{20, 69, 100})
 		{
 			final MovementRowPanel p = layOut(build(single(), ChangeText.DEFAULT.withBrightness(b)));
 			assertNotNull(gp2(p));
 			assertEquals(net.runelite.client.ui.ColorScheme.LIGHT_GRAY_COLOR, Widgets.quietAt(0, b));
 		}
-		assertEquals("History keeps its 45 percent", new Color(41, 124, 48), Widgets.move(1, Widgets.Kind.QUIET));
-		assertEquals(new Color(124, 58, 54), Widgets.move(-1, Widgets.Kind.QUIET));
-		assertEquals("quietAt at 45 is the old quiet mix", Widgets.move(1, Widgets.Kind.QUIET), Widgets.quietAt(1, 45));
-		assertEquals(Widgets.move(-1, Widgets.Kind.QUIET), Widgets.quietAt(-1, 45));
+		assertEquals("quietAt at 45 is the old quiet mix", new Color(41, 124, 48), Widgets.quietAt(1, 45));
+		assertEquals(new Color(124, 58, 54), Widgets.quietAt(-1, 45));
 	}
 
 	/** Straight-line distance between two colours in RGB. */
@@ -684,10 +685,10 @@ public class ChangeSizeRowsTest
 	@Test
 	public void theValueReadsAndChangesOnePartAtATime()
 	{
-		assertEquals(ChangeText.DEFAULT, ChangeText.of(null, null, 55));
+		assertEquals(ChangeText.DEFAULT, ChangeText.of(null, null, 69));
 		assertEquals(ChangeSize.NORMAL, ChangeText.DEFAULT.gp());
 		assertEquals(ChangeSize.NORMAL, ChangeText.DEFAULT.pct());
-		assertEquals(55, ChangeText.DEFAULT.brightness());
+		assertEquals(69, ChangeText.DEFAULT.brightness());
 		final ChangeText t = ChangeText.DEFAULT.withGp(ChangeSize.LARGE).withPct(ChangeSize.SMALL).withBrightness(70);
 		assertEquals(ChangeSize.LARGE, t.gp());
 		assertEquals(ChangeSize.SMALL, t.pct());
@@ -696,9 +697,5 @@ public class ChangeSizeRowsTest
 		assertEquals(t.hashCode(), ChangeText.of(ChangeSize.LARGE, ChangeSize.SMALL, 70).hashCode());
 		assertNotEquals(t, ChangeText.DEFAULT);
 		assertEquals(ChangeText.DEFAULT.withGp(null), ChangeText.DEFAULT);
-		assertEquals(ChangeSize.LARGEST, ChangeSize.parse(" Largest "));
-		assertEquals(ChangeSize.SMALL, ChangeSize.parse("small"));
-		assertEquals(null, ChangeSize.parse("huge"));
-		assertEquals(null, ChangeSize.parse(null));
 	}
 }

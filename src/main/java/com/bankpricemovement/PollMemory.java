@@ -147,12 +147,6 @@ final class PollMemory
 		return grown;
 	}
 
-	@Override
-	public String toString()
-	{
-		return "PollMemory{polledAt=" + polledAtMillis + ", items=" + prints.size() + '}';
-	}
-
 	/** For a debug line: how many prints the memory holds in all. */
 	int size()
 	{

@@ -858,6 +858,5 @@ public class PriceStoreHistoryTest
 		assertFalse(a.equals(PriceStore.BankHistoryLoad.missing()));
 		assertSame(PriceStore.BankHistoryLoad.failed(), PriceStore.BankHistoryLoad.failed());
 		assertEquals(PriceStore.BankHistoryLoad.State.FAILED, PriceStore.BankHistoryLoad.failed().state());
-		assertFalse(a.toString().isEmpty());
 	}
 }

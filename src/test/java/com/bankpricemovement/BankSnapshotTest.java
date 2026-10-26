@@ -521,16 +521,24 @@ public class BankSnapshotTest
 		assertEquals(1, bank.items.size());
 	}
 
-	/** A bank with no carried half prints exactly what it printed before addendum Y. */
+	/** A bank with no carried half holds nothing of the sort; withCarried puts the half in. */
 	@Test
-	public void toStringNamesTheCarriedHalfOnlyWhenThereIsOne()
+	public void aBankHasTheCarriedHalfOnlyWhenOneWasPutIn()
 	{
 		final BankSnapshot bank = new BankSnapshot(new ArrayList<>(Arrays.asList(WHIP)), 17L, 123L, "STANDARD", 500L);
 
-		assertEquals("BankSnapshot{items=1, capturedAtMillis=17, accountHash=123, profileType='STANDARD',"
-			+ " currencyGp=500}", bank.toString());
-		assertEquals("BankSnapshot{items=1, capturedAtMillis=17, accountHash=123, profileType='STANDARD',"
-			+ " currencyGp=500, inventory=1, worn=1, carriedGp=791078}", bank.withCarried(carried()).toString());
+		assertEquals(1, bank.items.size());
+		assertEquals(17L, bank.capturedAtMillis);
+		assertEquals(123L, bank.accountHash);
+		assertEquals("STANDARD", bank.profileType);
+		assertEquals(500L, bank.currencyGp);
+		assertTrue(bank.inventory.isEmpty());
+		assertTrue(bank.worn.isEmpty());
+		assertEquals(0L, bank.carriedGp);
+		final BankSnapshot carried = bank.withCarried(carried());
+		assertEquals(1, carried.inventory.size());
+		assertEquals(1, carried.worn.size());
+		assertEquals(791_078L, carried.carriedGp);
 	}
 
 	// ---------------------------------------------------------------- 1.0.9 part 3: the Grand Exchange offers
@@ -664,19 +672,20 @@ public class BankSnapshotTest
 		assertEquals(bank, back);
 	}
 
-	/** The exchange part is printed only when the offers held something. */
+	/** The exchange part holds what the offers held, and coins alone count. */
 	@Test
-	public void toStringNamesTheExchangeOnlyWhenThereIsOne()
+	public void theExchangePartHoldsWhatTheOffersHeld()
 	{
 		final BankSnapshot bank = new BankSnapshot(new ArrayList<>(Arrays.asList(WHIP)), 17L, 123L, "STANDARD", 500L);
 
-		assertEquals("BankSnapshot{items=1, capturedAtMillis=17, accountHash=123, profileType='STANDARD',"
-			+ " currencyGp=500, inventory=1, worn=1, carriedGp=791078, exchange=1, exchangeGp=52000000}",
-			bank.withCarried(withOffers()).toString());
-		assertEquals("coins alone count as something to print", "BankSnapshot{items=1, capturedAtMillis=17,"
-			+ " accountHash=123, profileType='STANDARD', currencyGp=500, exchange=0, exchangeGp=7}",
-			bank.withCarried(new BankReader.Carried(null, null, null, 0L, 7L, 1L)).toString());
-		assertEquals("BankSnapshot{items=1, capturedAtMillis=17, accountHash=123, profileType='STANDARD',"
-			+ " currencyGp=500, inventory=1, worn=1, carriedGp=791078}", bank.withCarried(carried()).toString());
+		final BankSnapshot offered = bank.withCarried(withOffers());
+		assertEquals(1, offered.exchange.size());
+		assertEquals(52_000_000L, offered.exchangeGp);
+		final BankSnapshot coins = bank.withCarried(new BankReader.Carried(null, null, null, 0L, 7L, 1L));
+		assertEquals("coins alone hold no offer", 0, coins.exchange.size());
+		assertEquals(7L, coins.exchangeGp);
+		final BankSnapshot plain = bank.withCarried(carried());
+		assertEquals(0, plain.exchange.size());
+		assertEquals(0L, plain.exchangeGp);
 	}
 }

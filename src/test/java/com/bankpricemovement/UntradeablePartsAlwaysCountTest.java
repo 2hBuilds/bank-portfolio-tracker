@@ -264,7 +264,6 @@ public class UntradeablePartsAlwaysCountTest
 		final MovementRow body = PriceServiceTest.rowFor(f.lastRows(), PriceServiceTest.CRYSTAL_BODY);
 		assertNotNull(body);
 		assertEquals("valued as its parts first", MovementRow.PriceSource.PARTS, body.source());
-		assertTrue("and live", body.isLive());
 		assertEquals("three seeds at the seed's graded price (L4): yesterday's buy side moved by today's buy",
 			Long.valueOf(3L * buy), body.unitPrice());
 		final PortfolioSummary summary = f.lastStatus().portfolio();
@@ -273,7 +272,9 @@ public class UntradeablePartsAlwaysCountTest
 		for (final MovementRow row : f.lastRows())
 		{
 			printed += row.holdingValue();
-			live += row.isLive() ? 1 : 0;
+			// The bank's one PARTS row is the body, live as its price above shows; every other live row says LIVE.
+			live += row.source() == MovementRow.PriceSource.LIVE || row.source() == MovementRow.PriceSource.PARTS
+				? 1 : 0;
 		}
 		assertEquals("the card counts every stack at what its row prints", printed, summary.valueStacks());
 		assertEquals("the body is one of the live stacks", live, f.lastStatus().live().liveRows());
@@ -380,14 +381,14 @@ public class UntradeablePartsAlwaysCountTest
 			PriceServiceTest.T0)));
 		final PriceService.Status counted = f.lastStatus();
 		assertFalse("24 samples with the inventory counted", counted.anchorDegraded());
-		assertEquals(inBank + 5, counted.agreeSamples());
+		assertEquals(inBank + 5, counted.agreeSamples);
 
 		f.service.setOptions(ViewOptions.DEFAULT.withCountInventory(false));
 
 		assertTrue("19 with it off, though the carried five were priced on the same trip",
 			f.lastStatus().anchorDegraded());
-		assertEquals(inBank, f.lastStatus().agreeSamples());
-		assertEquals(counted.anchorDay(), f.lastStatus().anchorDay());
+		assertEquals(inBank, f.lastStatus().agreeSamples);
+		assertEquals(counted.anchorDay, f.lastStatus().anchorDay);
 
 		f.service.setOptions(ViewOptions.DEFAULT);
 
@@ -437,10 +438,10 @@ public class UntradeablePartsAlwaysCountTest
 			{
 				final WindowMove before = LookRenderer.summary().move(window);
 				final WindowMove after = LookRenderer.summary(options).move(window);
-				assertEquals(options + " " + window, before.deltaGp() + body.deltaGp(), after.deltaGp());
-				assertEquals(before.valueThen() + body.thenPrice(), after.valueThen());
-				assertEquals(before.valueNowCovered() + body.unitPrice(), after.valueNowCovered());
-				assertEquals(after.deltaGp() * 100.0 / after.valueThen(), after.deltaPct().doubleValue(), 1e-9);
+				assertEquals(PanelState.asMap(options) + " " + window, before.deltaGp() + body.deltaGp(), after.deltaGp());
+				assertEquals(before.valueThen + body.thenPrice(), after.valueThen);
+				assertEquals(before.valueNowCovered + body.unitPrice(), after.valueNowCovered);
+				assertEquals(after.deltaGp() * 100.0 / after.valueThen, after.deltaPct().doubleValue(), 1e-9);
 			}
 		}
 	}

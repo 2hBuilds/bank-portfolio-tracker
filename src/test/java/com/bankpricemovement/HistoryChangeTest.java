@@ -61,7 +61,7 @@ public class HistoryChangeTest
 	private Memory prefs;
 
 	/** The config as a memory: both tabs' change settings and the range as stored, and every write of them, in order. */
-	private static final class Memory implements BankPriceMovementPanel.Prefs
+	private static final class Memory extends PrefsDefaults
 	{
 		@Nullable
 		ChangeText storedHistory;
@@ -170,7 +170,7 @@ public class HistoryChangeTest
 		final List<BankHistoryDayRow> rows = new ArrayList<>();
 		for (Component c : walk(root))
 		{
-			if (c instanceof BankHistoryDayRow && !((BankHistoryDayRow) c).model().carried())
+			if (c instanceof BankHistoryDayRow && !((BankHistoryDayRow) c).model().carried)
 			{
 				rows.add((BankHistoryDayRow) c);
 			}
@@ -333,9 +333,9 @@ public class HistoryChangeTest
 		});
 	}
 
-	/** P2: the opacity is the gp figure's colour - 100 is the percentage's colour exactly, 55 the default, 20 the least. */
+	/** P2: the opacity is the gp figure's colour - 100 is the percentage's colour exactly, 69 the default (since 1.2.2), 20 the least. */
 	@Test
-	public void p2_theGpFigureWearsTheOpacityAtTwentyFiftyFiveAndOneHundred() throws Exception
+	public void p2_theGpFigureWearsTheOpacityAtTwentySixtyNineAndOneHundred() throws Exception
 	{
 		onEdt(() ->
 		{
@@ -343,7 +343,7 @@ public class HistoryChangeTest
 			{
 				final BankHistoryDayRow.Model model = new BankHistoryDayRow.Model(TODAY, false, "Sat 26 Sep", "vs 25 Sep", "736m",
 					"736,412,683", sign > 0 ? "+0.2%" : "-0.2%", sign > 0 ? "+1.61m" : "-1.61m", sign, false);
-				for (int opacity : new int[]{20, 55, 100})
+				for (int opacity : new int[]{20, 69, 100})
 				{
 					final BankHistoryDayRow row = new BankHistoryDayRow(model, ChangeText.DEFAULT.withBrightness(opacity));
 					assertEquals(Widgets.quietAt(sign, opacity), gpLabel(row).getForeground());
@@ -351,13 +351,13 @@ public class HistoryChangeTest
 				assertEquals("100 is the percentage's colour exactly", pctLabel(new BankHistoryDayRow(model,
 					ChangeText.DEFAULT.withBrightness(100))).getForeground(),
 					gpLabel(new BankHistoryDayRow(model, ChangeText.DEFAULT.withBrightness(100))).getForeground());
-				assertEquals("the default is 55", Widgets.quietAt(sign, 55),
+				assertEquals("the default is 69", Widgets.quietAt(sign, 69),
 					gpLabel(new BankHistoryDayRow(model, ChangeText.DEFAULT)).getForeground());
 				assertNotEquals(Widgets.quietAt(sign, 20), Widgets.quietAt(sign, 100));
 			}
-			// An outside value reads as 55 (ChangeText.of), whatever the config holds.
-			assertEquals(55, ChangeText.of(ChangeSize.NORMAL, ChangeSize.NORMAL, 5).brightness());
-			assertEquals(55, ChangeText.of(ChangeSize.NORMAL, ChangeSize.NORMAL, 150).brightness());
+			// An outside value reads as 69 (ChangeText.of), whatever the config holds.
+			assertEquals(69, ChangeText.of(ChangeSize.NORMAL, ChangeSize.NORMAL, 5).brightness());
+			assertEquals(69, ChangeText.of(ChangeSize.NORMAL, ChangeSize.NORMAL, 150).brightness());
 		});
 	}
 
@@ -376,7 +376,7 @@ public class HistoryChangeTest
 			assertTrue(before.size() >= 20);
 			final Color lineWas = changeLineGp().getForeground();
 			final java.awt.Font lineFont = changeLineGp().getFont();
-			assertEquals(Widgets.quietAt(1, 55), lineWas);
+			assertEquals(Widgets.quietAt(1, 69), lineWas);
 			panel.pressHistoryText(ChangeText.of(ChangeSize.LARGE, ChangeSize.LARGEST, 80));
 			final List<BankHistoryDayRow> after = dayRows(panel);
 			assertEquals(before.size(), after.size());
@@ -440,7 +440,7 @@ public class HistoryChangeTest
 			final javax.swing.JScrollBar bar = LookRenderer.historyPane(drawn[0]).getVerticalScrollBar();
 			final int[] top = new int[1];
 			final int[] was = new int[1];
-			final ChangeText large = ChangeText.of(ChangeSize.LARGEST, ChangeSize.LARGEST, 55);
+			final ChangeText large = ChangeText.of(ChangeSize.LARGEST, ChangeSize.LARGEST, ChangeText.DEFAULT_BRIGHTNESS);
 			onEdt(() ->
 			{
 				final BankHistoryView view = find(drawn[0], BankHistoryView.class);
@@ -492,7 +492,7 @@ public class HistoryChangeTest
 			onEdt(() ->
 			{
 				bar.setValue(0);
-				drawn[0].pressHistoryText(ChangeText.of(ChangeSize.LARGEST, ChangeSize.LARGEST, 55));
+				drawn[0].pressHistoryText(ChangeText.of(ChangeSize.LARGEST, ChangeSize.LARGEST, ChangeText.DEFAULT_BRIGHTNESS));
 				LookRenderer.layoutTree(drawn[0]);
 			});
 			onEdt(() ->
@@ -522,7 +522,8 @@ public class HistoryChangeTest
 
 	/**
 	 * P2: the History options menu holds the tab's five rows directly after "Single chart colour" and a rule - caption, bar, the
-	 * opacity row, caption, bar - and they are the ones the Items menu has, word for word, in one builder.
+	 * opacity row, caption, bar - and they are the ones the Items menu has, word for word, in one builder; then, since 1.2.2, a rule
+	 * and the one row of Reset history and Restore history.
 	 */
 	@Test
 	public void p2_theMenuHoldsTheFiveRowsAfterSingleChartColourAndARule() throws Exception
@@ -531,7 +532,7 @@ public class HistoryChangeTest
 		onEdt(() ->
 		{
 			final Component[] items = menu();
-			assertEquals("the chart row, a rule and the five rows", 7, items.length);
+			assertEquals("the chart row, a rule, the five rows, a rule and the buttons' row", 9, items.length);
 			assertEquals(BankPriceMovementPanel.SINGLE_CHART_COLOUR_TEXT, ((JMenuItem) items[0]).getText());
 			assertTrue(items[1] instanceof JSeparator);
 			assertEquals("GP change size", find(items[2], JLabel.class).getText());
@@ -547,8 +548,11 @@ public class HistoryChangeTest
 			assertEquals(java.util.Arrays.asList("Opacity", "%"), words);
 			assertEquals("Percent change size", find(items[5], JLabel.class).getText());
 			assertTrue(items[6] instanceof JPanel && find(items[6], SizeBar.class) != null);
+			assertTrue(items[7] instanceof JSeparator);
+			assertTrue("Reset history and Restore history", items[8] instanceof JPanel
+				&& find(items[8], javax.swing.JButton.class) != null);
 			assertEquals(ChangeSettings.FIELD_WIDTH, box().getPreferredSize().width);
-			assertEquals("55", box().getText());
+			assertEquals("69", box().getText());
 			assertEquals("both bars lit on Normal", 1, lit(gpBar()));
 			assertEquals(1, lit(pctBar()));
 			assertSame("the keyboard is parked on the row, never the box", items[4], panel.historyMenuFocusTarget());
@@ -614,13 +618,13 @@ public class HistoryChangeTest
 			{
 				box().setText(bad);
 				box().getTextField().postActionEvent();
-				assertTrue("'" + bad + "' is red", Widgets.isMarkedInvalid(box()));
+				assertTrue("'" + bad + "' is red", PanelState.isMarkedInvalid(box()));
 				assertTrue("'" + bad + "' saves nothing", prefs.historySaves.isEmpty());
 				assertEquals(ChangeText.DEFAULT, panel.historyText());
 			}
 			fire(panel.historyMenu(), true);
-			assertEquals("the value in force again", "55", box().getText());
-			assertFalse("and not red", Widgets.isMarkedInvalid(box()));
+			assertEquals("the value in force again", "69", box().getText());
+			assertFalse("and not red", PanelState.isMarkedInvalid(box()));
 
 			box().setText("70");
 			box().getTextField().postActionEvent();
@@ -645,7 +649,7 @@ public class HistoryChangeTest
 			fire(panel.historyMenu(), false);
 			assertEquals(60, panel.historyText().brightness());
 			assertEquals(3, prefs.historySaves.size());
-			assertTrue(Widgets.isMarkedInvalid(box()));
+			assertTrue(PanelState.isMarkedInvalid(box()));
 		});
 	}
 
@@ -674,7 +678,8 @@ public class HistoryChangeTest
 			focusLost(false);
 			assertEquals("the queued focus lost saves nothing more", 2, prefs.historySaves.size());
 			// Every non-item part of the popup hears a press and hands the keyboard over.
-			for (Component c : java.util.Arrays.asList(menu()[2], menu()[3], menu()[4], menu()[5], menu()[6]))
+			for (Component c : java.util.Arrays.asList(menu()[1], menu()[2], menu()[3], menu()[4], menu()[5], menu()[6], menu()[7],
+				menu()[8]))
 			{
 				assertTrue(c + " hears a press", c.getMouseListeners().length > 0);
 			}
@@ -734,67 +739,58 @@ public class HistoryChangeTest
 			assertEquals(ChangeText.DEFAULT, prefs.itemSaves.get(prefs.itemSaves.size() - 1));
 			assertEquals(1, lit(gpBar()));
 			assertEquals(1, lit(pctBar()));
-			assertEquals("55", box().getText());
+			assertEquals("69", box().getText());
 			final BankHistoryDayRow row = dayRows(panel).get(0);
 			assertEquals(Widgets.sans(10), gpLabel(row).getFont());
 			assertEquals(Widgets.sansBold(14), pctLabel(row).getFont());
 			assertEquals(36, row.getPreferredSize().height);
-			assertEquals(Widgets.quietAt(1, 55), changeLineGp().getForeground());
+			assertEquals(Widgets.quietAt(1, 69), changeLineGp().getForeground());
 		});
 	}
 
-	// ----------------------------------------------------------------------------------------------- the bridge
+	// ------------------------------------------------------------------------------------- the road a terminal presses
 
-	private JsonObject bridge(String cmd)
+	/** The panel's own JSON line as a tree: what {@code state.panel} holds for a script. */
+	private JsonObject describe() throws Exception
 	{
-		final BpmCommands commands = new BpmCommands(panel, service, new Gson());
-		return new Gson().fromJson(commands.apply(cmd), JsonObject.class);
+		final String[] out = new String[1];
+		onEdt(() -> out[0] = PanelState.describe(panel));
+		return new Gson().fromJson(out[0], JsonObject.class);
 	}
 
 	/**
 	 * P2: {@code state.panel.historyChangeText} echoes the three values (with {@code changeText} the Items tab's, untouched), and
-	 * {@code hchange=gp:large,pct:normal,opacity:70} - any subset - presses the menu's own road for the History tab; a part it cannot
-	 * read is refused with a one-line reason and nothing changes.
+	 * {@code pressHistoryText} - the road the History menu's cells and the dev bridge's {@code hchange=} both press - stores the
+	 * value for the History tab and writes nothing when it does not change; one part on its own leaves the other two as they were.
 	 */
 	@Test
-	public void p2_theBridgeEchoesAndHchangePressesTheHistoryRoad() throws Exception
+	public void p2_theEchoShowsTheThreeAndPressingTheHistoryRoadStoresIt() throws Exception
 	{
 		build();
-		JsonObject state = bridge("state");
-		JsonObject echo = state.getAsJsonObject("panel").getAsJsonObject("historyChangeText");
+		JsonObject state = describe();
+		JsonObject echo = state.getAsJsonObject("historyChangeText");
 		assertEquals("NORMAL", echo.get("gpSize").getAsString());
 		assertEquals("NORMAL", echo.get("pctSize").getAsString());
-		assertEquals(55, echo.get("gpOpacity").getAsInt());
+		assertEquals(69, echo.get("gpOpacity").getAsInt());
 
-		state = bridge("hchange=gp:large,pct:normal,opacity:70");
-		assertTrue(state.toString(), state.get("ok").getAsBoolean());
-		echo = state.getAsJsonObject("panel").getAsJsonObject("historyChangeText");
+		onEdt(() -> panel.pressHistoryText(ChangeText.of(ChangeSize.LARGE, ChangeSize.NORMAL, 70)));
+		state = describe();
+		echo = state.getAsJsonObject("historyChangeText");
 		assertEquals("LARGE", echo.get("gpSize").getAsString());
 		assertEquals(70, echo.get("gpOpacity").getAsInt());
-		final JsonObject items = state.getAsJsonObject("panel").getAsJsonObject("changeText");
+		final JsonObject items = state.getAsJsonObject("changeText");
 		assertEquals("the Items echo is untouched", "NORMAL", items.get("gpSize").getAsString());
-		assertEquals(55, items.get("gpOpacity").getAsInt());
+		assertEquals(69, items.get("gpOpacity").getAsInt());
 		assertEquals(ChangeText.of(ChangeSize.LARGE, ChangeSize.NORMAL, 70), prefs.historySaves.get(prefs.historySaves.size() - 1));
 		assertTrue(prefs.itemSaves.isEmpty());
 
-		assertTrue(bridge("hchange=pct:largest").get("ok").getAsBoolean());
+		onEdt(() -> panel.pressHistoryText(panel.historyText().withPct(ChangeSize.LARGEST)));
 		assertEquals(ChangeText.of(ChangeSize.LARGE, ChangeSize.LARGEST, 70), onEdtText());
 		final int writes = prefs.historySaves.size();
-		bridge("hchange=pct:largest");
+		onEdt(() -> panel.pressHistoryText(panel.historyText().withPct(ChangeSize.LARGEST)));
 		assertEquals("the same again writes nothing", writes, prefs.historySaves.size());
-		for (String bad : new String[]{"hchange=gp:huge", "hchange=opacity:19", "hchange=opacity:101", "hchange=opacity:abc",
-			"hchange=", "hchange=gp:small,wat", "hchange=gp:small,opacity:5", "hchange=bright:70"})
-		{
-			final JsonObject refused = bridge(bad);
-			assertFalse(bad + ": " + refused, refused.get("ok").getAsBoolean());
-			assertFalse(bad + ": one line", refused.get("error").getAsString().contains("\n"));
-			assertEquals(bad + ": nothing changed", ChangeText.of(ChangeSize.LARGE, ChangeSize.LARGEST, 70), onEdtText());
-			assertEquals(bad + ": nothing written", writes, prefs.historySaves.size());
-		}
-		assertTrue(bridge("hchange=wat").get("error").getAsString().startsWith("hchange= wants"));
-		assertTrue(bridge("change=wat").get("error").getAsString().startsWith("change= wants"));
-		// The Items verb takes the opacity word too.
-		assertTrue(bridge("change=opacity:80").get("ok").getAsBoolean());
+		// The Items road takes the opacity too, and the History value stays where it was.
+		onEdt(() -> panel.pressChangeText(panel.changeText().withBrightness(80)));
 		assertEquals(80, prefs.itemSaves.get(0).brightness());
 		assertEquals(ChangeText.of(ChangeSize.LARGE, ChangeSize.LARGEST, 70), onEdtText());
 	}
@@ -811,7 +807,7 @@ public class HistoryChangeTest
 	private String range() throws Exception
 	{
 		final String[] out = new String[1];
-		onEdt(() -> out[0] = (String) panel.bankHistoryState().get("range"));
+		onEdt(() -> out[0] = (String) PanelState.bankHistoryState(panel).get("range"));
 		return out[0];
 	}
 
@@ -824,7 +820,8 @@ public class HistoryChangeTest
 
 	/**
 	 * P3: the chart's range is stored by EVERY road that changes it - its own bar, the card's window chip (which still moves the
-	 * chart, as it did), the bridge's {@code range=} - and writes nothing at start or when the range does not change.
+	 * chart, as it did), the {@code setHistoryRange} the dev bridge's {@code range=} presses - and writes nothing at start or when
+	 * the range does not change.
 	 */
 	@Test
 	public void p3_everyRoadThatMovesTheRangeStoresIt() throws Exception
@@ -850,12 +847,10 @@ public class HistoryChangeTest
 		assertEquals(BankHistoryRange.D90, prefs.rangeSaves.get(prefs.rangeSaves.size() - 1));
 		assertEquals(3, prefs.rangeSaves.size());
 
-		// The bridge, in any case.
-		assertTrue(bridge("range=7D").get("ok").getAsBoolean());
+		// The setter the bridge presses, in any case.
+		onEdt(() -> panel.setHistoryRange(BankHistoryRange.D7));
 		assertEquals("7d", range());
 		assertEquals(BankHistoryRange.D7, prefs.rangeSaves.get(prefs.rangeSaves.size() - 1));
-		assertEquals(4, prefs.rangeSaves.size());
-		assertFalse(bridge("range=1y").get("ok").getAsBoolean());
 		assertEquals(4, prefs.rangeSaves.size());
 	}
 

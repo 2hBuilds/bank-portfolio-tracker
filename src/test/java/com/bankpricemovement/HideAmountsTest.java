@@ -79,7 +79,7 @@ public class HideAmountsTest
 		987_654L, 5.5d, 123_456_789_012L, MovementRow.PriceSource.GUIDE);
 	/** Three in the bank, four in the inventory: a stack whose open block names where it is. */
 	private static final MovementRow SPLIT = new MovementRow(14, "Split", 7, false, 100L, 90L, 10L, 11.1d, 700L,
-		MovementRow.PriceSource.GUIDE, null, null, null, null, 3, 4, 0, 0);
+		MovementRow.PriceSource.GUIDE, null, null, 3, 4, 0, 0, null);
 
 	private PriceService service;
 	private ItemManager items;
@@ -89,7 +89,7 @@ public class HideAmountsTest
 	private final Map<String, AsyncBufferedImage> pictures = new HashMap<>();
 
 	/** The config as a memory: whether the amounts are stored hidden, and every write of that and of anything else. */
-	private static final class Memory implements BankPriceMovementPanel.Prefs
+	private static final class Memory extends PrefsDefaults
 	{
 		@Nullable
 		Boolean hide;
@@ -903,7 +903,7 @@ public class HideAmountsTest
 			BankHistoryDayRow reading = null;
 			for (BankHistoryDayRow r : rows)
 			{
-				if (!r.model().carried())
+				if (!r.model().carried)
 				{
 					reading = r;
 					break;
@@ -1080,7 +1080,7 @@ public class HideAmountsTest
 				figures.get(1)));
 			for (BankHistoryDayRow row : dayRows())
 			{
-				if (!row.model().carried())
+				if (!row.model().carried)
 				{
 					assertEquals(AmountMask.AMOUNT, dayText(row, 2));
 					assertEquals(AmountMask.AMOUNT, dayText(row, 3));

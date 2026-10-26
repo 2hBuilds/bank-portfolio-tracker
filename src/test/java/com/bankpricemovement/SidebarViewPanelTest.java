@@ -61,7 +61,7 @@ public class SidebarViewPanelTest
 	private PriceService.Listener listener;
 
 	/** The config, as a memory: what was loaded and every write, in order. */
-	static final class Prefs implements BankPriceMovementPanel.Prefs
+	static final class Prefs extends PrefsDefaults
 	{
 		@Nullable
 		RowFilter stored;
@@ -188,7 +188,7 @@ public class SidebarViewPanelTest
 		publish(rows(3), status(BankHistorySeries.EMPTY, VALUE_NOW, NOW - 60_000L));
 		onEdt(() ->
 		{
-			assertEquals(SidebarView.ITEMS, panel.view());
+			assertEquals(SidebarView.ITEMS, panel.view);
 			assertTrue("Items is lit on a fresh install", toggle().isLit(0));
 			// The first live look (2026-09-29): "instead of being called 'history' call it 'net worth tracker'".
 			assertEquals("Items", half(0).getText());
@@ -198,7 +198,7 @@ public class SidebarViewPanelTest
 			assertLitLook(half(1), false);
 
 			press(half(1), MouseEvent.BUTTON1);
-			assertEquals(SidebarView.HISTORY, panel.view());
+			assertEquals(SidebarView.HISTORY, panel.view);
 			assertTrue(toggle().isLit(1));
 			assertLitLook(half(1), true);
 			assertLitLook(half(0), false);
@@ -208,26 +208,26 @@ public class SidebarViewPanelTest
 			press(half(1), MouseEvent.BUTTON1);
 			assertNothingWritten();
 			press(half(0), MouseEvent.BUTTON3);
-			assertEquals("a right press is not a press", SidebarView.HISTORY, panel.view());
+			assertEquals("a right press is not a press", SidebarView.HISTORY, panel.view);
 			panel.pressView(SidebarView.HISTORY);
 			assertNothingWritten();
 
 			press(half(0), MouseEvent.BUTTON1);
-			assertEquals(SidebarView.ITEMS, panel.view());
+			assertEquals(SidebarView.ITEMS, panel.view);
 			assertEquals(BankPriceMovementPanel.ITEMS_CAPTION, caption().getText());
 			assertNothingWritten();
 
 			panel.setView(SidebarView.HISTORY);
-			assertEquals("the settings road switches...", SidebarView.HISTORY, panel.view());
+			assertEquals("the settings road switches...", SidebarView.HISTORY, panel.view);
 			assertTrue(toggle().isLit(1));
 			assertNothingWritten();
 			panel.setView(null);
-			assertEquals("null reads as Items", SidebarView.ITEMS, panel.view());
+			assertEquals("null reads as Items", SidebarView.ITEMS, panel.view);
 
 			panel.stop();
 			panel.pressView(SidebarView.HISTORY);
 			panel.setView(SidebarView.HISTORY);
-			assertEquals("a stopped panel switches nothing", SidebarView.ITEMS, panel.view());
+			assertEquals("a stopped panel switches nothing", SidebarView.ITEMS, panel.view);
 			assertNothingWritten();
 		});
 		verify(service, never()).setFilter(any());
@@ -274,12 +274,12 @@ public class SidebarViewPanelTest
 		onEdt(() ->
 		{
 			press(half(1), MouseEvent.BUTTON1);
-			assertEquals(SidebarView.HISTORY, panel.view());
+			assertEquals(SidebarView.HISTORY, panel.view);
 			assertNothingWritten();
 			final BankPriceMovementPanel later = new BankPriceMovementPanel(itemManager, service, prefs);
 			try
 			{
-				assertEquals(SidebarView.ITEMS, later.view());
+				assertEquals(SidebarView.ITEMS, later.view);
 				assertEquals(BankPriceMovementPanel.CARD_LOGIN, later.card());
 			}
 			finally
@@ -400,8 +400,8 @@ public class SidebarViewPanelTest
 			panel.pressView(SidebarView.HISTORY);
 			assertEquals("the toggle rebuilds no row", before[0], panel.rebuilds());
 			assertSame("History is drawn from the status on screen", drawn, panel.status());
-			assertEquals(2, panel.bankHistoryState().get("readings"));
-			assertEquals(TODAY.minusDays(1).toString(), panel.bankHistoryState().get("last"));
+			assertEquals(2, PanelState.bankHistoryState(panel).get("readings"));
+			assertEquals(TODAY.minusDays(1).toString(), PanelState.bankHistoryState(panel).get("last"));
 			assertEquals(MovementMath.formatGp(VALUE_NOW), panel.totalLabel().getText());
 		});
 
@@ -410,7 +410,7 @@ public class SidebarViewPanelTest
 		onEdt(() ->
 		{
 			assertSame("still held after the toggle", drawn, panel.status());
-			assertEquals(2, panel.bankHistoryState().get("readings"));
+			assertEquals(2, PanelState.bankHistoryState(panel).get("readings"));
 			panel.pressView(SidebarView.ITEMS);
 			assertEquals("the toggle back rebuilds no row either", before[0], panel.rebuilds());
 			assertSame("...and lifts nothing", drawn, panel.status());
@@ -422,9 +422,9 @@ public class SidebarViewPanelTest
 		onEdt(() ->
 		{
 			assertSame("the close replays the stored publish", held, panel.status());
-			assertEquals("...into the History view", 4, panel.bankHistoryState().get("readings"));
-			assertEquals(TODAY.toString(), panel.bankHistoryState().get("last"));
-			assertEquals(TODAY.minusDays(3).toString(), panel.bankHistoryState().get("first"));
+			assertEquals("...into the History view", 4, PanelState.bankHistoryState(panel).get("readings"));
+			assertEquals(TODAY.toString(), PanelState.bankHistoryState(panel).get("last"));
+			assertEquals(TODAY.minusDays(3).toString(), PanelState.bankHistoryState(panel).get("first"));
 		});
 	}
 
@@ -457,15 +457,15 @@ public class SidebarViewPanelTest
 		publish(rows(3), status(series(TODAY.minusDays(1)), VALUE_NOW, NOW - 60_000L));
 		onEdt(() ->
 		{
-			assertEquals("not shown while Items shows", 0, panel.bankHistoryState().get("readings"));
+			assertEquals("not shown while Items shows", 0, PanelState.bankHistoryState(panel).get("readings"));
 			panel.pressView(SidebarView.HISTORY);
-			assertEquals("the switch shows it", 1, panel.bankHistoryState().get("readings"));
+			assertEquals("the switch shows it", 1, PanelState.bankHistoryState(panel).get("readings"));
 		});
 		publish(rows(3), status(series(TODAY.minusDays(1), TODAY, TODAY.plusDays(1)), VALUE_NOW, NOW - 60_000L));
 		onEdt(() ->
 		{
-			assertEquals("a publish shows it, cut to today", 2, panel.bankHistoryState().get("readings"));
-			assertEquals(TODAY.toString(), panel.bankHistoryState().get("last"));
+			assertEquals("a publish shows it, cut to today", 2, PanelState.bankHistoryState(panel).get("readings"));
+			assertEquals(TODAY.toString(), PanelState.bankHistoryState(panel).get("last"));
 		});
 		// A mocked status answers null for both: the view reads them as empty and the defaults.
 		final PriceService.Status mocked = status(null, VALUE_NOW, NOW - 60_000L);
@@ -473,8 +473,8 @@ public class SidebarViewPanelTest
 		publish(rows(3), mocked);
 		onEdt(() ->
 		{
-			assertEquals(0, panel.bankHistoryState().get("readings"));
-			assertNull(panel.bankHistoryState().get("first"));
+			assertEquals(0, PanelState.bankHistoryState(panel).get("readings"));
+			assertNull(PanelState.bankHistoryState(panel).get("first"));
 		});
 	}
 
@@ -565,7 +565,7 @@ public class SidebarViewPanelTest
 
 	private int readings()
 	{
-		return (Integer) panel.bankHistoryState().get("readings");
+		return (Integer) PanelState.bankHistoryState(panel).get("readings");
 	}
 
 	private List<Component> legacyHeader()
@@ -622,7 +622,7 @@ public class SidebarViewPanelTest
 			panel.pressView(SidebarView.HISTORY);
 			assertEquals(Arrays.asList(panel.hero(), strip()), legacyHeader());
 			assertFalse(legacyItemShows());
-			assertTrue(panel.describe(), panel.describe().contains("\"legacyDays\":false"));
+			assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains("\"legacyDays\":false"));
 		});
 		publish(rows(3), status(BankHistorySeries.EMPTY, VALUE_NOW, NOW - 60_000L));
 		onEdt(() ->
@@ -637,7 +637,7 @@ public class SidebarViewPanelTest
 		publish(rows(3), status(withLegacyDays(), VALUE_NOW, NOW - 60_000L));
 		onEdt(() ->
 		{
-			assertTrue(panel.describe(), panel.describe().contains("\"legacyDays\":true"));
+			assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains("\"legacyDays\":true"));
 			assertTrue("the menu carries it while the record holds such days", legacyItemShows());
 			assertEquals("and the History header holds no box", Arrays.asList(panel.hero(), strip()), legacyHeader());
 			panel.pressView(SidebarView.ITEMS);
@@ -696,23 +696,23 @@ public class SidebarViewPanelTest
 			panel.pressView(SidebarView.HISTORY);
 			panel.selectWindow(MovementWindow.D7);
 			assertEquals("the fresh days only: yesterday and today", 2, readings());
-			assertEquals(TODAY.minusDays(1).toString(), panel.bankHistoryState().get("first"));
-			assertEquals(TODAY.toString(), panel.bankHistoryState().get("last"));
+			assertEquals(TODAY.minusDays(1).toString(), PanelState.bankHistoryState(panel).get("first"));
+			assertEquals(TODAY.toString(), PanelState.bankHistoryState(panel).get("last"));
 			final String hidden = panel.updateLabel().getText();
 			assertEquals(BankPriceMovementPanel.historyRecorded(record.fromFresh()), hidden);
 			assertTrue(hidden, hidden.startsWith("2 days recorded since"));
-			final String hiddenFootnote = panel.heroSubText();
+			final String hiddenFootnote = PanelState.heroSubText(panel);
 
 			panel.pressLegacy();
 			assertEquals("asked once, in the words", Arrays.asList(BankPriceMovementPanel.LEGACY_ASK), yes.questions);
 			assertEquals("every reading", 6, readings());
-			assertEquals(TODAY.minusDays(7).toString(), panel.bankHistoryState().get("first"));
+			assertEquals(TODAY.minusDays(7).toString(), PanelState.bankHistoryState(panel).get("first"));
 			final String shown = panel.updateLabel().getText();
 			assertEquals(BankPriceMovementPanel.historyRecorded(record), shown);
 			assertTrue(shown, shown.startsWith("6 days recorded since"));
-			assertNotEquals("the comparison line follows the cut", hiddenFootnote, panel.heroSubText());
+			assertNotEquals("the comparison line follows the cut", hiddenFootnote, PanelState.heroSubText(panel));
 			assertTrue("the item is ticked", legacyItem().isSelected());
-			assertTrue(panel.describe(), panel.describe().contains("\"includeLegacy\":true"));
+			assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains("\"includeLegacy\":true"));
 			assertEquals("written once", Arrays.asList(true), prefs.legacySaves);
 			assertTrue("the item stays while the days are there", legacyItemShows());
 
@@ -744,8 +744,8 @@ public class SidebarViewPanelTest
 		{
 			panel.pressView(SidebarView.HISTORY);
 			assertEquals(0, readings());
-			assertNull(panel.bankHistoryState().get("first"));
-			assertEquals("all", panel.bankHistoryState().get("freshFrom"));
+			assertNull(PanelState.bankHistoryState(panel).get("first"));
+			assertEquals("all", PanelState.bankHistoryState(panel).get("freshFrom"));
 			assertEquals(MovementMath.DASH, panel.updateLabel().getText());
 			assertTrue("the way out is in the menu", legacyItemShows());
 			assertEquals(BankPriceMovementPanel.CARD_HISTORY, panel.card());
@@ -771,7 +771,7 @@ public class SidebarViewPanelTest
 			assertEquals("asked each time, answered no each time", 2, no.questions.size());
 			assertEquals(2, readings());
 			assertFalse(legacyItem().isSelected());
-			assertTrue(panel.describe(), panel.describe().contains("\"includeLegacy\":false"));
+			assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains("\"includeLegacy\":false"));
 		});
 		assertTrue("nothing written", prefs.legacySaves.isEmpty());
 	}
@@ -816,7 +816,7 @@ public class SidebarViewPanelTest
 
 			panel.stop();
 			panel.setIncludeLegacy(true);
-			assertTrue("a stopped panel changes nothing", panel.describe().contains("\"includeLegacy\":false"));
+			assertTrue("a stopped panel changes nothing", PanelState.describe(panel).contains("\"includeLegacy\":false"));
 			panel.pressLegacy(true);
 			panel.pressLegacy();
 		});
@@ -880,7 +880,7 @@ public class SidebarViewPanelTest
 			panel.pressView(SidebarView.HISTORY);
 			assertEquals(6, readings());
 			assertTrue(legacyItem().isSelected());
-			assertTrue(panel.describe(), panel.describe().contains("\"includeLegacy\":true"));
+			assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains("\"includeLegacy\":true"));
 		});
 		assertTrue(prefs.legacySaves.isEmpty());
 	}
@@ -949,6 +949,12 @@ public class SidebarViewPanelTest
 			TODAY.minusDays(1), TODAY).judged(new BankHistorySeries.PlaceholderCheck(TODAY.minusDays(1), true));
 	}
 
+	/** The 1.0.9 fixture's cut, made by the player (1.2.2): hidden days, the third reason. */
+	private static BankHistorySeries withPlayerCut()
+	{
+		return withLegacyDays().withFreshWhy(BankHistorySeries.WHY_PLAYER);
+	}
+
 	/** {@link #status} counting {@code restarts} placeholder restarts, as the service's status does. */
 	private static PriceService.Status restarted(BankHistorySeries series, int restarts)
 	{
@@ -988,9 +994,9 @@ public class SidebarViewPanelTest
 			assertEquals(BankPriceMovementPanel.LEGACY_PLACEHOLDERS_TEXT, item.getText());
 			assertEquals(BankPriceMovementPanel.LEGACY_PLACEHOLDERS_TIP, item.getToolTipText());
 			assertEquals("the same cut: yesterday and today", 2, readings());
-			assertEquals("placeholders", panel.bankHistoryState().get("freshWhy"));
-			assertEquals(TODAY.minusDays(1).toString(), panel.bankHistoryState().get("placeholdersChecked"));
-			assertEquals(TODAY.minusDays(1).toString(), panel.bankHistoryState().get("freshFrom"));
+			assertEquals("placeholders", PanelState.bankHistoryState(panel).get("freshWhy"));
+			assertEquals(TODAY.minusDays(1).toString(), PanelState.bankHistoryState(panel).get("placeholdersChecked"));
+			assertEquals(TODAY.minusDays(1).toString(), PanelState.bankHistoryState(panel).get("freshFrom"));
 			panel.pressLegacy();
 			assertEquals(Arrays.asList(BankPriceMovementPanel.LEGACY_PLACEHOLDERS_ASK), no.questions);
 			assertFalse(legacyItem().isSelected());
@@ -1001,8 +1007,8 @@ public class SidebarViewPanelTest
 			final javax.swing.JCheckBoxMenuItem item = legacyItem();
 			assertEquals("the 1.0.9 words for a G.E.-only record", BankPriceMovementPanel.LEGACY_TEXT, item.getText());
 			assertEquals(BankPriceMovementPanel.LEGACY_TIP, item.getToolTipText());
-			assertNull(panel.bankHistoryState().get("freshWhy"));
-			assertNull(panel.bankHistoryState().get("placeholdersChecked"));
+			assertNull(PanelState.bankHistoryState(panel).get("freshWhy"));
+			assertNull(PanelState.bankHistoryState(panel).get("placeholdersChecked"));
 			panel.pressLegacy();
 			assertEquals(Arrays.asList(BankPriceMovementPanel.LEGACY_PLACEHOLDERS_ASK, BankPriceMovementPanel.LEGACY_ASK),
 				no.questions);
@@ -1036,7 +1042,7 @@ public class SidebarViewPanelTest
 		onEdt(() ->
 		{
 			assertFalse("turned off by the restart", legacyItem().isSelected());
-			assertTrue(panel.describe(), panel.describe().contains("\"includeLegacy\":false"));
+			assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains("\"includeLegacy\":false"));
 			assertEquals("the inflated days are hidden", 2, readings());
 		});
 		assertEquals("and the stored setting follows", Arrays.asList(false), prefs.legacySaves);
@@ -1055,7 +1061,7 @@ public class SidebarViewPanelTest
 
 		onEdt(panel::onDeactivate);
 		publish(rows(3), restarted(withPlaceholderDays(), 2));
-		onEdt(() -> assertTrue(panel.describe(), panel.describe().contains("\"includeLegacy\":false")));
+		onEdt(() -> assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains("\"includeLegacy\":false")));
 		assertEquals("a further restart, answered while hidden", Arrays.asList(false, true, false), prefs.legacySaves);
 
 		publish(rows(3), restarted(withPlaceholderDays(), 3));
@@ -1064,19 +1070,30 @@ public class SidebarViewPanelTest
 
 	// ---------------------------------------------------------------- 1.1.1 part G2: two gears and a notice on the History tab
 
-	/** The History options menu's twin of the settings menu's include item, or null while it is not in the menu. */
-	private javax.swing.JCheckBoxMenuItem historyLegacyItem()
+	/** One of the buttons of the History options menu's bottom row (1.2.2), found by its words as a user would. */
+	static javax.swing.JButton historyButton(final BankPriceMovementPanel panel, final String text)
 	{
 		for (Component c : panel.historyMenu().getComponents())
 		{
-			if (c instanceof javax.swing.JCheckBoxMenuItem && !(c instanceof SwatchRow)
-				&& (BankPriceMovementPanel.LEGACY_TEXT.equals(((javax.swing.JCheckBoxMenuItem) c).getText())
-				|| BankPriceMovementPanel.LEGACY_PLACEHOLDERS_TEXT.equals(((javax.swing.JCheckBoxMenuItem) c).getText())))
+			if (c instanceof java.awt.Container)
 			{
-				return (javax.swing.JCheckBoxMenuItem) c;
+				for (Component b : ((java.awt.Container) c).getComponents())
+				{
+					if (b instanceof javax.swing.JButton && text.equals(((javax.swing.JButton) b).getText()))
+					{
+						return (javax.swing.JButton) b;
+					}
+				}
 			}
 		}
+		fail("no " + text + " button in the History options menu");
 		return null;
+	}
+
+	/** The "Restore history" button: on while days are hidden and not shown. */
+	private javax.swing.JButton restoreButton()
+	{
+		return historyButton(panel, BankPriceMovementPanel.RESTORE_TEXT);
 	}
 
 	/** The History options menu's "Single chart colour" row. */
@@ -1166,14 +1183,17 @@ public class SidebarViewPanelTest
 	@Test
 	public void g2_theWordsAreVerbatimAndNeverSayGear()
 	{
-		assertEquals("Days before v1.1.1 counted bank placeholders as items, so they may read high. Restore them in settings.",
-			BankPriceMovementPanel.LEGACY_INFO_TIP_TEXT);
+		assertEquals("Days before v1.1.1 counted bank placeholders as items, so they may read high."
+			+ " Restore history in the History options brings them back.", BankPriceMovementPanel.LEGACY_INFO_TIP_TEXT);
 		assertEquals("History options", BankPriceMovementPanel.HISTORY_OPTIONS_TIP);
 		for (String said : new String[]{BankPriceMovementPanel.LEGACY_INFO_TIP, BankPriceMovementPanel.LEGACY_INFO_TIP_TEXT,
 			BankPriceMovementPanel.HISTORY_OPTIONS_TIP, BankPriceMovementPanel.LEGACY_TEXT,
-			BankPriceMovementPanel.LEGACY_PLACEHOLDERS_TEXT})
+			BankPriceMovementPanel.LEGACY_PLACEHOLDERS_TEXT, BankPriceMovementPanel.RESET_TEXT, BankPriceMovementPanel.RESET_TIP,
+			BankPriceMovementPanel.RESET_ASK, BankPriceMovementPanel.RESET_YES, BankPriceMovementPanel.RESTORE_TEXT,
+			BankPriceMovementPanel.RESTORE_TIP, BankPriceMovementPanel.RESET_FROM_TEXT})
 		{
 			assertFalse(said, said.toLowerCase().contains("gear"));
+			assertFalse(said, said.toLowerCase().contains("delete"));
 		}
 	}
 
@@ -1299,12 +1319,12 @@ public class SidebarViewPanelTest
 	}
 
 	/**
-	 * G1: the menu holds the include item and a rule ONLY while hidden days exist, in either wording (v1.1.1 for the placeholder
-	 * restart, v1.0.9 otherwise), then "Single chart colour"; with none, "Single chart colour" alone. The item's hover is on like the settings menu's, in the words for the
-	 * record's reason.
+	 * G1 (1.2.2): the menu holds NO include item for any reason; its last row, after a rule, is "Reset history" and "Restore
+	 * history". Restore is greyed while no day is hidden and on while days are hidden for ANY reason - the v1.1.1 restart, the 1.0.9
+	 * cut or the player's own - and not already shown. The item's hover is on, in the user's words.
 	 */
 	@Test
-	public void g2_theMenuHoldsTheIncludeItemOnlyWhileHiddenDaysExist() throws Exception
+	public void g2_theMenuHoldsNoIncludeItemAndRestoreIsOnOnlyWhileDaysAreHidden() throws Exception
 	{
 		build(new Asked(true));
 		publish(rows(3), status(BankHistorySeries.EMPTY, VALUE_NOW, NOW - 60_000L));
@@ -1312,49 +1332,72 @@ public class SidebarViewPanelTest
 		{
 			panel.pressView(SidebarView.HISTORY);
 			final Component[] none = panel.historyMenu().getComponents();
-			// Release 1.2.1 part 2: "Single chart colour", a rule and the tab's five change rows follow it.
-			assertEquals("no hidden days: the chart row, a rule and the five change rows", 7, none.length);
+			assertEquals("the chart row, a rule, the five change rows, a rule and the row of buttons", 9, none.length);
 			assertTrue(none[0] instanceof SwatchRow);
 			assertEquals(BankPriceMovementPanel.SINGLE_CHART_COLOUR_TEXT, ((SwatchRow) none[0]).getText());
-			assertNull(historyLegacyItem());
+			assertTrue("a rule before the buttons", none[7] instanceof javax.swing.JSeparator);
+			assertTrue("the row of buttons is last", none[8] instanceof javax.swing.JPanel);
+			assertTrue("Reset history is always on", restoreOrReset(BankPriceMovementPanel.RESET_TEXT).isEnabled());
+			assertFalse("nothing hidden: Restore history is greyed", restoreButton().isEnabled());
+			assertEquals("the menu's face", Widgets.sans(12), restoreButton().getFont());
+			assertEquals(BankPriceMovementPanel.RESTORE_TIP, restoreButton().getToolTipText());
+			assertEquals(BankPriceMovementPanel.RESET_TIP, restoreOrReset(BankPriceMovementPanel.RESET_TEXT).getToolTipText());
 		});
 		publish(rows(3), status(withPlaceholderDays(), VALUE_NOW, NOW - 60_000L));
 		onEdt(() ->
 		{
-			final Component[] c = panel.historyMenu().getComponents();
-			assertEquals("the item, a rule, the chart row, a rule and the five change rows", 9, c.length);
-			assertEquals(BankPriceMovementPanel.LEGACY_PLACEHOLDERS_TEXT, ((javax.swing.JCheckBoxMenuItem) c[0]).getText());
-			assertTrue("a rule under it", c[1] instanceof javax.swing.JSeparator);
-			assertTrue(c[2] instanceof SwatchRow);
-			final javax.swing.JCheckBoxMenuItem item = historyLegacyItem();
-			assertSame(c[0], item);
-			assertEquals("the menu's face", Widgets.sans(12), item.getFont());
-			assertFalse("unticked", item.isSelected());
-			assertEquals(BankPriceMovementPanel.LEGACY_PLACEHOLDERS_TIP, item.getToolTipText());
+			assertEquals("the same nine, whatever is hidden", 9, panel.historyMenu().getComponentCount());
+			assertTrue("the placeholder restart's hidden days", restoreButton().isEnabled());
+			assertNull("no include item in the History options menu", includeItemOf(panel.historyMenu()));
 		});
 		publish(rows(3), status(withLegacyDays(), VALUE_NOW, NOW - 60_000L));
 		onEdt(() ->
 		{
-			assertEquals("the 1.0.9 words for a G.E.-only record", BankPriceMovementPanel.LEGACY_TEXT,
-				historyLegacyItem().getText());
 			assertEquals(9, panel.historyMenu().getComponentCount());
-			assertEquals(BankPriceMovementPanel.LEGACY_TIP, historyLegacyItem().getToolTipText());
+			assertTrue("the 1.0.9 hidden days", restoreButton().isEnabled());
+			assertNull(includeItemOf(panel.historyMenu()));
+			assertNotNull("the settings menu keeps its item", legacyItem());
+		});
+		publish(rows(3), status(withPlayerCut(), VALUE_NOW, NOW - 60_000L));
+		onEdt(() ->
+		{
+			assertEquals(9, panel.historyMenu().getComponentCount());
+			assertTrue("the player's own reset", restoreButton().isEnabled());
+			assertNull(includeItemOf(panel.historyMenu()));
 		});
 		publish(rows(3), status(series(TODAY.minusDays(2), TODAY.minusDays(1), TODAY), VALUE_NOW, NOW - 60_000L));
 		onEdt(() ->
 		{
-			assertNull("the days are gone: so is the item", historyLegacyItem());
-			assertEquals("and its rule", 7, panel.historyMenu().getComponentCount());
+			assertFalse("the days are gone: Restore is greyed", restoreButton().isEnabled());
+			assertEquals(9, panel.historyMenu().getComponentCount());
 		});
 	}
 
+	/** The one text of a check item that says "Include days before", or null: the History options menu has none now. */
+	private static Component includeItemOf(final javax.swing.JPopupMenu menu)
+	{
+		for (Component c : menu.getComponents())
+		{
+			if (c instanceof javax.swing.JCheckBoxMenuItem && !(c instanceof SwatchRow))
+			{
+				return c;
+			}
+		}
+		return null;
+	}
+
+	private javax.swing.JButton restoreOrReset(final String text)
+	{
+		return historyButton(panel, text);
+	}
+
 	/**
-	 * G3: ticking the include item from the History options menu is the settings menu's road - the dialog's question in the
-	 * record's words, the config key written once, the cut changed, BOTH menus' items ticked - and unticking asks nothing; an
-	 * answer of no changes and writes nothing; a placeholder restart turns the box off through it still.
+	 * G3: Restore history is the settings item's road - the dialog's question in the record's words (for a placeholder restart), the
+	 * config key written once, the cut changed, the settings menu's item ticked - and unticking from the settings menu asks nothing;
+	 * an answer of no changes and writes nothing; a placeholder restart turns the box off through it still.
 	 */
 	@Test
-	public void g2_tickingTheIncludeItemFromTheMenuRunsTheSameRoadAsTheSettingsMenu() throws Exception
+	public void g2_restoreHistoryRunsTheSameRoadAsTheSettingsMenusItem() throws Exception
 	{
 		final Asked yes = new Asked(true);
 		build(yes);
@@ -1363,37 +1406,37 @@ public class SidebarViewPanelTest
 		{
 			panel.pressView(SidebarView.HISTORY);
 			assertEquals("the hidden days stay hidden", 2, readings());
-			historyLegacyItem().doClick(0);
+			restoreButton().doClick(0);
 			assertEquals("the settings item's question, in the record's words",
 				Arrays.asList(BankPriceMovementPanel.LEGACY_PLACEHOLDERS_ASK), yes.questions);
 			assertEquals("every reading", 6, readings());
-			assertTrue(historyLegacyItem().isSelected());
+			assertFalse("nothing is hidden now: Restore history is greyed", restoreButton().isEnabled());
 			assertTrue("the settings menu's item follows", legacyItem().isSelected());
-			assertTrue(panel.describe(), panel.describe().contains("\"includeLegacy\":true"));
+			assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains("\"includeLegacy\":true"));
 
-			historyLegacyItem().doClick(0);
+			legacyItem().doClick(0);
 			assertEquals("unticking asks nothing", 1, yes.questions.size());
 			assertEquals(2, readings());
-			assertFalse(historyLegacyItem().isSelected());
+			assertTrue("hidden again: Restore history is back", restoreButton().isEnabled());
 			assertFalse(legacyItem().isSelected());
 		});
 		assertEquals("written once each way", Arrays.asList(true, false), prefs.legacySaves);
 		verify(service, never()).setOptions(any());
 
-		// ...and the settings menu's tick moves the History menu's the same way.
+		// ...and the settings menu's tick moves the History menu's Restore the same way.
 		onEdt(() ->
 		{
 			legacyItem().doClick(0);
-			assertTrue(historyLegacyItem().isSelected());
+			assertFalse(restoreButton().isEnabled());
 			legacyItem().doClick(0);
-			assertFalse(historyLegacyItem().isSelected());
+			assertTrue(restoreButton().isEnabled());
 		});
 		assertEquals(Arrays.asList(true, false, true, false), prefs.legacySaves);
 	}
 
-	/** Cancel leaves the box off and unticked in both menus and writes nothing. */
+	/** Cancel leaves the box off and Restore history on, and writes nothing. */
 	@Test
-	public void g2_anAnswerOfNoLeavesTheItemUntickedAndWritesNothing() throws Exception
+	public void g2_anAnswerOfNoLeavesTheDaysHiddenAndWritesNothing() throws Exception
 	{
 		final Asked no = new Asked(false);
 		build(no);
@@ -1401,18 +1444,18 @@ public class SidebarViewPanelTest
 		onEdt(() ->
 		{
 			panel.pressView(SidebarView.HISTORY);
-			historyLegacyItem().doClick(0);
+			restoreButton().doClick(0);
 			assertEquals(Arrays.asList(BankPriceMovementPanel.LEGACY_PLACEHOLDERS_ASK), no.questions);
-			assertFalse("put back to what the panel believes", historyLegacyItem().isSelected());
+			assertTrue("still restorable", restoreButton().isEnabled());
 			assertFalse(legacyItem().isSelected());
 			assertEquals(2, readings());
 		});
 		assertTrue(prefs.legacySaves.isEmpty());
 	}
 
-	/** A placeholder restart with the box ticked turns it off through the History menu's item as well. */
+	/** A placeholder restart with the box ticked turns it off, and Restore history comes back on. */
 	@Test
-	public void g2_aPlaceholderRestartStillTurnsTheBoxOffAndTheMenusFollow() throws Exception
+	public void g2_aPlaceholderRestartStillTurnsTheBoxOffAndRestoreComesBack() throws Exception
 	{
 		prefs.storedLegacy = Boolean.TRUE;
 		build(new Asked(true));
@@ -1420,13 +1463,13 @@ public class SidebarViewPanelTest
 		onEdt(() ->
 		{
 			panel.pressView(SidebarView.HISTORY);
-			assertTrue("ticked for the 1.0.9 reason", historyLegacyItem().isSelected());
+			assertFalse("shown for the 1.0.9 reason: nothing to restore", restoreButton().isEnabled());
 			assertFalse("a ticked box shows no icon", infoShowing());
 		});
 		publish(rows(3), restarted(withPlaceholderDays(), 1));
 		onEdt(() ->
 		{
-			assertFalse("turned off by the restart", historyLegacyItem().isSelected());
+			assertTrue("turned off by the restart", restoreButton().isEnabled());
 			assertFalse(legacyItem().isSelected());
 			assertTrue("and the icon says so", infoShowing());
 		});
@@ -1563,7 +1606,7 @@ public class SidebarViewPanelTest
 		publish(rows(3), status(withPlaceholderDays(), VALUE_NOW, NOW - 60_000L));
 		onEdt(() ->
 		{
-			assertEquals(SidebarView.ITEMS, panel.view());
+			assertEquals(SidebarView.ITEMS, panel.view);
 			assertFalse("Items never shows it", infoShowing());
 			panel.pressView(SidebarView.HISTORY);
 			assertTrue("History, placeholders, hidden days, box off", infoShowing());
@@ -1576,7 +1619,7 @@ public class SidebarViewPanelTest
 			assertFalse("the config's road takes it away too", infoShowing());
 			panel.setIncludeLegacy(false);
 			assertTrue(infoShowing());
-			historyLegacyItem().doClick(0);
+			restoreButton().doClick(0);
 			assertFalse("from the History menu", infoShowing());
 			legacyItem().doClick(0);
 			assertTrue("from the settings menu", infoShowing());
@@ -1614,9 +1657,9 @@ public class SidebarViewPanelTest
 			assertEquals("the caption, the icon, the gears", 3, panel.viewCaptionRow().getComponentCount());
 			final JLabel info = (JLabel) panel.viewCaptionRow().getComponent(1);
 			final String sentence = "Days before v1.1.1 counted bank placeholders as items, so they may read high."
-				+ " Restore them in settings.";
+				+ " Restore history in the History options brings them back.";
 			final String tip = "<html>Days before v1.1.1 counted bank placeholders<br>as items, so they may read high.<br>"
-				+ "Restore them in settings.</html>";
+				+ "Restore history in the History options<br>brings them back.</html>";
 			assertEquals("the words, on one line of plain text", sentence, BankPriceMovementPanel.LEGACY_INFO_TIP_TEXT);
 			assertFalse(sentence.contains("<") || sentence.contains("\n"));
 			assertEquals("the sentence, as three short rows", tip, info.getToolTipText());
@@ -1627,12 +1670,12 @@ public class SidebarViewPanelTest
 	}
 
 	/**
-	 * I3: the hover is THREE short rows - Swing HTML with exactly two line breaks, after "placeholders" and after "high." - and
+	 * I3: the hover is FOUR short rows - Swing HTML with exactly three line breaks, after "placeholders", "high." and "options" - and
 	 * says the very words of the one-line sentence; it is taller and narrower than the same words on one line, and the dialog's
 	 * own sentence is untouched.
 	 */
 	@Test
-	public void i3_theHoverIsThreeShortRowsOfTheSameWords() throws Exception
+	public void i3_theHoverIsFourShortRowsOfTheSameWords() throws Exception
 	{
 		build(new Asked(true));
 		publish(rows(3), status(withPlaceholderDays(), VALUE_NOW, NOW - 60_000L));
@@ -1641,21 +1684,22 @@ public class SidebarViewPanelTest
 			panel.pressView(SidebarView.HISTORY);
 			final JLabel info = infoIcon();
 			assertEquals("<html>Days before v1.1.1 counted bank placeholders<br>as items, so they may read high.<br>"
-				+ "Restore them in settings.</html>", info.getToolTipText());
+				+ "Restore history in the History options<br>brings them back.</html>", info.getToolTipText());
 			final String inner = info.getToolTipText().substring("<html>".length(),
 				info.getToolTipText().length() - "</html>".length());
 			final String[] lines = inner.split("<br>");
-			assertEquals("three rows", 3, lines.length);
+			assertEquals("four rows", 4, lines.length);
 			assertEquals("Days before v1.1.1 counted bank placeholders", lines[0]);
 			assertEquals("as items, so they may read high.", lines[1]);
-			assertEquals("Restore them in settings.", lines[2]);
+			assertEquals("Restore history in the History options", lines[2]);
+			assertEquals("brings them back.", lines[3]);
 			assertEquals("the same words as the plain sentence", BankPriceMovementPanel.LEGACY_INFO_TIP_TEXT,
 				String.join(" ", lines));
 			final JToolTip threeRows = info.createToolTip();
 			threeRows.setTipText(info.getToolTipText());
 			final JToolTip oneRow = info.createToolTip();
 			oneRow.setTipText(BankPriceMovementPanel.LEGACY_INFO_TIP_TEXT);
-			assertTrue("three rows are taller and narrower than one",
+			assertTrue("four rows are taller and narrower than one",
 				threeRows.getPreferredSize().height > oneRow.getPreferredSize().height
 					&& threeRows.getPreferredSize().width < oneRow.getPreferredSize().width);
 			assertEquals("the dialog's own sentence is unchanged",
@@ -1703,7 +1747,7 @@ public class SidebarViewPanelTest
 
 			// A tip wider than the panel is aligned to the panel's left edge.
 			info.setToolTipText("<html>Days before v1.1.1 counted bank placeholders as items, so they may read high. "
-				+ "Restore them in settings, Restore them in settings.</html>");
+				+ "Restore history in the History options brings them back, Restore history in the History options.</html>");
 			final JToolTip wide = info.createToolTip();
 			wide.setTipText(info.getToolTipText());
 			assertTrue("the premise: wider than the panel", wide.getPreferredSize().width > LookRenderer.WIDTH);
@@ -1780,8 +1824,8 @@ public class SidebarViewPanelTest
 			assertFalse("the icon goes", infoShowing());
 			assertEquals("every reading is back", 6, readings());
 			assertTrue("the settings menu's item is ticked", legacyItem().isSelected());
-			assertTrue("and the History menu's", historyLegacyItem().isSelected());
-			assertTrue(panel.describe(), panel.describe().contains("\"includeLegacy\":true"));
+			assertFalse("and Restore history is greyed", restoreButton().isEnabled());
+			assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains("\"includeLegacy\":true"));
 		});
 		assertEquals("written once", Arrays.asList(true), prefs.legacySaves);
 		verify(service, never()).setOptions(any());
@@ -1815,7 +1859,7 @@ public class SidebarViewPanelTest
 			assertSame("the same icon", info, infoIcon());
 			assertEquals("the days stay hidden", 2, readings());
 			assertFalse(legacyItem().isSelected());
-			assertFalse(historyLegacyItem().isSelected());
+			assertTrue("Restore history stays on", restoreButton().isEnabled());
 			press(info, MouseEvent.BUTTON1);
 			assertEquals("it asks again", 2, no.questions.size());
 			no.answer = true;
@@ -1898,14 +1942,10 @@ public class SidebarViewPanelTest
 		when(s.loggedIn()).thenReturn(loggedIn);
 		when(s.bankLoaded()).thenReturn(bankLoaded);
 		when(s.bankItems()).thenReturn(bankLoaded ? 3 : 0);
-		when(s.totalRows()).thenReturn(bankLoaded ? 3 : 0);
 		when(s.window()).thenReturn(MovementWindow.D1);
 		when(s.problemKind()).thenReturn(PriceService.ProblemKind.NONE);
-		when(s.text()).thenReturn("Guide prices");
-		when(s.headerText()).thenReturn("Guide prices");
 		when(s.pricesAtMillis()).thenReturn(bankLoaded ? NOW : 0L);
 		when(s.bankAtMillis()).thenReturn(bankLoaded ? NOW - 60_000L : 0L);
-		when(s.baselineLoaded()).thenReturn(true);
 		when(s.thenDay()).thenReturn(TODAY.minusDays(1));
 		return s;
 	}
@@ -1936,7 +1976,7 @@ public class SidebarViewPanelTest
 
 	private String range()
 	{
-		return (String) panel.bankHistoryState().get("range");
+		return (String) PanelState.bankHistoryState(panel).get("range");
 	}
 
 	private List<Component> header()

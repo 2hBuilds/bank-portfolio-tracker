@@ -1,7 +1,6 @@
 package com.bankpricemovement;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import java.util.HashSet;
@@ -18,11 +17,11 @@ import org.junit.Test;
  * table RuneLite's prices match (or the clock while RuneLite is ahead of the index), and the "then" end the newest
  * table at least {@code days() x 24 h} older - {@code PriceService} picks it, this class only does the subtraction.
  *
- * <p>The legacy parse tests are the other load-bearing ones. A user who ran the first build has
+ * <p>The legacy spellings are the other load-bearing ones. A user who ran the first build has
  * {@code window=H24} written into their RuneLite config; {@code ConfigManager} reads an enum back with
  * {@code Enum.valueOf}, and an unknown constant there is how this workspace has already NPE'd a config panel
- * once (CLAUDE.md, "Config interfaces must be FLAT"). Every one of the four old spellings has to land on a
- * window that exists.
+ * once (CLAUDE.md, "Config interfaces must be FLAT"). The developer bridge's reading of them is pinned by its own
+ * local-only tests; the plugin's start-up sweep of a stored window is {@code BankPriceMovementWiringTest}'s.
  */
 public class MovementWindowTest
 {
@@ -138,73 +137,6 @@ public class MovementWindowTest
 		{
 			assertEquals(window + " must not invent a now", 0L, window.targetSeconds(0L));
 			assertEquals(0L, window.targetSeconds(-5L));
-		}
-	}
-
-	// ---- parse (K4)
-
-	@Test
-	public void parseTakesLabelsNamesAndCasing()
-	{
-		assertSame(MovementWindow.D1, MovementWindow.parse("1d"));
-		assertSame(MovementWindow.D7, MovementWindow.parse("7d"));
-		assertSame(MovementWindow.D30, MovementWindow.parse("30d"));
-		assertSame(MovementWindow.D90, MovementWindow.parse("90d"));
-		assertSame(MovementWindow.D180, MovementWindow.parse("180d"));
-
-		assertSame(MovementWindow.D1, MovementWindow.parse("D1"));
-		assertSame(MovementWindow.D30, MovementWindow.parse("d30"));
-		assertSame(MovementWindow.D180, MovementWindow.parse("  D180  "));
-	}
-
-	/**
-	 * The reason this method exists at all: {@code window=H24} is sitting in the user's RuneLite profile from
-	 * the first build, and H1 / H24 name nothing now. All four spellings collapse onto 1d - an hour is below the
-	 * resolution of the guide series, and 24 h IS the new 1d.
-	 */
-	@Test
-	public void theFourPreAddendumKSpellingsAllLandOnOneDay()
-	{
-		assertSame("the stored config value from the first build", MovementWindow.D1, MovementWindow.parse("H24"));
-		assertSame(MovementWindow.D1, MovementWindow.parse("h24"));
-		assertSame("the old chip text", MovementWindow.D1, MovementWindow.parse("24h"));
-		assertSame(MovementWindow.D1, MovementWindow.parse("H1"));
-		assertSame(MovementWindow.D1, MovementWindow.parse("h1"));
-		assertSame(MovementWindow.D1, MovementWindow.parse("1h"));
-		assertSame(MovementWindow.D1, MovementWindow.parse("  24H  "));
-	}
-
-	/** "7d" and "D7" meant the same window before addendum K and still do - the one value that carries over. */
-	@Test
-	public void theOldSevenDayWindowSurvivesUnchanged()
-	{
-		assertSame(MovementWindow.D7, MovementWindow.parse("7d"));
-		assertSame(MovementWindow.D7, MovementWindow.parse("D7"));
-		assertEquals(7, MovementWindow.D7.days());
-	}
-
-	@Test
-	public void parseAnswersNullRatherThanGuessing()
-	{
-		assertNull(MovementWindow.parse(null));
-		assertNull(MovementWindow.parse(""));
-		assertNull(MovementWindow.parse("   "));
-		assertNull(MovementWindow.parse("1"));
-		assertNull(MovementWindow.parse("d"));
-		assertNull(MovementWindow.parse("12h"));
-		assertNull(MovementWindow.parse("2d"));
-		assertNull(MovementWindow.parse("365d"));
-		assertNull(MovementWindow.parse("week"));
-	}
-
-	@Test
-	public void parseRoundTripsEveryLabelAndName()
-	{
-		for (final MovementWindow window : MovementWindow.values())
-		{
-			assertSame(window, MovementWindow.parse(window.label()));
-			assertSame(window, MovementWindow.parse(window.name()));
-			assertSame(window, MovementWindow.parse(window.toString()));
 		}
 	}
 

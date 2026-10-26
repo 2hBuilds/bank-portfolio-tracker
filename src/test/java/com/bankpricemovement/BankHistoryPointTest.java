@@ -276,6 +276,6 @@ public class BankHistoryPointTest
 		otherGuide[7] = 1L;
 		assertNotEquals(base, point(CARD, otherGuide));
 		assertNotEquals(base, point(CARD, null));
-		assertTrue(base.toString().contains("2026-09-28"));
+		assertEquals("2026-09-28", base.day().toString());
 	}
 }

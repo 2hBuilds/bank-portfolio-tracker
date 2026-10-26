@@ -19,6 +19,12 @@ import javax.annotation.Nullable;
  * clock), and {@link #dayOf} takes the zone. Every figure is a reading's {@link BankHistoryPoint#valueFor}, so
  * everything drawn follows the switches that are on now; a null {@link ViewOptions} reads as
  * {@link ViewOptions#DEFAULT} everywhere (amendment 9.2).
+ *
+ * <p><b>Transfers</b> (1.2.2). A day the player marked as a transfer ({@link BankHistorySeries#transfers()}) changes what
+ * is DRAWN and what is COMPARED, never what is recorded. {@link #drawnGp} is the one rule: a day's real total plus the gold
+ * the counted notes dated after it moved, so the days before a transfer are drawn as if it had already happened. Every
+ * CHANGE - {@link #overDays}, {@link #sinceDay}, {@link #vsPrevious} - is taken between those drawn totals, so it stops
+ * counting the transfer; every TOTAL ({@link Day#valueGp()}) stays the real one. Today is never shifted.
  */
 public final class BankHistoryMath
 {
@@ -52,17 +58,28 @@ public final class BankHistoryMath
 		private final int spanDays;
 
 		/**
-		 * deltaGp = toGp - fromGp; pct = deltaGp x 100 / fromGp, or null when fromGp is 0 (the formula
-		 * {@link PortfolioMath} uses for a window); spanDays = the calendar days from fromDay to toDay.
+		 * deltaGp = toGp - fromGp; pct = deltaGp x 100 / fromGp, or null when fromGp is 0 or less (the formula
+		 * {@link PortfolioMath} uses for a window, and no flipped sign over a base a transfer took below zero, 1.2.2);
+		 * spanDays = the calendar days from fromDay to toDay.
 		 */
 		Change(final LocalDate fromDay, final LocalDate toDay, final long fromGp, final long toGp)
+		{
+			this(fromDay, toDay, fromGp, toGp, fromGp);
+		}
+
+		/**
+		 * @param baseGp what the percentage is a share of: {@code fromGp}, except on the day list, where a row prints its REAL
+		 *               totals and so takes its percentage on the real total before it (1.2.2) - the gp change is still the
+		 *               drawn one, so a transfer is still not counted
+		 */
+		Change(final LocalDate fromDay, final LocalDate toDay, final long fromGp, final long toGp, final long baseGp)
 		{
 			this.fromDay = Objects.requireNonNull(fromDay, "fromDay");
 			this.toDay = Objects.requireNonNull(toDay, "toDay");
 			this.fromGp = fromGp;
 			this.toGp = toGp;
 			this.deltaGp = toGp - fromGp;
-			this.pct = fromGp == 0L ? null : deltaGp * 100.0d / fromGp;
+			this.pct = baseGp <= 0L ? null : deltaGp * 100.0d / baseGp;
 			this.spanDays = (int) ChronoUnit.DAYS.between(fromDay, toDay);
 		}
 
@@ -86,7 +103,7 @@ public final class BankHistoryMath
 
 		/**
 		 * The move as a percentage of the total compared FROM, unrounded (a reader truncates it toward zero when printing,
-		 * as every percentage in the plugin is); null when {@code fromGp} is 0.
+		 * as every percentage in the plugin is); null when {@code fromGp} is 0 or less.
 		 */
 		@Nullable
 		public Double pct()
@@ -121,31 +138,26 @@ public final class BankHistoryMath
 		{
 			return Objects.hash(fromDay, toDay, fromGp, toGp);
 		}
-
-		@Override
-		public String toString()
-		{
-			return "Change{" + fromDay + " " + fromGp + " -> " + toDay + " " + toGp + ", deltaGp=" + deltaGp
-				+ ", pct=" + pct + ", spanDays=" + spanDays + '}';
-		}
 	}
 
 	/**
 	 * One calendar day as drawn. A day with no reading is CARRIED: its value is the last reading before it, carried
-	 * forward. Two days are equal when they are the same day, value and reading.
+	 * forward. Two days are equal when they are the same day, value, drawn value and reading.
 	 */
 	public static final class Day
 	{
 		private final LocalDate day;
 		private final long valueGp;
+		private final long drawnGp;
 		private final boolean carried;
 		@Nullable
 		private final BankHistoryPoint reading;
 
-		Day(final LocalDate day, final long valueGp, @Nullable final BankHistoryPoint reading)
+		Day(final LocalDate day, final long valueGp, final long drawnGp, @Nullable final BankHistoryPoint reading)
 		{
 			this.day = Objects.requireNonNull(day, "day");
 			this.valueGp = valueGp;
+			this.drawnGp = drawnGp;
 			this.carried = reading == null;
 			this.reading = reading;
 		}
@@ -155,10 +167,19 @@ public final class BankHistoryMath
 			return day;
 		}
 
-		/** The day's total under the switches it was computed with - carried forward on a carried day. */
+		/** The day's REAL total under the switches it was computed with - carried forward on a carried day. */
 		public long valueGp()
 		{
 			return valueGp;
+		}
+
+		/**
+		 * The total the chart draws and every change is measured from (1.2.2): {@link #valueGp()} plus the gold the counted
+		 * transfers dated after this day moved - the same figure when there are none.
+		 */
+		public long drawnGp()
+		{
+			return drawnGp;
 		}
 
 		/** True when the day has no reading of its own. */
@@ -179,19 +200,14 @@ public final class BankHistoryMath
 				return false;
 			}
 			final Day other = (Day) o;
-			return day.equals(other.day) && valueGp == other.valueGp && Objects.equals(reading, other.reading);
+			return day.equals(other.day) && valueGp == other.valueGp && drawnGp == other.drawnGp
+				&& Objects.equals(reading, other.reading);
 		}
 
 		@Override
 		public int hashCode()
 		{
-			return Objects.hash(day, valueGp, reading);
-		}
-
-		@Override
-		public String toString()
-		{
-			return "Day{" + day + " " + valueGp + (carried ? " carried" : "") + '}';
+			return Objects.hash(day, valueGp, drawnGp, reading);
 		}
 	}
 
@@ -213,7 +229,7 @@ public final class BankHistoryMath
 		{
 			return null;
 		}
-		return new Change(from.day(), to.day(), from.valueFor(options), to.valueFor(options));
+		return new Change(from.day(), to.day(), drawnGp(s, from, options), drawnGp(s, to, options));
 	}
 
 	/**
@@ -233,12 +249,18 @@ public final class BankHistoryMath
 		{
 			return null;
 		}
-		return new Change(from.day(), today, from.valueFor(options), nowGp);
+		return new Change(from.day(), today, drawnGp(s, from, options), nowGp);
 	}
 
 	/**
 	 * The reading of {@code day} against the reading before it (the day list's change column). Null when that day
-	 * has no reading, or when it is the first reading ("first reading" on the row).
+	 * has no reading, or when it is the first reading ("first reading" on the row). The gp change is the drawn one (a
+	 * marked transfer is not counted); the percentage is a share of the REAL total before it, the figure the row above
+	 * prints - so a row before a transfer reads the same percentage it always did (the lead's find on the 1.2.2 pictures:
+	 * 941m and -6.81m read -0.9% on the drawn base where the row's own figures make -0.7%). The one exception is the MARKED row - a
+	 * day carrying a note that counts under {@code options} - whose base is the larger of the real total before it and that total
+	 * moved by the note: a received transfer would otherwise divide the leftover change by the small total from before the gold
+	 * arrived (+200% beside a +0.9% change line), and a sent one by the large total from before it left.
 	 */
 	@Nullable
 	public static Change vsPrevious(@Nullable final BankHistorySeries series, @Nullable final LocalDate day,
@@ -254,7 +276,11 @@ public final class BankHistoryMath
 		{
 			return null;
 		}
-		return new Change(from.day(), to.day(), from.valueFor(options), to.valueFor(options));
+		final ViewOptions o = options == null ? ViewOptions.DEFAULT : options;
+		final BankHistorySeries.Transfer note = series.transfers().get(day);
+		final long before = from.valueFor(o);
+		final long base = note != null && note.counts(o.countCash()) ? Math.max(before, before + note.gp()) : before;
+		return new Change(from.day(), to.day(), drawnGp(series, from, options), drawnGp(series, to, options), base);
 	}
 
 	/**
@@ -270,7 +296,8 @@ public final class BankHistoryMath
 		final LocalDate to, @Nullable final ViewOptions options)
 	{
 		Objects.requireNonNull(to, "to");
-		final BankHistoryPoint first = series == null ? null : series.first();
+		final BankHistorySeries s = cut(series, to);
+		final BankHistoryPoint first = s.first();
 		if (first == null)
 		{
 			return Collections.emptyList();
@@ -281,12 +308,13 @@ public final class BankHistoryMath
 			return Collections.emptyList();
 		}
 
-		final List<BankHistoryPoint> points = series.points();
+		final List<BankHistoryPoint> points = s.points();
+		final boolean countCash = (options == null ? ViewOptions.DEFAULT : options).countCash();
 		final List<Day> out = new ArrayList<>((int) Math.min(Integer.MAX_VALUE - 8,
 			ChronoUnit.DAYS.between(start, to) + 1));
 		// The last reading on or before `start` seeds the carry; `next` walks the readings after it in step with the
 		// days, so the whole range is one pass however long it is.
-		BankHistoryPoint carry = series.atOrBefore(start);
+		BankHistoryPoint carry = s.atOrBefore(start);
 		int next = carry == null ? 0 : points.indexOf(carry) + 1;
 		long carriedValue = carry == null ? 0L : carry.valueFor(options);
 		for (LocalDate d = start; !d.isAfter(to); d = d.plusDays(1))
@@ -297,7 +325,7 @@ public final class BankHistoryMath
 				carriedValue = carry.valueFor(options);
 			}
 			final BankHistoryPoint reading = carry != null && carry.day().equals(d) ? carry : null;
-			out.add(new Day(d, carriedValue, reading));
+			out.add(new Day(d, carriedValue, carriedValue + s.shiftAfter(d, countCash), reading));
 		}
 		return Collections.unmodifiableList(out);
 	}
@@ -355,6 +383,78 @@ public final class BankHistoryMath
 	{
 		final BankHistoryPoint first = series == null ? null : series.first();
 		return first == null ? null : first.day().plusDays(Math.max(0, days));
+	}
+
+	/**
+	 * A reading's total as it is drawn and compared (1.2.2): its real {@link BankHistoryPoint#valueFor} plus the gold the
+	 * counted transfers dated after its day moved ({@link BankHistorySeries#shiftAfter}) - the ONE rule behind every change
+	 * here and every point of the chart. With no notes it IS the real total.
+	 */
+	static long drawnGp(final BankHistorySeries series, final BankHistoryPoint reading, @Nullable final ViewOptions options)
+	{
+		final ViewOptions o = options == null ? ViewOptions.DEFAULT : options;
+		return reading.valueFor(o) + series.shiftAfter(reading.day(), o.countCash());
+	}
+
+	/**
+	 * Whether drawing the shifted totals would put any reading of this series below zero (1.2.2, the user's pick 1a): an
+	 * account that earned a sum and then sent it away has no days before the transfer to shift it onto. The chart then draws
+	 * the real totals with the step into each marked day dotted; every figure stays corrected either way. Ask it with the
+	 * series the reader can SEE (after "Reset history" or "Restore history"), so a hidden day never decides.
+	 */
+	public static boolean drawsBelowZero(@Nullable final BankHistorySeries series, @Nullable final ViewOptions options)
+	{
+		if (series == null || series.transfers().isEmpty())
+		{
+			return false;
+		}
+		for (final BankHistoryPoint reading : series.points())
+		{
+			if (drawnGp(series, reading, options) < 0L)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * What a transfer note on {@code day} starts as (1.2.2): the day's own note when it has one that counts (a coins note the
+	 * switches leave out draws no mark, so the day reads as unmarked); otherwise the day's REAL
+	 * change against the reading before it - never the corrected one, which a note makes 0. When the coins that moved (the
+	 * cash cells the switches count) went the same way as the whole change and are at least 80 % of it, the amount is exactly
+	 * those coins and {@link BankHistorySeries.Transfer#coins()} is true, so a day the prices also moved still offers the
+	 * exact sum; otherwise it is the whole change, not coins. Null when there is nothing to offer: no reading that day, none
+	 * before it, or a change of 0.
+	 */
+	@Nullable
+	public static BankHistorySeries.Transfer prefill(@Nullable final BankHistorySeries series, @Nullable final LocalDate day,
+		@Nullable final ViewOptions options)
+	{
+		if (series == null || day == null)
+		{
+			return null;
+		}
+		final ViewOptions o = options == null ? ViewOptions.DEFAULT : options;
+		final BankHistorySeries.Transfer own = series.transfers().get(day);
+		if (own != null && own.counts(o.countCash()))
+		{
+			return own;
+		}
+		final BankHistoryPoint to = series.on(day);
+		final BankHistoryPoint from = to == null ? null : series.atOrBefore(day.minusDays(1));
+		if (from == null)
+		{
+			return null;
+		}
+		final ViewOptions bare = o.withCountCash(false);
+		final long whole = to.valueFor(o) - from.valueFor(o);
+		final long coins = whole - (to.valueFor(bare) - from.valueFor(bare));
+		if (coins != 0L && Long.signum(coins) == Long.signum(whole) && Math.abs(coins) * 5L >= Math.abs(whole) * 4L)
+		{
+			return new BankHistorySeries.Transfer(coins, true);
+		}
+		return whole == 0L ? null : new BankHistorySeries.Transfer(whole, false);
 	}
 
 	/** The series cut to today; a null series reads as {@link BankHistorySeries#EMPTY}. */

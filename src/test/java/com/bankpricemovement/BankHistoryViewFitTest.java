@@ -57,7 +57,7 @@ public class BankHistoryViewFitTest
 					final BankHistoryDayRow row = new BankHistoryDayRow(model, ChangeText.DEFAULT);
 					row.setSize(width, BankHistoryDayRow.HEIGHT);
 					row.doLayout();
-					assertFits(width + " " + model, row, labels(row));
+					assertFits(width + " " + texts(row), row, labels(row));
 				}
 			}
 		});
@@ -260,7 +260,7 @@ public class BankHistoryViewFitTest
 				for (BankHistoryDayRow row : BankHistoryViewTest.rows(view))
 				{
 					assertEquals("a row is as wide as the view", width, row.getWidth());
-					assertFits(width + " " + row.model(), row, labels(row));
+					assertFits(width + " " + texts(row), row, labels(row));
 				}
 			}
 		});
@@ -273,6 +273,17 @@ public class BankHistoryViewFitTest
 	{
 		return new BankHistoryDayRow.Model(LocalDate.of(2026, 9, 30), false, date, sub, total, exact, pct, gp, sign,
 			false);
+	}
+
+	/** What a row's labels print, side by side - the name of the row in a failure message. */
+	private static String texts(final Container c)
+	{
+		final StringBuilder sb = new StringBuilder();
+		for (JLabel label : labels(c))
+		{
+			sb.append(sb.length() == 0 ? "" : " | ").append(label.getText());
+		}
+		return sb.toString();
 	}
 
 	static List<JLabel> labels(final Container c)

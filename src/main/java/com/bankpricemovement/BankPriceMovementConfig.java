@@ -21,7 +21,7 @@ import net.runelite.client.config.ConfigItem;
  * exact bank value, the time of the table, "n of m rows solid", the update line's why, the Refresh tip, "Change
  * sorting", "Clear the search", the icons - so a switch to hide them was one setting more than the plugin needs, and
  * the user (2026-10-08) removed it: the hovers are always on. A stored {@code showHoverText} is swept once at startUp
- * ({@link BankPriceMovementPlugin#unstickShowHoverText()}), the way {@code holdingOnRows} is, and the items below
+ * ({@link BankPriceMovementPlugin#unstickShowHoverText()}), and the items below
  * it moved up by one. Twenty-six items became twenty-five.
  *
  * <p><b>1.0.9 part 5 added an eighteenth and hid it</b>: {@code includeLegacyHistory}, whether the Net Worth History
@@ -43,8 +43,8 @@ import net.runelite.client.config.ConfigItem;
  * key, which is now the STACK's gp move permanently - the reading the switch gave when it was ON, because this is
  * a portfolio tracker and "biggest gainers" over a bank means the holding that gained the most gp. That is a
  * user-visible change to one column's default ordering, and it is recorded as one. A stored {@code holdingOnRows}
- * is swept once at startUp the way addendum N's deleted {@code look} is
- * ({@link BankPriceMovementPlugin#unstickLook()}), so no orphan sits in a profile forever. Sixteen items became
+ * was swept once at startUp, as addendum N's deleted {@code look} was, until release 1.2.2 took both sweeps out: both
+ * items went before the first build the Hub served, so no player's profile holds either key. Sixteen items became
  * fifteen and the two below it moved up by one.
  *
  * <p><b>Addendum AA added a fifteenth</b> (AA1): whether the price fold under the control row - the chip strip
@@ -703,10 +703,11 @@ public interface BankPriceMovementConfig extends Config
 
 	/**
 	 * Release 1.2.1, the third: how solid the gp change is, as a percentage of the way from the card's own grey to
-	 * the percentage's colour - 100 is the percentage's colour exactly, and the default, 55, is a little brighter than the 45
-	 * every release drew it at. Whole numbers 20 to 100 ({@link ChangeText}); a stored value outside that reads as 55. Hidden
-	 * for the reason {@link #gpChangeSize} is, and on the same road. It is called "Opacity" wherever the player reads it (part 2);
-	 * the key keeps its first spelling.
+	 * the percentage's colour - 100 is the percentage's colour exactly, and the default, 69 (55 in release 1.2.1, 45 before it), is
+	 * a little brighter than the 45 every earlier release drew it at. Whole numbers 20 to 100 ({@link ChangeText}); a stored value
+	 * outside that reads as 69. Hidden for the reason {@link #gpChangeSize} is, and on the same road. It is called "Opacity"
+	 * wherever the player reads it (part 2); the key keeps its first spelling. A 1.2.1 profile holds 55 here (RuneLite writes a
+	 * missing default into the profile), so start-up moves a stored 55 to 69 once ({@link BankPriceMovementPlugin#switchOpacityTo69}).
 	 */
 	@ConfigItem(
 		position = 27,
@@ -752,8 +753,9 @@ public interface BankPriceMovementConfig extends Config
 	}
 
 	/**
-	 * Release 1.2.1 part 2, position 30: {@link #gpBrightness}'s twin for the History tab, 20 to 100, and the default is 55 here
-	 * as there - the tab's gp figures were drawn at 45 until this release.
+	 * Release 1.2.1 part 2, position 30: {@link #gpBrightness}'s twin for the History tab, 20 to 100, and the default is 69 here
+	 * as there - the tab's gp figures were drawn at 45 until release 1.2.1, and the key shipped there with 55, so a 1.2.1 profile
+	 * holds 55 here too and start-up moves it with the Items one ({@link BankPriceMovementPlugin#switchOpacityTo69}).
 	 */
 	@ConfigItem(
 		position = 30,

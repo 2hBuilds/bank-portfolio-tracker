@@ -368,7 +368,7 @@ public class TradedPriceClientTest
 		assertEquals(Long.valueOf(1_688_000L), whip.avgLow());
 		assertEquals(213L, whip.highVolume());
 		assertEquals(304L, whip.lowVolume());
-		assertEquals("the volume check adds both sides", 517L, whip.volume());
+		assertEquals("the volume check adds both sides", 517L, whip.highVolume() + whip.lowVolume());
 	}
 
 	/** T4: "one side only when the other is absent" - whatever the volumes say. */
@@ -380,7 +380,7 @@ public class TradedPriceClientTest
 
 		assertNull("the buy side really is absent", shark.avgHigh());
 		assertEquals("the sell side is there", Long.valueOf(990L), shark.avgLow());
-		assertEquals("and its volume still counts", 41_000L, shark.volume());
+		assertEquals("and its volume still counts", 41_000L, shark.highVolume() + shark.lowVolume());
 	}
 
 	@Test
@@ -392,7 +392,7 @@ public class TradedPriceClientTest
 		final TradedPriceClient.Bucket bucket = client.fetchDay(SEP_11, 1L).get(5, TimeUnit.SECONDS).get(WHIP);
 
 		assertNotNull("kept: the volumes are read whatever the prices say", bucket);
-		assertEquals(1_000L, bucket.volume());
+		assertEquals(1_000L, bucket.highVolume() + bucket.lowVolume());
 		assertNull(bucket.avgHigh());
 	}
 

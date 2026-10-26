@@ -388,7 +388,7 @@ public class BankHistoryMountainTest
 			final int x = BankHistoryChartTest.x(ca, indexOf(ca, sep8));
 			hover(ca, x);
 			hover(chart(b), x);
-			assertEquals("2026-09-08", a.describe().get("hoverDay"));
+			assertEquals("2026-09-08", PanelState.describe(a).get("hoverDay"));
 			assertEquals("Tue 08 Sep", chartLabel(a, READOUT_DAY));
 			final long carried = fixture().on(sep8.minusDays(1)).valueFor(null);
 			assertEquals(MovementMath.formatExact(carried) + " gp", chartLabel(a, READOUT_TOTAL));

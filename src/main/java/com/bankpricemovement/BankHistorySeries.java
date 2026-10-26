@@ -5,7 +5,9 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.SortedMap;
 import java.util.TreeMap;
 import javax.annotation.Nullable;
 
@@ -35,12 +37,31 @@ import javax.annotation.Nullable;
  * that read dropped placeholders with a quantity and the series held an earlier day, the fresh start moves up to that day
  * with {@link #freshWhy()} {@value #WHY_PLACEHOLDERS} ({@link #judged}). Both are part of the value and carried by every
  * copy, as {@link #freshFrom()} is. An EMPTY series carries none of the three: it has nothing to hide or judge.
+ *
+ * <p><b>The transfer notes</b> (1.2.2). A day the player marked as "a transfer" - gold sent to or received from another
+ * account - is a {@link Transfer} in {@link #transfers()}, kept in its own file beside the readings and carried by every
+ * copy, as part of the value. A note sits on a day this series holds a reading of, and an EMPTY series carries none;
+ * {@link #of} has none. The notes never change a reading: {@link BankHistoryMath} reads them to draw the days before a
+ * transfer as if the gold had already moved.
+ *
+ * <p><b>The restore mark</b> (1.2.2 part 5). A player's own reset ({@link #WHY_PLAYER}) and its way back belong to THIS account:
+ * {@link #restored()} says the player pressed "Restore history" after it, so the panel shows every day again, and a new reset
+ * takes the mark off. It is read with the notes, from the same file, and carried by every copy as part of the value; {@link #of}
+ * has none and an EMPTY series carries none.
+ *
+ * <p><b>The cut a reset stands over</b> (1.2.2 verification fix). A player's reset replaces the record's {@link #freshFrom()} and
+ * {@link #freshWhy()}, so the automatic cut of 1.0.9 or 1.1.1 it replaced would be forgotten - and with it the warning those days
+ * earn. {@link #autoCut()} keeps that cut, in the account's notes file, and {@link #standing()} is the record as the panel reads its
+ * cut: the player's own until they restore it, the automatic one after. Carried by every copy, as part of the value; {@link #of}
+ * has none and an EMPTY series carries none.
  */
 public final class BankHistorySeries
 {
+	private static final SortedMap<LocalDate, Transfer> NO_TRANSFERS = Collections.emptySortedMap();
+
 	/** No readings at all. */
 	public static final BankHistorySeries EMPTY = new BankHistorySeries(Collections.<BankHistoryPoint>emptyList(), null,
-		null, null);
+		null, null, NO_TRANSFERS, false, null);
 
 	/**
 	 * The {@link #freshWhy()} of a fresh start made because the days before it counted bank placeholders as items (1.1.1
@@ -48,6 +69,12 @@ public final class BankHistorySeries
 	 * offers.
 	 */
 	public static final String WHY_PLACEHOLDERS = "placeholders";
+
+	/**
+	 * The {@link #freshWhy()} of a fresh start the player made (1.2.2): "Reset history", or "Reset history from this day". An
+	 * older build reads a reason it does not know as 1.0.9's, which only words its tick box differently.
+	 */
+	public static final String WHY_PLAYER = "player";
 
 	/** Ascending by day, one per day, unmodifiable. */
 	private final List<BankHistoryPoint> points;
@@ -64,13 +91,27 @@ public final class BankHistorySeries
 	@Nullable
 	private final String freshWhy;
 
+	/** 1.2.2: the days the player marked as transfers, ascending, unmodifiable; never null. */
+	private final SortedMap<LocalDate, Transfer> transfers;
+
+	/** 1.2.2 part 5: the player brought back the days their own reset hid; false = not, or no player's reset. */
+	private final boolean restored;
+
+	/** 1.2.2 verification fix: the automatic cut a player's reset stands over; null = none. */
+	@Nullable
+	private final AutoCut autoCut;
+
 	private BankHistorySeries(final List<BankHistoryPoint> sorted, @Nullable final LocalDate freshFrom,
-		@Nullable final LocalDate placeholdersChecked, @Nullable final String freshWhy)
+		@Nullable final LocalDate placeholdersChecked, @Nullable final String freshWhy,
+		final SortedMap<LocalDate, Transfer> transfers, final boolean restored, @Nullable final AutoCut autoCut)
 	{
 		this.points = sorted;
 		this.freshFrom = freshFrom;
 		this.placeholdersChecked = placeholdersChecked;
 		this.freshWhy = freshWhy;
+		this.transfers = transfers;
+		this.restored = restored;
+		this.autoCut = autoCut;
 	}
 
 	/**
@@ -91,7 +132,7 @@ public final class BankHistorySeries
 				byDay.merge(point.day(), point, BankHistorySeries::later);
 			}
 		}
-		return fromMap(byDay, null, null, null);
+		return fromMap(byDay, null, null, null, NO_TRANSFERS, false, null);
 	}
 
 	/** Of two readings of one day, the one taken later; {@code b} on a tie. */
@@ -101,14 +142,15 @@ public final class BankHistorySeries
 	}
 
 	private static BankHistorySeries fromMap(final TreeMap<LocalDate, BankHistoryPoint> byDay,
-		@Nullable final LocalDate freshFrom, @Nullable final LocalDate placeholdersChecked, @Nullable final String freshWhy)
+		@Nullable final LocalDate freshFrom, @Nullable final LocalDate placeholdersChecked, @Nullable final String freshWhy,
+		final SortedMap<LocalDate, Transfer> transfers, final boolean restored, @Nullable final AutoCut autoCut)
 	{
 		if (byDay.isEmpty())
 		{
 			return EMPTY;
 		}
 		return new BankHistorySeries(Collections.unmodifiableList(new ArrayList<>(byDay.values())), freshFrom,
-			placeholdersChecked, freshWhy);
+			placeholdersChecked, freshWhy, transfers, restored, autoCut);
 	}
 
 	private TreeMap<LocalDate, BankHistoryPoint> toMap()
@@ -133,7 +175,7 @@ public final class BankHistorySeries
 		}
 		final TreeMap<LocalDate, BankHistoryPoint> byDay = toMap();
 		byDay.put(point.day(), point);
-		return fromMap(byDay, freshFrom, placeholdersChecked, freshWhy);
+		return fromMap(byDay, freshFrom, placeholdersChecked, freshWhy, transfers, restored, autoCut);
 	}
 
 	/**
@@ -147,7 +189,7 @@ public final class BankHistorySeries
 		{
 			return this;
 		}
-		return new BankHistorySeries(points, freshFrom, placeholdersChecked, freshWhy);
+		return new BankHistorySeries(points, freshFrom, placeholdersChecked, freshWhy, transfers, restored, autoCut);
 	}
 
 	/**
@@ -160,7 +202,7 @@ public final class BankHistorySeries
 		{
 			return this;
 		}
-		return new BankHistorySeries(points, freshFrom, day, freshWhy);
+		return new BankHistorySeries(points, freshFrom, day, freshWhy, transfers, restored, autoCut);
 	}
 
 	/**
@@ -173,7 +215,34 @@ public final class BankHistorySeries
 		{
 			return this;
 		}
-		return new BankHistorySeries(points, freshFrom, placeholdersChecked, why);
+		return new BankHistorySeries(points, freshFrom, placeholdersChecked, why, transfers, restored, autoCut);
+	}
+
+	/**
+	 * This series with the restore mark set to {@code restored} (1.2.2 part 5): the player's own reset brought back, or - false -
+	 * hidden again by a new one. The store puts back what the notes file says with it, and the service sets it at the player's
+	 * press. An EMPTY series answers itself.
+	 */
+	public BankHistorySeries withRestored(final boolean restored)
+	{
+		if (points.isEmpty() || this.restored == restored)
+		{
+			return this;
+		}
+		return new BankHistorySeries(points, freshFrom, placeholdersChecked, freshWhy, transfers, restored, autoCut);
+	}
+
+	/**
+	 * This series with {@code cut} as the automatic cut a player's reset stands over (1.2.2 verification fix): the store puts back what
+	 * the notes file says, and the service sets it at the player's reset. Null clears it. An EMPTY series answers itself.
+	 */
+	public BankHistorySeries withAutoCut(@Nullable final AutoCut cut)
+	{
+		if (points.isEmpty() || Objects.equals(autoCut, cut))
+		{
+			return this;
+		}
+		return new BankHistorySeries(points, freshFrom, placeholdersChecked, freshWhy, transfers, restored, cut);
 	}
 
 	/**
@@ -194,10 +263,10 @@ public final class BankHistorySeries
 		}
 		if (!check.restart())
 		{
-			return new BankHistorySeries(points, freshFrom, check.day(), freshWhy);
+			return new BankHistorySeries(points, freshFrom, check.day(), freshWhy, transfers, restored, autoCut);
 		}
 		final LocalDate from = freshFrom != null && freshFrom.isAfter(check.day()) ? freshFrom : check.day();
-		return new BankHistorySeries(points, from, check.day(), WHY_PLACEHOLDERS);
+		return new BankHistorySeries(points, from, check.day(), WHY_PLACEHOLDERS, transfers, restored, autoCut);
 	}
 
 	/**
@@ -233,7 +302,8 @@ public final class BankHistorySeries
 			}
 		}
 		return kept.isEmpty() ? EMPTY
-			: new BankHistorySeries(Collections.unmodifiableList(kept), freshFrom, placeholdersChecked, freshWhy);
+			: new BankHistorySeries(Collections.unmodifiableList(kept), freshFrom, placeholdersChecked, freshWhy,
+				Collections.unmodifiableSortedMap(new TreeMap<>(transfers.headMap(today.plusDays(1)))), restored, autoCut);
 	}
 
 	/**
@@ -272,8 +342,10 @@ public final class BankHistorySeries
 				kept.add(point);
 			}
 		}
+		// The notes ride along whole: one on a hidden day shifts only days before it, so it is inert here (1.2.2).
 		return kept.isEmpty() ? EMPTY
-			: new BankHistorySeries(Collections.unmodifiableList(kept), null, placeholdersChecked, freshWhy);
+			: new BankHistorySeries(Collections.unmodifiableList(kept), null, placeholdersChecked, freshWhy, transfers, restored,
+					autoCut);
 	}
 
 	/**
@@ -309,6 +381,138 @@ public final class BankHistorySeries
 	public String freshWhy()
 	{
 		return freshWhy;
+	}
+
+	/**
+	 * The days the player marked as transfers (1.2.2), ascending: each is a day this series holds a reading of. Unmodifiable;
+	 * empty for a series with none.
+	 */
+	public SortedMap<LocalDate, Transfer> transfers()
+	{
+		return transfers;
+	}
+
+	/**
+	 * Whether the player brought back the days their own reset hid (1.2.2 part 5): only meaningful while {@link #freshWhy()} is
+	 * {@value #WHY_PLAYER}. This account's own, as its notes are - the shared "Include days before ..." box never says it.
+	 */
+	public boolean restored()
+	{
+		return restored;
+	}
+
+	/**
+	 * The automatic cut a player's reset stands over (1.2.2 verification fix), or null for none: the 1.0.9 or 1.1.1 cut the reset
+	 * replaced, kept so Restore history can still ask the warning those days earn. Only meaningful while {@link #freshWhy()} is
+	 * {@value #WHY_PLAYER}.
+	 */
+	@Nullable
+	public AutoCut autoCut()
+	{
+		return autoCut;
+	}
+
+	/**
+	 * The automatic cut a player's reset made NOW would stand over: this record's own cut while it is one (1.0.9's or 1.1.1's, not a
+	 * migrated file's {@link LocalDate#MAX}), the one it already stands over while the cut is the player's, or null. The service asks it of
+	 * the series in memory and the store of the file it re-reads, so the two cannot come to disagree.
+	 */
+	@Nullable
+	AutoCut autoCutToKeep()
+	{
+		if (points.isEmpty() || WHY_PLAYER.equals(freshWhy) || freshFrom == null || LocalDate.MAX.equals(freshFrom))
+		{
+			return autoCut;
+		}
+		return new AutoCut(freshFrom, freshWhy);
+	}
+
+	/**
+	 * This record as the panel reads its cut (1.2.2 verification fix): a player's reset the player has restored, over an automatic
+	 * cut, leaves that cut standing - the days it hid read low or high, so they stay hidden until the shared "Include days before ..."
+	 * box and its warning bring them back. Every other record answers itself. Only {@link #freshFrom()} and {@link #freshWhy()}
+	 * differ; the readings and the notes are the same.
+	 */
+	public BankHistorySeries standing()
+	{
+		if (!restored || autoCut == null || !WHY_PLAYER.equals(freshWhy) || points.isEmpty())
+		{
+			return this;
+		}
+		return new BankHistorySeries(points, autoCut.from(), placeholdersChecked, autoCut.why(), transfers, restored, autoCut);
+	}
+
+	/**
+	 * This series with exactly these notes (1.2.2): the store's way to put back what its file says, and the service's after it
+	 * rebuilds the readings. A note is kept only when it names a day this series holds a reading of and moves some gold - no more
+	 * than {@link Transfer#MAX_GP}, so no sum of notes can overflow - so a
+	 * file naming a day that was never recorded - or a reading the clock-behind rule dropped - leaves no stray shift. Null or
+	 * empty clears them. An EMPTY series answers itself.
+	 */
+	public BankHistorySeries withTransfers(@Nullable final Map<LocalDate, Transfer> notes)
+	{
+		if (points.isEmpty())
+		{
+			return this;
+		}
+		final TreeMap<LocalDate, Transfer> next = new TreeMap<>();
+		for (final Map.Entry<LocalDate, Transfer> note : notes == null ? NO_TRANSFERS.entrySet() : notes.entrySet())
+		{
+			final long gp = note.getValue().gp();
+			if (gp != 0L && gp >= -Transfer.MAX_GP && gp <= Transfer.MAX_GP && on(note.getKey()) != null)
+			{
+				next.put(note.getKey(), note.getValue());
+			}
+		}
+		return next.equals(transfers) ? this
+			: new BankHistorySeries(points, freshFrom, placeholdersChecked, freshWhy,
+				next.isEmpty() ? NO_TRANSFERS : Collections.unmodifiableSortedMap(next), restored, autoCut);
+	}
+
+	/**
+	 * This series with {@code note} as the transfer of {@code day} (1.2.2), replacing the one that stood there; null - or a
+	 * note of 0 gp - takes it away. A day with no reading answers this series: a note belongs to a reading.
+	 */
+	public BankHistorySeries withTransfer(@Nullable final LocalDate day, @Nullable final Transfer note)
+	{
+		if (day == null)
+		{
+			return this;
+		}
+		final TreeMap<LocalDate, Transfer> next = new TreeMap<>(transfers);
+		if (note == null)
+		{
+			next.remove(day);
+		}
+		else
+		{
+			next.put(day, note);
+		}
+		return withTransfers(next);
+	}
+
+	/**
+	 * The gold the counted notes dated AFTER {@code day} moved (1.2.2): what {@link BankHistoryMath} adds to that day's real
+	 * total to draw it as if every transfer after it had already happened - a sum sent away (minus) takes the older days
+	 * down to where the line landed, a sum received (plus) brings them up. A coins note counts only while {@code countCash}
+	 * is on - a transfer the line never showed a dip for must draw no shift either. Today is never shifted: no note is
+	 * dated after it.
+	 */
+	long shiftAfter(final LocalDate day, final boolean countCash)
+	{
+		long sum = 0L;
+		if (transfers.isEmpty())
+		{
+			return sum;
+		}
+		for (final Transfer note : transfers.tailMap(day.plusDays(1)).values())
+		{
+			if (note.counts(countCash))
+			{
+				sum += note.gp();
+			}
+		}
+		return sum;
 	}
 
 	/** Every reading, ascending by day; unmodifiable. */
@@ -397,25 +601,127 @@ public final class BankHistorySeries
 		}
 		final BankHistorySeries that = (BankHistorySeries) o;
 		return points.equals(that.points) && Objects.equals(freshFrom, that.freshFrom)
-			&& Objects.equals(placeholdersChecked, that.placeholdersChecked) && Objects.equals(freshWhy, that.freshWhy);
+			&& Objects.equals(placeholdersChecked, that.placeholdersChecked) && Objects.equals(freshWhy, that.freshWhy)
+			&& transfers.equals(that.transfers) && restored == that.restored && Objects.equals(autoCut, that.autoCut);
 	}
 
 	@Override
 	public int hashCode()
 	{
-		return Objects.hash(points, freshFrom, placeholdersChecked, freshWhy);
+		return Objects.hash(points, freshFrom, placeholdersChecked, freshWhy, transfers, restored, autoCut);
 	}
 
-	@Override
-	public String toString()
+	/**
+	 * One transfer note (1.2.2): gold the player sent to, or received from, another account on the day of a reading.
+	 * {@link #gp()} is signed - minus is sent away, plus is received - and never 0; {@link #coins()} says the amount was coins
+	 * (the day's cash cells moved it), which the "Include coins and platinum tokens" switch decides is drawn or not. Immutable.
+	 */
+	public static final class Transfer
 	{
-		final BankHistoryPoint first = first();
-		final BankHistoryPoint last = last();
-		return "BankHistorySeries{readings=" + points.size()
-			+ (first == null ? "" : ", first=" + first.day() + ", last=" + last.day())
-			+ (freshFrom == null ? "" : ", freshFrom=" + (LocalDate.MAX.equals(freshFrom) ? "all" : freshFrom))
-			+ (freshWhy == null ? "" : ", freshWhy=" + freshWhy)
-			+ (placeholdersChecked == null ? "" : ", placeholdersChecked=" + placeholdersChecked) + '}';
+		/** The most gold one note may move, 10,000b: far above any bank, and small enough that the notes of every day add up in a long. */
+		public static final long MAX_GP = 10_000_000_000_000L;
+
+		private final long gp;
+		private final boolean coins;
+
+		public Transfer(final long gp, final boolean coins)
+		{
+			this.gp = gp;
+			this.coins = coins;
+		}
+
+		/** The gold moved: minus when it left this account, plus when it arrived. */
+		public long gp()
+		{
+			return gp;
+		}
+
+		/** Whether the amount was coins and platinum tokens, rather than the day's whole change. */
+		public boolean coins()
+		{
+			return coins;
+		}
+
+		/**
+		 * Whether the line draws this note: an items note always, a coins note only while the coins switch is on (a transfer the
+		 * line showed no dip for must draw no shift). The one rule behind the shift, the marked row and the chart's marks.
+		 */
+		boolean counts(final boolean countCash)
+		{
+			return !coins || countCash;
+		}
+
+		@Override
+		public boolean equals(final Object o)
+		{
+			if (this == o)
+			{
+				return true;
+			}
+			if (!(o instanceof Transfer))
+			{
+				return false;
+			}
+			final Transfer that = (Transfer) o;
+			return gp == that.gp && coins == that.coins;
+		}
+
+		@Override
+		public int hashCode()
+		{
+			return 31 * Long.hashCode(gp) + (coins ? 1 : 0);
+		}
+	}
+
+	/**
+	 * The automatic cut (1.0.9 part 5 or 1.1.1 part B) a player's reset stands over (1.2.2 verification fix): the first day those cuts
+	 * showed and why they hid the days before it - {@link #WHY_PLACEHOLDERS}, or null for 1.0.9's reason. Immutable.
+	 */
+	public static final class AutoCut
+	{
+		private final LocalDate from;
+		@Nullable
+		private final String why;
+
+		public AutoCut(final LocalDate from, @Nullable final String why)
+		{
+			this.from = Objects.requireNonNull(from, "from");
+			this.why = why;
+		}
+
+		/** The first day the automatic cut showed. */
+		public LocalDate from()
+		{
+			return from;
+		}
+
+		/** Why the days before it were hidden: {@link #WHY_PLACEHOLDERS}, or null for 1.0.9's reason. */
+		@Nullable
+		public String why()
+		{
+			return why;
+		}
+
+		@Override
+		public boolean equals(final Object o)
+		{
+			if (this == o)
+			{
+				return true;
+			}
+			if (!(o instanceof AutoCut))
+			{
+				return false;
+			}
+			final AutoCut that = (AutoCut) o;
+			return from.equals(that.from) && Objects.equals(why, that.why);
+		}
+
+		@Override
+		public int hashCode()
+		{
+			return 31 * from.hashCode() + Objects.hashCode(why);
+		}
 	}
 
 	/**
@@ -465,12 +771,6 @@ public final class BankHistorySeries
 		public int hashCode()
 		{
 			return 31 * day.hashCode() + (restart ? 1 : 0);
-		}
-
-		@Override
-		public String toString()
-		{
-			return "PlaceholderCheck{" + day + (restart ? ", restart" : "") + '}';
 		}
 	}
 }

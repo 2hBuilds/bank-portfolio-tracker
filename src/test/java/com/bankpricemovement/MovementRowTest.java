@@ -185,185 +185,12 @@ public class MovementRowTest
 		}
 	}
 
-	// ---------------------------------------------------------------- T4/T6: the live seam (S1)
-
-	private static MovementRow.LiveFacts liveFacts()
-	{
-		return new MovementRow.LiveFacts(63_600_000L, 63_300_000L, 517L, null);
-	}
-
-	private static Map<MovementWindow, MovementRow.PriceSource> mixedSources()
-	{
-		final Map<MovementWindow, MovementRow.PriceSource> sources = new EnumMap<>(MovementWindow.class);
-		sources.put(MovementWindow.D1, MovementRow.PriceSource.LIVE);
-		sources.put(MovementWindow.D7, MovementRow.PriceSource.GUIDE);
-		return sources;
-	}
-
-	/** T4: a live row is an ordinary row that says which series priced it and carries the numbers behind that. */
-	@Test
-	public void aLiveRowCarriesTheSourceTheFactsAndItsWindowSources()
-	{
-		final MovementRow live = row(1, 10_000L).asLive(null, mixedSources(), liveFacts());
-
-		assertSame(MovementRow.PriceSource.LIVE, live.source());
-		assertTrue(live.isLive());
-		assertEquals(Long.valueOf(63_600_000L), live.liveFacts().buy());
-		assertEquals(Long.valueOf(63_300_000L), live.liveFacts().sell());
-		assertEquals(517L, live.liveFacts().volumeYesterday());
-		assertNull("a live row names no refusal", live.liveFacts().reason());
-		assertSame(MovementRow.PriceSource.LIVE, live.windowSource(MovementWindow.D1));
-		assertSame("the window that fell back says so", MovementRow.PriceSource.GUIDE,
-			live.windowSource(MovementWindow.D7));
-	}
-
-	/**
-	 * T4's awkward case: a live row whose CURRENT window fell back is built from the guide pair - so its gp and
-	 * percent are the guide's move - and still prints the live traded price, with the holding following the price
-	 * it prints. The move must not be recomputed from the new unit: that would be live-now against guide-then,
-	 * which is precisely the comparison addendum T's study refuted.
-	 */
-	@Test
-	public void aLivePriceCanBePrintedOverAGuideMove()
-	{
-		final MovementRow guide = new MovementRow(4151, "Abyssal whip", 3, false, 1_500_000L, 1_490_000L,
-			10_000L, 0.671140d, 4_500_000L, MovementRow.PriceSource.GUIDE);
-
-		final MovementRow live = guide.asLive(1_600_000L, mixedSources(), liveFacts());
-
-		assertEquals("the price it prints is the live mid", Long.valueOf(1_600_000L), live.unitPrice());
-		assertEquals("the holding follows the price it prints", 4_800_000L, live.holdingValue());
-		assertEquals("the move is untouched - still the guide's", Long.valueOf(10_000L), live.deltaGp());
-		assertEquals(Long.valueOf(1_490_000L), live.thenPrice());
-		assertEquals("and the stack change with it", 30_000L, live.holdingDeltaGp());
-	}
-
-	/** A parts stack keeps the source that tells a reader what it was valued from, and is still live (T4/R4). */
-	@Test
-	public void aLivePartsRowKeepsThePartsSourceAndStillAnswersLive()
-	{
-		final MovementRow live = crystalBodyRow().asLive(null, mixedSources(), liveFacts());
-
-		assertSame("\"valued as its parts\" is what a reader has to be told first", MovementRow.PriceSource.PARTS,
-			live.source());
-		assertTrue("and isLive() is the one test that covers both", live.isLive());
-		assertEquals(seeds(3L), live.parts());
-	}
-
-	/** T6: a row that stayed on the guide keeps everything it had and gains the check that refused it. */
-	@Test
-	public void aRefusedRowKeepsItsGuideSourceAndNamesTheFirstFailingCheck()
-	{
-		final MovementRow.LiveFacts refused = new MovementRow.LiveFacts(1_000L, 900L, 12L, "12 traded yesterday");
-
-		final MovementRow guide = row(1, 10_000L).withLiveRefusal(refused);
-
-		assertSame(MovementRow.PriceSource.GUIDE, guide.source());
-		assertFalse(guide.isLive());
-		assertEquals("12 traded yesterday", guide.liveFacts().reason());
-		assertEquals("the numbers the refusal was made on are still there", Long.valueOf(1_000L),
-			guide.liveFacts().buy());
-		assertSame("every window of a guide row is the guide's", MovementRow.PriceSource.GUIDE,
-			guide.windowSource(MovementWindow.D30));
-	}
-
-	/**
-	 * The two builders are re-sourcings, not valuations - the rule {@code asParts} already obeys. A row with no
-	 * price cannot become "the live traded price", facts that name a refusal cannot make a row live, and facts
-	 * that name none cannot be a refusal.
-	 */
-	@Test
-	public void theLiveBuildersAnswerTheRowUnchangedWhenThereIsNothingToSay()
-	{
-		final MovementRow guide = row(3, 10_000L);
-
-		assertSame(guide, guide.asLive(null, mixedSources(), null));
-		assertSame(guide, guide.asLive(null, mixedSources(),
-			new MovementRow.LiveFacts(1L, 1L, 1L, "no live data")));
-		assertSame(guide, guide.withLiveRefusal(null));
-		assertSame(guide, guide.withLiveRefusal(liveFacts()));
-
-		final MovementRow unpriced = MovementMath.alchRow(new BankItem(1, 1, "Junk", false, true, 0));
-		assertNull(unpriced.unitPrice());
-		assertSame(unpriced, unpriced.asLive(1_000L, mixedSources(), liveFacts()));
-	}
-
-	/**
-	 * The pre-T shape, exactly: a row built by any caller that knows nothing of live prices carries no window
-	 * sources and no facts, and every window answers the row's own source. This is what "the switch off is
-	 * byte-identical to today" rests on at the row level.
-	 */
-	@Test
-	public void aRowBuiltWithTheSwitchOffCarriesNoLiveStateAtAll()
-	{
-		final MovementRow guide = row(3, 10_000L);
-
-		assertNull(guide.liveFacts());
-		assertFalse(guide.isLive());
-		for (final MovementWindow window : MovementWindow.values())
-		{
-			assertSame(MovementRow.PriceSource.GUIDE, guide.windowSource(window));
-		}
-		assertSame("a null window is not a reason to guess", MovementRow.PriceSource.GUIDE, guide.windowSource(null));
-
-		final MovementRow alch = MovementMath.alchRow(new BankItem(772, 2, "Dramen staff", false, true, 1500));
-		assertSame("an alch row's windows are the alch rule", MovementRow.PriceSource.ALCH,
-			alch.windowSource(MovementWindow.D1));
-	}
-
-	/** A LIVE row asked about a window nothing recorded must not claim a comparison that was never made. */
-	@Test
-	public void aLiveRowNeverClaimsLiveForAnUnrecordedWindow()
-	{
-		final Map<MovementWindow, MovementRow.PriceSource> only1d = new EnumMap<>(MovementWindow.class);
-		only1d.put(MovementWindow.D1, MovementRow.PriceSource.LIVE);
-
-		final MovementRow live = row(1, 10_000L).asLive(null, only1d, liveFacts());
-
-		assertSame(MovementRow.PriceSource.LIVE, live.windowSource(MovementWindow.D1));
-		assertSame(MovementRow.PriceSource.GUIDE, live.windowSource(MovementWindow.D180));
-		assertSame(MovementRow.PriceSource.GUIDE, live.windowSource(null));
-	}
-
-	/** The live state is part of a row's identity: two rows with the same figures and different series differ. */
-	@Test
-	public void theLiveStateIsPartOfTheRowsIdentity()
-	{
-		final MovementRow guide = row(1, 10_000L);
-		final MovementRow live = guide.asLive(null, mixedSources(), liveFacts());
-
-		assertNotEquals(guide, live);
-		assertEquals(live, guide.asLive(null, mixedSources(), liveFacts()));
-		assertEquals(live.hashCode(), guide.asLive(null, mixedSources(), liveFacts()).hashCode());
-		assertNotEquals("a different window split is a different row",
-			live, guide.asLive(null, Collections.singletonMap(MovementWindow.D1, MovementRow.PriceSource.LIVE),
-				liveFacts()));
-	}
-
-	/** An empty window map is stored as the pre-T null, so an empty map and no map are one row. */
-	@Test
-	public void anEmptyWindowMapIsTheSameAsNone()
-	{
-		final MovementRow a = row(1, 10_000L).asLive(null, Collections.emptyMap(), liveFacts());
-		final MovementRow b = row(1, 10_000L).asLive(null, null, liveFacts());
-
-		assertEquals(a, b);
-		assertSame(MovementRow.PriceSource.GUIDE, a.windowSource(MovementWindow.D1));
-	}
-
-	/** A negative volume cannot become a negative count on a tooltip. */
-	@Test
-	public void liveFactsRefuseANegativeVolume()
-	{
-		assertEquals(0L, new MovementRow.LiveFacts(1L, 1L, -5L, null).volumeYesterday());
-	}
-
 	// ---------------------------------------------------------------- U3: the day each window used (seam S1)
 
 	private static final LocalDate SEP_11 = LocalDate.of(2026, 9, 11);
 	private static final LocalDate SEP_5 = LocalDate.of(2026, 9, 5);
 
-	/** The days beside {@link #mixedSources()}: 1d off the traded bucket, 7d off the guide baseline it fell to. */
+	/** The days of a row the traded series touched: 1d off the traded bucket, 7d off the guide baseline it fell to. */
 	private static Map<MovementWindow, LocalDate> mixedDays()
 	{
 		final Map<MovementWindow, LocalDate> days = new EnumMap<>(MovementWindow.class);
@@ -380,7 +207,7 @@ public class MovementRowTest
 	@Test
 	public void aLiveRowCarriesTheDayEachWindowComparedAgainst()
 	{
-		final MovementRow live = row(1, 10_000L).asLive(null, mixedSources(), mixedDays(), liveFacts());
+		final MovementRow live = LiveRows.asLive(row(1, 10_000L), null, mixedDays());
 
 		assertEquals(SEP_11, live.windowDay(MovementWindow.D1));
 		assertEquals("the window that fell back stamps the guide's day", SEP_5, live.windowDay(MovementWindow.D7));
@@ -388,16 +215,13 @@ public class MovementRowTest
 		assertNull(live.windowDay(null));
 	}
 
-	/** The day travels with the row through both re-sourcings, because the figures it belongs to do. */
+	/** The day travels with the row through the parts re-sourcing, because the figures it belongs to do. */
 	@Test
-	public void theDaysSurviveAsPartsAndARefusal()
+	public void theDaysSurviveAsParts()
 	{
-		final MovementRow live = crystalBodyRow().asLive(null, mixedSources(), mixedDays(), liveFacts());
+		final MovementRow live = LiveRows.asLive(crystalBodyRow(), null, mixedDays());
 
 		assertEquals(SEP_11, live.asParts(seeds(3L)).windowDay(MovementWindow.D1));
-
-		final MovementRow.LiveFacts refused = new MovementRow.LiveFacts(1_000L, 900L, 12L, "12 traded yesterday");
-		assertEquals(SEP_11, live.withLiveRefusal(refused).windowDay(MovementWindow.D1));
 	}
 
 	/** A row built with the switch off records no day at all - the pre-addendum-U shape, byte for byte. */
@@ -410,9 +234,8 @@ public class MovementRowTest
 		{
 			assertNull(guide.windowDay(window));
 		}
-		assertEquals("an empty map is stored as no map", guide.asLive(null, mixedSources(),
-			Collections.<MovementWindow, LocalDate>emptyMap(), liveFacts()),
-			guide.asLive(null, mixedSources(), liveFacts()));
+		assertEquals("an empty map is stored as no map", LiveRows.asLive(guide, null, null),
+			LiveRows.asLive(guide, null, Collections.<MovementWindow, LocalDate>emptyMap()));
 	}
 
 	/** Two rows that compared against different days are different rows, whatever their figures look like. */
@@ -420,13 +243,13 @@ public class MovementRowTest
 	public void theDaysArePartOfTheRowsIdentity()
 	{
 		final MovementRow guide = row(1, 10_000L);
-		final MovementRow live = guide.asLive(null, mixedSources(), mixedDays(), liveFacts());
+		final MovementRow live = LiveRows.asLive(guide, null, mixedDays());
 
-		assertEquals(live, guide.asLive(null, mixedSources(), mixedDays(), liveFacts()));
-		assertEquals(live.hashCode(), guide.asLive(null, mixedSources(), mixedDays(), liveFacts()).hashCode());
-		assertNotEquals("one day apart is one row apart", live, guide.asLive(null, mixedSources(),
-			Collections.singletonMap(MovementWindow.D1, SEP_5), liveFacts()));
-		assertNotEquals(live, guide.asLive(null, mixedSources(), liveFacts()));
+		assertEquals(live, LiveRows.asLive(guide, null, mixedDays()));
+		assertEquals(live.hashCode(), LiveRows.asLive(guide, null, mixedDays()).hashCode());
+		assertNotEquals("one day apart is one row apart", live,
+			LiveRows.asLive(guide, null, Collections.singletonMap(MovementWindow.D1, SEP_5)));
+		assertNotEquals(live, LiveRows.asLive(guide, null, null));
 	}
 
 	// ---------------------------------------------------------------- addendum Y: where the quantity is
@@ -442,7 +265,7 @@ public class MovementRowTest
 		assertEquals(1, all.wornQuantity());
 		assertEquals("they add up to what the row prints", all.quantity(),
 			all.bankQuantity() + all.inventoryQuantity() + all.wornQuantity());
-		assertTrue(all.split());
+		assertTrue(PanelState.split(all));
 		assertFalse("something is carried, so the hover line is drawn", all.allInBank());
 	}
 
@@ -455,7 +278,7 @@ public class MovementRowTest
 		assertEquals(0, worn.bankQuantity());
 		assertEquals(0, worn.inventoryQuantity());
 		assertEquals(1, worn.wornQuantity());
-		assertTrue("it still knows where it is", worn.split());
+		assertTrue("it still knows where it is", PanelState.split(worn));
 		assertFalse(worn.allInBank());
 	}
 
@@ -466,7 +289,7 @@ public class MovementRowTest
 		final MovementRow banked = row(3, 10_000L).withSplit(3, 0, 0, 0);
 
 		assertEquals(3, banked.bankQuantity());
-		assertTrue(banked.split());
+		assertTrue(PanelState.split(banked));
 		assertTrue(banked.allInBank());
 	}
 
@@ -479,7 +302,7 @@ public class MovementRowTest
 		assertEquals(0, guide.bankQuantity());
 		assertEquals(0, guide.inventoryQuantity());
 		assertEquals(0, guide.wornQuantity());
-		assertFalse(guide.split());
+		assertFalse(PanelState.split(guide));
 		assertTrue(guide.allInBank());
 		assertSame("three zeros answer the row itself", guide, guide.withSplit(0, 0, 0, 0));
 		assertEquals("and a negative is no split either", guide, guide.withSplit(-2, 0, 0, 0));
@@ -501,21 +324,14 @@ public class MovementRowTest
 		assertEquals(guide.source(), split.source());
 	}
 
-	/** The split travels with the row through every re-sourcing, exactly as the parts and the days do. */
+	/** The split travels with the row through the parts re-sourcing, exactly as the parts and the days do. */
 	@Test
-	public void theSplitSurvivesAsPartsAsLiveAndARefusal()
+	public void theSplitSurvivesAsParts()
 	{
 		final MovementRow body = crystalBodyRow().withSplit(2, 0, 1, 0);
 
 		assertEquals(2, body.asParts(seeds(3L)).bankQuantity());
 		assertEquals(1, body.asParts(seeds(3L)).wornQuantity());
-
-		final MovementRow live = body.asLive(2_000_000L, mixedSources(), mixedDays(), liveFacts());
-		assertEquals(2, live.bankQuantity());
-		assertEquals(1, live.wornQuantity());
-
-		final MovementRow.LiveFacts refused = new MovementRow.LiveFacts(1_000L, 900L, 12L, "12 traded yesterday");
-		assertEquals(2, body.withLiveRefusal(refused).bankQuantity());
 	}
 
 	/** Two rows of the same five that live in different places are two different rows. */
@@ -530,17 +346,17 @@ public class MovementRowTest
 		assertNotEquals("and neither is a row that does not know", banked, row(5, 10_000L));
 	}
 
-	/** A row with no split prints exactly what it printed before addendum Y. */
+	/** A row with no split knows none; one merged with a split holds its four figures. */
 	@Test
-	public void toStringNamesTheSplitOnlyWhenThereIsOne()
+	public void aRowKnowsItsSplitOnlyWhenOneWasMerged()
 	{
-		assertFalse(row(5, 10_000L).toString().contains("bank="));
-		assertTrue(row(5, 10_000L).withSplit(3, 1, 1, 0).toString()
-			.contains(", bank=3, inventory=1, worn=1"));
-		assertFalse("the exchange part is printed only when there is one",
-			row(5, 10_000L).withSplit(3, 1, 1, 0).toString().contains("exchange="));
-		assertTrue(row(7, 10_000L).withSplit(3, 1, 1, 2).toString()
-			.contains(", bank=3, inventory=1, worn=1, exchange=2"));
+		assertFalse(PanelState.split(row(5, 10_000L)));
+		final MovementRow carried = row(5, 10_000L).withSplit(3, 1, 1, 0);
+		assertEquals(3, carried.bankQuantity());
+		assertEquals(1, carried.inventoryQuantity());
+		assertEquals(1, carried.wornQuantity());
+		assertEquals("the exchange part is there only when there is one", 0, carried.exchangeQuantity());
+		assertEquals(2, row(7, 10_000L).withSplit(3, 1, 1, 2).exchangeQuantity());
 	}
 
 	// ---------------------------------------------------------------- 1.0.9 part 3: the Grand Exchange offers
@@ -557,7 +373,7 @@ public class MovementRowTest
 		assertEquals(2, all.exchangeQuantity());
 		assertEquals("the four add up to what the row prints", all.quantity(),
 			all.bankQuantity() + all.inventoryQuantity() + all.wornQuantity() + all.exchangeQuantity());
-		assertTrue(all.split());
+		assertTrue(PanelState.split(all));
 		assertFalse("something is in an offer, so the hover line is drawn", all.allInBank());
 	}
 
@@ -569,7 +385,7 @@ public class MovementRowTest
 
 		assertEquals(0, offer.bankQuantity());
 		assertEquals(2, offer.exchangeQuantity());
-		assertTrue("a split of nothing but offers is still a split", offer.split());
+		assertTrue("a split of nothing but offers is still a split", PanelState.split(offer));
 		assertFalse(offer.allInBank());
 		assertNotEquals("and it is not the row that knows nothing of the split", offer, row(2, 10_000L));
 	}
@@ -587,16 +403,13 @@ public class MovementRowTest
 		assertEquals("a negative offer figure is no offer", guide, guide.withSplit(0, 0, 0, -3));
 	}
 
-	/** The offers' figure travels with the row through every re-sourcing and is part of its identity. */
+	/** The offers' figure travels with the row through the parts re-sourcing and is part of its identity. */
 	@Test
-	public void theOffersFigureSurvivesAsPartsAsLiveAndARefusalAndIsPartOfTheIdentity()
+	public void theOffersFigureSurvivesAsPartsAndIsPartOfTheIdentity()
 	{
 		final MovementRow body = crystalBodyRow().withSplit(1, 0, 0, 2);
 
 		assertEquals(2, body.asParts(seeds(3L)).exchangeQuantity());
-		assertEquals(2, body.asLive(2_000_000L, mixedSources(), mixedDays(), liveFacts()).exchangeQuantity());
-		final MovementRow.LiveFacts refused = new MovementRow.LiveFacts(1_000L, 900L, 12L, "12 traded yesterday");
-		assertEquals(2, body.withLiveRefusal(refused).exchangeQuantity());
 
 		final MovementRow banked = row(5, 10_000L).withSplit(3, 0, 0, 2);
 		assertEquals(banked, row(5, 10_000L).withSplit(3, 0, 0, 2));
@@ -605,9 +418,9 @@ public class MovementRowTest
 			row(5, 10_000L).withSplit(3, 0, 2, 0));
 		assertNotEquals(banked, row(5, 10_000L).withSplit(5, 0, 0, 0));
 		final MovementRow viaConstructor = new MovementRow(4151, "Abyssal whip", 5, false, 1_500_000L, null, null, null,
-			7_500_000L, MovementRow.PriceSource.GUIDE, null, null, null, null, 3, 0, 0, 2);
+			7_500_000L, MovementRow.PriceSource.GUIDE, null, null, 3, 0, 0, 2, null);
 		assertEquals(2, viaConstructor.exchangeQuantity());
 		assertEquals(0, new MovementRow(4151, "Abyssal whip", 5, false, 1_500_000L, null, null, null, 7_500_000L,
-			MovementRow.PriceSource.GUIDE, null, null, null, null, 3, 0, 0).exchangeQuantity());
+			MovementRow.PriceSource.GUIDE, null, null, 3, 0, 0, 0, null).exchangeQuantity());
 	}
 }

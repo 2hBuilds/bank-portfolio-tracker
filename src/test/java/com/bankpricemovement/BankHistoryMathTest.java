@@ -263,7 +263,7 @@ public class BankHistoryMathTest
 			assertEquals(sep(1 + i), day.day());
 			assertEquals(values[i], day.valueGp());
 			assertEquals(carried[i], day.carried());
-			assertEquals("a day is its reading, or none", new BankHistoryMath.Day(sep(1 + i), values[i],
+			assertEquals("a day is its reading, or none", new BankHistoryMath.Day(sep(1 + i), values[i], values[i],
 				carried[i] ? null : s.on(sep(1 + i))), day);
 		}
 	}
@@ -452,11 +452,9 @@ public class BankHistoryMathTest
 		assertEquals(10L, a.deltaGp());
 		assertEquals(100.0d, a.pct(), 0.0d);
 		assertEquals(-100.0d, new BankHistoryMath.Change(sep(1), sep(3), 10L, 0L).pct(), 0.0d);
-		final BankHistoryMath.Day d = new BankHistoryMath.Day(sep(1), 5L, null);
-		assertEquals(d, new BankHistoryMath.Day(sep(1), 5L, null));
+		final BankHistoryMath.Day d = new BankHistoryMath.Day(sep(1), 5L, 5L, null);
+		assertEquals(d, new BankHistoryMath.Day(sep(1), 5L, 5L, null));
 		assertTrue(d.carried());
-		assertFalse(d.toString().isEmpty());
-		assertFalse(a.toString().isEmpty());
 	}
 
 	/** {@code n} consecutive days from 1 Jan 2025, a reading on every {@code every}-th (day 0 always). */
@@ -467,7 +465,7 @@ public class BankHistoryMathTest
 		for (int i = 0; i < n; i++)
 		{
 			final LocalDate day = first.plusDays(i);
-			days.add(new BankHistoryMath.Day(day, i, i % every == 0 ? p(day, i, i) : null));
+			days.add(new BankHistoryMath.Day(day, i, i, i % every == 0 ? p(day, i, i) : null));
 		}
 		return days;
 	}

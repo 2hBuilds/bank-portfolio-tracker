@@ -260,14 +260,4 @@ public final class GuideSnapshot
 	{
 		return Objects.hash(revId, revisionSeconds, dataSeconds, fetchedAtMillis, pricesByName);
 	}
-
-	@Override
-	public String toString()
-	{
-		return "GuideSnapshot{revId=" + revId
-			+ ", dataDay=" + dataDay()
-			+ ", revisionSeconds=" + revisionSeconds
-			+ ", fetchedAtMillis=" + fetchedAtMillis
-			+ ", names=" + pricesByName.size() + '}';
-	}
 }

@@ -30,7 +30,6 @@ import static com.bankpricemovement.SidebarViewPanelTest.series;
 import static com.bankpricemovement.SidebarViewPanelTest.status;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -43,8 +42,8 @@ import static org.mockito.Mockito.when;
 /**
  * Addendum AU's start-tab setting, the sixteenth config item, the tab the sidebar opens on - Items unless it says Net
  * Worth History. Since 1.1.0 part A it is the tab used LAST (the user, 2026-10-03): the toggle's press writes it, the
- * settings menu's two dots are gone, and the item is hidden from the settings page; the bridge's {@code starttab=} still
- * sets it without switching the tab that is showing. The toggle and the menu are pinned by
+ * settings menu's two dots are gone, and the item is hidden from the settings page; {@code pressStartTab}, the road the dev
+ * bridge's {@code starttab=} presses, still sets it without switching the tab that is showing. The toggle and the menu are pinned by
  * {@link SettingsMenuTidyTest}.
  */
 public class StartTabTest
@@ -53,7 +52,7 @@ public class StartTabTest
 	private BankPriceMovementPanel panel;
 
 	/** The config as a memory: what the start tab is, and every write of it. */
-	private static final class Memory implements BankPriceMovementPanel.Prefs
+	private static final class Memory extends PrefsDefaults
 	{
 		@Nullable
 		SidebarView stored;
@@ -128,7 +127,7 @@ public class StartTabTest
 
 	private String card()
 	{
-		return gson.fromJson(panel.describe(), JsonObject.class).get("card").getAsString();
+		return gson.fromJson(PanelState.describe(panel), JsonObject.class).get("card").getAsString();
 	}
 
 	private Widgets.Toggle toggle()
@@ -146,7 +145,7 @@ public class StartTabTest
 
 	private void assertStored(SidebarView on)
 	{
-		assertEquals(on, panel.startTab());
+		assertEquals(on, panel.startTab);
 	}
 
 	// ---------------------------------------------------------------- the setting
@@ -180,7 +179,7 @@ public class StartTabTest
 				{
 					hidden++;
 					assertTrue("the hidden ones are startTab, includeLegacyHistory, (part J) the two slot colours and (release 1.2.1)"
-						+ " the three change settings",
+						+ " the change settings",
 						"startTab".equals(o.keyName()) || "includeLegacyHistory".equals(o.keyName())
 							|| "slotUpColour".equals(o.keyName()) || "slotDownColour".equals(o.keyName())
 							|| "gpChangeSize".equals(o.keyName()) || "pctChangeSize".equals(o.keyName())
@@ -194,6 +193,7 @@ public class StartTabTest
 		// Release 1.2.0 deleted the hover switch, which was listed: twenty-one on the page and the four hidden ones.
 		// Release 1.2.1 added three hidden ones, the change settings: twenty-one on the page and the seven hidden ones.
 		// Its part 2 added four more, the History tab's three twins and the chart's range: twenty-one and the eleven hidden ones.
+		// Release 1.2.2 part 4's opacity marker is a raw key and no item (verification fix): twenty-one and the eleven hidden ones.
 		assertEquals("twenty-one items on the page and the eleven hidden ones", 32, items);
 		assertEquals(11, hidden);
 	}
@@ -202,7 +202,7 @@ public class StartTabTest
 	@Test
 	public void aBarePrefsHasNothingStoredAndWritesNothing()
 	{
-		final BankPriceMovementPanel.Prefs bare = new BankPriceMovementPanel.Prefs()
+		final BankPriceMovementPanel.Prefs bare = new PrefsDefaults()
 		{
 			@Override
 			public RowFilter load()
@@ -229,7 +229,7 @@ public class StartTabTest
 		loadBank(l);
 		onEdt(() ->
 		{
-			assertEquals(SidebarView.ITEMS, panel.view());
+			assertEquals(SidebarView.ITEMS, panel.view);
 			assertEquals(BankPriceMovementPanel.CARD_LIST, card());
 			assertTrue(toggle().isLit(0));
 			assertStored(SidebarView.ITEMS);
@@ -245,14 +245,14 @@ public class StartTabTest
 		final PriceService.Listener l = build(prefs, service());
 		onEdt(() ->
 		{
-			assertEquals(SidebarView.HISTORY, panel.view());
+			assertEquals(SidebarView.HISTORY, panel.view);
 			assertStored(SidebarView.HISTORY);
 		});
 		loadBank(l);
 		onEdt(() ->
 		{
 			assertTrue(toggle().isLit(1));
-			assertEquals(SidebarView.HISTORY, panel.view());
+			assertEquals(SidebarView.HISTORY, panel.view);
 			assertEquals(BankPriceMovementPanel.CARD_HISTORY, card());
 			assertEquals(BankPriceMovementPanel.HISTORY_CAPTION, captionText());
 		});
@@ -298,7 +298,7 @@ public class StartTabTest
 		{
 			panel.pressStartTab(SidebarView.HISTORY);
 			assertStored(SidebarView.HISTORY);
-			assertEquals("the showing tab does not change", SidebarView.ITEMS, panel.view());
+			assertEquals("the showing tab does not change", SidebarView.ITEMS, panel.view);
 			assertEquals(BankPriceMovementPanel.CARD_LIST, card());
 			assertEquals(Arrays.asList(SidebarView.HISTORY), prefs.saves);
 
@@ -308,13 +308,13 @@ public class StartTabTest
 
 			panel.pressStartTab(SidebarView.ITEMS);
 			assertStored(SidebarView.ITEMS);
-			assertEquals(SidebarView.ITEMS, panel.view());
+			assertEquals(SidebarView.ITEMS, panel.view);
 			assertEquals(Arrays.asList(SidebarView.HISTORY, SidebarView.ITEMS), prefs.saves);
 
 			// Pressed while History is showing, it leaves History showing too.
 			panel.setView(SidebarView.HISTORY);
 			panel.pressStartTab(SidebarView.ITEMS);
-			assertEquals(SidebarView.HISTORY, panel.view());
+			assertEquals(SidebarView.HISTORY, panel.view);
 			assertEquals("Items was already stored: no write", 2, prefs.saves.size());
 			panel.pressStartTab(null);
 			assertEquals("null reads as Items", 2, prefs.saves.size());
@@ -335,13 +335,13 @@ public class StartTabTest
 		{
 			panel.setStartTab(SidebarView.HISTORY);
 			assertStored(SidebarView.HISTORY);
-			assertEquals(SidebarView.ITEMS, panel.view());
+			assertEquals(SidebarView.ITEMS, panel.view);
 			panel.setStartTab(null);
 			assertStored(SidebarView.ITEMS);
 			panel.stop();
 			panel.setStartTab(SidebarView.HISTORY);
 			panel.pressStartTab(SidebarView.HISTORY);
-			assertEquals("a stopped panel changes nothing", SidebarView.ITEMS, panel.startTab());
+			assertEquals("a stopped panel changes nothing", SidebarView.ITEMS, panel.startTab);
 		});
 		assertTrue(prefs.saves.isEmpty());
 		verify(service, never()).setFilter(any());
@@ -444,42 +444,28 @@ public class StartTabTest
 		plugin.configPrefs().saveStartTab(SidebarView.ITEMS);
 	}
 
-	// ---------------------------------------------------------------- the bridge
+	// ---------------------------------------------------------------- the road a terminal presses
 
+	/**
+	 * {@code pressStartTab} - the dot's road, which the dev bridge's {@code starttab=} presses - is read back as the start
+	 * tab and not as the tab showing, and is stored once. The bridge's reading of the words is pinned in the test source set.
+	 */
 	@Test
-	public void theVerbPressesTheDotsRoadRefusesOtherWordsAndEchoesTheState() throws Exception
+	public void theStartTabRoadIsReadBackAsTheDotAndNotTheShowingTab() throws Exception
 	{
-		final BankPriceMovementPanel mocked = mock(BankPriceMovementPanel.class);
-		final BpmCommands dev = new BpmCommands(mocked, service(), gson);
-		assertTrue(send(dev, "starttab=history").get("ok").getAsBoolean());
-		verify(mocked).pressStartTab(SidebarView.HISTORY);
-		assertTrue(send(dev, "starttab= Items ").get("ok").getAsBoolean());
-		verify(mocked).pressStartTab(SidebarView.ITEMS);
-		final JsonObject bad = send(dev, "starttab=Chart");
-		assertFalse(bad.get("ok").getAsBoolean());
-		assertEquals("starttab= wants items or history, not 'Chart'", bad.get("error").getAsString());
-		assertEquals("starttab= wants items or history, not ''", send(dev, "starttab").get("error").getAsString());
-		verify(mocked, never()).pressView(any());
-
-		// The real panel: the echo follows the dot and not the showing tab.
 		final Memory prefs = new Memory();
-		final PriceService service = service();
-		build(prefs, service);
-		final BpmCommands real = new BpmCommands(panel, service, gson);
-		JsonObject state = send(real, "state");
-		assertEquals("ITEMS", state.get("startTab").getAsString());
-		state = send(real, "starttab=history");
-		assertEquals("HISTORY", state.get("startTab").getAsString());
-		assertEquals("ITEMS", state.get("view").getAsString());
+		build(prefs, service());
+		final SidebarView[] read = new SidebarView[2];
+		onEdt(() -> read[0] = panel.startTab);
+		assertEquals(SidebarView.ITEMS, read[0]);
+		onEdt(() ->
+		{
+			panel.pressStartTab(SidebarView.HISTORY);
+			read[0] = panel.startTab;
+			read[1] = panel.view;
+		});
+		assertEquals(SidebarView.HISTORY, read[0]);
+		assertEquals("the tab showing does not move", SidebarView.ITEMS, read[1]);
 		assertEquals(Arrays.asList(SidebarView.HISTORY), prefs.saves);
-		final String unknown = send(real, "nope").get("error").getAsString();
-		assertTrue(unknown, unknown.contains("starttab="));
-	}
-
-	private JsonObject send(BpmCommands bridge, String cmd)
-	{
-		final String s = bridge.apply(cmd);
-		assertNotNull(s);
-		return gson.fromJson(s, JsonObject.class);
 	}
 }

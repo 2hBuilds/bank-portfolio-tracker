@@ -53,7 +53,7 @@ public class SettingsMenuTidyTest
 	private PriceService.Listener listener;
 
 	/** The config as a memory: what the start tab and the legacy switch are stored as, and every write of them. */
-	private static final class Memory implements BankPriceMovementPanel.Prefs
+	private static final class Memory extends PrefsDefaults
 	{
 		@Nullable
 		SidebarView stored;
@@ -197,7 +197,7 @@ public class SettingsMenuTidyTest
 
 	private int readings()
 	{
-		return (Integer) panel.bankHistoryState().get("readings");
+		return (Integer) PanelState.bankHistoryState(panel).get("readings");
 	}
 
 	// ---------------------------------------------------------------- A1: the menu, component by component
@@ -316,23 +316,23 @@ public class SettingsMenuTidyTest
 		{
 			final Component items = toggle().getComponent(0);
 			final Component history = toggle().getComponent(1);
-			assertEquals(SidebarView.ITEMS, panel.view());
+			assertEquals(SidebarView.ITEMS, panel.view);
 			press(items, MouseEvent.BUTTON1);
 			assertTrue("Items is already lit: nothing stored", prefs.saves.isEmpty());
 
 			press(history, MouseEvent.BUTTON1);
-			assertEquals(SidebarView.HISTORY, panel.view());
+			assertEquals(SidebarView.HISTORY, panel.view);
 			assertEquals("HISTORY once", Arrays.asList(SidebarView.HISTORY), prefs.saves);
 			press(history, MouseEvent.BUTTON1);
 			panel.pressView(SidebarView.HISTORY);
 			assertEquals("the tab already lit stores nothing", 1, prefs.saves.size());
 
 			press(items, MouseEvent.BUTTON1);
-			assertEquals(SidebarView.ITEMS, panel.view());
+			assertEquals(SidebarView.ITEMS, panel.view);
 			assertEquals("ITEMS once", Arrays.asList(SidebarView.HISTORY, SidebarView.ITEMS), prefs.saves);
 			panel.pressView(SidebarView.ITEMS);
 			assertEquals(2, prefs.saves.size());
-			assertEquals("the panel's own memory of it", SidebarView.ITEMS, panel.startTab());
+			assertEquals("the panel's own memory of it", SidebarView.ITEMS, panel.startTab);
 		});
 		verify(service, never()).setFilter(any());
 		verify(service, never()).setOptions(any());
@@ -345,7 +345,7 @@ public class SettingsMenuTidyTest
 		load(withoutLegacyDays());
 		onEdt(() ->
 		{
-			assertEquals(SidebarView.HISTORY, panel.view());
+			assertEquals(SidebarView.HISTORY, panel.view);
 			assertTrue(toggle().isLit(1));
 			assertEquals(BankPriceMovementPanel.CARD_HISTORY, panel.card());
 		});

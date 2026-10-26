@@ -151,7 +151,7 @@ public class BankHistoryRecordingTest
 			}
 			sawTotal = true;
 			final BankHistoryPoint point = status.bankHistory().on(SEP_8);
-			assertNotNull("a publish with a total carries its reading: " + status, point);
+			assertNotNull("a publish with a total carries its reading", point);
 			assertEquals(status.portfolio().valueNow(), point.valueFor(status.options()));
 			assertEquals(status.bankAtMillis(), point.bankAtMillis());
 		}

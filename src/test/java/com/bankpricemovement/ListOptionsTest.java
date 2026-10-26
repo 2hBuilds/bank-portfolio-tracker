@@ -80,7 +80,7 @@ public class ListOptionsTest
 	private JFrame frame;
 
 	/** The config as a memory: whether the tick is stored on, every write of it, the colours' writes and anything else. */
-	private static final class Memory implements BankPriceMovementPanel.Prefs
+	private static final class Memory extends PrefsDefaults
 	{
 		@Nullable
 		Boolean showAlch;

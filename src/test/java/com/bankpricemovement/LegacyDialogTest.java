@@ -33,7 +33,7 @@ public class LegacyDialogTest
 	@Test
 	public void theWordsAreTheQuestionAndTwoButtonsInOrder()
 	{
-		final LegacyDialog window = new LegacyDialog(BankPriceMovementPanel.LEGACY_ASK);
+		final LegacyDialog window = new LegacyDialog(BankPriceMovementPanel.LEGACY_ASK, LegacyDialog.INCLUDE_TEXT);
 
 		assertEquals("Days before v1.0.9 did not count open G.E. orders, so their net worth totals may read low."
 			+ " Include them anyway?", window.textArea.getText());
@@ -52,7 +52,7 @@ public class LegacyDialogTest
 	@Test
 	public void theLookIsTheClients()
 	{
-		final LegacyDialog window = new LegacyDialog("?");
+		final LegacyDialog window = new LegacyDialog("?", LegacyDialog.INCLUDE_TEXT);
 
 		assertEquals(ColorScheme.DARKER_GRAY_COLOR, window.content.getBackground());
 		assertFalse("a label that wraps, not a box with a caret", window.textArea.isFocusable());
@@ -66,7 +66,7 @@ public class LegacyDialogTest
 	@Test
 	public void includeAnswersYes()
 	{
-		final LegacyDialog window = new LegacyDialog("?");
+		final LegacyDialog window = new LegacyDialog("?", LegacyDialog.INCLUDE_TEXT);
 
 		window.includeButton.doClick();
 
@@ -76,7 +76,7 @@ public class LegacyDialogTest
 	@Test
 	public void cancelAnswersNo()
 	{
-		final LegacyDialog window = new LegacyDialog("?");
+		final LegacyDialog window = new LegacyDialog("?", LegacyDialog.INCLUDE_TEXT);
 
 		window.cancelButton.doClick();
 
@@ -87,7 +87,7 @@ public class LegacyDialogTest
 	@Test
 	public void escapeIsCancel()
 	{
-		final LegacyDialog window = new LegacyDialog("?");
+		final LegacyDialog window = new LegacyDialog("?", LegacyDialog.INCLUDE_TEXT);
 		final KeyStroke escape = KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0);
 
 		final Object key = window.content.getInputMap(JComponent.WHEN_IN_FOCUSED_WINDOW).get(escape);
@@ -103,7 +103,7 @@ public class LegacyDialogTest
 	@Test
 	public void aWindowThatWasNeverOpenedIsHarmlessToAnswer()
 	{
-		final LegacyDialog window = new LegacyDialog("?");
+		final LegacyDialog window = new LegacyDialog("?", LegacyDialog.INCLUDE_TEXT);
 
 		window.cancelButton.doClick();
 		window.includeButton.doClick();
@@ -118,7 +118,8 @@ public class LegacyDialogTest
 		{
 			return;
 		}
-		assertFalse(LegacyDialog.ask(null, BankPriceMovementPanel.LEGACY_TEXT, BankPriceMovementPanel.LEGACY_ASK));
+		assertFalse(LegacyDialog.ask(null, BankPriceMovementPanel.LEGACY_TEXT, BankPriceMovementPanel.LEGACY_ASK,
+			LegacyDialog.INCLUDE_TEXT));
 	}
 
 	// ---- the window itself, where there is a display
@@ -132,7 +133,7 @@ public class LegacyDialogTest
 		}
 		final LegacyDialog[] made = new LegacyDialog[1];
 		SwingUtilities.invokeAndWait(() -> made[0] = LegacyDialog.window((Window) null, BankPriceMovementPanel.LEGACY_TEXT,
-			BankPriceMovementPanel.LEGACY_ASK));
+			BankPriceMovementPanel.LEGACY_ASK, LegacyDialog.INCLUDE_TEXT));
 		final LegacyDialog window = made[0];
 		assertNotNull(window);
 
@@ -155,7 +156,7 @@ public class LegacyDialogTest
 	@Test
 	public void theWindowCarriesTheWordsItIsGiven() throws Exception
 	{
-		final LegacyDialog model = new LegacyDialog(BankPriceMovementPanel.LEGACY_PLACEHOLDERS_ASK);
+		final LegacyDialog model = new LegacyDialog(BankPriceMovementPanel.LEGACY_PLACEHOLDERS_ASK, LegacyDialog.INCLUDE_TEXT);
 		assertEquals("the question is the one given", BankPriceMovementPanel.LEGACY_PLACEHOLDERS_ASK,
 			model.textArea.getText());
 		if (GraphicsEnvironment.isHeadless())
@@ -164,7 +165,8 @@ public class LegacyDialogTest
 		}
 		final LegacyDialog[] made = new LegacyDialog[1];
 		SwingUtilities.invokeAndWait(() -> made[0] = LegacyDialog.window((Window) null,
-			BankPriceMovementPanel.LEGACY_PLACEHOLDERS_TEXT, BankPriceMovementPanel.LEGACY_PLACEHOLDERS_ASK));
+			BankPriceMovementPanel.LEGACY_PLACEHOLDERS_TEXT, BankPriceMovementPanel.LEGACY_PLACEHOLDERS_ASK,
+			LegacyDialog.INCLUDE_TEXT));
 		SwingUtilities.invokeAndWait(() ->
 		{
 			final JDialog dialog = (JDialog) SwingUtilities.getWindowAncestor(made[0].content);
@@ -183,7 +185,7 @@ public class LegacyDialogTest
 		for (final String how : new String[]{"include", "cancel", "escape"})
 		{
 			final LegacyDialog[] made = new LegacyDialog[1];
-			SwingUtilities.invokeAndWait(() -> made[0] = LegacyDialog.window((Window) null, "?", "?"));
+			SwingUtilities.invokeAndWait(() -> made[0] = LegacyDialog.window((Window) null, "?", "?", LegacyDialog.INCLUDE_TEXT));
 			final LegacyDialog window = made[0];
 			SwingUtilities.invokeAndWait(() ->
 			{

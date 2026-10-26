@@ -243,7 +243,7 @@ public class GradeMathTest
 		assertEquals("the last print of each side, with its time", Long.valueOf(1_030L), move.buy().last());
 		assertEquals(seconds(TODAY, 13, 50), move.buy().lastSeconds());
 		assertEquals(Long.valueOf(1_010L), move.sell().last());
-		assertEquals(2, move.buy().observations());
+		assertEquals(2, move.buy().observations);
 	}
 
 	/**
@@ -264,7 +264,7 @@ public class GradeMathTest
 		assertEquals(Long.valueOf(25L), buyOnly.deltaGp());
 		assertEquals(0.025d, buyOnly.move(), 1e-12);
 		assertNull(buyOnly.sell().move());
-		assertEquals(0, buyOnly.sell().observations());
+		assertEquals(0, buyOnly.sell().observations);
 
 		final GradedMove sellOnly = oneDay(facts(quote(null, 0, 0, 1_010L, 13, 40), prints(), prints(1_000L, 9, 0), null,
 			0L, BUSY_YESTERDAY, null));
@@ -302,7 +302,7 @@ public class GradeMathTest
 		final TradedPriceClient.Quote staleSell = new TradedPriceClient.Quote(1_210L, seconds(TODAY, 13, 50), 1_000L,
 			seconds(YESTERDAY, 12, 0));
 		final GradedMove stale = oneDay(facts(staleSell, prints(), prints(), null, 0L, BUSY_YESTERDAY, null));
-		assertEquals("only the buy was observed", 0, stale.sell().observations());
+		assertEquals("only the buy was observed", 0, stale.sell().observations);
 		assertSame("a pair with a side silent for 26 hours is no spread", Grade.SOLID, stale.grade());
 		assertEquals(GradeWords.SOLID, stale.word());
 		assertNull(stale.spreadPercent());
@@ -326,8 +326,8 @@ public class GradeMathTest
 		final GradedMove oneSided = oneDay(GradeMath.facts(NOW, TODAY, GUIDE,
 			new TradedPriceClient.Quote(1_200L, twoHoursAgo, 800L, thirtyHoursAgo), null, null, null, 0L, BUSY_YESTERDAY,
 			YESTERDAY, null, null));
-		assertEquals("only the buy reported", 1, oneSided.buy().observations());
-		assertEquals(0, oneSided.sell().observations());
+		assertEquals("only the buy reported", 1, oneSided.buy().observations);
+		assertEquals(0, oneSided.sell().observations);
 		assertSame(Grade.SOLID, oneSided.grade());
 		assertEquals(GradeWords.SOLID, oneSided.word());
 		assertNull("the pair is 40 % apart and no current spread", oneSided.spreadPercent());
@@ -336,8 +336,8 @@ public class GradeMathTest
 		final GradedMove both = oneDay(GradeMath.facts(NOW, TODAY, GUIDE,
 			new TradedPriceClient.Quote(1_200L, twoHoursAgo, 800L, twoHoursAgo), null, null, null, 0L, BUSY_YESTERDAY,
 			YESTERDAY, null, null));
-		assertEquals(1, both.buy().observations());
-		assertEquals(1, both.sell().observations());
+		assertEquals(1, both.buy().observations);
+		assertEquals(1, both.sell().observations);
 		assertSame(Grade.SOFT, both.grade());
 		assertEquals("1,200 and 800 are 400 apart over a middle of 1,000: the word says how far", "spread 40%", both.word());
 		assertEquals(Long.valueOf(40L), both.spreadPercent());
@@ -353,7 +353,7 @@ public class GradeMathTest
 		final GradedMove junk = oneDay(GradeMath.facts(NOW, TODAY, GUIDE,
 			new TradedPriceClient.Quote(1_200L, twoHoursAgo, 5L, twoHoursAgo), null, null, null, 0L, BUSY_YESTERDAY,
 			YESTERDAY, null, null));
-		assertEquals(0, junk.sell().observations());
+		assertEquals(0, junk.sell().observations);
 		assertSame(Grade.SOLID, junk.grade());
 		assertNull(junk.spreadPercent());
 	}
@@ -539,7 +539,7 @@ public class GradeMathTest
 		final GradedMove quietHour = oneDay(facts(pair, prints(), prints(), day(1_026L, 96L, 1_004L, 96L), hourStart,
 			BUSY_YESTERDAY, null));
 		assertSame("96k gp in the last hour", Grade.SOLID, quietHour.grade());
-		assertEquals("the print and the hour", 2, quietHour.buy().observations());
+		assertEquals("the print and the hour", 2, quietHour.buy().observations);
 		assertEquals("the hour's average moved the median: 1,030 and 1,026", Long.valueOf(1_028L), quietHour.buy().now());
 
 		assertSame("one trade in the last hour", Grade.SOLID, oneDay(facts(pair, prints(), prints(),
@@ -557,7 +557,7 @@ public class GradeMathTest
 		final TradedPriceClient.Quote pair = quote(1_030L, 13, 50, 1_010L, 13, 40);
 		final GradedMove stale = oneDay(facts(pair, prints(), prints(), day(1_026L, 10_000L, 1_004L, 10_000L),
 			seconds(TODAY, 9, 0), BUSY_YESTERDAY, null));
-		assertEquals("the 09:00 hour ended four hours ago", 1, stale.buy().observations());
+		assertEquals("the 09:00 hour ended four hours ago", 1, stale.buy().observations);
 		assertEquals(Long.valueOf(1_030L), stale.buy().now());
 	}
 
@@ -605,13 +605,13 @@ public class GradeMathTest
 			switch (figure.grade())
 			{
 				case SOLID:
-					assertEquals("a solid row has no word: " + figure, GradeWords.SOLID, figure.word());
+					assertEquals("a solid row has no word: '" + figure.word() + "'", GradeWords.SOLID, figure.word());
 					break;
 				case SOFT:
-					assertFalse("a soft row has a word: " + figure, figure.word().isEmpty());
+					assertFalse("a soft row has a word: '" + figure.word() + "'", figure.word().isEmpty());
 					break;
 				default:
-					assertEquals("no figure: " + figure, GradeWords.NO_TRADES, figure.word());
+					assertEquals("no figure: '" + figure.word() + "'", GradeWords.NO_TRADES, figure.word());
 			}
 		}
 	}
@@ -775,12 +775,12 @@ public class GradeMathTest
 	@Test
 	public void theCardIsSoftWhenSolidRowsHoldUnderNinetyPercentOrSoftRowsMoveOverTen()
 	{
-		assertFalse("solid 90 of 100, soft move 10 of 100", card(90L, 10L, 0L, 90L, 10L).soft());
-		assertTrue("solid 89 of 100", card(89L, 11L, 0L, 90L, 10L).soft());
-		assertTrue("soft move 11 of 100", card(95L, 5L, 0L, 89L, 11L).soft());
-		assertFalse("solid 95, soft move 5", card(95L, 5L, 0L, 95L, 5L).soft());
-		assertTrue("a NONE row's value is counted and not solid", card(85L, 0L, 15L, 100L, 0L).soft());
-		assertFalse("nothing graded is never soft", GradeSummary.NONE.soft());
+		assertFalse("solid 90 of 100, soft move 10 of 100", PanelState.soft(card(90L, 10L, 0L, 90L, 10L)));
+		assertTrue("solid 89 of 100", PanelState.soft(card(89L, 11L, 0L, 90L, 10L)));
+		assertTrue("soft move 11 of 100", PanelState.soft(card(95L, 5L, 0L, 89L, 11L)));
+		assertFalse("solid 95, soft move 5", PanelState.soft(card(95L, 5L, 0L, 95L, 5L)));
+		assertTrue("a NONE row's value is counted and not solid", PanelState.soft(card(85L, 0L, 15L, 100L, 0L)));
+		assertFalse("nothing graded is never soft", PanelState.soft(GradeSummary.NONE));
 	}
 
 	@Test
@@ -791,7 +791,7 @@ public class GradeMathTest
 		assertEquals(1, summary.softRows());
 		assertEquals(1, summary.noneRows());
 		assertEquals(3, summary.gradedRows());
-		assertEquals(105L, summary.countedValue());
+		assertEquals(105L, summary.countedValue);
 	}
 
 	// ---------------------------------------------------------------- fixtures
@@ -819,7 +819,7 @@ public class GradeMathTest
 	{
 		final boolean moved = graded.hasFigure();
 		return new MovementRow(id, "Item " + id, 1, false, value, moved ? value - move : null, moved ? move : null,
-			moved ? 1.0d : null, value, MovementRow.PriceSource.LIVE, null, null, null, null, 0, 0, 0, 0, graded);
+			moved ? 1.0d : null, value, MovementRow.PriceSource.LIVE, null, null, 0, 0, 0, 0, graded);
 	}
 
 	/** Two prints a side today and a busy yesterday: the solid figure of {@link #bothSidesMeasuredMakeASolidFigure}. */
