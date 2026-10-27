@@ -24,12 +24,13 @@ import javax.swing.border.EmptyBorder;
 import net.runelite.client.ui.ColorScheme;
 
 /**
- * The amount box a "This was a transfer of another amount..." or "Change the amount..." press opens (1.2.2), modelled on
+ * The amount box an "Another amount...", "To or from my other account..." or "Change the amount..." press opens (1.2.2), modelled on
  * {@link LegacyDialog}: document-modal to the client window, Enter answers OK, Escape and Cancel answer no, the controls built
  * without a window so a test can press them on a machine with no screen.
  *
- * <p>A bold "Sun 20 Sep was a transfer", the sentence {@link #ASK}, the box in the Min / Max boxes' own look prefilled with the
- * amount on offer - and, in grey beside it, "(that day: -200m)", what the day really changed by. The box takes the focus: it is the
+ * <p>A bold "Sun 20 Sep", the question {@link #ASK}, the box in the Min / Max boxes' own look prefilled with the
+ * amount on offer - and, in grey beside it, "(whole day: -200m)", what the day really changed by. The window is titled
+ * {@link #TITLE} (1.2.3). The box takes the focus: it is the
  * only thing to type. The amount is read by {@link #parse}: a minus is gold that left, a plus gold that arrived, no sign the day's
  * own direction; nothing that is not an amount, and not 0, is accepted - the box turns red, the window stays and nothing is saved.
  * While the sidebar hides its amounts (the eye) the box starts empty and the caption is masked - an unsigned amount still takes the
@@ -38,7 +39,9 @@ import net.runelite.client.ui.ColorScheme;
 final class TransferDialog
 {
 	static final String OK_TEXT = "OK";
-	static final String ASK = "Amount moved to or from another account:";
+	static final String ASK = "How much did you send (-) or get (+)?";
+	static final String TITLE = "My other account";
+	static final String WHOLE_DAY = "(whole day: ";
 	private static final int PADDING = 12;
 
 	/** Everything the window shows, built without a window. */
@@ -71,14 +74,14 @@ final class TransferDialog
 		box.setText(hide ? "" : amountText(initial));
 		box.addActionListener(e -> ok());
 		entry.add(Widgets.fixed(box, 110, box.getPreferredSize().height));
-		final JLabel that = Widgets.label("(that day: " + AmountMask.change(hide, MovementRowPanel.signedGp(whole)) + ")", Widgets.sans(11), ColorScheme.LIGHT_GRAY_COLOR);
+		final JLabel that = Widgets.label(WHOLE_DAY + AmountMask.change(hide, MovementRowPanel.signedGp(whole)) + ")", Widgets.sans(11), ColorScheme.LIGHT_GRAY_COLOR);
 		that.setBorder(new EmptyBorder(0, 8, 0, 0));
 		entry.add(that);
 
 		final JPanel text = new JPanel();
 		text.setLayout(new BoxLayout(text, BoxLayout.Y_AXIS));
 		text.setOpaque(false);
-		final JLabel heading = Widgets.label(BankHistoryDayRow.weekday(day) + " was a transfer", Widgets.sansBold(13), Color.WHITE);
+		final JLabel heading = Widgets.label(BankHistoryDayRow.weekday(day), Widgets.sansBold(13), Color.WHITE);
 		heading.setBorder(new EmptyBorder(0, 0, 4, 0));
 		text.add(heading);
 		text.add(Widgets.label(ASK, Widgets.sans(12), ColorScheme.LIGHT_GRAY_COLOR));
@@ -156,7 +159,7 @@ final class TransferDialog
 		final boolean hide)
 	{
 		final TransferDialog window = new TransferDialog(day, initial, whole, hide);
-		final JDialog dialog = new JDialog(owner, "This was a transfer");
+		final JDialog dialog = new JDialog(owner, TITLE);
 		dialog.setModalityType(Dialog.ModalityType.DOCUMENT_MODAL);
 		dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
 		dialog.setContentPane(window.content);

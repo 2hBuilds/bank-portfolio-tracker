@@ -625,9 +625,15 @@ public class BankPriceMovementPanel extends PluginPanel
 	public static final String RESTORE_TIP = "Bring back the days a reset hid.";
 	/** The right-click item of a day row (1.2.2); its question puts "before Sun 20 Sep" between {@link #RESET_ASK}'s two halves. */
 	public static final String RESET_FROM_TEXT = "Reset history from this day";
-	public static final String TRANSFER_TEXT = "This was a transfer";
-	public static final String TRANSFER_OTHER_TEXT = "This was a transfer of another amount...";
-	public static final String NOT_TRANSFER_TEXT = "Not a transfer";
+	/** The transfer items (1.2.3): "Sent 200m to my other account" or "Got 200m from my other account", the amount left out while hidden. */
+	public static final String SENT_TEXT = "Sent";
+	public static final String SENT_TAIL = "to my other account";
+	public static final String GOT_TEXT = "Got";
+	public static final String GOT_TAIL = "from my other account";
+	public static final String TRANSFER_OTHER_TEXT = "Another amount...";
+	public static final String TRANSFER_EITHER_TEXT = "To or from my other account...";
+	public static final String NOT_SENT_TEXT = "Not sent to my other account";
+	public static final String NOT_GOT_TEXT = "Not from my other account";
 	public static final String CHANGE_AMOUNT_TEXT = "Change the amount...";
 
 	public static final String TITLE = "2h Bank Portfolio Tracker";
@@ -1536,7 +1542,7 @@ public class BankPriceMovementPanel extends PluginPanel
 	private final LegacyPrompt legacyPrompt;
 	/** Set while the question is open, so a second press (a script's) cannot open a second dialog on top of it. */
 	private boolean askingLegacy;
-	/** The amount box a transfer's "another amount" and "Change the amount" open (1.2.2); the tests put their own answer here. */
+	/** The amount box "Another amount...", "To or from my other account..." and "Change the amount..." open (1.2.2); the tests put their own answer here. */
 	TransferPrompt transferPrompt = (day, initial, whole) ->
 		TransferDialog.ask(SwingUtilities.getWindowAncestor(this), day, initial, whole, hideAmounts);
 	/**
@@ -3052,10 +3058,12 @@ public class BankPriceMovementPanel extends PluginPanel
 
 	/**
 	 * The right-click menu of a day row (1.2.2), built at the press from the record as it stands now. A day with a reading and a
-	 * reading before it offers the transfer: unmarked, "This was a transfer: -200m" (the amount {@link BankHistoryMath#prefill}
-	 * offers, one click) and "of another amount..." (the amount box); with a note on it - "Not a transfer" and "Change the amount...",
-	 * whether or not the row draws the mark: a coins note draws none while the coins switch is off, and the unmarked items would replace
-	 * it with no word, so that day offers its note's own two items, "Change the amount..." starting from the note. Every day
+	 * reading before it offers the transfer: unmarked, "Sent 200m to my other account" or "Got 200m from my other account" (the amount
+	 * {@link BankHistoryMath#prefill} offers, one click; the way it went is the offer's sign, and the amount is left out while amounts are
+	 * hidden) and "Another amount..." (the amount box); a day whose total did not move has no offer, so its box item reads "To or from my
+	 * other account..."; with a note on it - "Not sent to my other account" or "Not from my other account" (the note's sign) and "Change
+	 * the amount...", whether or not the row draws the mark: a coins note draws none while the coins switch is off, and the unmarked items
+	 * would replace it with no word, so that day offers its note's own two items, "Change the amount..." starting from the note. Every day
 	 * offers "Reset history from this day", after a rule where the transfer items stand. Nothing here is a hover: a menu item's
 	 * words are all it has.
 	 */
@@ -3075,22 +3083,28 @@ public class BankPriceMovementPanel extends PluginPanel
 			final long whole = series.on(day).valueFor(o) - was.valueFor(o);
 			if (note != null)
 			{
-				menuItem(menu, NOT_TRANSFER_TEXT, () -> unmarkTransfer(day));
+				menuItem(menu, BankHistoryMath.sent(note.gp()) ? NOT_SENT_TEXT : NOT_GOT_TEXT, () -> unmarkTransfer(day));
 				menuItem(menu, CHANGE_AMOUNT_TEXT, () -> askTransfer(day, offer, whole));
 			}
 			else
 			{
 				if (offer != null)
 				{
-					menuItem(menu, TRANSFER_TEXT + ": " + AmountMask.change(hideAmounts, MovementRowPanel.signedGp(offer.gp())),
-						() -> markTransfer(day, offer.gp(), offer.coins()));
+					menuItem(menu, transferText(offer.gp(), hideAmounts), () -> markTransfer(day, offer.gp(), offer.coins()));
 				}
-				menuItem(menu, TRANSFER_OTHER_TEXT, () -> askTransfer(day, offer, whole));
+				menuItem(menu, offer != null ? TRANSFER_OTHER_TEXT : TRANSFER_EITHER_TEXT, () -> askTransfer(day, offer, whole));
 			}
 			menu.addSeparator();
 		}
 		menuItem(menu, RESET_FROM_TEXT, () -> startFrom(day, false));
 		return menu;
+	}
+
+	/** The one-click item for an offer of {@code gp} (1.2.3): the way it went from its sign, the size unsigned, left out while hidden. */
+	static String transferText(final long gp, final boolean hide)
+	{
+		final String amount = hide ? "" : MovementMath.formatGp(Math.abs(gp)) + " ";
+		return BankHistoryMath.sent(gp) ? SENT_TEXT + " " + amount + SENT_TAIL : GOT_TEXT + " " + amount + GOT_TAIL;
 	}
 
 	/** Puts the amount box to the player and marks {@code day} with what they typed, keeping the offer's coins flag. */

@@ -201,7 +201,7 @@ public class BankHistoryTransferViewTest
 			assertEquals("731,000,000", text(row, 3));
 			assertEquals("the corrected change: nothing moved but the transfer", "0.0%", text(row, 4));
 			assertEquals("the note's amount stands where the gp change does", "-200m", text(row, 5));
-			assertEquals("transfer", text(row, 6));
+			assertEquals("the note is minus: sent", "sent", text(row, 6));
 			final JLabel word = (JLabel) row.getComponent(6);
 			final JLabel sub = (JLabel) row.getComponent(1);
 			assertEquals(ColorScheme.BRAND_ORANGE, word.getForeground());
@@ -217,6 +217,45 @@ public class BankHistoryTransferViewTest
 		});
 	}
 
+	/** 1.2.3: the orange word follows the note's sign - minus reads "sent", plus reads "got" - and the model tells the two rows apart. */
+	@Test
+	public void theTagReadsGotForAPlusNoteAndSentForAMinusNote() throws Exception
+	{
+		onEdt(() ->
+		{
+			final BankHistorySeries rose = BankHistorySeries.of(Arrays.asList(point(SEP_19, 531 * M), point(SEP_20, 731 * M),
+				point(TODAY, 736 * M))).withTransfer(SEP_20, new BankHistorySeries.Transfer(200 * M, false));
+			final BankHistoryView got = view(rose, BankHistoryRange.ALL);
+			layOut(got, 213);
+			final BankHistoryDayRow gotRow = rowOf(got, SEP_20);
+			assertEquals(7, gotRow.getComponentCount());
+			assertEquals("vs 19 Sep,", text(gotRow, 1));
+			assertEquals("+200m", text(gotRow, 5));
+			assertEquals("got", text(gotRow, 6));
+			assertEquals(ColorScheme.BRAND_ORANGE, gotRow.getComponent(6).getForeground());
+			assertTrue(gotRow.model().marked);
+			assertFalse(gotRow.model().sent);
+
+			final BankHistoryView sentView = view(sent(), BankHistoryRange.ALL);
+			layOut(sentView, 213);
+			final BankHistoryDayRow sentRow = rowOf(sentView, SEP_20);
+			assertEquals("sent", text(sentRow, 6));
+			assertTrue(sentRow.model().marked);
+			assertTrue(sentRow.model().sent);
+			assertNotEquals("the model drives change detection: sent and got are not the same row", gotRow.model(), sentRow.model());
+
+			final BankHistoryDayRow.Model a = new BankHistoryDayRow.Model(TODAY, false, "Wed 30 Sep", "vs 29 Sep,", "731m", "731,000,000",
+				"0.0%", "-200m", 0, false, true, true);
+			final BankHistoryDayRow.Model b = new BankHistoryDayRow.Model(TODAY, false, "Wed 30 Sep", "vs 29 Sep,", "731m", "731,000,000",
+				"0.0%", "-200m", 0, false, true, false);
+			assertNotEquals(a, b);
+			assertNotEquals("and so is its hash", a.hashCode(), b.hashCode());
+			assertEquals(a, new BankHistoryDayRow.Model(TODAY, false, "Wed 30 Sep", "vs 29 Sep,", "731m", "731,000,000", "0.0%", "-200m", 0,
+				false, true, true));
+			assertEquals("an unmarked row has no word", 6, rowOf(sentView, SEP_19).getComponentCount());
+		});
+	}
+
 	@Test
 	public void withTheEyeShutTheNotesAmountIsMaskedLikeEveryGpFigure() throws Exception
 	{
@@ -228,7 +267,7 @@ public class BankHistoryTransferViewTest
 			view.show(sent(), ViewOptions.DEFAULT);
 			layOut(view, 213);
 			assertEquals(AmountMask.change(true, "-200m"), text(rowOf(view, SEP_20), 5));
-			assertEquals("the word and the percentage are not amounts", "transfer", text(rowOf(view, SEP_20), 6));
+			assertEquals("the word and the percentage are not amounts", "sent", text(rowOf(view, SEP_20), 6));
 			assertEquals("0.0%", text(rowOf(view, SEP_20), 4));
 		});
 	}
@@ -240,7 +279,7 @@ public class BankHistoryTransferViewTest
 		onEdt(() ->
 		{
 			final BankHistoryDayRow row = new BankHistoryDayRow(new BankHistoryDayRow.Model(TODAY, false, "Wed 30 Sep", "vs 01 May,",
-				"731m", "12,345,678,901", "0.0%", "-200m", 0, false, true), ChangeText.DEFAULT);
+				"731m", "12,345,678,901", "0.0%", "-200m", 0, false, true, true), ChangeText.DEFAULT);
 			row.setSize(Widgets.CONTENT_WIDTH, BankHistoryDayRow.HEIGHT);
 			HistoryViewRenderer.layoutTree(row);
 			final JLabel sub = (JLabel) row.getComponent(1);

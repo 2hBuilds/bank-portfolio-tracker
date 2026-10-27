@@ -30,7 +30,7 @@
 - **Untradeables** made from tradeable items, like a charged bow or crystal armour, count at their parts' prices.
 - **Alch-only items** stay out of the list. Tick *Show alch-only items* under the options icon beside the search box to see them. Searching finds them either way.
 - **Change size and opacity.** The *List options* menu at the end of the search box also sets how big the gp change and the % change are on each row, and how solid the gp change is (*Opacity*). The Net Worth History has its own three, and its chart remembers the range you left it on.
-- **Moved gold to your other account?** Right-click that day in the Net Worth History and pick *This was a transfer*, and the line stops showing it as a loss. *Reset history*, in its options menu, hides every day before today, and *Restore history* brings them back. Hover a chart point that is drawn at a shifted total to see what you really had that day.
+- **Moved gold to your other account?** Right-click that day in the Net Worth History and pick *Sent 200m to my other account* or *Got 200m from my other account*, and the line runs smooth instead of showing a drop or a jump. *Reset history*, in its options menu, hides every day before today, and *Restore history* brings them back. Hover a chart point that is drawn at a shifted total to see what you really had that day.
 - **Grand Exchange offers** count too: unsold items, bought items waiting to be collected, and the coins committed or waiting in your offers.
 - **Privacy.** No account or bank data is ever uploaded. The plugin only fetches prices.
 - **Streaming?** Click the eye beside the Discord icon to hide every gp amount and item quantity. Names and percentages stay.

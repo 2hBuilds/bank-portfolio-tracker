@@ -136,6 +136,18 @@ public class TransferMenuTest
 		return BankHistorySeries.of(Arrays.asList(point(SEP_25, 931 * M), point(SEP_26, 731 * M), point(TODAY, 736 * M)));
 	}
 
+	/** 531m on the 25th, 731m on the 26th, 736m today: 200m arrived on the 26th. */
+	private static BankHistorySeries got()
+	{
+		return BankHistorySeries.of(Arrays.asList(point(SEP_25, 531 * M), point(SEP_26, 731 * M), point(TODAY, 736 * M)));
+	}
+
+	/** 731m on the 25th and the 26th: the total did not move, so there is nothing to offer. */
+	private static BankHistorySeries flat()
+	{
+		return BankHistorySeries.of(Arrays.asList(point(SEP_25, 731 * M), point(SEP_26, 731 * M), point(TODAY, 736 * M)));
+	}
+
 	private static List<String> words(final JPopupMenu menu)
 	{
 		final List<String> out = new ArrayList<>();
@@ -160,7 +172,7 @@ public class TransferMenuTest
 		onEdt(() ->
 		{
 			final JPopupMenu menu = panel.historyRowMenu(SEP_26);
-			assertEquals(Arrays.asList("This was a transfer: -200m", "This was a transfer of another amount...", "-",
+			assertEquals(Arrays.asList("Sent 200m to my other account", "Another amount...", "-",
 				"Reset history from this day"), words(menu));
 			assertEquals("the sidebar's menu face", Widgets.sans(12), item(menu, 0).getFont());
 			assertNull("a menu item's words are all it has", item(menu, 0).getToolTipText());
@@ -178,10 +190,86 @@ public class TransferMenuTest
 		{
 			panel.applyHideAmounts(true);
 			final JPopupMenu menu = panel.historyRowMenu(SEP_26);
-			assertEquals("This was a transfer: " + AmountMask.change(true, "-200m"), item(menu, 0).getText());
+			assertEquals("the amount is left out, not masked", "Sent to my other account", item(menu, 0).getText());
 			item(menu, 0).doClick();
 		});
 		verify(service).markTransfer(SEP_26, -200 * M, false);
+	}
+
+	/** 1.2.3: a day that rose offers "Got 200m from my other account", the size unsigned, and marks the plus amount. */
+	@Test
+	public void aDayThatRoseOffersGotFromMyOtherAccountAndMarksThePlusAmount() throws Exception
+	{
+		open(got());
+		onEdt(() ->
+		{
+			final JPopupMenu menu = panel.historyRowMenu(SEP_26);
+			assertEquals(Arrays.asList("Got 200m from my other account", "Another amount...", "-", "Reset history from this day"),
+				words(menu));
+			item(menu, 0).doClick();
+		});
+		verify(service).markTransfer(SEP_26, 200 * M, false);
+	}
+
+	/** 1.2.3: with the eye shut the amount is left out of both one-click items, not masked, and the click still marks the exact amount. */
+	@Test
+	public void withTheEyeShutTheGotItemLeavesTheAmountOutToo() throws Exception
+	{
+		open(got());
+		onEdt(() ->
+		{
+			panel.applyHideAmounts(true);
+			final JPopupMenu menu = panel.historyRowMenu(SEP_26);
+			assertEquals("Got from my other account", item(menu, 0).getText());
+			item(menu, 0).doClick();
+		});
+		verify(service).markTransfer(SEP_26, 200 * M, false);
+		assertEquals("Sent to my other account", BankPriceMovementPanel.transferText(-200 * M, true));
+		assertEquals("Got from my other account", BankPriceMovementPanel.transferText(200 * M, true));
+		assertEquals("Sent 1.5m to my other account", BankPriceMovementPanel.transferText(-1_500_000L, false));
+		assertEquals("Got 1.5m from my other account", BankPriceMovementPanel.transferText(1_500_000L, false));
+	}
+
+	/** 1.2.3: a day whose total did not move has no offer, so no one-click item; the box item says it may be either way. */
+	@Test
+	public void aDayThatDidNotMoveHasNoOneClickItemAndTheBoxItemSaysToOrFrom() throws Exception
+	{
+		open(flat());
+		final List<Long> offered = new ArrayList<>();
+		onEdt(() ->
+		{
+			final JPopupMenu menu = panel.historyRowMenu(SEP_26);
+			assertEquals(Arrays.asList("To or from my other account...", "-", "Reset history from this day"), words(menu));
+			panel.transferPrompt = (day, initial, whole) ->
+			{
+				offered.add(initial);
+				offered.add(whole);
+				return 30 * M;
+			};
+			item(menu, 0).doClick();
+		});
+		assertEquals("nothing on offer and nothing moved", Arrays.asList(0L, 0L), offered);
+		verify(service).markTransfer(SEP_26, 30 * M, false);
+	}
+
+	/** 1.2.3: the undo item follows the stored note's sign, both ways. */
+	@Test
+	public void theUndoItemFollowsTheNotesSign() throws Exception
+	{
+		open(sent().withTransfer(SEP_26, new BankHistorySeries.Transfer(-200 * M, false)));
+		onEdt(() -> assertEquals("Not sent to my other account", item(panel.historyRowMenu(SEP_26), 0).getText()));
+		open(got().withTransfer(SEP_26, new BankHistorySeries.Transfer(200 * M, false)));
+		onEdt(() ->
+		{
+			final JPopupMenu menu = panel.historyRowMenu(SEP_26);
+			assertEquals(Arrays.asList("Not from my other account", "Change the amount...", "-", "Reset history from this day"),
+				words(menu));
+			item(menu, 0).doClick();
+		});
+		verify(service).removeTransfer(SEP_26);
+		open(sent().withTransfer(SEP_26, new BankHistorySeries.Transfer(-200 * M, true)));
+		onEdt(() -> assertEquals("a coins note reads the same way", "Not sent to my other account",
+			item(panel.historyRowMenu(SEP_26), 0).getText()));
 	}
 
 	/** The amount box answers: what was typed is marked, with the offer's flag; Cancel marks nothing. */
@@ -227,7 +315,7 @@ public class TransferMenuTest
 		onEdt(() ->
 		{
 			final JPopupMenu menu = panel.historyRowMenu(SEP_26);
-			assertEquals("This was a transfer: -200m", item(menu, 0).getText());
+			assertEquals("Sent 200m to my other account", item(menu, 0).getText());
 			item(menu, 0).doClick();
 		});
 		verify(service).markTransfer(SEP_26, -200 * M, true);
@@ -240,7 +328,7 @@ public class TransferMenuTest
 		onEdt(() ->
 		{
 			final JPopupMenu menu = panel.historyRowMenu(SEP_26);
-			assertEquals(Arrays.asList("Not a transfer", "Change the amount...", "-", "Reset history from this day"), words(menu));
+			assertEquals(Arrays.asList("Not sent to my other account", "Change the amount...", "-", "Reset history from this day"), words(menu));
 			final List<Long> offered = new ArrayList<>();
 			panel.transferPrompt = (day, initial, whole) ->
 			{
@@ -259,7 +347,7 @@ public class TransferMenuTest
 	/**
 	 * 1.2.2 verification fix: a coins note the coins switch leaves out draws no mark, but it is still the day's note - the menu is the
 	 * marked one, so the unmarked items cannot replace it with no word (which, with the switch back on, brought the 200m cliff back under
-	 * a "transfer" tag with the wrong amount), and "Change the amount..." starts from the note and keeps its coins flag. Switched back on,
+	 * a "sent" tag with the wrong amount), and "Change the amount..." starts from the note and keeps its coins flag. Switched back on,
 	 * the row is marked again and the menu is the same.
 	 */
 	@Test
@@ -272,7 +360,7 @@ public class TransferMenuTest
 		{
 			assertFalse("the row draws no mark", BankHistoryViewTest.rowOf(panel.historyView, SEP_26).model().marked);
 			final JPopupMenu menu = panel.historyRowMenu(SEP_26);
-			assertEquals(Arrays.asList("Not a transfer", "Change the amount...", "-", "Reset history from this day"), words(menu));
+			assertEquals(Arrays.asList("Not sent to my other account", "Change the amount...", "-", "Reset history from this day"), words(menu));
 			assertEquals("and so does the row's own", words(menu), words(BankHistoryViewTest.rowOf(panel.historyView, SEP_26).menu()));
 			panel.transferPrompt = (day, initial, whole) ->
 			{
@@ -292,7 +380,7 @@ public class TransferMenuTest
 		onEdt(() ->
 		{
 			assertTrue("coins counted again: the row is marked", BankHistoryViewTest.rowOf(panel.historyView, SEP_26).model().marked);
-			assertEquals(Arrays.asList("Not a transfer", "Change the amount...", "-", "Reset history from this day"),
+			assertEquals(Arrays.asList("Not sent to my other account", "Change the amount...", "-", "Reset history from this day"),
 				words(panel.historyRowMenu(SEP_26)));
 		});
 	}
@@ -318,7 +406,7 @@ public class TransferMenuTest
 		{
 			final BankHistoryDayRow marked = BankHistoryViewTest.rowOf(panel.historyView, SEP_26);
 			assertEquals(words(panel.historyRowMenu(SEP_26)), words(marked.menu()));
-			assertEquals("Not a transfer", item(marked.menu(), 0).getText());
+			assertEquals("Not sent to my other account", item(marked.menu(), 0).getText());
 			final BankHistoryDayRow carried = BankHistoryViewTest.rowOf(panel.historyView, SEP_27);
 			assertTrue(carried.model().carried);
 			assertEquals(Arrays.asList("Reset history from this day"), words(carried.menu()));

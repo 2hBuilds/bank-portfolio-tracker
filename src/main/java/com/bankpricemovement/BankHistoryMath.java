@@ -457,6 +457,15 @@ public final class BankHistoryMath
 		return whole == 0L ? null : new BankHistorySeries.Transfer(whole, false);
 	}
 
+	/**
+	 * Which way a transfer went (1.2.3), from its sign: minus left this account (sent), plus arrived (got). The one rule behind the
+	 * one-click item, the undo item and the row's tag.
+	 */
+	public static boolean sent(final long gp)
+	{
+		return gp < 0L;
+	}
+
 	/** The series cut to today; a null series reads as {@link BankHistorySeries#EMPTY}. */
 	private static BankHistorySeries cut(@Nullable final BankHistorySeries series, final LocalDate today)
 	{

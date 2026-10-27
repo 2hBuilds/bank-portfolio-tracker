@@ -49,8 +49,8 @@ import net.runelite.client.ui.ColorScheme;
  * only way to reach it.
  *
  * <p><b>A day marked as a transfer</b> (1.2.2) prints its real total, its CORRECTED change (a whole-day transfer reads "0.0%" on a
- * grey rail), the note's amount in grey where the gp change stands, and "vs 19 Sep, transfer" with the word in the brand orange (a
- * second label after the sub-line: no markup here). A right-click on any row asks the view for that day's menu ({@link #menu}).
+ * grey rail), the note's amount in grey where the gp change stands, and "vs 19 Sep, sent" or "vs 19 Sep, got" (the note's sign, 1.2.3)
+ * with the word in the brand orange (a second label after the sub-line: no markup here). A right-click on any row asks the view for that day's menu ({@link #menu}).
  *
  * <p>Built from an immutable {@link Model} of the strings it prints, so the view can keep a row whose model has not
  * changed (plan 7.2 item 9) and a test can build the widest honest row directly. Plain labels only: no
@@ -82,8 +82,9 @@ final class BankHistoryDayRow extends JPanel
 	static final int YEAR_AFTER_DAYS = 300;
 
 	static final String FIRST_READING = "first reading";
-	/** The orange word that ends a marked row's sub-line (1.2.2). */
-	static final String TRANSFER_WORD = "transfer";
+	/** The orange word that ends a marked row's sub-line (1.2.2; sent or got by the note's sign since 1.2.3). */
+	static final String SENT_WORD = "sent";
+	static final String GOT_WORD = "got";
 	static final String DAY_HEADER = "Day";
 	static final String TOTAL_HEADER = "Bank Total";
 	static final String CHANGE_HEADER = "Change";
@@ -209,15 +210,18 @@ final class BankHistoryDayRow extends JPanel
 		private final boolean first;
 		/** 1.2.2: the day is marked as a transfer and the note counts - the sub-line ends in the orange word, the gp is the note's. */
 		final boolean marked;
+		/** 1.2.3: with {@link #marked}, the note's gp is minus and the orange word reads "sent"; otherwise "got". */
+		final boolean sent;
 
 		Model(final LocalDate day, final boolean carried, final String date, final String sub, final String total,
 			final String exact, final String pct, final String gp, final int signum, final boolean first)
 		{
-			this(day, carried, date, sub, total, exact, pct, gp, signum, first, false);
+			this(day, carried, date, sub, total, exact, pct, gp, signum, first, false, false);
 		}
 
 		Model(final LocalDate day, final boolean carried, final String date, final String sub, final String total,
-			final String exact, final String pct, final String gp, final int signum, final boolean first, final boolean marked)
+			final String exact, final String pct, final String gp, final int signum, final boolean first, final boolean marked,
+			final boolean sent)
 		{
 			this.day = Objects.requireNonNull(day, "day");
 			this.carried = carried;
@@ -230,6 +234,7 @@ final class BankHistoryDayRow extends JPanel
 			this.signum = Integer.signum(signum);
 			this.first = first;
 			this.marked = marked;
+			this.sent = sent;
 		}
 
 		private static String text(@Nullable final String s)
@@ -254,7 +259,7 @@ final class BankHistoryDayRow extends JPanel
 				return false;
 			}
 			final Model m = (Model) o;
-			return carried == m.carried && signum == m.signum && first == m.first && marked == m.marked && day.equals(m.day)
+			return carried == m.carried && signum == m.signum && first == m.first && marked == m.marked && sent == m.sent && day.equals(m.day)
 				&& date.equals(m.date) && sub.equals(m.sub) && total.equals(m.total) && exact.equals(m.exact)
 				&& pct.equals(m.pct) && gp.equals(m.gp);
 		}
@@ -262,7 +267,7 @@ final class BankHistoryDayRow extends JPanel
 		@Override
 		public int hashCode()
 		{
-			return Objects.hash(day, carried, date, sub, total, exact, pct, gp, signum, first, marked);
+			return Objects.hash(day, carried, date, sub, total, exact, pct, gp, signum, first, marked, sent);
 		}
 	}
 
@@ -297,12 +302,13 @@ final class BankHistoryDayRow extends JPanel
 		final int span = change.spanDays();
 		final BankHistorySeries.Transfer note = series.transfers().get(day.day());
 		final boolean marked = note != null && note.counts((options == null ? ViewOptions.DEFAULT : options).countCash());
-		// A marked row says "transfer" instead of its span (the date already shows a gap) and prints the note where the gp change stands.
+		// A marked row says sent or got instead of its span (the date already shows a gap) and prints the note where the gp change stands.
 		final String sub = "vs " + MovementMath.formatDay(change.fromDay())
 			+ (marked ? "," : span > 1 ? ", " + span + " days" : "");
 		final long shown = marked ? note.gp() : delta;
 		return new Model(day.day(), false, date, sub, total, exact, MovementMath.formatPctCompact(change.pct(), delta),
-			shown == 0L ? "" : AmountMask.change(hideAmounts, MovementRowPanel.signedGp(shown)), Long.signum(delta), false, marked);
+			shown == 0L ? "" : AmountMask.change(hideAmounts, MovementRowPanel.signedGp(shown)), Long.signum(delta), false, marked,
+			marked && BankHistoryMath.sent(note.gp()));
 	}
 
 	/** "Tue 22 Sep" (amendment 9.14's weekday form). */
@@ -338,7 +344,7 @@ final class BankHistoryDayRow extends JPanel
 	private final JLabel pctLabel;
 	@Nullable
 	private final JLabel gpLabel;
-	/** The orange "transfer" after a marked row's sub-line; null on every other row. */
+	/** The orange "sent" or "got" after a marked row's sub-line; null on every other row. */
 	@Nullable
 	private final JLabel tagLabel;
 	/** What a right-click asks for this day's menu, or null for a row that has none. */
@@ -402,7 +408,7 @@ final class BankHistoryDayRow extends JPanel
 		exactLabel = add(Widgets.label(model.exact, EXACT_FONT, ColorScheme.LIGHT_GRAY_COLOR));
 		pctLabel = add(Widgets.label(model.pct, fit.pctFont, Widgets.move(model.signum, Widgets.Kind.FIGURE)));
 		gpLabel = add(Widgets.label(model.gp, fit.gpFont, Widgets.quietAt(model.marked ? 0 : model.signum, text.brightness())));
-		tagLabel = model.marked ? add(Widgets.label(TRANSFER_WORD, SUB_FONT, ColorScheme.BRAND_ORANGE)) : null;
+		tagLabel = model.marked ? add(Widgets.label(model.sent ? SENT_WORD : GOT_WORD, SUB_FONT, ColorScheme.BRAND_ORANGE)) : null;
 		setPreferredSize(new Dimension(Widgets.CONTENT_WIDTH, fit.height));
 	}
 

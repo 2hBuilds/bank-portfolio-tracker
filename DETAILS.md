@@ -269,14 +269,16 @@ the gp figure over the chart (which keeps its size); it starts at 69, like the *
 the *Items* tab, and nothing there moves this one.
 
 **Transfers between your accounts** (1.2.2). Sent 200m to your alt, and your main's chart fell off a cliff? Right-click that day's
-row in the list and pick *This was a transfer: -200m* - the amount is what the day's change was, taken as exactly the coins that moved
-when they were most of it - or *This was a transfer of another amount...*, which asks for it: a minus is gold that left, a plus gold
+row in the list and pick *Sent 200m to my other account* - the amount is what the day's change was, taken as exactly the coins that moved
+when they were most of it (on a day the total rose it reads *Got 200m from my other account*, and with the eye shut the amount is left
+out) - or *Another amount...*, which asks *How much did you send (-) or get (+)?* (*To or from my other account...* on a day the total
+did not move, which has no amount to offer): a minus is gold that left, a plus gold
 that arrived, and with no sign the day's own direction (*200m*, *1.5m*, *12,345,678*; the box turns red for anything else, and for
 0). The days before it are then drawn as if the gold had already moved, so the line runs smooth, and every *change* - the line over
 the chart, the card at the top, each day's row - stops counting it; every *total* stays what you really had, so the list and the card
 still read real figures. The marked day's row reads its real total, *0.0%* on a grey edge when the transfer was the whole change, the
-amount in grey where the gp change goes, and *vs 19 Sep, transfer* with the word in orange. The same works on the account that
-*received* it (a plus). Right-click a marked day for *Not a transfer* or *Change the amount...*. A transfer is a note kept beside your
+amount in grey where the gp change goes, and *vs 19 Sep, sent* (*got* for a plus) with the word in orange. The same works on the account that
+*received* it (a plus). Right-click a marked day for *Not sent to my other account* (*Not from my other account* for a plus) or *Change the amount...*. A transfer is a note kept beside your
 readings in its own small file, `notes-<account>-<profile>.json`, written only when you mark, change or remove one; no reading is
 changed or removed, and an older build simply ignores the file. A note of coins counts only while *Include coins and platinum
 tokens* is on, as the dip it explains would not show otherwise. If shifting the days would draw any of them below zero - the account

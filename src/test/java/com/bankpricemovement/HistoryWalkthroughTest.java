@@ -1648,7 +1648,7 @@ public class HistoryWalkthroughTest
 	/**
 	 * 22 (1.2.2). A transfer marked from the day row's own right-click menu, through the real panel and the real service: the one-click
 	 * amount is the day's change, the row reads as the user's mock draws it, the chart is drawn on the shifted totals while the list
-	 * keeps the real ones, "Not a transfer" puts it all back, and the amount box's answer is marked as typed. The notes are on disk
+	 * keeps the real ones, "Not from my other account" puts it all back, and the amount box's answer is marked as typed. The notes are on disk
 	 * beside the readings, and the readings are not touched. (The menu's cut asks a modal question, which this harness's client would
 	 * really show: it is pinned in {@link TransferMenuTest} with the question answered by a stand-in.)
 	 */
@@ -1674,13 +1674,13 @@ public class HistoryWalkthroughTest
 			((javax.swing.JMenuItem) menu.getComponent(0)).doClick();
 		});
 		settle();
-		assertEquals("This was a transfer: +50k", items[0]);
+		assertEquals("Got 50k from my other account", items[0]);
 		assertEquals(new BankHistorySeries.Transfer(50_000L, false), onDisk(MAIN).transfers().get(TUE_29));
 		assertEquals("the readings are untouched", before.points(), onDisk(MAIN).points());
 		assertEquals("the series in memory is the file's", onDisk(MAIN), panel.status().bankHistory());
 
 		final List<String> marked = row("Tue 29 Sep");
-		assertEquals(Arrays.asList("Tue 29 Sep", "vs 28 Sep,", "6.15m", "6,150,000", "0.0%", "+50k", "transfer"), marked);
+		assertEquals(Arrays.asList("Tue 29 Sep", "vs 28 Sep,", "6.15m", "6,150,000", "0.0%", "+50k", "got"), marked);
 		assertEquals("the day before keeps its real total", "6,100,000", row("Mon 28 Sep").get(3));
 		final BankHistoryChart chart = find(BankHistoryChart.class);
 		final long[] drawn = new long[2];
@@ -1694,7 +1694,7 @@ public class HistoryWalkthroughTest
 
 		onEdt(() -> ((javax.swing.JMenuItem) panel.historyRowMenu(TUE_29).getComponent(0)).doClick());
 		settle();
-		assertTrue("Not a transfer", onDisk(MAIN).transfers().isEmpty());
+		assertTrue("the note is taken off", onDisk(MAIN).transfers().isEmpty());
 		assertEquals(Arrays.asList("Tue 29 Sep", "vs 28 Sep", "6.15m", "6,150,000", "+0.8%", "+50k"), row("Tue 29 Sep"));
 
 		final long[] offered = new long[2];
@@ -1731,14 +1731,14 @@ public class HistoryWalkthroughTest
 		settle();
 		assertEquals(new BankHistorySeries.Transfer(50_000L, false), onDisk(MAIN).transfers().get(TUE_29));
 		assertEquals("drawn at once, with the bank still open",
-			Arrays.asList("Tue 29 Sep", "vs 28 Sep,", "6.15m", "6,150,000", "0.0%", "+50k", "transfer"), row("Tue 29 Sep"));
+			Arrays.asList("Tue 29 Sep", "vs 28 Sep,", "6.15m", "6,150,000", "0.0%", "+50k", "got"), row("Tue 29 Sep"));
 	}
 
 	@Test
 	public void s23b_takingATransferOffIsDrawnWhileTheBankIsOpen() throws Exception
 	{
 		openHistoryWithTheBankOpen(true);
-		onEdt(() -> assertEquals("Not a transfer", menuItem(panel.historyRowMenu(TUE_29), 0).getText()));
+		onEdt(() -> assertEquals("Not from my other account", menuItem(panel.historyRowMenu(TUE_29), 0).getText()));
 		onEdt(() -> menuItem(panel.historyRowMenu(TUE_29), 0).doClick());
 		settle();
 		assertTrue(onDisk(MAIN).transfers().isEmpty());
@@ -1943,7 +1943,7 @@ public class HistoryWalkthroughTest
 		{
 			assertTrue(service.markTransfer(TUE_29, 50_000L, false));
 			settle();
-			assertEquals("transfer", row("Tue 29 Sep").get(6));
+			assertEquals("got", row("Tue 29 Sep").get(6));
 		}
 		hold(true, false, 0);
 	}
@@ -2662,8 +2662,8 @@ public class HistoryWalkthroughTest
 	/**
 	 * 25a. A coins transfer, then the coins switch off. The note no longer counts (the row draws no mark), but it is still the day's note:
 	 * its menu is the marked one, so the player cannot replace it with an items amount without saying so, and "Change the amount..." starts
-	 * from the note. Before the fix the unmarked "This was a transfer: +200k" overwrote the coins note, and with the coins back on the
-	 * 100m cliff came back under a "transfer" tag on the wrong amount.
+	 * from the note. Before the fix the unmarked one-click item for +200k overwrote the coins note, and with the coins back on the
+	 * 100m cliff came back under a "sent" tag on the wrong amount.
 	 */
 	@Test
 	public void s25a_aCoinsNoteIsNotReplacedByTheMenuWhileTheCoinsSwitchIsOff() throws Exception
@@ -2686,10 +2686,10 @@ public class HistoryWalkthroughTest
 			menuItem(menu, 0).doClick();
 		});
 		settle();
-		assertEquals("coins on: the one click offers the coins that left", "This was a transfer: -100m", first.get(0));
+		assertEquals("coins on: the one click offers the coins that left", "Sent 100m to my other account", first.get(0));
 		final BankHistorySeries.Transfer note = new BankHistorySeries.Transfer(-100_000_000L, true);
 		assertEquals(note, onDisk(MAIN).transfers().get(TUE_29));
-		assertEquals("transfer", row("Tue 29 Sep").get(6));
+		assertEquals("sent", row("Tue 29 Sep").get(6));
 
 		config.saveOptions(config.options.withCountCash(false));
 		settle();
@@ -2698,7 +2698,7 @@ public class HistoryWalkthroughTest
 		onEdt(() ->
 		{
 			final javax.swing.JPopupMenu menu = panel.historyRowMenu(TUE_29);
-			assertEquals(Arrays.asList("Not a transfer", "Change the amount...", "-", "Reset history from this day"), menuWords(menu));
+			assertEquals(Arrays.asList("Not sent to my other account", "Change the amount...", "-", "Reset history from this day"), menuWords(menu));
 			panel.transferPrompt = (day, initial, whole) ->
 			{
 				offered[0] = initial;
@@ -2713,7 +2713,7 @@ public class HistoryWalkthroughTest
 		config.saveOptions(config.options.withCountCash(true));
 		settle();
 		final List<String> again = row("Tue 29 Sep");
-		assertEquals("the coins back on: the cliff is corrected again, under the right amount", "transfer", again.get(6));
+		assertEquals("the coins back on: the cliff is corrected again, under the right amount", "sent", again.get(6));
 		assertEquals("-100m", again.get(5));
 		assertEquals(note, onDisk(MAIN).transfers().get(TUE_29));
 	}
@@ -2744,7 +2744,7 @@ public class HistoryWalkthroughTest
 		final List<String> marked = row("Tue 29 Sep");
 		assertEquals("a share of the 201m the row's own figures start from, not +200% of the 1m", "+0.9%", marked.get(4));
 		assertEquals("the note stands where the gp change does", "+200m", marked.get(5));
-		assertEquals("transfer", marked.get(6));
+		assertEquals("got", marked.get(6));
 		assertEquals("the real total is kept", "203,000,000", marked.get(3));
 	}
 

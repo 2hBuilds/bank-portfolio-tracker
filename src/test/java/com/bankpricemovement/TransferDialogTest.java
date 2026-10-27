@@ -122,12 +122,12 @@ public class TransferDialogTest
 				words.add(((JLabel) c).getText());
 			}
 		}
-		assertEquals(java.util.Arrays.asList("Sun 20 Sep was a transfer", "Amount moved to or from another account:",
-			"(that day: -200m)"), words);
+		assertEquals(java.util.Arrays.asList("Sun 20 Sep", "How much did you send (-) or get (+)?", "(whole day: -200m)"), words);
 		assertEquals("prefilled with the amount on offer", "-200m", dialog.box.getText());
 		assertEquals("OK", dialog.okButton.getText());
 		assertEquals("Cancel", dialog.cancelButton.getText());
-		assertEquals("Amount moved to or from another account:", TransferDialog.ASK);
+		assertEquals("How much did you send (-) or get (+)?", TransferDialog.ASK);
+		assertEquals("the window's title", "My other account", TransferDialog.TITLE);
 	}
 
 	@Test
@@ -138,7 +138,7 @@ public class TransferDialogTest
 		boolean caption = false;
 		for (final Component c : all(dialog.content))
 		{
-			caption |= c instanceof JLabel && "(that day: +4m)".equals(((JLabel) c).getText());
+			caption |= c instanceof JLabel && "(whole day: +4m)".equals(((JLabel) c).getText());
 		}
 		assertTrue(caption);
 		dialog.box.setText("3m");
@@ -155,7 +155,7 @@ public class TransferDialogTest
 		boolean masked = false;
 		for (final Component c : all(dialog.content))
 		{
-			masked |= c instanceof JLabel && ("(that day: " + AmountMask.change(true, "-200m") + ")").equals(((JLabel) c).getText());
+			masked |= c instanceof JLabel && ("(whole day: " + AmountMask.change(true, "-200m") + ")").equals(((JLabel) c).getText());
 		}
 		assertTrue(masked);
 		dialog.box.setText("75m");
@@ -238,7 +238,7 @@ public class TransferDialogTest
 		{
 			final JDialog dialog = (JDialog) SwingUtilities.getWindowAncestor(made[0].content);
 			assertNotNull("the controls are hosted in a dialog", dialog);
-			assertEquals("This was a transfer", dialog.getTitle());
+			assertEquals("My other account", dialog.getTitle());
 			assertEquals(Dialog.ModalityType.DOCUMENT_MODAL, dialog.getModalityType());
 			assertEquals(WindowConstants.DISPOSE_ON_CLOSE, dialog.getDefaultCloseOperation());
 			assertFalse("built, not shown", dialog.isVisible());
