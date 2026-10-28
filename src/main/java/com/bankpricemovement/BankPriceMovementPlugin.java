@@ -7,6 +7,7 @@ import javax.annotation.Nullable;
 import javax.inject.Inject;
 import javax.inject.Named;
 import javax.swing.SwingUtilities;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -472,6 +473,8 @@ public class BankPriceMovementPlugin extends Plugin
 	private boolean bondsOpen;
 	/** Whether the "Old School Bonds" screen is on show (1.2.4, rule 3c): its totals give the pouch when "Your Bonds" is shut. */
 	private boolean bondMainOpen;
+	/** A bond screen read threw (1.2.4): no bond screen is read again until the plugin starts again. */
+	private boolean bondReadsOff;
 	/** Whether a real bank read was made since this login (1.2.4, rule 3c): the held bank is then one the pouch sum can lean on. */
 	private boolean bankReadThisLogin;
 	/** The last bond pouch pair handed to the service, and for whom (release 1.2.4); 0 / -1 before any. */
@@ -546,6 +549,7 @@ public class BankPriceMovementPlugin extends Plugin
 		log.info("bank-portfolio-tracker: 2h Bank Portfolio Tracker {} starting on RuneLite {}", Version.CURRENT,
 			RuneLiteProperties.getVersion());
 		warnedKinds.clear();
+		bondReadsOff = false;
 		placeholdersLogged = false;
 		// RuneLite reuses the plugin instance across a disable/enable, so last run's memo would swallow this
 		// run's first login (the service below is a new one and has been told nothing).
@@ -1628,13 +1632,26 @@ public class BankPriceMovementPlugin extends Plugin
 	@Subscribe
 	public void onGameTick(GameTick tick)
 	{
-		if (bondsOpen)
+		if ((bondsOpen || bondMainOpen) && !bondReadsOff)
 		{
-			readBondPouch();
-		}
-		else if (bondMainOpen)
-		{
-			readBondTotals();
+			// 1.2.4 (rsbfox on the Hub pull request: the bond screen is being changed): a read that throws is reported once
+			// and the bond screens are left alone until the plugin starts again; the saved pouch stands.
+			try
+			{
+				if (bondsOpen)
+				{
+					readBondPouch();
+				}
+				else
+				{
+					readBondTotals();
+				}
+			}
+			catch (RuntimeException e)
+			{
+				bondReadsOff = true;
+				log.warn("bank-portfolio-tracker: reading a bond screen failed; bond screens are not read until restart", e);
+			}
 		}
 		if (!bankOpen)
 		{
@@ -1672,8 +1689,16 @@ public class BankPriceMovementPlugin extends Plugin
 			bondsOpen = false;
 			return;
 		}
-		final int tradeable = BankReader.pouchCount(tradeableColumn, ItemID.OSRS_BOND);
-		final int untradeable = BankReader.pouchCount(untradeableColumn, ItemID.OSRS_BOND_UNTRADEABLE);
+		final Item[] inventory = inventoryOf(c);
+		if (inventory == null)
+		{
+			return;
+		}
+		final List<BankItem> none = new ArrayList<>();
+		final int tradeable = BankReader.pouchCount(tradeableColumn, ItemID.OSRS_BOND,
+			bondsIn(inventory, none, ItemID.OSRS_BOND));
+		final int untradeable = BankReader.pouchCount(untradeableColumn, ItemID.OSRS_BOND_UNTRADEABLE,
+			bondsIn(inventory, none, ItemID.OSRS_BOND_UNTRADEABLE));
 		if (tradeable < 0 || untradeable < 0)
 		{
 			return;

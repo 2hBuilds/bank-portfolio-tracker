@@ -4864,6 +4864,7 @@ public class BankPriceMovementWiringTest
 	public void theBondPouchIsReadWhileTheYourBondsScreenIsOpenAndHandedOnlyWhenItChanges() throws Exception
 	{
 		final BankRig r = new BankRig();
+		r.carrying(new Item[]{new Item(PriceServiceTest.BOND, 9), new Item(PriceServiceTest.BOND_UNTRADEABLE, 8)}, NOTHING);
 		final Widget tradeable = bondColumn(PriceServiceTest.BOND, 9, 3, 7);
 		final Widget untradeable = bondColumn(PriceServiceTest.BOND_UNTRADEABLE, 8, 2, 6);
 		when(r.client.getWidget(InterfaceID.BondManagement.BONDS_TRADEABLE)).thenReturn(tradeable);
@@ -4880,19 +4881,19 @@ public class BankPriceMovementWiringTest
 		r.plugin.onGameTick(new GameTick());
 		verify(r.service, times(1)).setPouch(anyLong(), anyString(), anyInt(), anyInt(), anyLong());
 
-		// A change in the pouch is handed on once more; a change in the inventory or the bank column is not a pouch change.
-		final Widget otherPlaces = bondColumn(PriceServiceTest.BOND, 1, 3, 1);
+		// A change in the pouch is handed on once more; a change in the bank column is not a pouch change.
+		final Widget otherPlaces = bondColumn(PriceServiceTest.BOND, 9, 3, 1);
 		when(r.client.getWidget(InterfaceID.BondManagement.BONDS_TRADEABLE)).thenReturn(otherPlaces);
 		r.plugin.onGameTick(new GameTick());
 		verify(r.service, times(1)).setPouch(anyLong(), anyString(), anyInt(), anyInt(), anyLong());
-		final Widget emptied = bondColumn(PriceServiceTest.BOND, 1, 0, 1);
+		final Widget emptied = bondColumn(PriceServiceTest.BOND, 9, 0, 1);
 		when(r.client.getWidget(InterfaceID.BondManagement.BONDS_TRADEABLE)).thenReturn(emptied);
 		r.plugin.onGameTick(new GameTick());
 		verify(r.service, times(1)).setPouch(eq(ACCOUNT), anyString(), eq(0), eq(2), anyLong());
 
 		// The screen closes: nothing more is read, whatever the screen would say.
 		r.plugin.onWidgetClosed(closed(InterfaceID.BOND_MANAGEMENT, true));
-		final Widget refilled = bondColumn(PriceServiceTest.BOND, 1, 5, 1);
+		final Widget refilled = bondColumn(PriceServiceTest.BOND, 9, 5, 1);
 		when(r.client.getWidget(InterfaceID.BondManagement.BONDS_TRADEABLE)).thenReturn(refilled);
 		r.plugin.onGameTick(new GameTick());
 		verify(r.service, times(2)).setPouch(anyLong(), anyString(), anyInt(), anyInt(), anyLong());
@@ -4906,6 +4907,7 @@ public class BankPriceMovementWiringTest
 	public void anOpenYourBondsScreenPutsAWrongHeldPouchRight() throws Exception
 	{
 		final BankRig r = new BankRig();
+		r.carrying(new Item[]{new Item(PriceServiceTest.BOND, 9), new Item(PriceServiceTest.BOND_UNTRADEABLE, 8)}, NOTHING);
 		final Widget tradeable = bondColumn(PriceServiceTest.BOND, 9, 3, 7);
 		final Widget untradeable = bondColumn(PriceServiceTest.BOND_UNTRADEABLE, 8, 2, 6);
 		when(r.client.getWidget(InterfaceID.BondManagement.BONDS_TRADEABLE)).thenReturn(tradeable);
@@ -4933,6 +4935,7 @@ public class BankPriceMovementWiringTest
 	public void aNewPouchCountReReadsTheInventoryInTheSamePass() throws Exception
 	{
 		final BankRig r = new BankRig();
+		r.carrying(new Item[]{new Item(PriceServiceTest.BOND, 9), new Item(PriceServiceTest.BOND_UNTRADEABLE, 8)}, NOTHING);
 		final Widget tradeable = bondColumn(PriceServiceTest.BOND, 9, 3, 7);
 		final Widget untradeable = bondColumn(PriceServiceTest.BOND_UNTRADEABLE, 8, 2, 6);
 		when(r.client.getWidget(InterfaceID.BondManagement.BONDS_TRADEABLE)).thenReturn(tradeable);
@@ -4940,13 +4943,15 @@ public class BankPriceMovementWiringTest
 		when(r.service.bank()).thenReturn(new BankSnapshot(new ArrayList<BankItem>(), 1L, ACCOUNT, (String) field(r.plugin, "profileType")));
 		r.plugin.onWidgetLoaded(loaded(InterfaceID.BOND_MANAGEMENT));
 
+		// Each look asks for the inventory once (the layout check: a column must show the bonds it holds); a new pouch count
+		// asks once more, for the carried re-read.
 		r.plugin.onGameTick(new GameTick());
-		verify(r.client, times(1)).getItemContainer(InventoryID.INV);
+		verify(r.client, times(2)).getItemContainer(InventoryID.INV);
 		// The service now holds the pair it was handed, as the real one does.
 		when(r.service.bank()).thenReturn(new BankSnapshot(new ArrayList<BankItem>(), 1L, ACCOUNT,
 			(String) field(r.plugin, "profileType")).withPouch(3, 2, 2L));
 		r.plugin.onGameTick(new GameTick());
-		verify(r.client, times(1)).getItemContainer(InventoryID.INV);
+		verify(r.client, times(3)).getItemContainer(InventoryID.INV);
 	}
 
 	/**
@@ -4957,6 +4962,7 @@ public class BankPriceMovementWiringTest
 	public void shutDownForgetsTheLastPouchHanded() throws Exception
 	{
 		final BankRig r = new BankRig();
+		r.carrying(new Item[]{new Item(PriceServiceTest.BOND, 9), new Item(PriceServiceTest.BOND_UNTRADEABLE, 8)}, NOTHING);
 		final Widget tradeable = bondColumn(PriceServiceTest.BOND, 9, 3, 7);
 		final Widget untradeable = bondColumn(PriceServiceTest.BOND_UNTRADEABLE, 8, 2, 6);
 		when(r.client.getWidget(InterfaceID.BondManagement.BONDS_TRADEABLE)).thenReturn(tradeable);
@@ -4971,6 +4977,39 @@ public class BankPriceMovementWiringTest
 		assertEquals(0L, (long) field(r.plugin, "pouchHandedKey"));
 		assertEquals(-1, (int) field(r.plugin, "pouchHandedTradeable"));
 		assertEquals(-1, (int) field(r.plugin, "pouchHandedUntradeable"));
+	}
+
+	/**
+	 * rsbfox on the Hub pull request (2026-10-28: the bond screen is being changed): a column whose inventory picture does not
+	 * show the bonds the inventory holds is no read - the columns may have moved - and the saved pouch stands.
+	 */
+	@Test
+	public void aYourBondsScreenThatDoesNotLookAsExpectedHandsNothingOver() throws Exception
+	{
+		final BankRig r = new BankRig();
+		r.carrying(new Item[]{new Item(PriceServiceTest.BOND, 4)}, NOTHING);
+		final Widget tradeable = bondColumn(PriceServiceTest.BOND, 9, 3, 7);
+		final Widget untradeable = bondColumn(PriceServiceTest.BOND_UNTRADEABLE, 0, 2, 6);
+		when(r.client.getWidget(InterfaceID.BondManagement.BONDS_TRADEABLE)).thenReturn(tradeable);
+		when(r.client.getWidget(InterfaceID.BondManagement.BONDS_UNTRADEABLE)).thenReturn(untradeable);
+		r.plugin.onWidgetLoaded(loaded(InterfaceID.BOND_MANAGEMENT));
+		r.plugin.onGameTick(new GameTick());
+		verify(r.service, never()).setPouch(anyLong(), anyString(), anyInt(), anyInt(), anyLong());
+	}
+
+	/** A bond screen read that throws is reported once and no bond screen is read again until the plugin starts again. */
+	@Test
+	public void aBondScreenReadThatThrowsStopsTheReadsUntilRestart() throws Exception
+	{
+		final BankRig r = new BankRig();
+		r.carrying(NOTHING, NOTHING);
+		when(r.client.getWidget(InterfaceID.BondManagement.BONDS_TRADEABLE)).thenThrow(new IllegalStateException("changed"));
+		r.plugin.onWidgetLoaded(loaded(InterfaceID.BOND_MANAGEMENT));
+		r.plugin.onGameTick(new GameTick());
+		r.plugin.onGameTick(new GameTick());
+		r.plugin.onGameTick(new GameTick());
+		verify(r.client, times(1)).getWidget(InterfaceID.BondManagement.BONDS_TRADEABLE);
+		verify(r.service, never()).setPouch(anyLong(), anyString(), anyInt(), anyInt(), anyLong());
 	}
 
 	/** The screen is announced but its columns are not there (it is closing): nothing is handed over and the plugin stops looking. */
@@ -5005,9 +5044,15 @@ public class BankPriceMovementWiringTest
 	/** A rig with the carried read answered, an empty bank held, and "Your Bonds" showing this pouch pair. */
 	private BankRig bondsRig(final int pouchTradeable, final int pouchUntradeable) throws Exception
 	{
+		return bondsRig(pouchTradeable, pouchUntradeable, 0);
+	}
+
+	/** The same, the screen's inventory column showing {@code carriedTradeable} tradeable bonds. */
+	private BankRig bondsRig(final int pouchTradeable, final int pouchUntradeable, final int carriedTradeable) throws Exception
+	{
 		final BankRig r = new BankRig();
 		r.answerCarriedReads();
-		final Widget tradeable = bondColumn(PriceServiceTest.BOND, 0, pouchTradeable, 0);
+		final Widget tradeable = bondColumn(PriceServiceTest.BOND, carriedTradeable, pouchTradeable, 0);
 		final Widget untradeable = bondColumn(PriceServiceTest.BOND_UNTRADEABLE, 0, pouchUntradeable, 0);
 		when(r.client.getWidget(InterfaceID.BondManagement.BONDS_TRADEABLE)).thenReturn(tradeable);
 		when(r.client.getWidget(InterfaceID.BondManagement.BONDS_UNTRADEABLE)).thenReturn(untradeable);
@@ -5030,7 +5075,7 @@ public class BankPriceMovementWiringTest
 	@Test
 	public void aDepositedBondLeavesTheInventoryReadWhileTheBondScreenIsOpen() throws Exception
 	{
-		final BankRig r = bondsRig(1, 0);
+		final BankRig r = bondsRig(1, 0, 1);
 		r.carrying(new Item[]{new Item(PriceServiceTest.BOND, 1)}, NOTHING);
 		r.plugin.onWidgetLoaded(loaded(InterfaceID.BOND_MANAGEMENT));
 		r.plugin.onGameTick(new GameTick());
@@ -5235,7 +5280,7 @@ public class BankPriceMovementWiringTest
 	public void yourBondsWinsOverOldSchoolBonds() throws Exception
 	{
 		final BankRig r = totalsRig(totals(5, 1));
-		final Widget exactTradeable = bondColumn(PriceServiceTest.BOND, 0, 7, 0);
+		final Widget exactTradeable = bondColumn(PriceServiceTest.BOND, 1, 7, 0);
 		final Widget exactUntradeable = bondColumn(PriceServiceTest.BOND_UNTRADEABLE, 0, 0, 0);
 		when(r.client.getWidget(InterfaceID.BondManagement.BONDS_TRADEABLE)).thenReturn(exactTradeable);
 		when(r.client.getWidget(InterfaceID.BondManagement.BONDS_UNTRADEABLE)).thenReturn(exactUntradeable);

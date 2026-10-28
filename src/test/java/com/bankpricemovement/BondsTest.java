@@ -493,32 +493,38 @@ public class BondsTest
 		final Widget stranger = picture(bond + 1, WidgetPositionMode.ABSOLUTE_LEFT, 80, 99);
 		final Widget[][] orders = {
 			{pouch, inventory, bank}, {bank, inventory, pouch}, {inventory, bank, pouch}, {stranger, bank, pouch, inventory},
-			{inventory, stranger, pouch},
+			{inventory, stranger, pouch, bank},
 		};
 		for (final Widget[] order : orders)
 		{
-			assertEquals(3, BankReader.pouchCount(column(order), bond));
+			assertEquals(3, BankReader.pouchCount(column(order), bond, 5));
 		}
-		assertEquals("another bond's column is read for that bond", 99,
-			BankReader.pouchCount(column(pouch, inventory, bank, stranger), bond + 1));
 		assertEquals("an empty pouch reads 0 - never the inventory's count", 0, BankReader.pouchCount(column(inventory,
-			picture(bond, WidgetPositionMode.ABSOLUTE_LEFT, 80, 0), bank), bond));
+			picture(bond, WidgetPositionMode.ABSOLUTE_LEFT, 80, 0), bank), bond, 5));
 	}
 
 	@Test
 	public void aColumnThatCannotBeReadIsNoCount()
 	{
 		final int bond = PriceServiceTest.BOND;
-		assertEquals(-1, BankReader.pouchCount(null, bond));
-		assertEquals(-1, BankReader.pouchCount(column(), bond));
+		assertEquals(-1, BankReader.pouchCount(null, bond, 0));
+		assertEquals(-1, BankReader.pouchCount(column(), bond, 0));
 		final Widget noChildren = mock(Widget.class);
-		assertEquals(-1, BankReader.pouchCount(noChildren, bond));
+		assertEquals(-1, BankReader.pouchCount(noChildren, bond, 0));
+		final Widget pouch = picture(bond, WidgetPositionMode.ABSOLUTE_LEFT, 80, 3);
+		final Widget inventory = picture(bond, WidgetPositionMode.ABSOLUTE_RIGHT, 46, 5);
+		final Widget bank = picture(bond, WidgetPositionMode.ABSOLUTE_RIGHT, 5, 7);
 		assertEquals("no left-anchored picture: no pouch", -1, BankReader.pouchCount(
-			column(picture(bond, WidgetPositionMode.ABSOLUTE_RIGHT, 46, 5), picture(bond, WidgetPositionMode.ABSOLUTE_RIGHT, 5, 3)),
-			bond));
+			column(inventory, bank, picture(bond, WidgetPositionMode.ABSOLUTE_RIGHT, 20, 3)), bond, 5));
 		assertEquals("two left-anchored pictures: it is not known which it is", -1, BankReader.pouchCount(
-			column(picture(bond, WidgetPositionMode.ABSOLUTE_LEFT, 80, 5), picture(bond, WidgetPositionMode.ABSOLUTE_LEFT, 40, 3)),
-			bond));
+			column(pouch, picture(bond, WidgetPositionMode.ABSOLUTE_LEFT, 40, 5), bank), bond, 5));
+		// rsbfox on the Hub pull request (2026-10-28): the screen is being changed, so a column that does not look as it does
+		// today is no count.
+		assertEquals("two pictures, not three", -1, BankReader.pouchCount(column(pouch, inventory), bond, 5));
+		assertEquals("four pictures, not three", -1, BankReader.pouchCount(column(pouch, inventory, bank,
+			picture(bond, WidgetPositionMode.ABSOLUTE_RIGHT, 20, 1)), bond, 5));
+		assertEquals("no picture shows the bonds the inventory holds: the columns may have moved", -1,
+			BankReader.pouchCount(column(pouch, inventory, bank), bond, 4));
 	}
 
 	/** The "Old School Bonds" totals: the picture whose item is the bond, found by item whatever the child order. */

@@ -371,18 +371,17 @@ public class BankReader
 	}
 
 	/**
-	 * How many of one bond the BOND POUCH holds, read off one column of the "Your Bonds" screen (release 1.2.4,
-	 * CLIENT THREAD). A column ({@code BONDS_TRADEABLE}, {@code BONDS_UNTRADEABLE}) is a row of pictures of the bond, one
-	 * per place: the pouch's (anchored left, under the screen's gold sack) and, anchored right, the inventory's and then
-	 * the bank's (live check 2026-10-28: container 536, the pouch, held the bond the LEFT picture counted). The pouch is
-	 * the one left-anchored picture of the bond - found by item and position and never by child index, which the screen
-	 * does not promise to keep - and its {@code itemQuantity} is the count.
+	 * The bond pouch's count in one column of the "Your Bonds" screen (1.2.4, CLIENT THREAD): the one picture of the bond
+	 * anchored LEFT. Read only while the column looks as it does today (rsbfox on the Hub pull request, 2026-10-28: the
+	 * screen is being changed): exactly three pictures of the bond - pouch, inventory, bank - one of them anchored left, and
+	 * one of the other two showing the bonds the inventory holds now. Anything else is no count, never a guess.
 	 *
-	 * @param column the column's widget, or null when the screen is not loaded
-	 * @param bondId the bond the column shows
-	 * @return the count, or -1 when the pouch cannot be found (no column, no left-anchored picture, or more than one)
+	 * @param column  the column widget, or null
+	 * @param bondId  the bond the column shows
+	 * @param carried how many of that bond the inventory holds now
+	 * @return the count, or -1 when the column does not look as expected
 	 */
-	static int pouchCount(@Nullable final Widget column, final int bondId)
+	static int pouchCount(@Nullable final Widget column, final int bondId, final int carried)
 	{
 		final Widget[] children = column == null ? null : column.getDynamicChildren();
 		if (children == null)
@@ -390,19 +389,29 @@ public class BankReader
 			return -1;
 		}
 		Widget pouch = null;
+		int pictures = 0;
+		boolean carriedShown = false;
 		for (final Widget child : children)
 		{
-			if (child == null || child.getItemId() != bondId || child.getXPositionMode() != WidgetPositionMode.ABSOLUTE_LEFT)
+			if (child == null || child.getItemId() != bondId)
 			{
 				continue;
 			}
-			if (pouch != null)
+			pictures++;
+			if (child.getXPositionMode() != WidgetPositionMode.ABSOLUTE_LEFT)
+			{
+				carriedShown |= Math.max(0, child.getItemQuantity()) == carried;
+			}
+			else if (pouch != null)
 			{
 				return -1;
 			}
-			pouch = child;
+			else
+			{
+				pouch = child;
+			}
 		}
-		return pouch == null ? -1 : Math.max(0, pouch.getItemQuantity());
+		return pouch == null || pictures != 3 || !carriedShown ? -1 : Math.max(0, pouch.getItemQuantity());
 	}
 
 	/**
