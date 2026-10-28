@@ -94,7 +94,7 @@ import org.slf4j.LoggerFactory;
 		// The version, appended as a constant expression (an annotation takes nothing else): the Hub page and the
 		// client's plugin list then say which build a player is reading about. Version.CURRENT is bumped by hand.
 		+ " (v" + Version.CURRENT + ")",
-	tags = {"bank", "price", "prices", "ge", "grand exchange", "guide price", "portfolio", "wiki", "flipping", "money"},
+	tags = {"bank", "price", "prices", "ge", "grand exchange", "guide price", "portfolio", "wiki", "flipping", "money", "bonds"},
 	// The Plugin Hub slug, which is what Plugin.getPluginDirectory() names the data directory after and what it
 	// refuses to run without (addendum AD). PriceStore.DIR_NAME is the one spelling of it.
 	internalName = PriceStore.DIR_NAME,

@@ -1,7 +1,6 @@
 <p align="center"><img width="800" src="images/title.png" alt="2h Bank Portfolio Tracker"></p>
 
-<p align="center">- See at a glance which of your items are rising or falling.<br>
-- Track and display your net worth over time.</p>
+<p align="center">See which of your items are rising or falling, and track your net worth over time.</p>
 
 <table width="100%">
 <tr>
@@ -9,33 +8,27 @@
 
 ## What it shows
 
-- **Bank value.** Everything you own, price displayed, and how much it changed over the last day, week, month, 3 months or 6 months.
-- **Items tab.** Every item you own, what it is worth, and its change in gp and %. Green went up, red went down, biggest movers first.
-- **Net Worth History tab.** Your net worth saved once a day, shown as a chart and a list of days.
+- **Bank value.** Everything you own and how much it moved over 1, 7, 30, 90 or 180 days.
+- **Items.** Every item's worth and its change in gp and %.
+- **Net Worth History.** Your total once a day, as a chart and a list.
 
-## Quick guide
+## Features
 
-1. **Start.** Open your bank once. After that it works with the bank closed.
-2. **Refresh.** The list updates when you close the bank. If Refresh glows, click it to update now.
-3. **Switch tabs.** Items or Net Worth History, under the bank value.
-4. **Pick a window.** 1d, 7d, 30d, 90d or 180d, on the card.
-5. **Sort.** By % change, gp change, item price or stack price. Click the lit one again to flip.
-6. **Filter.** Items over 100k, 1m or 10m, or your own min and max. Or type part of a name in the search box above the list.
-7. **Open an item.** Click any item to see its exact figures. Click it again to close.
-8. **Settings.** Click the settings icon to include or exclude your inventory, worn items, Grand Exchange offers, coins and alch-only untradeables, to turn live prices on or off, and to pick your up, down and chart colours or a colour preset.
+- **Counts everything:** bank, inventory, worn items, Grand Exchange offers, coins and bonds. Untradeables made from tradeable items count at their parts' prices.
+- **Live prices:** guide prices plus the last 24 hours of trades.
+- **Sort, search and filter:** by change, price or stack value; by name; 100k+, 1m+, 10m+ or your own range.
+- **Your colours:** presets, including one for colour-blind players, or your own.
+- **Streamer mode:** the eye hides every gp amount.
+- **No lag while banking:** your bank is read once per visit.
+- **Every account apart:** each keeps its own bank and history.
+- **Private:** nothing about your account is uploaded.
 
-## Good to know
+## Quick start
 
-- **Prices** are the Grand Exchange guide price, updated several times a day, plus the last 24 hours' trades for every item that has traded, with a small word under the % when a move is less certain.
-- **Untradeables** made from tradeable items, like a charged bow or crystal armour, count at their parts' prices.
-- **Alch-only items** stay out of the list. Tick *Show alch-only items* under the options icon beside the search box to see them. Searching finds them either way.
-- **Change size and opacity.** The *List options* menu at the end of the search box also sets how big the gp change and the % change are on each row, and how solid the gp change is (*Opacity*). The Net Worth History has its own three, and its chart remembers the range you left it on.
-- **Moved gold to your other account?** Right-click that day in the Net Worth History and pick *Sent 200m to my other account* or *Got 200m from my other account*, and the line runs smooth instead of showing a drop or a jump. *Reset history*, in its options menu, hides every day before today, and *Restore history* brings them back. Hover a chart point that is drawn at a shifted total to see what you really had that day.
-- **Grand Exchange offers** count too: unsold items, bought items waiting to be collected, and the coins committed or waiting in your offers.
-- **Bonds** count, tradeable and untradeable, in your bank, inventory, offers and bond pouch. An untradeable bond counts at 90% of a tradeable one. Open the *Your Bonds* screen to load the pouch. Turn them off with *Include bonds*.
-- **Privacy.** No account or bank data is ever uploaded. The plugin only fetches prices.
-- **Streaming?** Click the eye beside the Discord icon to hide every gp amount and item quantity. Names and percentages stay.
-- **Something wrong?** Tell us in the Discord.
+1. **Open your bank once.** After that it works with the bank closed.
+2. **Click an item** to see its exact figures.
+3. **Settings icon:** colours, and under *Prices and what counts*, what is counted.
+4. **Bonds:** open *Your Bonds* once to count your pouch. A gold dot shows until you do.
 
 </td>
 <td width="28"></td>
@@ -43,7 +36,7 @@
 
 <br>
 
-<img width="242" src="images/sidebar.png" alt="The Items tab: bank value on top, a search box, every item below">
+<img width="242" src="images/sidebar.png" alt="The Items tab">
 
 </td>
 </tr>
@@ -58,12 +51,11 @@
 
 ## Net Worth History
 
-- **Your account's net worth over time.** Displayed as a chart and a list of days. Saved once a day, on each day you log in.
-- **Chart.** Pick 7d, 30d, 90d or all. Rest the pointer on the line to read that day's total.
-- **Every day listed.** Each day's total and its change, newest first.
-- **Follows your settings.** Turn coins off and the whole chart redraws.
-- **Your colours.** The chart is the 2h gold by default. Pick any colour, or let it follow your up and down colours.
-- **Opens where you left it.** The sidebar opens on the tab you used last.
+- **A chart of your total**, 7d, 30d, 90d or all. Rest the pointer on the line to read a day.
+- **Every day listed**, newest first, with its change.
+- **Follows your settings.** Turn coins off and the chart redraws.
+- **Moved gold to your other account?** Right-click that day and pick *Sent 200m to my other account* or *Got 200m from my other account*, and the line runs smooth.
+- **Start over** with *Reset history*, and undo it with *Restore history*.
 
 </td>
 <td width="28"></td>
@@ -71,7 +63,7 @@
 
 <br>
 
-<img width="242" src="images/history.png" alt="The Net Worth History tab: a chart of your bank's total over a list of days">
+<img width="242" src="images/history.png" alt="The Net Worth History tab">
 
 </td>
 </tr>
@@ -81,4 +73,4 @@
 
 <p align="center"><strong>Found a bug or have an idea?</strong> Join the <a href="https://discord.gg/nsam4CfWzf">2hBuilds Discord</a>.</p>
 
-<sub>Want every figure and setting explained? Read the <a href="https://github.com/2hBuilds/bank-portfolio-tracker/blob/main/DETAILS.md">full details</a>.</sub>
+<sub>Every figure and setting explained: <a href="https://github.com/2hBuilds/bank-portfolio-tracker/blob/main/DETAILS.md">full details</a>.</sub>
