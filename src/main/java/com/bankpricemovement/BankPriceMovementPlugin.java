@@ -7,6 +7,7 @@ import javax.annotation.Nullable;
 import javax.inject.Inject;
 import javax.inject.Named;
 import javax.swing.SwingUtilities;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -25,6 +26,8 @@ import net.runelite.api.events.WidgetClosed;
 import net.runelite.api.events.WidgetLoaded;
 import net.runelite.api.gameval.InterfaceID;
 import net.runelite.api.gameval.InventoryID;
+import net.runelite.api.gameval.ItemID;
+import net.runelite.api.widgets.Widget;
 import net.runelite.client.RuneLiteProperties;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
@@ -147,6 +150,8 @@ public class BankPriceMovementPlugin extends Plugin
 	 * either way: the offers come from the client, not from the wiki.
 	 */
 	static final String COUNT_GRAND_EXCHANGE_KEY = "countGrandExchange";
+	/** Release 1.2.4: the bonds switch's key. */
+	static final String COUNT_BONDS_KEY = "countBonds";
 	/**
 	 * Addendum Z's three price presets (Z1), which landed as the fourteenth stored key and is the thirteenth since
 	 * addendum AO - and the only one of this plugin's that
@@ -463,6 +468,16 @@ public class BankPriceMovementPlugin extends Plugin
 	 * {@link #startUp()} / {@link #shutDown()} ({@link #resetBankHold}).
 	 */
 	private volatile ExchangeOffers lastOffers;
+	/** Whether the "Your Bonds" screen is on show (release 1.2.4): set by its load, cleared by its close - the only time the pouch is read. */
+	private boolean bondsOpen;
+	/** Whether the "Old School Bonds" screen is on show (1.2.4, rule 3c): its totals give the pouch when "Your Bonds" is shut. */
+	private boolean bondMainOpen;
+	/** Whether a real bank read was made since this login (1.2.4, rule 3c): the held bank is then one the pouch sum can lean on. */
+	private boolean bankReadThisLogin;
+	/** The last bond pouch pair handed to the service, and for whom (release 1.2.4); 0 / -1 before any. */
+	private long pouchHandedKey;
+	private int pouchHandedTradeable = -1;
+	private int pouchHandedUntradeable = -1;
 
 	/**
 	 * AS: bank events held rather than read, and reads made, since startUp - the two counters the dev bridge echoes
@@ -1115,8 +1130,17 @@ public class BankPriceMovementPlugin extends Plugin
 		final PriceService s = service;
 		final BankReader reader = bankReader;
 		final Client c = client;
-		if (s == null || reader == null || c == null || !BankReader.isBank(event))
+		if (s == null || reader == null || c == null)
 		{
+			return;
+		}
+		if (!BankReader.isBank(event))
+		{
+			// 1.2.4, rule 3b: while a bond screen is on show the inventory is followed; at any other time it is not read here.
+			if (event != null && event.getContainerId() == InventoryID.INV && (bondsOpen || bondMainOpen))
+			{
+				readCarriedOnClientThread();
+			}
 			return;
 		}
 		final ItemContainer container = event.getItemContainer();
@@ -1163,6 +1187,16 @@ public class BankPriceMovementPlugin extends Plugin
 			// tells the live run to look for this line, and "unchanged" now means all three containers.
 			log.debug("bank-portfolio-tracker: bank hold - bank event unchanged since the last read (open={}),"
 				+ " skipped", bankOpen);
+			// 1.2.4: the held bank IS the bank on screen, so it counts as read this login for "Old School Bonds" (rule 3c).
+			// A logout dropped lastBank; the service kept this account's bank (F2), which is the read this matched.
+			if (lastBank == null && s != null)
+			{
+				lastBank = ownBank(s.bank(), hash);
+			}
+			if (lastBank != null)
+			{
+				bankReadThisLogin = true;
+			}
 			return;
 		}
 		if (bankOpen && readBefore)
@@ -1242,6 +1276,7 @@ public class BankPriceMovementPlugin extends Plugin
 			log.info("bank-portfolio-tracker: {} bank placeholders with a quantity skipped", placeholders);
 		}
 		lastBank = snapshot;
+		bankReadThisLogin = true;
 		s.setBank(snapshot);
 		lastFingerprint = fingerprint(items, inventory, worn);
 		lastFingerprintHash = hash;
@@ -1519,6 +1554,16 @@ public class BankPriceMovementPlugin extends Plugin
 	@Subscribe
 	public void onWidgetLoaded(WidgetLoaded event)
 	{
+		if (event.getGroupId() == InterfaceID.BOND_MANAGEMENT)
+		{
+			bondsOpen = true;
+			return;
+		}
+		if (event.getGroupId() == InterfaceID.BOND_MAIN)
+		{
+			bondMainOpen = true;
+			return;
+		}
 		if (event.getGroupId() != InterfaceID.BANKMAIN)
 		{
 			return;
@@ -1545,6 +1590,17 @@ public class BankPriceMovementPlugin extends Plugin
 	@Subscribe
 	public void onWidgetClosed(WidgetClosed event)
 	{
+		if (event.getGroupId() == InterfaceID.BOND_MANAGEMENT || event.getGroupId() == InterfaceID.BOND_MAIN)
+		{
+			if (event.isUnload())
+			{
+				bondsOpen &= event.getGroupId() != InterfaceID.BOND_MANAGEMENT;
+				bondMainOpen &= event.getGroupId() != InterfaceID.BOND_MAIN;
+				// 1.2.4, rule 3b: once more at the close, for an inventory event that came first or not at all.
+				readCarriedOnClientThread();
+			}
+			return;
+		}
 		if (event.getGroupId() != InterfaceID.BANKMAIN)
 		{
 			return;
@@ -1572,6 +1628,14 @@ public class BankPriceMovementPlugin extends Plugin
 	@Subscribe
 	public void onGameTick(GameTick tick)
 	{
+		if (bondsOpen)
+		{
+			readBondPouch();
+		}
+		else if (bondMainOpen)
+		{
+			readBondTotals();
+		}
 		if (!bankOpen)
 		{
 			return;
@@ -1584,6 +1648,121 @@ public class BankPriceMovementPlugin extends Plugin
 		log.debug("bank-portfolio-tracker: bank hold - the bank interface is gone and no close arrived for it,"
 			+ " treating it as closed");
 		closeBank("bank interface gone");
+	}
+
+	/**
+	 * CLIENT THREAD. While the "Your Bonds" screen is open ({@link #bondsOpen}), one look per game tick at the bond pouch (release 1.2.4):
+	 * the count of each bond in it, read off the screen ({@link BankReader#pouchCount}) and handed to the service
+	 * only when it differs from the pair handed last for this account. Nothing is read, and nothing guessed, while the
+	 * screen is shut; the count stands as of the last look, saved with the bank. Costs the client nothing while the
+	 * screen is shut.
+	 */
+	private void readBondPouch()
+	{
+		final Client c = client;
+		final PriceService s = service;
+		if (c == null || s == null || c.getGameState() != GameState.LOGGED_IN)
+		{
+			return;
+		}
+		final Widget tradeableColumn = c.getWidget(InterfaceID.BondManagement.BONDS_TRADEABLE);
+		final Widget untradeableColumn = c.getWidget(InterfaceID.BondManagement.BONDS_UNTRADEABLE);
+		if (tradeableColumn == null || untradeableColumn == null)
+		{
+			bondsOpen = false;
+			return;
+		}
+		final int tradeable = BankReader.pouchCount(tradeableColumn, ItemID.OSRS_BOND);
+		final int untradeable = BankReader.pouchCount(untradeableColumn, ItemID.OSRS_BOND_UNTRADEABLE);
+		if (tradeable < 0 || untradeable < 0)
+		{
+			return;
+		}
+		final long hash = rememberAccount();
+		if (!BankSnapshot.isAccount(hash))
+		{
+			return;
+		}
+		handPouch(s, hash, tradeable, untradeable);
+	}
+
+	/**
+	 * CLIENT THREAD. While "Old School Bonds" is open ({@link #bondMainOpen}), one look per game tick at the bond totals it
+	 * shows (1.2.4, rule 3c): the pouch is each total less what the inventory holds now and what the bank held at its
+	 * last read this login. Handed on only when both results are 0 or more and that bank was a real read made since
+	 * this login with no change held; "Your Bonds" is the exact source and is read instead while it is open.
+	 */
+	private void readBondTotals()
+	{
+		final Client c = client;
+		final PriceService s = service;
+		if (c == null || s == null || c.getGameState() != GameState.LOGGED_IN)
+		{
+			return;
+		}
+		final Widget box = c.getWidget(InterfaceID.BondMain.QUANTITY_CONTAINER);
+		if (box == null)
+		{
+			bondMainOpen = false;
+			return;
+		}
+		final int totalTradeable = BankReader.bondTotal(box, ItemID.OSRS_BOND);
+		final int totalUntradeable = BankReader.bondTotal(box, ItemID.OSRS_BOND_UNTRADEABLE);
+		final long hash = rememberAccount();
+		if (totalTradeable == 0 && totalUntradeable == 0)
+		{
+			// No bonds anywhere: the pouch is empty whatever the bank held (the user's live test, 2026-10-28).
+			handPouch(s, hash, 0, 0);
+			return;
+		}
+		final BankSnapshot bank = ownBank(lastBank, hash);
+		final Item[] inventory = inventoryOf(c);
+		if (bank == null || inventory == null || !bankReadThisLogin || bankPending)
+		{
+			return;
+		}
+		final int tradeable = totalTradeable - bondsIn(inventory, bank.items, ItemID.OSRS_BOND);
+		final int untradeable = totalUntradeable - bondsIn(inventory, bank.items, ItemID.OSRS_BOND_UNTRADEABLE);
+		if (tradeable >= 0 && untradeable >= 0)
+		{
+			handPouch(s, hash, tradeable, untradeable);
+		}
+	}
+
+	/** One bond's count in the live inventory and the held bank together. */
+	private static int bondsIn(final Item[] inventory, final List<BankItem> bank, final int bondId)
+	{
+		int n = 0;
+		for (final Item item : inventory)
+		{
+			n += item != null && item.getId() == bondId ? item.getQuantity() : 0;
+		}
+		for (final BankItem item : bank)
+		{
+			n += item != null && item.id == bondId ? item.quantity : 0;
+		}
+		return n;
+	}
+
+	/** CLIENT THREAD. Hands a pouch pair to the service unless it is the pair handed last for this account. */
+	private void handPouch(final PriceService s, final long hash, final int tradeable, final int untradeable)
+	{
+		final long key = hash * 31L + Objects.hashCode(profileType);
+		// The screen is the truth while it is open: a pair handed before is handed again when the held bank no longer says so,
+		// or has never had a pouch read (an empty pouch is a read pouch; it clears the hint).
+		final BankSnapshot held = ownBank(s.bank(), hash);
+		if (key == pouchHandedKey && tradeable == pouchHandedTradeable && untradeable == pouchHandedUntradeable
+			&& (held == null || held.pouchAtMillis > 0L && held.pouchTradeable == tradeable
+				&& held.pouchUntradeable == untradeable))
+		{
+			return;
+		}
+		pouchHandedKey = key;
+		pouchHandedTradeable = tradeable;
+		pouchHandedUntradeable = untradeable;
+		// A bond moved between the inventory and the pouch changes both; the inventory is read in the same pass.
+		readCarriedOnClientThread();
+		s.setPouch(hash, profileType, tradeable, untradeable, System.currentTimeMillis());
 	}
 
 	/**
@@ -1627,6 +1806,9 @@ public class BankPriceMovementPlugin extends Plugin
 			readBankOnce(state + " with a bank change held");
 		}
 		bankOpen = false;
+		bondsOpen = false;
+		bondMainOpen = false;
+		bankReadThisLogin = false;
 		endHold();
 		// 1.0.9 part 3: the offers belong to the account that has just left, and the read above was the last that
 		// could want them. Cleared AFTER it, so the logout read still sees them.
@@ -1780,6 +1962,9 @@ public class BankPriceMovementPlugin extends Plugin
 	private void resetBankHold()
 	{
 		bankOpen = false;
+		bondsOpen = false;
+		bondMainOpen = false;
+		bankReadThisLogin = false;
 		endHold();
 		lastFingerprint = null;
 		lastFingerprintHash = 0L;
@@ -1787,6 +1972,10 @@ public class BankPriceMovementPlugin extends Plugin
 		lastOffers = null;
 		heldEvents = 0;
 		bankReads = 0;
+		// Release 1.2.4: a new run's service has been handed no pouch, so the same count must be handed again.
+		pouchHandedKey = 0L;
+		pouchHandedTradeable = -1;
+		pouchHandedUntradeable = -1;
 	}
 
 	/**
@@ -2252,7 +2441,7 @@ public class BankPriceMovementPlugin extends Plugin
 	/**
 	 * The settings menu's five stored keys (Q3, T1, Y1, 1.0.9 part 3) as one immutable value - the plugin's only
 	 * reader of {@code countCash} / {@code countUntradeables} / {@code livePrices} / {@code countInventory} /
-	 * {@code countGrandExchange}, and so the one place the config and {@link ViewOptions}
+	 * {@code countGrandExchange} / {@code countBonds}, and so the one place the config and {@link ViewOptions}
 	 * are put in step. The panel's {@code Prefs.loadOptions}, the value {@link #startUp()} opens on, and what
 	 * {@link #onConfigChanged} rebuilds when one of the five is written anywhere. Addendum AO took a sixth,
 	 * {@code holdingOnRows}, off this list and out of the group altogether (AO1), and release 1.2.0 a seventh,
@@ -2267,7 +2456,7 @@ public class BankPriceMovementPlugin extends Plugin
 	ViewOptions optionsFromConfig()
 	{
 		return new ViewOptions(config.countCash(), config.countUntradeables(), config.livePrices(),
-			config.countInventory(), config.countGrandExchange());
+			config.countInventory(), config.countGrandExchange(), config.countBonds());
 	}
 
 	/**
@@ -2286,7 +2475,7 @@ public class BankPriceMovementPlugin extends Plugin
 	{
 		return COUNT_CASH_KEY.equals(key) || COUNT_UNTRADEABLES_KEY.equals(key)
 			|| LIVE_PRICES_KEY.equals(key) || COUNT_INVENTORY_KEY.equals(key)
-			|| COUNT_GRAND_EXCHANGE_KEY.equals(key);
+			|| COUNT_GRAND_EXCHANGE_KEY.equals(key) || COUNT_BONDS_KEY.equals(key);
 	}
 
 	/**
@@ -2687,6 +2876,8 @@ public class BankPriceMovementPlugin extends Plugin
 				// 1.0.9 part 3. The Grand Exchange offers come from the client the same way, and it is stored
 				// with the rest before the service is told below.
 				saveColour(COUNT_GRAND_EXCHANGE_KEY, options.countGrandExchange());
+				// Release 1.2.4: the bonds switch, stored with the rest before the service is told below.
+				saveColour(COUNT_BONDS_KEY, options.countBonds());
 				// ...and then, whether or not there was a manager to write to, the half the guard just
 				// suppressed. The gear's check item paints the card and the rows itself, but the sums
 				// behind the bank value are the service's (Q4/Q5), and the ConfigChanged that would have carried

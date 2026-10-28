@@ -273,12 +273,12 @@ public final class BankHistoryView extends JPanel
 		chart.setAmountsHidden(hide);
 	}
 
-	/** Whether two option sets give every total the same figure: the five switches {@code valueFor} reads. */
+	/** Whether two option sets give every total the same figure: the six switches {@code valueFor} reads. */
 	private static boolean sameTotals(final ViewOptions a, final ViewOptions b)
 	{
 		return a.countCash() == b.countCash() && a.countUntradeables() == b.countUntradeables()
 			&& a.countInventory() == b.countInventory() && a.countGrandExchange() == b.countGrandExchange()
-			&& a.livePrices() == b.livePrices();
+			&& a.countBonds() == b.countBonds() && a.livePrices() == b.livePrices();
 	}
 
 	/**

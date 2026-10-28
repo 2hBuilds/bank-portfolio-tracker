@@ -254,12 +254,13 @@ public class ChartColourTest
 	}
 
 	/**
-	 * The menu's "Single chart colour" row: after the caption, which is component 23 with or without the days item (24 before 1.2.0 took the hover item out; 21 before
-	 * 1.1.0 part J put a rule above the colour rows and Slot 1 and its save row under the presets; 17 before part H).
+	 * The menu's "Single chart colour" row: after the caption, which is component 19 with or without the days item (24 before
+	 * 1.2.4 moved the six switches into one list; 23 before 1.2.0 took the hover item out; 21 before 1.1.0 part J put a rule
+	 * above the colour rows and Slot 1 and its save row under the presets; 17 before part H).
 	 */
 	private SwatchRow chartRow()
 	{
-		final Component c = panel.heroMenu().getComponent(24);
+		final Component c = panel.heroMenu().getComponent(20);
 		assertTrue(String.valueOf(c), c instanceof SwatchRow);
 		return (SwatchRow) c;
 	}
@@ -421,7 +422,7 @@ public class ChartColourTest
 		onEdt(() ->
 		{
 			final Component[] c = panel.heroMenu().getComponents();
-			assertEquals(26, c.length);
+			assertEquals("release 1.2.4 moved the six switches into one list: 22, not 27", 22, c.length);
 			assertFalse(c[0] instanceof JSeparator || c[0] instanceof javax.swing.AbstractButton);
 			assertTrue(c[1] instanceof JSeparator);
 			assertSame(panel.showValueItem(), c[2]);
@@ -435,32 +436,38 @@ public class ChartColourTest
 			assertTrue(c[9] instanceof SetRow && c[10] instanceof SetRow && c[11] instanceof SetRow
 				&& c[12] instanceof SetRow && c[13] instanceof SetRow);
 			assertTrue(c[14] instanceof JSeparator);
-			assertSame(panel.livePricesItem(), c[15]);
-			assertSame(panel.countCashItem(), c[16]);
-			assertSame(panel.countUntradeablesItem(), c[17]);
-			assertSame(panel.countInventoryItem(), c[18]);
-			assertSame(panel.countGrandExchangeItem(), c[19]);
-			assertTrue(c[20] instanceof JSeparator);
-			assertSame(panel.presetRow(), c[21]);
-			assertTrue(c[22] instanceof JSeparator);
-			assertEquals("Net worth chart", find(c[23], JLabel.class).getText());
-			assertTrue(c[24] instanceof SwatchRow);
-			assertEquals("Single chart colour", ((SwatchRow) c[24]).getText());
-			assertEquals(BankPriceMovementPanel.SINGLE_CHART_COLOUR_TEXT, ((SwatchRow) c[24]).getText());
-			assertEquals(Widgets.sans(12), c[24].getFont());
-			assertSame(panel.okRow(), c[25]);
+			// Release 1.2.4: the six switches (live prices, coins, untradeables, inventory, Grand Exchange, bonds) are the
+			// one list's items, in that order.
+			assertTrue(c[15] instanceof javax.swing.JMenu);
+			final Component[] six = ((javax.swing.JMenu) c[15]).getMenuComponents();
+			assertEquals(6, six.length);
+			assertSame(panel.livePricesItem(), six[0]);
+			assertSame(panel.countCashItem(), six[1]);
+			assertSame(panel.countUntradeablesItem(), six[2]);
+			assertSame(panel.countInventoryItem(), six[3]);
+			assertSame(panel.countGrandExchangeItem(), six[4]);
+			assertEquals(BankPriceMovementPanel.COUNT_BONDS_TEXT, ((JCheckBoxMenuItem) six[5]).getText());
+			assertTrue(c[16] instanceof JSeparator);
+			assertSame(panel.presetRow(), c[17]);
+			assertTrue(c[18] instanceof JSeparator);
+			assertEquals("Net worth chart", find(c[19], JLabel.class).getText());
+			assertTrue(c[20] instanceof SwatchRow);
+			assertEquals("Single chart colour", ((SwatchRow) c[20]).getText());
+			assertEquals(BankPriceMovementPanel.SINGLE_CHART_COLOUR_TEXT, ((SwatchRow) c[20]).getText());
+			assertEquals(Widgets.sans(12), c[20].getFont());
+			assertSame(panel.okRow(), c[21]);
 		});
 
 		load(withLegacyDays());
 		onEdt(() ->
 		{
 			final Component[] c = panel.heroMenu().getComponents();
-			assertEquals(27, c.length);
-			assertEquals("Net worth chart", find(c[23], JLabel.class).getText());
-			assertEquals("Single chart colour", ((SwatchRow) c[24]).getText());
-			assertEquals(BankPriceMovementPanel.LEGACY_TEXT, ((JCheckBoxMenuItem) c[25]).getText());
-			assertFalse("an ordinary check item, not a swatch row", c[25] instanceof SwatchRow);
-			assertSame("the OK row is still last", panel.okRow(), c[26]);
+			assertEquals(23, c.length);
+			assertEquals("Net worth chart", find(c[19], JLabel.class).getText());
+			assertEquals("Single chart colour", ((SwatchRow) c[20]).getText());
+			assertEquals(BankPriceMovementPanel.LEGACY_TEXT, ((JCheckBoxMenuItem) c[21]).getText());
+			assertFalse("an ordinary check item, not a swatch row", c[21] instanceof SwatchRow);
+			assertSame("the OK row is still last", panel.okRow(), c[22]);
 		});
 	}
 
@@ -902,10 +909,10 @@ public class ChartColourTest
 
 	// ---------------------------------------------------------------- C7: the version
 
-	/** C7: this build is 1.1.0. */
+	/** C7: this build is 1.2.4. */
 	@Test
 	public void c7_theVersionIs110()
 	{
-		assertEquals("1.2.3", Version.CURRENT);
+		assertEquals("1.2.4", Version.CURRENT);
 	}
 }

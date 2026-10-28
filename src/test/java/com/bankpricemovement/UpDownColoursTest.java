@@ -283,7 +283,7 @@ public class UpDownColoursTest
 			assertTrue("the colour presets' five rows", menu[9] instanceof SetRow && menu[10] instanceof SetRow
 				&& menu[11] instanceof SetRow && menu[12] instanceof SetRow && menu[13] instanceof SetRow);
 			assertTrue("then the rule that opens the view group", menu[14] instanceof JSeparator);
-			assertSame(panel.livePricesItem(), menu[15]);
+			assertTrue("release 1.2.4: the list of six stands there", menu[15] instanceof javax.swing.JMenu);
 			assertEquals(Widgets.sans(12), menu[6].getFont());
 			assertEquals(Widgets.sans(12), menu[7].getFont());
 

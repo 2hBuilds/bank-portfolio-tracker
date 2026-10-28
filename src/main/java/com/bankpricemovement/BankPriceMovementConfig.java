@@ -438,7 +438,7 @@ public interface BankPriceMovementConfig extends Config
 	 * and is the first check item in the gear's last group.
 	 */
 	@ConfigItem(
-		position = 14,
+		position = 15,
 		keyName = "livePrices",
 		name = "Use live prices",
 		description = "Actively traded items are priced from the last 24 hours of trades; a word under the percentage says"
@@ -464,7 +464,7 @@ public interface BankPriceMovementConfig extends Config
 	 * tab that is showing now, and the service is never told.
 	 */
 	@ConfigItem(
-		position = 15,
+		position = 16,
 		keyName = "startTab",
 		name = "Last tab",
 		description = "The tab the sidebar showed last. It opens there next time.",
@@ -487,7 +487,7 @@ public interface BankPriceMovementConfig extends Config
 	 * told, because what is drawn changes and no figure does.
 	 */
 	@ConfigItem(
-		position = 16,
+		position = 17,
 		keyName = "includeLegacyHistory",
 		name = "Include days before v1.0.9",
 		description = "Show net worth readings recorded before v1.0.9 on the Net Worth History tab."
@@ -513,7 +513,7 @@ public interface BankPriceMovementConfig extends Config
 	 * never is - what is drawn changes and no figure does.
 	 */
 	@ConfigItem(
-		position = 17,
+		position = 18,
 		keyName = "upColour",
 		name = "Up colour",
 		description = "The colour of a rise, on both tabs."
@@ -530,7 +530,7 @@ public interface BankPriceMovementConfig extends Config
 	 * mark and edge keep the deeper red they have always had.
 	 */
 	@ConfigItem(
-		position = 18,
+		position = 19,
 		keyName = "downColour",
 		name = "Down colour",
 		description = "The colour of a fall, on both tabs."
@@ -553,7 +553,7 @@ public interface BankPriceMovementConfig extends Config
 	 * no figure does.
 	 */
 	@ConfigItem(
-		position = 19,
+		position = 20,
 		keyName = "singleChartColour",
 		name = "Single chart colour",
 		description = "Draw the net worth chart in one colour instead of the up and down colours."
@@ -570,7 +570,7 @@ public interface BankPriceMovementConfig extends Config
 	 * opens RuneLite's colour picker, and it is read on the same road as the switch above.
 	 */
 	@ConfigItem(
-		position = 20,
+		position = 21,
 		keyName = "chartColour",
 		name = "Chart colour",
 		description = "The net worth chart's colour while Single chart colour is on."
@@ -596,7 +596,7 @@ public interface BankPriceMovementConfig extends Config
 	 * drawn changes and no figure does. The eye's own press comes back that way only when it was not the sidebar's write.
 	 */
 	@ConfigItem(
-		position = 21,
+		position = 22,
 		keyName = "hideAmounts",
 		name = "Hide amounts",
 		description = "Hide every gp amount and item quantity in the sidebar, keeping item names and percentages."
@@ -620,7 +620,7 @@ public interface BankPriceMovementConfig extends Config
 	 * rows are drawn changes and no figure does.
 	 */
 	@ConfigItem(
-		position = 22,
+		position = 23,
 		keyName = "showAlchRows",
 		name = "Show alch-only items",
 		description = "Lists untradeables with no tradeable parts, at alch value. Searching finds them either way."
@@ -640,7 +640,7 @@ public interface BankPriceMovementConfig extends Config
 	 * ({@link BankPriceMovementPlugin#isSlotKey}) of the colours' shape: the panel is told and the service never is.
 	 */
 	@ConfigItem(
-		position = 23,
+		position = 24,
 		keyName = "slotUpColour",
 		name = "Slot 1 up colour",
 		description = "The colour of a rise saved in the colour presets' Slot 1.",
@@ -656,7 +656,7 @@ public interface BankPriceMovementConfig extends Config
 	 * Classic's fall, the lifted red ({@code Widgets.MOVE_DOWN_TEXT}). Hidden for the same reason.
 	 */
 	@ConfigItem(
-		position = 24,
+		position = 25,
 		keyName = "slotDownColour",
 		name = "Slot 1 down colour",
 		description = "The colour of a fall saved in the colour presets' Slot 1.",
@@ -677,7 +677,7 @@ public interface BankPriceMovementConfig extends Config
 	 * colours' shape - the panel is told and the service never is, because what is drawn changes and no figure does.
 	 */
 	@ConfigItem(
-		position = 25,
+		position = 26,
 		keyName = "gpChangeSize",
 		name = "GP change size",
 		description = "How big the gp change is on each Items row.",
@@ -690,7 +690,7 @@ public interface BankPriceMovementConfig extends Config
 
 	/** Release 1.2.1, the second: {@link #gpChangeSize}'s twin for the percentage change. Hidden for the same reason. */
 	@ConfigItem(
-		position = 26,
+		position = 27,
 		keyName = "pctChangeSize",
 		name = "Percent change size",
 		description = "How big the percent change is on each Items row.",
@@ -710,7 +710,7 @@ public interface BankPriceMovementConfig extends Config
 	 * missing default into the profile), so start-up moves a stored 55 to 69 once ({@link BankPriceMovementPlugin#switchOpacityTo69}).
 	 */
 	@ConfigItem(
-		position = 27,
+		position = 28,
 		keyName = "gpBrightness",
 		name = "GP change opacity",
 		description = "How solid the gp change is, from 20 to 100. 100 is the same colour as the percent change.",
@@ -728,7 +728,7 @@ public interface BankPriceMovementConfig extends Config
 	 * History tab's three are INDEPENDENT of the Items tab's: a size chosen on one tab never moves the other.
 	 */
 	@ConfigItem(
-		position = 28,
+		position = 29,
 		keyName = "historyGpChangeSize",
 		name = "History GP change size",
 		description = "How big the gp change is on each Net Worth History day.",
@@ -741,7 +741,7 @@ public interface BankPriceMovementConfig extends Config
 
 	/** Release 1.2.1 part 2, position 29: the History day rows' percentage, 11, 14, 16 or 17 px bold ({@link ChangeSize#historyPctPx}). */
 	@ConfigItem(
-		position = 29,
+		position = 30,
 		keyName = "historyPctChangeSize",
 		name = "History percent change size",
 		description = "How big the percent change is on each Net Worth History day.",
@@ -758,7 +758,7 @@ public interface BankPriceMovementConfig extends Config
 	 * holds 55 here too and start-up moves it with the Items one ({@link BankPriceMovementPlugin#switchOpacityTo69}).
 	 */
 	@ConfigItem(
-		position = 30,
+		position = 31,
 		keyName = "historyGpOpacity",
 		name = "History GP change opacity",
 		description = "How solid the gp change is on the Net Worth History tab, from 20 to 100.",
@@ -777,7 +777,7 @@ public interface BankPriceMovementConfig extends Config
 	 * stored word that is not one of the four reads as nothing. Hidden: the chart's bar is the control.
 	 */
 	@ConfigItem(
-		position = 31,
+		position = 32,
 		keyName = "historyRange",
 		name = "History chart range",
 		description = "The range the Net Worth History chart was left on: 7d, 30d, 90d or all.",
@@ -786,5 +786,23 @@ public interface BankPriceMovementConfig extends Config
 	default String historyRange()
 	{
 		return "";
+	}
+
+	/**
+	 * Release 1.2.4, position 14 (directly after the Grand Exchange switch, the later items one place down): whether bonds count - the tradeable Old School Bond and the untradeable one, in the
+	 * bank, the inventory, the Grand Exchange offers and the bond pouch. The switch sits ON TOP of the place switches:
+	 * a bond in the inventory also needs "Include inventory and worn items", one in an offer also needs "Include Grand
+	 * Exchange offers"; the bank and the pouch need only this one. An untradeable bond is valued at 90% of a tradeable one.
+	 */
+	@ConfigItem(
+		position = 14,
+		keyName = "countBonds",
+		name = "Include bonds",
+		description = "Bonds count in the bank value and are listed with the bank's stacks, including the bond pouch."
+			+ " An untradeable bond counts at 90% of a tradeable one."
+	)
+	default boolean countBonds()
+	{
+		return true;
 	}
 }

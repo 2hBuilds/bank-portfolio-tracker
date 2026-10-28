@@ -1159,28 +1159,34 @@ public class BankPriceMovementWiringTest
 		set(plugin, "config", config);
 		// A mocked proxy answers false for everything until it is told otherwise - here, every switch off, which
 		// is a combination the interface defaults do not give (four of them default on).
-		assertEquals(new ViewOptions(false, false, false, false, false), plugin.optionsFromConfig());
+		assertEquals(new ViewOptions(false, false, false, false, false, false), plugin.optionsFromConfig());
 
 		when(config.countCash()).thenReturn(true);
 		when(config.livePrices()).thenReturn(true);
 		when(config.countInventory()).thenReturn(true);
 		when(config.countGrandExchange()).thenReturn(true);
+		assertEquals("release 1.2.4: the bonds switch is READ - still off here", new ViewOptions(true, false, true, true,
+			true, false), plugin.optionsFromConfig());
+		when(config.countBonds()).thenReturn(true);
 		assertEquals(ViewOptions.DEFAULT, plugin.optionsFromConfig());
 
 		when(config.countUntradeables()).thenReturn(true);
-		assertEquals(new ViewOptions(true, true, true, true, true), plugin.optionsFromConfig());
+		assertEquals(new ViewOptions(true, true, true, true, true, true), plugin.optionsFromConfig());
 
 		// ...and each of the late arrivals is READ rather than assumed: moving only one moves only it.
 		when(config.livePrices()).thenReturn(false);
-		assertEquals(new ViewOptions(true, true, false, true, true), plugin.optionsFromConfig());
+		assertEquals(new ViewOptions(true, true, false, true, true, true), plugin.optionsFromConfig());
 		when(config.countInventory()).thenReturn(false);
 		assertEquals("1.0.9 part 3: the inventory moves alone, the Grand Exchange switch stays as stored",
-			new ViewOptions(true, true, false, false, true), plugin.optionsFromConfig());
+			new ViewOptions(true, true, false, false, true, true), plugin.optionsFromConfig());
 		when(config.countGrandExchange()).thenReturn(false);
-		assertEquals(new ViewOptions(true, true, false, false, false), plugin.optionsFromConfig());
+		assertEquals(new ViewOptions(true, true, false, false, false, true), plugin.optionsFromConfig());
 		// ...and the Grand Exchange switch on its own, with the inventory off: neither reads through the other.
 		when(config.countGrandExchange()).thenReturn(true);
-		assertEquals(new ViewOptions(true, true, false, false, true), plugin.optionsFromConfig());
+		assertEquals(new ViewOptions(true, true, false, false, true, true), plugin.optionsFromConfig());
+		// ...and the bonds switch alone, with every other one as it stood.
+		when(config.countBonds()).thenReturn(false);
+		assertEquals(new ViewOptions(true, true, false, false, true, false), plugin.optionsFromConfig());
 	}
 
 	/**
@@ -1220,7 +1226,9 @@ public class BankPriceMovementWiringTest
 			BankPriceMovementPlugin.COUNT_INVENTORY_KEY,
 			// 1.0.9 part 3: the Grand Exchange switch is the fifth passenger and takes the same road, for the same
 			// reason - it changes which STACKS exist and what each one's quantity is, so it must reach the service.
-			BankPriceMovementPlugin.COUNT_GRAND_EXCHANGE_KEY})
+			BankPriceMovementPlugin.COUNT_GRAND_EXCHANGE_KEY,
+			// Release 1.2.4: the bonds switch is the sixth passenger, and changes which STACKS exist for the same reason.
+			BankPriceMovementPlugin.COUNT_BONDS_KEY})
 		{
 			assertTrue(key + " is one of the gear's own keys", BankPriceMovementPlugin.isOptionKey(key));
 			plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, key));
@@ -1229,9 +1237,9 @@ public class BankPriceMovementWiringTest
 		onEdt(() ->
 		{
 		});
-		final ViewOptions expected = new ViewOptions(false, true, false, false, false);
-		verify(service, times(5)).setOptions(expected);
-		verify(panel, times(5)).applyOptions(expected);
+		final ViewOptions expected = new ViewOptions(false, true, false, false, false, false);
+		verify(service, times(6)).setOptions(expected);
+		verify(panel, times(6)).applyOptions(expected);
 		verify(service, never()).setFilter(any());
 		verify(panel, never()).applyFilter(any());
 		// ...and the card's switches are a different road again (O2): a gear switch never re-renders the hero.
@@ -1282,6 +1290,7 @@ public class BankPriceMovementWiringTest
 		when(config.livePrices()).thenReturn(true);
 		when(config.countInventory()).thenReturn(true);
 		when(config.countGrandExchange()).thenReturn(true);
+		when(config.countBonds()).thenReturn(true);
 
 		final BankPriceMovementPanel.Prefs prefs = plugin.configPrefs();
 		// The shipped defaults: DEFAULT is what the config above answers.
@@ -1290,7 +1299,7 @@ public class BankPriceMovementWiringTest
 		// Every switch away from its default (cash off, untradeables on, live off, the inventory off, the offers off),
 		// so each of the five writes below carries a value the config did not already hold, and a key written from the
 		// wrong field would show as the wrong one.
-		final ViewOptions all = new ViewOptions(false, true, false, false, false);
+		final ViewOptions all = new ViewOptions(false, true, false, false, false, false);
 		prefs.saveOptions(all);
 		final String g = BankPriceMovementConfig.GROUP;
 		verify(cm).setConfiguration(g, BankPriceMovementPlugin.COUNT_CASH_KEY, (Object) Boolean.FALSE);
@@ -1298,6 +1307,7 @@ public class BankPriceMovementWiringTest
 		verify(cm).setConfiguration(g, BankPriceMovementPlugin.LIVE_PRICES_KEY, (Object) Boolean.FALSE);
 		verify(cm).setConfiguration(g, BankPriceMovementPlugin.COUNT_INVENTORY_KEY, (Object) Boolean.FALSE);
 		verify(cm).setConfiguration(g, BankPriceMovementPlugin.COUNT_GRAND_EXCHANGE_KEY, (Object) Boolean.FALSE);
+		verify(cm).setConfiguration(g, BankPriceMovementPlugin.COUNT_BONDS_KEY, (Object) Boolean.FALSE);
 		// AO1 and release 1.2.0: and the deleted keys are not written at all. The sweep unsets them at start-up, so a
 		// save that still wrote either would put back on every tick the very value the launch had just taken away.
 		verify(cm, never()).setConfiguration(eq(g), eq(LEGACY_HOLDING_KEY),
@@ -1308,7 +1318,7 @@ public class BankPriceMovementWiringTest
 
 		// Nothing to save is not a crash, and writes nothing more.
 		prefs.saveOptions(null);
-		verify(cm, times(5)).setConfiguration(anyString(), anyString(), any(Object.class));
+		verify(cm, times(6)).setConfiguration(anyString(), anyString(), any(Object.class));
 		verify(service, times(1)).setOptions(any());
 
 		// No manager at all (a field never injected) still reaches the service: the figures on screen must
@@ -1354,6 +1364,7 @@ public class BankPriceMovementWiringTest
 		when(config.livePrices()).thenReturn(true);
 		when(config.countInventory()).thenReturn(true);
 		when(config.countGrandExchange()).thenReturn(true);
+		when(config.countBonds()).thenReturn(true);
 		when(config.sortMode()).thenReturn(SortMode.PERCENT_MOVE);
 		when(config.window()).thenReturn(MovementWindow.DEFAULT);
 		// ConfigManager, as it really behaves: the stored value changes and the event is posted on this very
@@ -1382,13 +1393,17 @@ public class BankPriceMovementWiringTest
 			{
 				when(config.countGrandExchange()).thenReturn(value);
 			}
+			else if (BankPriceMovementPlugin.COUNT_BONDS_KEY.equals(key))
+			{
+				when(config.countBonds()).thenReturn(value);
+			}
 			plugin.onConfigChanged(configChanged(BankPriceMovementConfig.GROUP, key));
 			return null;
 		}).when(cm).setConfiguration(anyString(), anyString(), any(Object.class));
 
 		// The tick turns the untradeables ON, the live switch OFF and the Grand Exchange switch OFF, so three of the five
 		// writes really move a stored value and the guard has five events to swallow.
-		final ViewOptions ticked = new ViewOptions(true, true, false, true, false);
+		final ViewOptions ticked = new ViewOptions(true, true, false, true, false, true);
 		plugin.configPrefs().saveOptions(ticked);
 
 		// Not "the right options five times": nothing at all from the round trip. The menu applied the switch
@@ -1429,11 +1444,12 @@ public class BankPriceMovementWiringTest
 		// 1.0.9 part 3's Grand Exchange switch, which ships ON, the same.
 		when(f.config.countInventory()).thenReturn(false);
 		when(f.config.countGrandExchange()).thenReturn(false);
+		when(f.config.countBonds()).thenReturn(false);
 		onEdt(f.plugin::startUp);
 
 		final BankPriceMovementPanel panel = (BankPriceMovementPanel) field(f.plugin, "panel");
 		assertNotNull(panel);
-		final ViewOptions stored = new ViewOptions(false, true, false, false, false);
+		final ViewOptions stored = new ViewOptions(false, true, false, false, false, false);
 		assertEquals(stored, panel.options());
 		// The service was told too, or the figures behind the card would be the defaults until the first tick.
 		// Its own switches, not the Status's: that one answers what the figures ALREADY on screen were computed
@@ -2386,7 +2402,7 @@ public class BankPriceMovementWiringTest
 			assertNotNull(panel);
 			onEdt(() ->
 			{
-				final SwatchRow row = (SwatchRow) panel.heroMenu().getComponent(24);
+				final SwatchRow row = (SwatchRow) panel.heroMenu().getComponent(20);
 				assertEquals("Single chart colour", row.getText());
 				assertTrue("ticked from the stored switch", row.isSelected());
 			});
@@ -4816,6 +4832,419 @@ public class BankPriceMovementWiringTest
 
 		r.plugin.onGameTick(new GameTick());
 		verify(r.client, times(2)).getWidget(anyInt());
+	}
+
+	/** One column of the "Your Bonds" screen: the pouch's picture (left), the inventory's and the bank's, in a shuffled order. */
+	private static Widget bondColumn(final int bondId, final int inventory, final int pouch, final int bank)
+	{
+		final Widget inv = bondPicture(bondId, net.runelite.api.widgets.WidgetPositionMode.ABSOLUTE_RIGHT, 46, inventory);
+		final Widget pouchPicture = bondPicture(bondId, net.runelite.api.widgets.WidgetPositionMode.ABSOLUTE_LEFT, 80, pouch);
+		final Widget bankPicture = bondPicture(bondId, net.runelite.api.widgets.WidgetPositionMode.ABSOLUTE_RIGHT, 5, bank);
+		final Widget column = mock(Widget.class);
+		when(column.getDynamicChildren()).thenReturn(new Widget[]{bankPicture, inv, pouchPicture});
+		return column;
+	}
+
+	private static Widget bondPicture(final int bondId, final int xMode, final int x, final int quantity)
+	{
+		final Widget w = mock(Widget.class);
+		when(w.getItemId()).thenReturn(bondId);
+		when(w.getXPositionMode()).thenReturn(xMode);
+		when(w.getOriginalX()).thenReturn(x);
+		when(w.getItemQuantity()).thenReturn(quantity);
+		return w;
+	}
+
+	/**
+	 * Release 1.2.4: the bond pouch is read off the "Your Bonds" screen on each game tick while it is open - and only then: a
+	 * tick with the screen shut asks the client nothing, and a pouch is handed to the service only when it differs from the
+	 * pair handed last, once per change.
+	 */
+	@Test
+	public void theBondPouchIsReadWhileTheYourBondsScreenIsOpenAndHandedOnlyWhenItChanges() throws Exception
+	{
+		final BankRig r = new BankRig();
+		final Widget tradeable = bondColumn(PriceServiceTest.BOND, 9, 3, 7);
+		final Widget untradeable = bondColumn(PriceServiceTest.BOND_UNTRADEABLE, 8, 2, 6);
+		when(r.client.getWidget(InterfaceID.BondManagement.BONDS_TRADEABLE)).thenReturn(tradeable);
+		when(r.client.getWidget(InterfaceID.BondManagement.BONDS_UNTRADEABLE)).thenReturn(untradeable);
+
+		r.plugin.onGameTick(new GameTick());
+		verify(r.client, never()).getWidget(anyInt());
+		verify(r.service, never()).setPouch(anyLong(), anyString(), anyInt(), anyInt(), anyLong());
+
+		r.plugin.onWidgetLoaded(loaded(InterfaceID.BOND_MANAGEMENT));
+		r.plugin.onGameTick(new GameTick());
+		verify(r.service, times(1)).setPouch(eq(ACCOUNT), anyString(), eq(3), eq(2), anyLong());
+		r.plugin.onGameTick(new GameTick());
+		r.plugin.onGameTick(new GameTick());
+		verify(r.service, times(1)).setPouch(anyLong(), anyString(), anyInt(), anyInt(), anyLong());
+
+		// A change in the pouch is handed on once more; a change in the inventory or the bank column is not a pouch change.
+		final Widget otherPlaces = bondColumn(PriceServiceTest.BOND, 1, 3, 1);
+		when(r.client.getWidget(InterfaceID.BondManagement.BONDS_TRADEABLE)).thenReturn(otherPlaces);
+		r.plugin.onGameTick(new GameTick());
+		verify(r.service, times(1)).setPouch(anyLong(), anyString(), anyInt(), anyInt(), anyLong());
+		final Widget emptied = bondColumn(PriceServiceTest.BOND, 1, 0, 1);
+		when(r.client.getWidget(InterfaceID.BondManagement.BONDS_TRADEABLE)).thenReturn(emptied);
+		r.plugin.onGameTick(new GameTick());
+		verify(r.service, times(1)).setPouch(eq(ACCOUNT), anyString(), eq(0), eq(2), anyLong());
+
+		// The screen closes: nothing more is read, whatever the screen would say.
+		r.plugin.onWidgetClosed(closed(InterfaceID.BOND_MANAGEMENT, true));
+		final Widget refilled = bondColumn(PriceServiceTest.BOND, 1, 5, 1);
+		when(r.client.getWidget(InterfaceID.BondManagement.BONDS_TRADEABLE)).thenReturn(refilled);
+		r.plugin.onGameTick(new GameTick());
+		verify(r.service, times(2)).setPouch(anyLong(), anyString(), anyInt(), anyInt(), anyLong());
+	}
+
+	/**
+	 * The screen is the truth while it is open (live test 2026-10-28): when the held bank no longer carries the pair handed
+	 * last, the same pair is handed again on the next tick, and once the held bank agrees nothing more is handed.
+	 */
+	@Test
+	public void anOpenYourBondsScreenPutsAWrongHeldPouchRight() throws Exception
+	{
+		final BankRig r = new BankRig();
+		final Widget tradeable = bondColumn(PriceServiceTest.BOND, 9, 3, 7);
+		final Widget untradeable = bondColumn(PriceServiceTest.BOND_UNTRADEABLE, 8, 2, 6);
+		when(r.client.getWidget(InterfaceID.BondManagement.BONDS_TRADEABLE)).thenReturn(tradeable);
+		when(r.client.getWidget(InterfaceID.BondManagement.BONDS_UNTRADEABLE)).thenReturn(untradeable);
+		r.plugin.onWidgetLoaded(loaded(InterfaceID.BOND_MANAGEMENT));
+		r.plugin.onGameTick(new GameTick());
+		verify(r.service, times(1)).setPouch(eq(ACCOUNT), anyString(), eq(3), eq(2), anyLong());
+
+		when(r.service.bank()).thenReturn(new BankSnapshot(Collections.emptyList(), 1_000L, ACCOUNT, STANDARD, 0L)
+			.withPouch(0, 0, 2_000L));
+		r.plugin.onGameTick(new GameTick());
+		verify(r.service, times(2)).setPouch(eq(ACCOUNT), anyString(), eq(3), eq(2), anyLong());
+
+		when(r.service.bank()).thenReturn(new BankSnapshot(Collections.emptyList(), 1_000L, ACCOUNT, STANDARD, 0L)
+			.withPouch(3, 2, 3_000L));
+		r.plugin.onGameTick(new GameTick());
+		verify(r.service, times(2)).setPouch(anyLong(), anyString(), anyInt(), anyInt(), anyLong());
+	}
+
+	/**
+	 * A bond moved between the inventory and the pouch changes both: when a new pouch count is handed over, the inventory is read
+	 * again in the same pass, so the bond is not counted twice (or not at all) until the next bank event.
+	 */
+	@Test
+	public void aNewPouchCountReReadsTheInventoryInTheSamePass() throws Exception
+	{
+		final BankRig r = new BankRig();
+		final Widget tradeable = bondColumn(PriceServiceTest.BOND, 9, 3, 7);
+		final Widget untradeable = bondColumn(PriceServiceTest.BOND_UNTRADEABLE, 8, 2, 6);
+		when(r.client.getWidget(InterfaceID.BondManagement.BONDS_TRADEABLE)).thenReturn(tradeable);
+		when(r.client.getWidget(InterfaceID.BondManagement.BONDS_UNTRADEABLE)).thenReturn(untradeable);
+		when(r.service.bank()).thenReturn(new BankSnapshot(new ArrayList<BankItem>(), 1L, ACCOUNT, (String) field(r.plugin, "profileType")));
+		r.plugin.onWidgetLoaded(loaded(InterfaceID.BOND_MANAGEMENT));
+
+		r.plugin.onGameTick(new GameTick());
+		verify(r.client, times(1)).getItemContainer(InventoryID.INV);
+		// The service now holds the pair it was handed, as the real one does.
+		when(r.service.bank()).thenReturn(new BankSnapshot(new ArrayList<BankItem>(), 1L, ACCOUNT,
+			(String) field(r.plugin, "profileType")).withPouch(3, 2, 2L));
+		r.plugin.onGameTick(new GameTick());
+		verify(r.client, times(1)).getItemContainer(InventoryID.INV);
+	}
+
+	/**
+	 * A disable/enable builds a new service that has been handed no pouch, so the memo of the last pair handed (which would
+	 * swallow the same count on the next look) is cleared by shutDown.
+	 */
+	@Test
+	public void shutDownForgetsTheLastPouchHanded() throws Exception
+	{
+		final BankRig r = new BankRig();
+		final Widget tradeable = bondColumn(PriceServiceTest.BOND, 9, 3, 7);
+		final Widget untradeable = bondColumn(PriceServiceTest.BOND_UNTRADEABLE, 8, 2, 6);
+		when(r.client.getWidget(InterfaceID.BondManagement.BONDS_TRADEABLE)).thenReturn(tradeable);
+		when(r.client.getWidget(InterfaceID.BondManagement.BONDS_UNTRADEABLE)).thenReturn(untradeable);
+		r.plugin.onWidgetLoaded(loaded(InterfaceID.BOND_MANAGEMENT));
+		r.plugin.onGameTick(new GameTick());
+		verify(r.service, times(1)).setPouch(eq(ACCOUNT), anyString(), eq(3), eq(2), anyLong());
+		assertTrue(3 == (int) field(r.plugin, "pouchHandedTradeable"));
+
+		onEdt(r.plugin::shutDown);
+
+		assertEquals(0L, (long) field(r.plugin, "pouchHandedKey"));
+		assertEquals(-1, (int) field(r.plugin, "pouchHandedTradeable"));
+		assertEquals(-1, (int) field(r.plugin, "pouchHandedUntradeable"));
+	}
+
+	/** The screen is announced but its columns are not there (it is closing): nothing is handed over and the plugin stops looking. */
+	@Test
+	public void aBondScreenWithNoColumnsHandsNothingOver() throws Exception
+	{
+		final BankRig r = new BankRig();
+		r.plugin.onWidgetLoaded(loaded(InterfaceID.BOND_MANAGEMENT));
+		r.plugin.onGameTick(new GameTick());
+		verify(r.service, never()).setPouch(anyLong(), anyString(), anyInt(), anyInt(), anyLong());
+		r.plugin.onGameTick(new GameTick());
+		verify(r.client, times(2)).getWidget(anyInt());
+	}
+
+	// ---------------------------------------------------------------- 1.2.4 rules 3b and 3c: the bond screens
+
+	private static final Item[] NOTHING = new Item[0];
+
+	/** A bond screen's picture container holding these pictures, in this order. */
+	private static Widget bondBox(final Widget... pictures)
+	{
+		final Widget box = mock(Widget.class);
+		when(box.getDynamicChildren()).thenReturn(pictures);
+		return box;
+	}
+
+	private static Widget total(final int bondId, final int quantity)
+	{
+		return bondPicture(bondId, 0, 0, quantity);
+	}
+
+	/** A rig with the carried read answered, an empty bank held, and "Your Bonds" showing this pouch pair. */
+	private BankRig bondsRig(final int pouchTradeable, final int pouchUntradeable) throws Exception
+	{
+		final BankRig r = new BankRig();
+		r.answerCarriedReads();
+		final Widget tradeable = bondColumn(PriceServiceTest.BOND, 0, pouchTradeable, 0);
+		final Widget untradeable = bondColumn(PriceServiceTest.BOND_UNTRADEABLE, 0, pouchUntradeable, 0);
+		when(r.client.getWidget(InterfaceID.BondManagement.BONDS_TRADEABLE)).thenReturn(tradeable);
+		when(r.client.getWidget(InterfaceID.BondManagement.BONDS_UNTRADEABLE)).thenReturn(untradeable);
+		final BankSnapshot held = new BankSnapshot(new ArrayList<BankItem>(), 1L, ACCOUNT,
+			(String) field(r.plugin, "profileType"));
+		when(r.service.bank()).thenReturn(held);
+		return r;
+	}
+
+	private static ItemContainerChanged inventoryEvent(final Item... slots)
+	{
+		return new ItemContainerChanged(InventoryID.INV, BankRig.container(slots));
+	}
+
+	/**
+	 * Rule 3b, a right-click Deposit: "Your Bonds" opens and the pouch reads 1 on the first tick while the inventory still
+	 * holds the bond (the row read 2 bonds); the inventory event that follows re-reads the carried part, so the bond is
+	 * counted once. Without the inventory branch there is one carried read, with the bond still in it.
+	 */
+	@Test
+	public void aDepositedBondLeavesTheInventoryReadWhileTheBondScreenIsOpen() throws Exception
+	{
+		final BankRig r = bondsRig(1, 0);
+		r.carrying(new Item[]{new Item(PriceServiceTest.BOND, 1)}, NOTHING);
+		r.plugin.onWidgetLoaded(loaded(InterfaceID.BOND_MANAGEMENT));
+		r.plugin.onGameTick(new GameTick());
+		verify(r.service, times(1)).setPouch(eq(ACCOUNT), anyString(), eq(1), eq(0), anyLong());
+		assertEquals(1, r.carriedReads().size());
+		assertEquals("the first look still saw the bond in the inventory", 1, r.carriedReads().get(0)[0].length);
+
+		r.carrying(NOTHING, NOTHING);
+		r.plugin.onItemContainerChanged(inventoryEvent());
+
+		assertEquals("the inventory event re-reads the carried part", 2, r.carriedReads().size());
+		assertEquals("...and it no longer holds the bond", 0, r.carriedReads().get(1)[0].length);
+	}
+
+	/** The reverse: a bond leaves the pouch for the inventory, and the inventory event brings it in. */
+	@Test
+	public void aWithdrawnBondEntersTheInventoryReadWhileTheBondScreenIsOpen() throws Exception
+	{
+		final BankRig r = bondsRig(0, 0);
+		r.carrying(NOTHING, NOTHING);
+		r.plugin.onWidgetLoaded(loaded(InterfaceID.BOND_MANAGEMENT));
+		r.plugin.onGameTick(new GameTick());
+		final int before = r.carriedReads().size();
+
+		r.carrying(new Item[]{new Item(PriceServiceTest.BOND, 1)}, NOTHING);
+		r.plugin.onItemContainerChanged(inventoryEvent(new Item(PriceServiceTest.BOND, 1)));
+
+		assertEquals(before + 1, r.carriedReads().size());
+		assertEquals(1, r.carriedReads().get(before)[0].length);
+	}
+
+	/** The inventory is read at bank events and Refresh only: with neither bond screen open an inventory event reads nothing. */
+	@Test
+	public void anInventoryEventWithNoBondScreenOpenReadsNothing() throws Exception
+	{
+		final BankRig r = bondsRig(0, 0);
+		r.carrying(new Item[]{new Item(PriceServiceTest.BOND, 1)}, NOTHING);
+		r.plugin.onItemContainerChanged(inventoryEvent(new Item(PriceServiceTest.BOND, 1)));
+		assertEquals(0, r.carriedReads().size());
+
+		// ...nor after both screens have closed.
+		r.plugin.onWidgetLoaded(loaded(InterfaceID.BOND_MANAGEMENT));
+		r.plugin.onWidgetLoaded(loaded(InterfaceID.BOND_MAIN));
+		r.plugin.onWidgetClosed(closed(InterfaceID.BOND_MANAGEMENT, true));
+		r.plugin.onWidgetClosed(closed(InterfaceID.BOND_MAIN, true));
+		final int atClose = r.carriedReads().size();
+		r.plugin.onItemContainerChanged(inventoryEvent(new Item(PriceServiceTest.BOND, 1)));
+		assertEquals(atClose, r.carriedReads().size());
+	}
+
+	/** Either bond screen makes an inventory event a carried read ("Old School Bonds" too). */
+	@Test
+	public void theOldSchoolBondsScreenFollowsTheInventoryToo() throws Exception
+	{
+		final BankRig r = bondsRig(0, 0);
+		r.carrying(NOTHING, NOTHING);
+		r.plugin.onWidgetLoaded(loaded(InterfaceID.BOND_MAIN));
+		r.plugin.onItemContainerChanged(inventoryEvent());
+		assertEquals(1, r.carriedReads().size());
+	}
+
+	/** The screen's close reads the carried part once more (only a real unload), and the bank path is untouched by it. */
+	@Test
+	public void theBondScreensCloseReReadsTheInventoryOnce() throws Exception
+	{
+		for (final int screen : new int[]{InterfaceID.BOND_MANAGEMENT, InterfaceID.BOND_MAIN})
+		{
+			final BankRig r = bondsRig(0, 0);
+			r.carrying(NOTHING, NOTHING);
+			r.plugin.onWidgetLoaded(loaded(screen));
+			r.plugin.onWidgetClosed(closed(screen, false));
+			assertEquals("a close to be reloaded is no close", 0, r.carriedReads().size());
+			r.plugin.onWidgetClosed(closed(screen, true));
+			assertEquals(1, r.carriedReads().size());
+			r.plugin.onItemContainerChanged(inventoryEvent());
+			assertEquals("shut: the inventory is no longer followed", 1, r.carriedReads().size());
+		}
+	}
+
+	/**
+	 * A rig whose bank was read for real (2 tradeable and 1 untradeable bond in it), holding 1 tradeable bond in the
+	 * inventory, with "Old School Bonds" showing these totals in this picture order.
+	 */
+	private BankRig totalsRig(final Widget... pictures) throws Exception
+	{
+		final BankRig r = new BankRig();
+		r.answerCarriedReads();
+		r.carrying(new Item[]{new Item(PriceServiceTest.BOND, 1)}, NOTHING);
+		final List<BankItem> items = new ArrayList<>();
+		items.add(new BankItem(PriceServiceTest.BOND, 2, PriceServiceTest.BOND_NAME, false));
+		items.add(new BankItem(PriceServiceTest.BOND_UNTRADEABLE, 1, "Old school bond (untradeable)", false, true, 0));
+		when(r.reader.read(any(), anyLong(), anyString(), anyLong())).thenAnswer(invocation ->
+			new BankSnapshot(items, 1L, (Long) invocation.getArgument(1), (String) invocation.getArgument(2)));
+		final Widget box = bondBox(pictures);
+		when(r.client.getWidget(InterfaceID.BondMain.QUANTITY_CONTAINER)).thenReturn(box);
+		return r;
+	}
+
+	private static Widget[] totals(final int tradeable, final int untradeable)
+	{
+		return new Widget[]{total(PriceServiceTest.BOND, tradeable), total(PriceServiceTest.BOND_UNTRADEABLE, untradeable)};
+	}
+
+	/** Rule 3c: pouch = total - live inventory - held bank, per bond, handed once, and "Your Bonds" is not needed. */
+	@Test
+	public void theOldSchoolBondsTotalsGiveThePouchWhenTheBankWasReadThisLogin() throws Exception
+	{
+		final Widget[] pictures = totals(5, 1);
+		final Widget[][] orders = {{pictures[0], pictures[1]}, {pictures[1], pictures[0]}};
+		for (final Widget[] order : orders)
+		{
+			final BankRig r = totalsRig(order);
+			r.bankEvent(bank());
+			r.plugin.onWidgetLoaded(loaded(InterfaceID.BOND_MAIN));
+			r.plugin.onGameTick(new GameTick());
+			r.plugin.onGameTick(new GameTick());
+			verify(r.service, times(1)).setPouch(eq(ACCOUNT), anyString(), eq(2), eq(0), anyLong());
+		}
+	}
+
+	/** Nothing is handed on a bank not read this login, a negative result, a missing picture, or a change held. */
+	@Test
+	public void theOldSchoolBondsTotalsHandNothingOnAnythingShaky() throws Exception
+	{
+		// No bank read this login: the service holds one (from disk) but it is not a read of this login.
+		BankRig r = totalsRig(totals(5, 1));
+		final BankSnapshot fromDisk = new BankSnapshot(new ArrayList<BankItem>(), 1L, ACCOUNT,
+			(String) field(r.plugin, "profileType"));
+		when(r.service.bank()).thenReturn(fromDisk);
+		r.plugin.onWidgetLoaded(loaded(InterfaceID.BOND_MAIN));
+		// ...and an inventory event makes the plugin's own copy of that stored bank, which is still no read of the bank.
+		r.plugin.onItemContainerChanged(inventoryEvent());
+		r.plugin.onGameTick(new GameTick());
+		verify(r.service, never()).setPouch(anyLong(), anyString(), anyInt(), anyInt(), anyLong());
+
+		// A bank read in an earlier login: the session ended, so it no longer counts.
+		r = totalsRig(totals(5, 1));
+		r.bankEvent(bank());
+		r.endSessionAndLogIn(GameState.LOGIN_SCREEN, ACCOUNT);
+		when(r.service.bank()).thenReturn(fromDisk);
+		r.plugin.onWidgetLoaded(loaded(InterfaceID.BOND_MAIN));
+		r.plugin.onItemContainerChanged(inventoryEvent());
+		r.plugin.onGameTick(new GameTick());
+		verify(r.service, never()).setPouch(anyLong(), anyString(), anyInt(), anyInt(), anyLong());
+
+		// A negative pouch (the totals are smaller than what the inventory and bank hold).
+		r = totalsRig(totals(2, 1));
+		r.bankEvent(bank());
+		r.plugin.onWidgetLoaded(loaded(InterfaceID.BOND_MAIN));
+		r.plugin.onGameTick(new GameTick());
+		verify(r.service, never()).setPouch(anyLong(), anyString(), anyInt(), anyInt(), anyLong());
+
+		// A missing picture: only one of the two bonds is there.
+		r = totalsRig(total(PriceServiceTest.BOND, 5));
+		r.bankEvent(bank());
+		r.plugin.onWidgetLoaded(loaded(InterfaceID.BOND_MAIN));
+		r.plugin.onGameTick(new GameTick());
+		verify(r.service, never()).setPouch(anyLong(), anyString(), anyInt(), anyInt(), anyLong());
+
+		// A bank change held while the bank is open: the held bank is stale.
+		r = totalsRig(totals(5, 1));
+		r.openBank();
+		r.bankEvent(bank());
+		r.bankEvent(withdrew28Sharks());
+		assertTrue(r.isPending());
+		r.plugin.onWidgetLoaded(loaded(InterfaceID.BOND_MAIN));
+		r.plugin.onGameTick(new GameTick());
+		verify(r.service, never()).setPouch(anyLong(), anyString(), anyInt(), anyInt(), anyLong());
+	}
+
+	/** The user's live test, 2026-10-28: "Old School Bonds" showing no bonds at all is an empty pouch, bank read or not. */
+	@Test
+	public void oldSchoolBondsShowingNoBondsIsAnEmptyPouch() throws Exception
+	{
+		final BankRig r = totalsRig(totals(0, 0));
+		r.plugin.onWidgetLoaded(loaded(InterfaceID.BOND_MAIN));
+		r.plugin.onGameTick(new GameTick());
+		verify(r.service, times(1)).setPouch(eq(ACCOUNT), anyString(), eq(0), eq(0), anyLong());
+	}
+
+	/** A bank opened unchanged since the last read (so not read again) still counts as read this login for rule 3c. */
+	@Test
+	public void anUnchangedBankCountsAsReadThisLogin() throws Exception
+	{
+		final BankRig r = totalsRig(totals(5, 1));
+		r.bankEvent(bank());
+		// The service keeps the account's bank over a logout (F2), as the real one does.
+		final ArgumentCaptor<BankSnapshot> read = ArgumentCaptor.forClass(BankSnapshot.class);
+		verify(r.service).setBank(read.capture());
+		when(r.service.bank()).thenReturn(read.getValue());
+		r.endSessionAndLogIn(GameState.LOGIN_SCREEN, ACCOUNT);
+		final int reads = r.reads();
+		r.bankEvent(bank());
+		assertEquals("the unchanged bank is not read again", reads, r.reads());
+		r.plugin.onWidgetLoaded(loaded(InterfaceID.BOND_MAIN));
+		r.plugin.onGameTick(new GameTick());
+		verify(r.service, times(1)).setPouch(eq(ACCOUNT), anyString(), eq(2), eq(0), anyLong());
+	}
+
+	/** "Your Bonds" is the exact source: with both screens open, only its pouch is handed. */
+	@Test
+	public void yourBondsWinsOverOldSchoolBonds() throws Exception
+	{
+		final BankRig r = totalsRig(totals(5, 1));
+		final Widget exactTradeable = bondColumn(PriceServiceTest.BOND, 0, 7, 0);
+		final Widget exactUntradeable = bondColumn(PriceServiceTest.BOND_UNTRADEABLE, 0, 0, 0);
+		when(r.client.getWidget(InterfaceID.BondManagement.BONDS_TRADEABLE)).thenReturn(exactTradeable);
+		when(r.client.getWidget(InterfaceID.BondManagement.BONDS_UNTRADEABLE)).thenReturn(exactUntradeable);
+		r.bankEvent(bank());
+		r.plugin.onWidgetLoaded(loaded(InterfaceID.BOND_MAIN));
+		r.plugin.onWidgetLoaded(loaded(InterfaceID.BOND_MANAGEMENT));
+		r.plugin.onGameTick(new GameTick());
+		verify(r.service, times(1)).setPouch(eq(ACCOUNT), anyString(), eq(7), eq(0), anyLong());
+		verify(r.service, never()).setPouch(anyLong(), anyString(), eq(2), anyInt(), anyLong());
 	}
 
 	/**

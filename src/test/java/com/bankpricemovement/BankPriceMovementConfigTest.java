@@ -99,7 +99,10 @@ public class BankPriceMovementConfigTest
 		"historyGpChangeSize",
 		"historyPctChangeSize",
 		"historyGpOpacity",
-		"historyRange"
+		"historyRange",
+		// Release 1.2.4: the bonds switch, the sixth field of the same ViewOptions and the thirty-third key - VISIBLE on the page,
+		// at position 14, directly after the Grand Exchange switch; every later item moved one place down.
+		"countBonds"
 	);
 
 	/** Every zero-argument {@code @ConfigItem} method visible on the interface, inherited ones included. */
@@ -172,7 +175,8 @@ public class BankPriceMovementConfigTest
 		// Release 1.2.1 part 2 added the History tab's three change settings and the chart's range at 28 to 31.
 		// Release 1.2.2 part 4's marker "opacity69Done" is no item at all (verification fix): a declared item is written back by
 		// RuneLite's own Reset, which would re-arm the one-time opacity move.
-		assertEquals("unexpected number of config items", 32, methods.size());
+		// Release 1.2.4 added "countBonds" at 14, after the Grand Exchange switch, and moved every later item one place down.
+		assertEquals("unexpected number of config items", 33, methods.size());
 	}
 
 	/**
@@ -399,8 +403,8 @@ public class BankPriceMovementConfigTest
 			+ " or press Refresh.", offers.description());
 		assertEquals(13, offers.position());
 		assertEquals(12, item("countInventory").position());
-		assertEquals(14, item("livePrices").position());
-		assertEquals(15, item("startTab").position());
+		assertEquals(15, item("livePrices").position());
+		assertEquals(16, item("startTab").position());
 		final BankPriceMovementConfig config = new BankPriceMovementConfig() {};
 		assertTrue("on for a fresh profile", config.countGrandExchange());
 		assertTrue("and DEFAULT carries it", ViewOptions.DEFAULT.countGrandExchange());
@@ -478,7 +482,7 @@ public class BankPriceMovementConfigTest
 		assertEquals("Use live prices", live.name());
 		assertEquals("Actively traded items are priced from the last 24 hours of trades; a word under the percentage says"
 			+ " why a figure is uncertain. Items with no trades keep the guide price", live.description());
-		assertEquals(14, live.position());
+		assertEquals(15, live.position());
 		// Only addendum AU's startTab (15), 1.0.9 part 5's hidden includeLegacyHistory (16), 1.1.0 part B's two colours
 		// (17 and 18), part C's chart switch and colour (19 and 20), part E's hideAmounts (21), part G's showAlchRows (22),
 		// part J's two hidden slot colours (23 and 24), release 1.2.1's three hidden change settings (25 to 27), its part 2's four
@@ -487,32 +491,51 @@ public class BankPriceMovementConfigTest
 		{
 			final ConfigItem other = m.getAnnotation(ConfigItem.class);
 			assertTrue("\"" + other.name() + "\" is drawn below the change settings",
-				other.position() <= item("historyRange").position());
+				other.position() <= item("historyRange").position() || other.keyName().equals("countBonds"));
 			assertTrue("\"" + other.name() + "\" is below livePrices but is not one of the last ten",
 				other.position() <= live.position() || other.keyName().equals("startTab")
 					|| other.keyName().equals("includeLegacyHistory") || other.keyName().equals("upColour")
 					|| other.keyName().equals("downColour") || other.keyName().equals("singleChartColour")
 					|| other.keyName().equals("chartColour") || other.keyName().equals("hideAmounts")
 					|| other.keyName().equals("showAlchRows") || other.keyName().equals("slotUpColour")
-					|| other.keyName().equals("slotDownColour") || isChangeKey(other.keyName()));
+					|| other.keyName().equals("slotDownColour") || isChangeKey(other.keyName())
+					|| other.keyName().equals("countBonds"));
 		}
-		assertEquals(15, item("startTab").position());
-		assertEquals(16, item("includeLegacyHistory").position());
-		assertEquals(17, item("upColour").position());
-		assertEquals(18, item("downColour").position());
-		assertEquals(19, item("singleChartColour").position());
-		assertEquals(20, item("chartColour").position());
-		assertEquals(21, item("hideAmounts").position());
-		assertEquals(22, item("showAlchRows").position());
-		assertEquals(23, item("slotUpColour").position());
-		assertEquals(24, item("slotDownColour").position());
-		assertEquals(25, item("gpChangeSize").position());
-		assertEquals(26, item("pctChangeSize").position());
-		assertEquals(27, item("gpBrightness").position());
-		assertEquals(28, item("historyGpChangeSize").position());
-		assertEquals(29, item("historyPctChangeSize").position());
-		assertEquals(30, item("historyGpOpacity").position());
-		assertEquals(31, item("historyRange").position());
+		assertEquals(16, item("startTab").position());
+		assertEquals(17, item("includeLegacyHistory").position());
+		assertEquals(18, item("upColour").position());
+		assertEquals(19, item("downColour").position());
+		assertEquals(20, item("singleChartColour").position());
+		assertEquals(21, item("chartColour").position());
+		assertEquals(22, item("hideAmounts").position());
+		assertEquals(23, item("showAlchRows").position());
+		assertEquals(24, item("slotUpColour").position());
+		assertEquals(25, item("slotDownColour").position());
+		assertEquals(26, item("gpChangeSize").position());
+		assertEquals(27, item("pctChangeSize").position());
+		assertEquals(28, item("gpBrightness").position());
+		assertEquals(29, item("historyGpChangeSize").position());
+		assertEquals(30, item("historyPctChangeSize").position());
+		assertEquals(31, item("historyGpOpacity").position());
+		assertEquals(32, item("historyRange").position());
+		assertEquals("release 1.2.4: the bonds switch sits directly after the Grand Exchange switch", 14, item("countBonds").position());
+	}
+
+	/**
+	 * Release 1.2.4: the bonds switch - its key, its words, its default (ON), its place on the page (visible, last) and the
+	 * fact that it rides the same ViewOptions as the five before it.
+	 */
+	@Test
+	public void theBondsSwitchIsNamedDefaultedAndVisible()
+	{
+		final ConfigItem bonds = item("countBonds");
+		assertEquals("Include bonds", bonds.name());
+		assertEquals(BankPriceMovementPanel.COUNT_BONDS_TEXT, bonds.name());
+		assertFalse("listed on the settings page", bonds.hidden());
+		assertEquals(BankPriceMovementPlugin.COUNT_BONDS_KEY, bonds.keyName());
+		assertTrue("on for a fresh profile", new BankPriceMovementConfig() {}.countBonds());
+		assertTrue("and DEFAULT carries it", ViewOptions.DEFAULT.countBonds());
+		assertEquals(ViewOptions.DEFAULT, optionsOf(new BankPriceMovementConfig() {}));
 	}
 
 	/**
@@ -674,7 +697,7 @@ public class BankPriceMovementConfigTest
 	private static ViewOptions optionsOf(BankPriceMovementConfig config)
 	{
 		return new ViewOptions(config.countCash(), config.countUntradeables(), config.livePrices(),
-			config.countInventory(), config.countGrandExchange());
+			config.countInventory(), config.countGrandExchange(), config.countBonds());
 	}
 
 	/** The {@code @ConfigItem} of one stored key, by name; fails rather than returning null when it is gone. */
@@ -693,7 +716,7 @@ public class BankPriceMovementConfigTest
 		assertEquals(BankPriceMovementPanel.LEGACY_TEXT, legacy.name());
 		assertEquals("Show net worth readings recorded before v1.0.9 on the Net Worth History tab."
 			+ " They did not count Grand Exchange offers.", legacy.description());
-		assertEquals(16, legacy.position());
+		assertEquals(17, legacy.position());
 		assertTrue("hidden from the settings page", legacy.hidden());
 		assertFalse("off for a fresh profile", new BankPriceMovementConfig() {}.includeLegacyHistory());
 		assertEquals("the key the plugin's road and prefs name", BankPriceMovementPlugin.INCLUDE_LEGACY_KEY,
@@ -714,7 +737,8 @@ public class BankPriceMovementConfigTest
 					|| other.keyName().equals("singleChartColour") || other.keyName().equals("chartColour")
 					|| other.keyName().equals("hideAmounts") || other.keyName().equals("showAlchRows")
 					|| other.keyName().equals("slotUpColour") || other.keyName().equals("slotDownColour")
-					|| isChangeKey(other.keyName()) || other.position() < legacy.position());
+					|| isChangeKey(other.keyName()) || other.keyName().equals("countBonds")
+					|| other.position() < legacy.position());
 			}
 		}
 	}
@@ -734,7 +758,7 @@ public class BankPriceMovementConfigTest
 		assertEquals("Draw the net worth chart in one colour instead of the up and down colours.",
 			single.description());
 		assertEquals(BankPriceMovementPanel.SINGLE_CHART_COLOUR_TIP, single.description());
-		assertEquals(19, single.position());
+		assertEquals(20, single.position());
 		assertFalse("listed on the settings page", single.hidden());
 		assertTrue("on for a fresh profile (part D)", new BankPriceMovementConfig() {}.singleChartColour());
 		assertEquals(BankPriceMovementPlugin.SINGLE_CHART_KEY, single.keyName());
@@ -743,7 +767,7 @@ public class BankPriceMovementConfigTest
 		assertEquals("Chart colour", colour.name());
 		assertEquals(BankPriceMovementPanel.CHART_COLOUR_TEXT, colour.name());
 		assertEquals("The net worth chart's colour while Single chart colour is on.", colour.description());
-		assertEquals(20, colour.position());
+		assertEquals(21, colour.position());
 		assertFalse("listed on the settings page", colour.hidden());
 		assertEquals("the logo gold, the face of the 2h coin", new java.awt.Color(196, 156, 58),
 			new BankPriceMovementConfig() {}.chartColour());
@@ -765,7 +789,7 @@ public class BankPriceMovementConfigTest
 		assertEquals("Single chart colour", single.name());
 		assertEquals("Draw the net worth chart in one colour instead of the up and down colours.",
 			single.description());
-		assertEquals(19, single.position());
+		assertEquals(20, single.position());
 		assertFalse(single.hidden());
 		assertEquals("and the colour it draws in is the logo gold", new java.awt.Color(196, 156, 58),
 			new BankPriceMovementConfig() {}.chartColour());
@@ -783,7 +807,7 @@ public class BankPriceMovementConfigTest
 		assertEquals("Hide amounts", hide.name());
 		assertEquals("Hide every gp amount and item quantity in the sidebar, keeping item names and percentages."
 			+ " For streaming.", hide.description());
-		assertEquals(21, hide.position());
+		assertEquals(22, hide.position());
 		assertFalse("listed on the settings page", hide.hidden());
 		assertFalse("off for a fresh profile", new BankPriceMovementConfig() {}.hideAmounts());
 		assertEquals(Boolean.TYPE, itemMethod("hideAmounts").getReturnType());
@@ -805,7 +829,7 @@ public class BankPriceMovementConfigTest
 		assertEquals("Lists untradeables with no tradeable parts, at alch value. Searching finds them either way.",
 			alch.description());
 		assertEquals(BankPriceMovementPanel.SHOW_ALCH_TIP, alch.description());
-		assertEquals(22, alch.position());
+		assertEquals(23, alch.position());
 		assertFalse("listed on the settings page", alch.hidden());
 		assertFalse("off for a fresh profile", new BankPriceMovementConfig() {}.showAlchRows());
 		assertEquals(Boolean.TYPE, itemMethod("showAlchRows").getReturnType());
@@ -826,7 +850,7 @@ public class BankPriceMovementConfigTest
 		assertEquals("slotUpColour", up.keyName());
 		assertEquals("Slot 1 up colour", up.name());
 		assertEquals("The colour of a rise saved in the colour presets' Slot 1.", up.description());
-		assertEquals(23, up.position());
+		assertEquals(24, up.position());
 		assertTrue("hidden from the settings page", up.hidden());
 		assertEquals(java.awt.Color.class, itemMethod("slotUpColour").getReturnType());
 		assertEquals("Classic's rise", Widgets.MOVE_UP_DEFAULT, new BankPriceMovementConfig() {}.slotUpColour());
@@ -836,7 +860,7 @@ public class BankPriceMovementConfigTest
 		assertEquals("slotDownColour", down.keyName());
 		assertEquals("Slot 1 down colour", down.name());
 		assertEquals("The colour of a fall saved in the colour presets' Slot 1.", down.description());
-		assertEquals(24, down.position());
+		assertEquals(25, down.position());
 		assertTrue("hidden from the settings page", down.hidden());
 		assertEquals(java.awt.Color.class, itemMethod("slotDownColour").getReturnType());
 		assertEquals("Classic's fall", Widgets.MOVE_DOWN_TEXT, new BankPriceMovementConfig() {}.slotDownColour());
@@ -868,7 +892,7 @@ public class BankPriceMovementConfigTest
 	{
 		final ConfigItem gp = item("gpChangeSize");
 		assertEquals("GP change size", gp.name());
-		assertEquals(25, gp.position());
+		assertEquals(26, gp.position());
 		assertTrue("hidden from the settings page", gp.hidden());
 		assertEquals(ChangeSize.class, itemMethod("gpChangeSize").getReturnType());
 		assertEquals(ChangeSize.NORMAL, new BankPriceMovementConfig() {}.gpChangeSize());
@@ -876,7 +900,7 @@ public class BankPriceMovementConfigTest
 
 		final ConfigItem pct = item("pctChangeSize");
 		assertEquals("Percent change size", pct.name());
-		assertEquals(26, pct.position());
+		assertEquals(27, pct.position());
 		assertTrue("hidden from the settings page", pct.hidden());
 		assertEquals(ChangeSize.class, itemMethod("pctChangeSize").getReturnType());
 		assertEquals(ChangeSize.NORMAL, new BankPriceMovementConfig() {}.pctChangeSize());
@@ -884,7 +908,7 @@ public class BankPriceMovementConfigTest
 
 		final ConfigItem bright = item("gpBrightness");
 		assertEquals("GP change opacity", bright.name());
-		assertEquals(27, bright.position());
+		assertEquals(28, bright.position());
 		assertTrue("hidden from the settings page", bright.hidden());
 		assertEquals(Integer.TYPE, itemMethod("gpBrightness").getReturnType());
 		assertEquals("release 1.2.2: 69 for everyone", 69, new BankPriceMovementConfig() {}.gpBrightness());

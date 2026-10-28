@@ -47,6 +47,7 @@ import javax.swing.JComponent;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JLayer;
+import javax.swing.JMenu;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
@@ -1929,24 +1930,31 @@ public class BankPriceMovementPanelTest
 			// caption is a label, not an item).
 			ColourSet.CLASSIC.label(), ColourSet.TWO_H.label(), ColourSet.COLOUR_BLIND.label(),
 			BankPriceMovementPanel.SLOT_TEXT, BankPriceMovementPanel.SAVE_SLOT_TEXT,
+			// Release 1.2.4: the six switches stand in ONE list; the list's row comes first, then its six in order.
+			BankPriceMovementPanel.COUNTS_MENU_TEXT,
 			BankPriceMovementPanel.LIVE_PRICES_TEXT, BankPriceMovementPanel.COUNT_CASH_TEXT,
 			BankPriceMovementPanel.COUNT_UNTRADEABLES_TEXT, BankPriceMovementPanel.COUNT_INVENTORY_TEXT,
 			// 1.0.9 part 3: the Grand Exchange switch, directly after the inventory's and last of the group.
 			BankPriceMovementPanel.COUNT_GRAND_EXCHANGE_TEXT,
+			// Release 1.2.4: Include bonds, directly after it and the new last of the group.
+			BankPriceMovementPanel.COUNT_BONDS_TEXT,
 			// "Reset to default" is not among them - AH2 made it a button in the bottom row beside OK, so it is a child of
 			// that row and not an entry. (Addendum AH's "Show hover text" stood here, the last ITEM, until release 1.2.0.)
 			// 1.1.0 part C: the net worth chart's switch, last of the items, under its caption.
 			BankPriceMovementPanel.SINGLE_CHART_COLOUR_TEXT), itemTexts(menu));
 		// Z2: the switches, with the preset row among them and, under everything, addendum AB's OK row carrying AH2's
 		// "Reset to default" button at its left end.
-		assertEquals("sixteen items (1.1.0 part A took Refresh and the start-tab dots out, part B added the two colour rows,"
-			+ " part C the Single chart colour row, part H the three colour presets, part J Slot 1 and its save row; release 1.2.0"
-			+ " took the hover item out), the \"Net worth chart\" and \"Colour presets\" captions, the preset row, the OK row,"
-			+ " the header and five separators (part J's above Up colour is the fifth)", 26, menu.getComponentCount());
+		assertEquals("eleven items and the list of six (release 1.2.4 moved the six switches into one list) (1.1.0 part A took Refresh and the"
+			+ " start-tab dots out, part B added the two colour rows, part C the Single chart colour row, part H the three colour presets,"
+			+ " part J Slot 1 and its save row; release 1.2.0 took the hover item out), the \"Net worth chart\" and \"Colour presets\""
+			+ " captions, the preset row, the OK row, the header and five separators (part J's above Up colour is the fifth)", 22,
+			menu.getComponentCount());
 		assertTrue("1.0.8: the header's rule first, under the name and the version", menu.getComponent(1) instanceof JSeparator);
-		assertTrue("the second is between the colour presets and the view's four", menu.getComponent(14) instanceof JSeparator);
-		// T1: the price series leads the group - what a stack is worth is answered before whether it is counted.
-		assertSame(panel.livePricesItem(), menu.getComponent(15));
+		assertTrue("the second is between the colour presets and the list of six", menu.getComponent(14) instanceof JSeparator);
+		// T1: the price series leads the group - what a stack is worth is answered before whether it is counted. Since 1.2.4
+		// the group is the list at 15 and the price series is its first item.
+		assertTrue("release 1.2.4: the list of six stands at 15", menu.getComponent(15) instanceof JMenu);
+		assertSame(panel.livePricesItem(), ((JMenu) menu.getComponent(15)).getMenuComponent(0));
 		final List<JComponent> children = new ArrayList<>();
 		descendants(panel.hero(), children);
 		assertFalse(children.isEmpty());
@@ -2613,12 +2621,12 @@ public class BankPriceMovementPanelTest
 	@Test
 	public void theInitialViewOptionsComeFromThePrefs() throws Exception
 	{
-		prefs.storedOptions = new ViewOptions(false, true, true, false, false);
+		prefs.storedOptions = new ViewOptions(false, true, true, false, false, true);
 		build();
 		publish(rows(3), listedWith(summary()));
 		onEdt(() ->
 		{
-			assertEquals(new ViewOptions(false, true, true, false, false), panel.options());
+			assertEquals(new ViewOptions(false, true, true, false, false, true), panel.options());
 			assertFalse(panel.countCashItem().isSelected());
 			assertTrue(panel.countUntradeablesItem().isSelected());
 			// T1's switch reads through the seam as well; it stood beside the row switch addendum AO deleted.
@@ -2674,21 +2682,21 @@ public class BankPriceMovementPanelTest
 		assertEquals(Arrays.asList(ViewOptions.DEFAULT.withCountUntradeables(true)), prefs.optionSaves);
 
 		onEdt(() -> panel.countCashItem().doClick(0));
-		assertEquals(new ViewOptions(false, true, true, true, true), panel.options());
+		assertEquals(new ViewOptions(false, true, true, true, true, true), panel.options());
 		onEdt(() -> panel.livePricesItem().doClick(0));
-		assertEquals(new ViewOptions(false, true, false, true, true), panel.options());
+		assertEquals(new ViewOptions(false, true, false, true, true, true), panel.options());
 		assertEquals(3, prefs.optionSaves.size());
-		assertEquals(new ViewOptions(false, true, false, true, true), prefs.optionSaves.get(2));
+		assertEquals(new ViewOptions(false, true, false, true, true, true), prefs.optionSaves.get(2));
 
 		// The config's ConfigChanged comes back through applyOptions and writes nothing more.
-		onEdt(() -> panel.applyOptions(new ViewOptions(false, true, false, true, true)));
+		onEdt(() -> panel.applyOptions(new ViewOptions(false, true, false, true, true, true)));
 		assertEquals(3, prefs.optionSaves.size());
 		assertTrue("the hero switches and the filter are untouched", prefs.heroSaves.isEmpty());
 		assertTrue(prefs.saves.isEmpty());
 		verify(service, never()).setFilter(any());
 
 		onEdt(() -> panel.countCashItem().doClick(0));
-		assertEquals(new ViewOptions(true, true, false, true, true), panel.options());
+		assertEquals(new ViewOptions(true, true, false, true, true, true), panel.options());
 		assertTrue(panel.countCashItem().isSelected());
 	}
 
@@ -2720,6 +2728,8 @@ public class BankPriceMovementPanelTest
 			"Colour-blind",
 			"Slot 1",
 			"Save current colours to Slot 1",
+			// Release 1.2.4: the six switches stand in one list, whose row comes first.
+			"Prices and what counts",
 			"Use live prices",
 			"Include coins and platinum tokens",
 			// AV: the untradeables switch in the user's words since it reaches the alch-only ones alone.
@@ -2727,6 +2737,8 @@ public class BankPriceMovementPanelTest
 			"Include inventory and worn items",
 			// 1.0.9 part 3: directly after it, and the last of the group.
 			"Include Grand Exchange offers",
+			// Release 1.2.4: and Include bonds after that, the last of the group.
+			"Include bonds",
 			// 1.1.0 part C: the net worth chart's switch, under its caption and last of the items.
 			"Single chart colour"), texts);
 		for (String gone : new String[]{"Show bank move (gp)", "Show bank move (%)", "Live prices",
@@ -2748,10 +2760,10 @@ public class BankPriceMovementPanelTest
 		assertFalse("1.1.0 part A: the gear's Refresh item is gone, label and all", texts.contains("Refresh prices now"));
 		assertFalse("1.1.0 part A: the start-tab dots are gone, labels and all",
 			texts.contains("Items") || texts.contains("Net Worth History"));
-		assertEquals("sixteen items (1.0.9 part 3's Grand Exchange switch, 1.1.0 part B's two colour rows, part C's Single"
-			+ " chart colour row, part H's three colour presets and part J's Slot 1 and save row among them; release 1.2.0 took"
-			+ " the hover item out), the \"Net worth chart\" and \"Colour presets\" captions, the preset row, the OK row, the"
-			+ " header and five separators", 26, panel.heroMenu().getComponentCount());
+		assertEquals("eleven items and the list of six (release 1.2.4 moved the six switches into one list) (1.0.9 part 3's Grand Exchange"
+			+ " switch, 1.1.0 part B's two colour rows, part C's Single chart colour row, part H's three colour presets and part J's"
+			+ " Slot 1 and save row among them; release 1.2.0 took the hover item out), the \"Net worth chart\" and \"Colour presets\""
+			+ " captions, the preset row, the OK row, the header and five separators", 22, panel.heroMenu().getComponentCount());
 	}
 
 	/**
@@ -2768,10 +2780,16 @@ public class BankPriceMovementPanelTest
 		publish(rows(3), listedWith(summary()));
 		final JPopupMenu menu = panel.heroMenu();
 		assertSame(panel.countInventoryItem(), item(menu, BankPriceMovementPanel.COUNT_INVENTORY_TEXT));
-		assertSame("directly after the untradeables", panel.countInventoryItem(), menu.getComponent(18));
+		// Release 1.2.4: the group is the list at 15, its six items in its own popup (live prices, coins, untradeables, ...).
+		final JMenu counts = (JMenu) menu.getComponent(15);
+		assertSame("directly after the untradeables", panel.countInventoryItem(), counts.getMenuComponent(3));
 		assertSame("1.0.9 part 3: the Grand Exchange switch directly after it", panel.countGrandExchangeItem(),
-			menu.getComponent(19));
-		assertTrue("and last of the group, with the separator under it", menu.getComponent(20) instanceof JSeparator);
+			counts.getMenuComponent(4));
+		assertTrue("release 1.2.4: Include bonds directly after that",
+			counts.getMenuComponent(5) instanceof JCheckBoxMenuItem
+				&& ((JMenuItem) counts.getMenuComponent(5)).getText().equals(BankPriceMovementPanel.COUNT_BONDS_TEXT));
+		assertEquals("and last of the list", 6, counts.getMenuComponentCount());
+		assertTrue("the list's row has the separator under it", menu.getComponent(16) instanceof JSeparator);
 		assertEquals("the name addendum Y asks for, pinned", "Include inventory and worn items",
 			BankPriceMovementPanel.COUNT_INVENTORY_TEXT);
 		assertEquals("the description addendum Y asks for, its moment the close since addendum AS, pinned",
@@ -2796,7 +2814,7 @@ public class BankPriceMovementPanelTest
 		// Y1: the key of state.options named "inventory" - the fourth since addendum AO took "holding" out from
 		// between the untradeables and the live switch. Release 1.2.0 took the sixth, "hover", out of the echo.
 		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains(
-			",\"options\":{\"cash\":true,\"untradeables\":false,\"live\":true,\"inventory\":false,\"ge\":true}"));
+			",\"options\":{\"cash\":true,\"untradeables\":false,\"live\":true,\"inventory\":false,\"ge\":true,\"bonds\":true}"));
 
 		// The settings page's own change comes back through applyOptions: it ticks and writes nothing more.
 		onEdt(() -> panel.applyOptions(ViewOptions.DEFAULT));
@@ -2804,7 +2822,7 @@ public class BankPriceMovementPanelTest
 		assertEquals(1, prefs.optionSaves.size());
 		assertEquals(rebuilds, panel.rebuilds());
 		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains(
-			",\"options\":{\"cash\":true,\"untradeables\":false,\"live\":true,\"inventory\":true,\"ge\":true}"));
+			",\"options\":{\"cash\":true,\"untradeables\":false,\"live\":true,\"inventory\":true,\"ge\":true,\"bonds\":true}"));
 	}
 
 	/**
@@ -2821,9 +2839,10 @@ public class BankPriceMovementPanelTest
 		publish(rows(3), listedWith(summary()));
 		final JPopupMenu menu = panel.heroMenu();
 		assertSame(panel.countGrandExchangeItem(), item(menu, BankPriceMovementPanel.COUNT_GRAND_EXCHANGE_TEXT));
+		// Release 1.2.4: the switches stand in the list at 15; the Grand Exchange switch follows the inventory one inside it.
 		assertSame("directly after \"Include inventory and worn items\"", panel.countGrandExchangeItem(),
-			menu.getComponent(19));
-		assertSame(panel.countInventoryItem(), menu.getComponent(18));
+			((JMenu) menu.getComponent(15)).getMenuComponent(4));
+		assertSame(panel.countInventoryItem(), ((JMenu) menu.getComponent(15)).getMenuComponent(3));
 		assertEquals("the name, pinned", "Include Grand Exchange offers",
 			BankPriceMovementPanel.COUNT_GRAND_EXCHANGE_TEXT);
 		assertEquals("the sentence, pinned",
@@ -2846,7 +2865,7 @@ public class BankPriceMovementPanelTest
 		assertTrue(prefs.heroSaves.isEmpty());
 		verify(service, never()).setFilter(any());
 		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains(
-			",\"options\":{\"cash\":true,\"untradeables\":false,\"live\":true,\"inventory\":true,\"ge\":false}"));
+			",\"options\":{\"cash\":true,\"untradeables\":false,\"live\":true,\"inventory\":true,\"ge\":false,\"bonds\":true}"));
 		assertEquals("the card's hover is the same exact-gp string as before (AF)", VALUE_TIP,
 			panel.hero().getToolTipText());
 
@@ -2890,12 +2909,12 @@ public class BankPriceMovementPanelTest
 
 			panel.applyOptions(ViewOptions.DEFAULT.withCountCash(false));
 			assertEquals(built, panel.rebuilds());
-			panel.applyOptions(new ViewOptions(false, true, true, true, true));
+			panel.applyOptions(new ViewOptions(false, true, true, true, true, true));
 			assertEquals("a switch the rows do not read leaves them alone", built, panel.rebuilds());
 			assertFalse(panel.countCashItem().isSelected());
 			assertTrue(panel.countUntradeablesItem().isSelected());
 
-			panel.applyOptions(new ViewOptions(false, true, false, false, false));
+			panel.applyOptions(new ViewOptions(false, true, false, false, false, true));
 			assertEquals("AO1: and so does every other one, now that the row switch is gone", built,
 				panel.rebuilds());
 			assertEquals("the face is unmoved", "9,000", panel.rowPanels().get(2).priceText());
@@ -2903,7 +2922,7 @@ public class BankPriceMovementPanelTest
 			assertFalse(panel.livePricesItem().isSelected());
 			assertFalse(panel.countInventoryItem().isSelected());
 
-			panel.applyOptions(new ViewOptions(false, true, false, false, false));
+			panel.applyOptions(new ViewOptions(false, true, false, false, false, true));
 			assertEquals("the same value again does nothing at all", built, panel.rebuilds());
 			panel.applyOptions(null);
 			assertEquals("null reads as the defaults", ViewOptions.DEFAULT, panel.options());
@@ -3814,6 +3833,45 @@ public class BankPriceMovementPanelTest
 		});
 	}
 
+	/**
+	 * Release 1.2.4 (the user's layout 1): the price switch and the five Include switches stand in ONE list, "Prices and what
+	 * counts", between two rules, in the order they always had - and not one of the six is a direct child of the menu.
+	 */
+	@Test
+	public void theSixSwitchesStandInOneListBetweenTwoRules() throws Exception
+	{
+		build();
+		final JPopupMenu menu = panel.heroMenu();
+		assertEquals("the words the user asked for, pinned", "Prices and what counts", BankPriceMovementPanel.COUNTS_MENU_TEXT);
+		final List<Integer> lists = new ArrayList<>();
+		for (int i = 0; i < menu.getComponentCount(); i++)
+		{
+			if (menu.getComponent(i) instanceof JMenu)
+			{
+				lists.add(i);
+			}
+		}
+		assertEquals("exactly one list in the menu, at 15", Arrays.asList(15), lists);
+		assertTrue("a rule above it", menu.getComponent(14) instanceof JSeparator);
+		assertTrue("and a rule below it", menu.getComponent(16) instanceof JSeparator);
+		final JMenu counts = (JMenu) menu.getComponent(15);
+		assertEquals(BankPriceMovementPanel.COUNTS_MENU_TEXT, counts.getText());
+		assertEquals(Widgets.sans(12), counts.getFont());
+		final Component[] six = counts.getMenuComponents();
+		assertEquals(6, six.length);
+		assertSame(panel.livePricesItem(), six[0]);
+		assertSame(panel.countCashItem(), six[1]);
+		assertSame(panel.countUntradeablesItem(), six[2]);
+		assertSame(panel.countInventoryItem(), six[3]);
+		assertSame(panel.countGrandExchangeItem(), six[4]);
+		assertEquals(BankPriceMovementPanel.COUNT_BONDS_TEXT, ((JMenuItem) six[5]).getText());
+		final List<Component> direct = Arrays.asList(menu.getComponents());
+		for (Component c : six)
+		{
+			assertFalse(((JMenuItem) c).getText() + " is inside the list, not a child of the menu", direct.contains(c));
+		}
+	}
+
 	// ---- addendum Z: the three price presets (Z1-Z3)
 
 	/**
@@ -3838,22 +3896,22 @@ public class BankPriceMovementPanelTest
 	{
 		build();
 		final JPopupMenu menu = panel.heroMenu();
-		assertEquals("sixteen items, the \"Net worth chart\" and \"Colour presets\" captions, the preset row, the OK row,"
-			+ " the header and five separators", 26, menu.getComponentCount());
+		assertEquals("eleven items and the list of six (release 1.2.4 moved the six switches into one list), the \"Net worth chart\" and"
+			+ " \"Colour presets\" captions, the preset row, the OK row, the header and five separators", 22, menu.getComponentCount());
 		// 1.0.8: the header (the name over the version) and its rule come first, so everything else sits two places
 		// lower than before it.
 		assertTrue("the header's rule", menu.getComponent(1) instanceof JSeparator);
-		assertTrue("1.0.9 part 7: one rule under the Grand Exchange switch, and no Troubleshoot item in a group of its"
-			+ " own (1.1.0 part A took the start-tab dots, Refresh and their two rules out, six places up)",
-			menu.getComponent(20) instanceof JSeparator);
-		assertSame("then the row", panel.presetRow(), menu.getComponent(21));
+		assertTrue("1.0.9 part 7: one rule under the list of six (the Grand Exchange switch before 1.2.4), and no Troubleshoot item in"
+			+ " a group of its own (1.1.0 part A took the start-tab dots, Refresh and their two rules out, six places up)",
+			menu.getComponent(16) instanceof JSeparator);
+		assertSame("then the row", panel.presetRow(), menu.getComponent(17));
 		// 1.1.0 part C: the rule, the "Net worth chart" caption and its one item, Single chart colour, stand between.
-		assertTrue(menu.getComponent(22) instanceof JSeparator);
-		assertTrue(texts(menu.getComponent(23)).contains(BankPriceMovementPanel.NET_WORTH_CHART_TEXT));
-		assertEquals(BankPriceMovementPanel.SINGLE_CHART_COLOUR_TEXT, ((JMenuItem) menu.getComponent(24)).getText());
+		assertTrue(menu.getComponent(18) instanceof JSeparator);
+		assertTrue(texts(menu.getComponent(19)).contains(BankPriceMovementPanel.NET_WORTH_CHART_TEXT));
+		assertEquals(BankPriceMovementPanel.SINGLE_CHART_COLOUR_TEXT, ((JMenuItem) menu.getComponent(20)).getText());
 		assertSame("and the OK row under all of those (AB2), the menu's last thing again - the user moved the version"
-			+ " lines to the top (2026-09-30)", panel.okRow(), menu.getComponent(25));
-		assertEquals(25, menu.getComponentCount() - 1);
+			+ " lines to the top (2026-09-30)", panel.okRow(), menu.getComponent(21));
+		assertEquals(21, menu.getComponentCount() - 1);
 		assertFalse("the row is no menu element - which is what makes the popup window focusable",
 			panel.presetRow() instanceof MenuElement);
 		assertEquals("the caption addendum AB line AB3 asks for, pinned", "Preset price ranges",
@@ -4322,8 +4380,8 @@ public class BankPriceMovementPanelTest
 				assertFalse(((JMenuItem) c).getText(), ((JMenuItem) c).getText().startsWith("Troubleshoot"));
 			}
 		}
-		assertEquals("sixteen items, the \"Net worth chart\" and \"Colour presets\" captions, the preset row, the OK row, the"
-			+ " header and five rules", 26, menu.getComponentCount());
+		assertEquals("eleven items and the list of six (release 1.2.4 moved the six switches into one list), the \"Net worth chart\" and"
+			+ " \"Colour presets\" captions, the preset row, the OK row, the header and five rules", 22, menu.getComponentCount());
 
 		final Container header = (Container) menu.getComponent(0);
 		assertEquals("the name, the version and the row of link marks", 3, header.getComponentCount());
@@ -4331,9 +4389,12 @@ public class BankPriceMovementPanelTest
 		assertEquals("the four link marks", 4, marksOf((Container) header.getComponent(2)).size());
 		assertTrue("the rule under the header", menu.getComponent(1) instanceof JSeparator);
 		assertSame("the OK row is still last", panel.okRow(), menu.getComponent(menu.getComponentCount() - 1));
-		assertTrue("the Grand Exchange switch, then the one rule that opens the preset group, then the row",
-			menu.getComponent(19) == panel.countGrandExchangeItem() && menu.getComponent(20) instanceof JSeparator
-				&& menu.getComponent(21) == panel.presetRow());
+		final JMenu counts = (JMenu) menu.getComponent(15);
+		assertTrue("the Grand Exchange switch (in the list of six since 1.2.4), then the one rule that opens the preset group, then the row",
+			counts.getMenuComponent(4) == panel.countGrandExchangeItem() && menu.getComponent(16) instanceof JSeparator
+				&& menu.getComponent(17) == panel.presetRow());
+		assertEquals("release 1.2.4: Include bonds is the list's item after it", BankPriceMovementPanel.COUNT_BONDS_TEXT,
+			((JMenuItem) counts.getMenuComponent(5)).getText());
 	}
 
 	// ---- addendum AB: the gear toggles (AB1) and the menu's OK button (AB2)
@@ -5805,7 +5866,7 @@ public class BankPriceMovementPanelTest
 		// no baseline: one dash on the gp, nothing on the percent). The bank time is before the epoch, so the clock
 		// in the footnote is a dash.
 		assertTrue(d, d.contains(",\"options\":{\"cash\":true,\"untradeables\":false,\"live\":true"
-			+ ",\"inventory\":true,\"ge\":true}"
+			+ ",\"inventory\":true,\"ge\":true,\"bonds\":true}"
 			+ ",\"live\":{\"fetchedAt\":0,\"latestItems\":0,\"liveRows\":0,\"guideRows\":0,\"alchRows\":0"
 			+ ",\"liveDay\":null,\"windowDays\":{\"1d\":null,\"7d\":null,\"30d\":null,\"90d\":null,\"180d\":null}"
 			// 1.2.0, L1: and the /1h bucket's start last, null with no hour in hand.
@@ -5841,13 +5902,13 @@ public class BankPriceMovementPanelTest
 		// Q7: the view switches ride beside the hero's, written from PanelState.asMap(ViewOptions) in the same shape - five
 		// of them since addendum AO took "holding" out from between the untradeables and the live switch, in that
 		// value's own order (release 1.2.0 took the sixth, "hover", out).
-		onEdt(() -> panel.applyOptions(new ViewOptions(false, true, true, true, true)));
+		onEdt(() -> panel.applyOptions(new ViewOptions(false, true, true, true, true, true)));
 		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains(
-			",\"options\":{\"cash\":false,\"untradeables\":true,\"live\":true,\"inventory\":true,\"ge\":true}"));
+			",\"options\":{\"cash\":false,\"untradeables\":true,\"live\":true,\"inventory\":true,\"ge\":true,\"bonds\":true}"));
 		assertFalse("AO1: and the key it echoed is gone", PanelState.describe(panel).contains("\"holding\":"));
 		onEdt(() -> panel.applyOptions(LIVE_OFF.withCountInventory(false)));
 		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains(
-			",\"options\":{\"cash\":true,\"untradeables\":false,\"live\":false,\"inventory\":false,\"ge\":true}"
+			",\"options\":{\"cash\":true,\"untradeables\":false,\"live\":false,\"inventory\":false,\"ge\":true,\"bonds\":true}"
 				+ ",\"live\":{"));
 		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains(
 			",\"updateLine\":\"Guide prices update every few hours\","));
@@ -7101,9 +7162,9 @@ public class BankPriceMovementPanelTest
 			assertEquals("the Min box holds only its text field: no x", 1, panel.minField().getComponentCount());
 			box.setText("r");
 			assertFalse("typed in: the placeholder goes", box.getText().isEmpty());
-			assertEquals("the settings menu is 26 components (27 before release 1.2.0 took the hover item out, 24 before 1.1.0 part J's"
-				+ " rule and Slot 1 rows, 20 before part H's colour presets caption and three rows, 21 before part A, 17 after it,"
-				+ " 19 before part C)", 26,
+			assertEquals("the settings menu is 22 components (27 before release 1.2.4 moved the six switches into one list, 26 before"
+				+ " release 1.2.0 took the hover item out, 24 before 1.1.0 part J's rule and Slot 1 rows, 20 before part H's colour presets"
+				+ " caption and three rows, 21 before part A, 17 after it, 19 before part C)", 22,
 				panel.heroMenu().getComponentCount());
 		});
 		assertTrue("nothing is stored for a search", prefs.saves.isEmpty() && prefs.optionSaves.isEmpty()
@@ -10059,9 +10120,18 @@ public class BankPriceMovementPanelTest
 			{
 				descendants((Container) c, out);
 			}
+			if (c instanceof JMenu)
+			{
+				// A list's items live in its own popup, not among its children (release 1.2.4).
+				descendants(((JMenu) c).getPopupMenu(), out);
+			}
 		}
 	}
 
+	/**
+	 * The menu's items in order. A list (a {@link JMenu}, since release 1.2.4) is itself an item and is followed by the
+	 * items in its own popup, so a search by text finds a switch inside it and an order check sees the list's row first.
+	 */
 	private static List<JMenuItem> items(JPopupMenu menu)
 	{
 		final List<JMenuItem> out = new ArrayList<>();
@@ -10070,6 +10140,10 @@ public class BankPriceMovementPanelTest
 			if (c instanceof JMenuItem)
 			{
 				out.add((JMenuItem) c);
+				if (c instanceof JMenu)
+				{
+					out.addAll(items(((JMenu) c).getPopupMenu()));
+				}
 			}
 		}
 		return out;

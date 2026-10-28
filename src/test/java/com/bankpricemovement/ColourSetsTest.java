@@ -294,16 +294,16 @@ public class ColourSetsTest
 			final List<Component> next = after(menu, 7, 7);
 			assertSetsGroup(next.subList(0, 6));
 			assertTrue("then the rule that opens the view group", next.get(6) instanceof JSeparator);
-			assertSame(panel.livePricesItem(), menu.getComponent(15));
-			assertEquals("Net worth chart", find(menu.getComponent(23), JLabel.class).getText());
+			assertTrue("release 1.2.4: the list of six stands there", menu.getComponent(15) instanceof javax.swing.JMenu);
+			assertEquals("Net worth chart", find(menu.getComponent(19), JLabel.class).getText());
 
 			// The caption's look is the Net worth chart caption's, with no hover of its own.
 			final JLabel caption = find(next.get(0), JLabel.class);
-			final JLabel chart = find(menu.getComponent(23), JLabel.class);
+			final JLabel chart = find(menu.getComponent(19), JLabel.class);
 			assertEquals(chart.getFont(), caption.getFont());
 			assertEquals(ColorScheme.LIGHT_GRAY_COLOR, caption.getForeground());
 			assertEquals(chart.getForeground(), caption.getForeground());
-			assertEquals(((javax.swing.JComponent) menu.getComponent(23)).getBorder().getBorderInsets(menu.getComponent(23)),
+			assertEquals(((javax.swing.JComponent) menu.getComponent(19)).getBorder().getBorderInsets(menu.getComponent(19)),
 				((javax.swing.JComponent) next.get(0)).getBorder().getBorderInsets(next.get(0)));
 			assertNull("no hover of its own", caption.getToolTipText());
 		});

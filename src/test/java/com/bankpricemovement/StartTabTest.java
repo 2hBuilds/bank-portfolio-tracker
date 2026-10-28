@@ -164,7 +164,7 @@ public class StartTabTest
 		assertEquals("1.1.0 part A: the item is the tab used last", "Last tab", item.name());
 		assertEquals("The tab the sidebar showed last. It opens there next time.", item.description());
 		assertEquals("1.0.9 part 3 moved it down one for the Grand Exchange switch, release 1.2.0 up one again for the hover"
-			+ " switch it deleted", 15, item.position());
+			+ " switch it deleted", 16, item.position());
 		assertTrue("hidden from the settings page since 1.1.0 part A", item.hidden());
 		assertEquals(SidebarView.class, m.getReturnType());
 		int items = 0;
@@ -194,7 +194,8 @@ public class StartTabTest
 		// Release 1.2.1 added three hidden ones, the change settings: twenty-one on the page and the seven hidden ones.
 		// Its part 2 added four more, the History tab's three twins and the chart's range: twenty-one and the eleven hidden ones.
 		// Release 1.2.2 part 4's opacity marker is a raw key and no item (verification fix): twenty-one and the eleven hidden ones.
-		assertEquals("twenty-one items on the page and the eleven hidden ones", 32, items);
+		// Release 1.2.4 added the visible "Include bonds" switch: twenty-two on the page and the eleven hidden ones.
+		assertEquals("twenty-two items on the page and the eleven hidden ones", 33, items);
 		assertEquals(11, hidden);
 	}
 

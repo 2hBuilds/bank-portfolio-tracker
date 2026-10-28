@@ -10,7 +10,8 @@ import javax.annotation.Nullable;
  * sections 2 and 9.4): the total the Bank value card showed that day, saved IN PARTS so the History line can be
  * drawn under whatever counting switches are on NOW.
  *
- * <p><b>The ten cells.</b> WHERE (in the bank | carried = inventory + worn) times WHAT (tradeable stacks | coins
+ * <p><b>The ten cells</b> (fourteen since release 1.2.4, which added one bonds cell per place - bank, carried, offers and
+ * pouch - and keeps bonds out of the first ten from then on; a day recorded before holds its bonds inside them). WHERE (in the bank | carried = inventory + worn) times WHAT (tradeable stacks | coins
  * and platinum tokens | untradeables valued as their tradeable PARTS that day | untradeables at their High Alchemy
  * value that day) - eight cells, to which 1.0.9 part 3 added two for the third place a player's worth can be, the
  * Grand Exchange offers: the tradeable stacks in them and the coins committed to or earned by them. The Grand
@@ -59,8 +60,19 @@ public final class BankHistoryPoint
 	 * switch AND the coins switch.
 	 */
 	public static final int GE_CASH = 9;
+	/**
+	 * Bonds - the tradeable and the untradeable Old School Bond - in the bank, kept OUT of the cells above from release
+	 * 1.2.4 on. Counted with "Include bonds".
+	 */
+	public static final int BANK_BONDS = 10;
+	/** Bonds carried (inventory + worn). Counted with "Include bonds" AND the inventory switch. */
+	public static final int CARRIED_BONDS = 11;
+	/** Bonds in Grand Exchange offers. Counted with "Include bonds" AND the Grand Exchange switch. */
+	public static final int GE_BONDS = 12;
+	/** Bonds in the bond pouch. Counted with "Include bonds" alone. */
+	public static final int POUCH_BONDS = 13;
 	/** How many cells a reading holds, in {@code card} and in {@code guide}. */
-	public static final int CELLS = 10;
+	public static final int CELLS = 14;
 
 	private final LocalDate day;
 	private final long readAtMillis;
@@ -160,7 +172,9 @@ public final class BankHistoryPoint
 	 * <li>carried cash - {@code countInventory && countCash}; carried alch -
 	 * {@code countInventory && countUntradeables};</li>
 	 * <li>Grand Exchange tradeable - {@code countGrandExchange}; Grand Exchange cash -
-	 * {@code countGrandExchange && countCash} (1.0.9 part 3).</li>
+	 * {@code countGrandExchange && countCash} (1.0.9 part 3);</li>
+	 * <li>bank bonds and pouch bonds - {@code countBonds}; carried bonds - {@code countBonds && countInventory}; Grand
+	 * Exchange bonds - {@code countBonds && countGrandExchange} (release 1.2.4).</li>
 	 * </ul>
 	 * Summed from {@code card} with {@code livePrices} on and from {@code guide} with it off, with the clamped
 	 * addition {@link PortfolioSummary} uses ({@link PortfolioMath#clampedAdd}).
@@ -175,6 +189,7 @@ public final class BankHistoryPoint
 		final boolean alch = o.countUntradeables();
 		final boolean carried = o.countInventory();
 		final boolean offers = o.countGrandExchange();
+		final boolean bonds = o.countBonds();
 
 		long sum = figures[BANK_TRADEABLE];
 		sum = PortfolioMath.clampedAdd(sum, figures[BANK_PARTS]);
@@ -205,6 +220,20 @@ public final class BankHistoryPoint
 			if (cash)
 			{
 				sum = PortfolioMath.clampedAdd(sum, figures[GE_CASH]);
+			}
+		}
+		// Release 1.2.4: bonds are their own cells, one per place; the switch is on top of the place switches.
+		if (bonds)
+		{
+			sum = PortfolioMath.clampedAdd(sum, figures[BANK_BONDS]);
+			sum = PortfolioMath.clampedAdd(sum, figures[POUCH_BONDS]);
+			if (carried)
+			{
+				sum = PortfolioMath.clampedAdd(sum, figures[CARRIED_BONDS]);
+			}
+			if (offers)
+			{
+				sum = PortfolioMath.clampedAdd(sum, figures[GE_BONDS]);
 			}
 		}
 		return sum;

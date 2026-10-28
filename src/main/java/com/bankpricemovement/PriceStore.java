@@ -504,6 +504,10 @@ public class PriceStore
 	 * which is what an OLDER build does with the schema 2 this build writes: "written by a newer build - leaving it
 	 * alone". Schema 2 is 1.0.9 part 3's: every entry's {@code card} and {@code guide} hold ten cells, the two new
 	 * ones being the Grand Exchange offers' ({@link BankHistoryPoint#GE_TRADEABLE}, {@link BankHistoryPoint#GE_CASH}).
+	 * Schema 3 is release 1.2.4's: fourteen cells, the four new ones holding bonds, one per place
+	 * ({@link BankHistoryPoint#BANK_BONDS} to {@link BankHistoryPoint#POUCH_BONDS}). An older file pads with zeros and
+	 * loads unchanged; it is NOT made legacy by the step (only schema 1's days did not count the offers - see
+	 * {@link #FIRST_COUNTING_SCHEMA}).
 	 *
 	 * <p><b>Not bumped for 1.1.1 part B</b>, on purpose, although it adds two OPTIONAL root keys
 	 * ({@value #PLACEHOLDERS_CHECKED_KEY}, {@value #FRESH_WHY_KEY}): a bump would make a 1.1.0 build refuse every file
@@ -511,10 +515,20 @@ public class PriceStore
 	 * finds keys it does not know, loads it LOSSY, copies it aside and drops the two keys at its next write - which costs
 	 * nothing but a second judgement, and only for someone who runs both builds on one account.
 	 */
-	static final int HISTORY_SCHEMA = 2;
+	static final int HISTORY_SCHEMA = 3;
+
+	/**
+	 * The first schema whose days counted the Grand Exchange offers (1.0.9 part 3): a file older than this is migrated into
+	 * the LEGACY days of 1.0.9 part 5. Release 1.2.4's schema 3 changes only where bonds are filed, so it does not hide
+	 * any day.
+	 */
+	private static final int FIRST_COUNTING_SCHEMA = 2;
 
 	/** How many cells a schema 1 entry holds: the eight of addendum AU, before 1.0.9 part 3 added the offers' two. */
 	private static final int SCHEMA_1_CELLS = 8;
+
+	/** How many cells a schema 2 entry holds: schema 1's eight and the offers' two, before release 1.2.4 added the bonds' four. */
+	private static final int SCHEMA_2_CELLS = 10;
 
 	private static final String POINTS_KEY = "points";
 	/**
@@ -884,7 +898,7 @@ public class PriceStore
 		}
 
 		boolean unknownKeys = !HISTORY_ROOT_KEYS.containsAll(root.keySet());
-		final boolean migrated = schema < HISTORY_SCHEMA;
+		final boolean migrated = schema < FIRST_COUNTING_SCHEMA;
 		LocalDate freshFrom = null;
 		if (!migrated)
 		{
@@ -972,6 +986,7 @@ public class PriceStore
 	{
 		// 0 -> 1: the same shape; the number alone was missing.
 		// 1 -> 2: the same document; cells() pads each entry's eight cells to ten as it reads them.
+		// 2 -> 3 (release 1.2.4): the same document; cells() pads each entry's ten cells to fourteen, and no day becomes legacy.
 		return root;
 	}
 
@@ -1009,8 +1024,8 @@ public class PriceStore
 	}
 
 	/**
-	 * Exactly {@link BankHistoryPoint#CELLS} numbers - or exactly {@link #SCHEMA_1_CELLS}, a schema 1 entry written
-	 * before the Grand Exchange offers were counted, which is padded with zeros into the cells that did not exist
+	 * Exactly {@link BankHistoryPoint#CELLS} numbers - or exactly {@link #SCHEMA_1_CELLS} or {@link #SCHEMA_2_CELLS}, an
+	 * entry written before the Grand Exchange offers (or, for the ten, the bonds) were counted, which is padded with zeros into the cells that did not exist
 	 * yet - or null for any other length.
 	 */
 	@Nullable
@@ -1021,7 +1036,7 @@ public class PriceStore
 			return null;
 		}
 		final JsonArray array = element.getAsJsonArray();
-		if (array.size() != BankHistoryPoint.CELLS && array.size() != SCHEMA_1_CELLS)
+		if (array.size() != BankHistoryPoint.CELLS && array.size() != SCHEMA_1_CELLS && array.size() != SCHEMA_2_CELLS)
 		{
 			return null;
 		}

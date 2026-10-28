@@ -900,9 +900,9 @@ public class SidebarViewPanelTest
 	}
 
 	/**
-	 * The menu is 26 components while the record holds no days before 1.0.9 (27 before release 1.2.0 took the hover item out, 24 before 1.1.0 part J added a rule above the
-	 * colour rows and the Slot 1 and save rows, 20 before part H added the colour presets'
-	 * caption and its three rows, 21 before part A took Refresh and
+	 * The menu is 22 components while the record holds no days before 1.0.9 (27 before release 1.2.4 moved the six switches into
+	 * one list, 26 before release 1.2.0 took the hover item out, 24 before 1.1.0 part J added a rule above the colour rows and the
+	 * Slot 1 and save rows, 20 before part H added the colour presets' caption and its three rows, 21 before part A took Refresh and
 	 * the start-tab group out, 17 after it until part B added the two colour rows, and 19 until part C added the Single
 	 * chart colour row), and exactly one more - the item - while it does.
 	 */
@@ -910,13 +910,13 @@ public class SidebarViewPanelTest
 	public void theSettingsMenuIsTwentyComponentsAndOneMoreWhileTheItemIsThere() throws Exception
 	{
 		build(new Asked(true));
-		onEdt(() -> assertEquals(26, panel.heroMenu().getComponentCount()));
+		onEdt(() -> assertEquals(22, panel.heroMenu().getComponentCount()));
 		publish(rows(3), status(withLegacyDays(), VALUE_NOW, NOW - 60_000L));
 		onEdt(() ->
 		{
 			panel.pressView(SidebarView.HISTORY);
 			assertTrue(legacyItemShows());
-			assertEquals(27, panel.heroMenu().getComponentCount());
+			assertEquals(23, panel.heroMenu().getComponentCount());
 		});
 	}
 

@@ -22,16 +22,20 @@ public class BankHistoryPointTest
 {
 	private static final LocalDate DAY = LocalDate.of(2026, 9, 28);
 	private static final long[] CARD = {1L, 10L, 100L, 1_000L, 10_000L, 100_000L, 1_000_000L, 10_000_000L,
-		100_000_000L, 1_000_000_000L};
+		100_000_000L, 1_000_000_000L, 10_000_000_000L, 100_000_000_000L, 1_000_000_000_000L, 10_000_000_000_000L};
 	private static final long[] GUIDE = {2L, 20L, 200L, 2_000L, 20_000L, 200_000L, 2_000_000L, 20_000_000L,
-		200_000_000L, 2_000_000_000L};
+		200_000_000L, 2_000_000_000L, 20_000_000_000L, 200_000_000_000L, 2_000_000_000_000L, 20_000_000_000_000L};
 
 	private static BankHistoryPoint point(final long[] card, final long[] guide)
 	{
 		return new BankHistoryPoint(DAY, 1_000L, 900L, card, guide);
 	}
 
-	/** The four switches the table of addendum AU names, with the Grand Exchange one OFF. */
+	/**
+	 * The four switches the table of addendum AU names, with the Grand Exchange one OFF - and, since release 1.2.4, the bonds
+	 * one OFF too, so the older tests keep the totals of the ten cells they were written for (the bonds cells have their own
+	 * tests below).
+	 */
 	private static ViewOptions options(final boolean cash, final boolean untradeables, final boolean inventory,
 		final boolean live)
 	{
@@ -41,7 +45,7 @@ public class BankHistoryPointTest
 	private static ViewOptions options(final boolean cash, final boolean untradeables, final boolean inventory,
 		final boolean ge, final boolean live)
 	{
-		return new ViewOptions(cash, untradeables, live, inventory, ge);
+		return new ViewOptions(cash, untradeables, live, inventory, ge, false);
 	}
 
 	@Test
@@ -57,7 +61,11 @@ public class BankHistoryPointTest
 		assertEquals(7, BankHistoryPoint.CARRIED_ALCH);
 		assertEquals(8, BankHistoryPoint.GE_TRADEABLE);
 		assertEquals(9, BankHistoryPoint.GE_CASH);
-		assertEquals(10, BankHistoryPoint.CELLS);
+		assertEquals(10, BankHistoryPoint.BANK_BONDS);
+		assertEquals(11, BankHistoryPoint.CARRIED_BONDS);
+		assertEquals(12, BankHistoryPoint.GE_BONDS);
+		assertEquals(13, BankHistoryPoint.POUCH_BONDS);
+		assertEquals(14, BankHistoryPoint.CELLS);
 	}
 
 	@Test
@@ -111,7 +119,7 @@ public class BankHistoryPointTest
 	@Test
 	public void wrongLengthsAreRefused()
 	{
-		for (final int length : new int[]{0, 7, 8, 9, 11})
+		for (final int length : new int[]{0, 7, 8, 9, 10, 11, 13, 15})
 		{
 			try
 			{
@@ -223,6 +231,38 @@ public class BankHistoryPointTest
 		}
 	}
 
+	/**
+	 * Release 1.2.4: the four bonds cells (bank, carried, offers, pouch), counted with the bonds switch - the bank's and the
+	 * pouch's by it alone, the carried ones also with the inventory switch and the offers' also with the Grand Exchange
+	 * one. Cash, untradeables and live prices are held fixed (cash off, untradeables off): the bonds cells ride on top of
+	 * the others and nothing else touches them.
+	 */
+	@Test
+	public void valueForAddsTheBondsCellsUnderTheirSwitchesOnTopOfThePlaceSwitches()
+	{
+		final BankHistoryPoint p = point(CARD, GUIDE);
+		final long bankBonds = 10_000_000_000L;
+		final long carriedBonds = 100_000_000_000L;
+		final long offerBonds = 1_000_000_000_000L;
+		final long pouchBonds = 10_000_000_000_000L;
+		// cash off, alch off: the bank's tradeable and parts cells (101) are always in.
+		for (final boolean inventory : new boolean[]{false, true})
+		{
+			for (final boolean offers : new boolean[]{false, true})
+			{
+				final long without = 101L + (inventory ? 1_010_000L : 0L) + (offers ? 100_000_000L : 0L);
+				final long bonds = bankBonds + pouchBonds + (inventory ? carriedBonds : 0L) + (offers ? offerBonds : 0L);
+				final String why = "inventory=" + inventory + " offers=" + offers;
+				assertEquals("bonds on: " + why, without + bonds,
+					p.valueFor(new ViewOptions(false, false, true, inventory, offers, true)));
+				assertEquals("bonds off takes every bonds cell out: " + why, without,
+					p.valueFor(new ViewOptions(false, false, true, inventory, offers, false)));
+				assertEquals("live off reads the guide figures: " + why, 2 * (without + bonds),
+					p.valueFor(new ViewOptions(false, false, false, inventory, offers, true)));
+			}
+		}
+	}
+
 	@Test
 	public void withLivePricesOffAndNoGuideTheCardFiguresAreUsed()
 	{
@@ -235,9 +275,10 @@ public class BankHistoryPointTest
 	public void aNullOptionsReadsAsTheDefault()
 	{
 		final BankHistoryPoint p = point(CARD, GUIDE);
-		// DEFAULT = cash on, alch-only untradeables off, live on, inventory on, Grand Exchange on: the bank's
+		// DEFAULT = cash on, alch-only untradeables off, live on, inventory on, Grand Exchange on, bonds on: the bank's
 		// tradeables, cash and parts, the carried tradeables, cash and parts, and both Grand Exchange cells.
-		assertEquals(1_101_110_111L, p.valueFor(null));
+		// Release 1.2.4: and the four bonds cells, every place's bonds counted.
+		assertEquals(11_111_101_110_111L, p.valueFor(null));
 		assertEquals(p.valueFor(ViewOptions.DEFAULT), p.valueFor(null));
 	}
 

@@ -734,10 +734,10 @@ public class BankHistoryTransfersTest
 			new BankHistoryPoint(sep(2), 2, 2, b, null)));
 		assertEquals("bank + carried + Grand Exchange cash", new BankHistorySeries.Transfer(-200L, true),
 			BankHistoryMath.prefill(s, sep(2), null));
-		final ViewOptions noInventory = new ViewOptions(true, false, true, false, true);
+		final ViewOptions noInventory = new ViewOptions(true, false, true, false, true, true);
 		assertEquals("the inventory's coins left out", new BankHistorySeries.Transfer(-100L, true),
 			BankHistoryMath.prefill(s, sep(2), noInventory));
-		final ViewOptions noOffers = new ViewOptions(true, false, true, true, false);
+		final ViewOptions noOffers = new ViewOptions(true, false, true, true, false, true);
 		assertEquals("the offers' coins left out", new BankHistorySeries.Transfer(-100L, true),
 			BankHistoryMath.prefill(s, sep(2), noOffers));
 		assertNull("no coins counted and nothing else moved", BankHistoryMath.prefill(s, sep(2), NO_COINS));

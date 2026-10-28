@@ -14,6 +14,8 @@ import net.runelite.api.ItemComposition;
 import net.runelite.api.events.ItemContainerChanged;
 import net.runelite.api.gameval.InventoryID;
 import net.runelite.api.gameval.ItemID;
+import net.runelite.api.widgets.Widget;
+import net.runelite.api.widgets.WidgetPositionMode;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.game.ItemMapping;
 import org.slf4j.Logger;
@@ -369,6 +371,60 @@ public class BankReader
 	}
 
 	/**
+	 * How many of one bond the BOND POUCH holds, read off one column of the "Your Bonds" screen (release 1.2.4,
+	 * CLIENT THREAD). A column ({@code BONDS_TRADEABLE}, {@code BONDS_UNTRADEABLE}) is a row of pictures of the bond, one
+	 * per place: the pouch's (anchored left, under the screen's gold sack) and, anchored right, the inventory's and then
+	 * the bank's (live check 2026-10-28: container 536, the pouch, held the bond the LEFT picture counted). The pouch is
+	 * the one left-anchored picture of the bond - found by item and position and never by child index, which the screen
+	 * does not promise to keep - and its {@code itemQuantity} is the count.
+	 *
+	 * @param column the column's widget, or null when the screen is not loaded
+	 * @param bondId the bond the column shows
+	 * @return the count, or -1 when the pouch cannot be found (no column, no left-anchored picture, or more than one)
+	 */
+	static int pouchCount(@Nullable final Widget column, final int bondId)
+	{
+		final Widget[] children = column == null ? null : column.getDynamicChildren();
+		if (children == null)
+		{
+			return -1;
+		}
+		Widget pouch = null;
+		for (final Widget child : children)
+		{
+			if (child == null || child.getItemId() != bondId || child.getXPositionMode() != WidgetPositionMode.ABSOLUTE_LEFT)
+			{
+				continue;
+			}
+			if (pouch != null)
+			{
+				return -1;
+			}
+			pouch = child;
+		}
+		return pouch == null ? -1 : Math.max(0, pouch.getItemQuantity());
+	}
+
+	/**
+	 * One bond's total in the inventory, bank and pouch together, read off the "Old School Bonds" quantity container
+	 * (1.2.4, rule 3c, CLIENT THREAD): the picture whose item is the bond, found by item and never by child index.
+	 *
+	 * @return the total, or -1 when the container or the bond's picture is not there
+	 */
+	static int bondTotal(@Nullable final Widget container, final int bondId)
+	{
+		final Widget[] children = container == null ? null : container.getDynamicChildren();
+		for (final Widget child : children == null ? new Widget[0] : children)
+		{
+			if (child != null && child.getItemId() == bondId)
+			{
+				return Math.max(0, child.getItemQuantity());
+			}
+		}
+		return -1;
+	}
+
+	/**
 	 * Reads the player's INVENTORY and WORN containers into the carried half of a snapshot (addendum Y, line Y2).
 	 * CLIENT THREAD ONLY, for the reason {@link #read} is - it is the same cache lookups over two more containers.
 	 *
@@ -593,7 +649,9 @@ public class BankReader
 		// an ordinary bank costs exactly the cache lookups it did before.
 		final boolean untradeable = !composition.isGeTradeable();
 		final int haPrice = untradeable ? composition.getHaPrice() : 0;
-		if (untradeable && haPrice <= 0)
+		// Release 1.2.4: the untradeable bond has no alch value and is kept all the same - the service prices it at 90% of
+		// a tradeable bond, whatever else it is.
+		if (untradeable && haPrice <= 0 && canonical != ItemID.OSRS_BOND_UNTRADEABLE)
 		{
 			return;
 		}

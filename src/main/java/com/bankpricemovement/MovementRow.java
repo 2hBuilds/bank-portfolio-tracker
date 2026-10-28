@@ -139,6 +139,11 @@ public final class MovementRow
 	private final int wornQuantity;
 	private final int exchangeQuantity;
 	/**
+	 * How many of a bond row's {@link #quantity} are in the player's bond pouch (release 1.2.4); 0 for every other row and
+	 * while "Include bonds" is off. Set only by {@link #withPouch}, after every other copy.
+	 */
+	private final int pouchQuantity;
+	/**
 	 * The graded live figure of the window this row was built for (contract 1.2.0, L2-L4) - its grade, its word and
 	 * every number behind it - or null on a row the traded feeds did not grade: every row computed with live prices
 	 * off or without a usable snapshot, and every alch row. Read through {@link #graded()}.
@@ -190,6 +195,17 @@ public final class MovementRow
 		final int inventoryQuantity, final int wornQuantity, final int exchangeQuantity,
 		@Nullable final GradedMove graded)
 	{
+		this(id, name, quantity, stackable, unitPrice, thenPrice, deltaGp, deltaPct, holdingValue, source, parts, windowDays,
+			bankQuantity, inventoryQuantity, wornQuantity, exchangeQuantity, 0, graded);
+	}
+
+	private MovementRow(final int id, final String name, final int quantity, final boolean stackable,
+		final Long unitPrice, final Long thenPrice, final Long deltaGp, final Double deltaPct,
+		final long holdingValue, final PriceSource source, @Nullable final List<BankItem.Part> parts,
+		@Nullable final Map<MovementWindow, LocalDate> windowDays, final int bankQuantity,
+		final int inventoryQuantity, final int wornQuantity, final int exchangeQuantity, final int pouchQuantity,
+		@Nullable final GradedMove graded)
+	{
 		this.id = id;
 		this.name = name == null ? "" : name;
 		this.quantity = quantity;
@@ -208,6 +224,7 @@ public final class MovementRow
 		this.inventoryQuantity = Math.max(0, inventoryQuantity);
 		this.wornQuantity = Math.max(0, wornQuantity);
 		this.exchangeQuantity = Math.max(0, exchangeQuantity);
+		this.pouchQuantity = Math.max(0, pouchQuantity);
 		this.graded = graded;
 	}
 
@@ -283,6 +300,12 @@ public final class MovementRow
 		return exchangeQuantity;
 	}
 
+	/** How many of {@link #quantity()} are in the player's bond pouch (release 1.2.4); 0 for anything but a bond. */
+	public int pouchQuantity()
+	{
+		return pouchQuantity;
+	}
+
 	/**
 	 * Whether the whole stack is in the bank - the test the row's hover line is drawn on: it is printed only while
 	 * something is carried, worn or in an offer (Y3), because "3 in bank" alone tells a reader nothing they cannot
@@ -290,7 +313,7 @@ public final class MovementRow
 	 */
 	public boolean allInBank()
 	{
-		return inventoryQuantity == 0 && wornQuantity == 0 && exchangeQuantity == 0;
+		return inventoryQuantity == 0 && wornQuantity == 0 && exchangeQuantity == 0 && pouchQuantity == 0;
 	}
 
 	public boolean stackable()
@@ -398,7 +421,7 @@ public final class MovementRow
 
 		return new MovementRow(id, name, quantity, stackable, unitPrice, thenPrice, deltaGp, deltaPct, holdingValue,
 			PriceSource.PARTS, parts, windowDays, bankQuantity, inventoryQuantity, wornQuantity, exchangeQuantity,
-			graded);
+			pouchQuantity, graded);
 	}
 
 	/**
@@ -422,7 +445,24 @@ public final class MovementRow
 		}
 
 		return new MovementRow(id, name, quantity, stackable, unitPrice, thenPrice, deltaGp, deltaPct, holdingValue,
-			source, parts, windowDays, bankQuantity, inventoryQuantity, wornQuantity, exchangeQuantity, graded);
+			source, parts, windowDays, bankQuantity, inventoryQuantity, wornQuantity, exchangeQuantity, pouchQuantity,
+			graded);
+	}
+
+	/**
+	 * This same row with the bond pouch's share of its quantity named (release 1.2.4), the last copy the service makes.
+	 * Every figure is untouched; zero or less answers this row unchanged.
+	 */
+	public MovementRow withPouch(final int pouchQuantity)
+	{
+		if (pouchQuantity <= 0)
+		{
+			return this;
+		}
+
+		return new MovementRow(id, name, quantity, stackable, unitPrice, thenPrice, deltaGp, deltaPct, holdingValue,
+			source, parts, windowDays, bankQuantity, inventoryQuantity, wornQuantity, exchangeQuantity, pouchQuantity,
+			graded);
 	}
 
 	/**
@@ -511,6 +551,7 @@ public final class MovementRow
 			&& inventoryQuantity == other.inventoryQuantity
 			&& wornQuantity == other.wornQuantity
 			&& exchangeQuantity == other.exchangeQuantity
+			&& pouchQuantity == other.pouchQuantity
 			// And the GRADE (1.2.0): the same figure, solid or soft, is two different rows on the screen.
 			&& Objects.equals(graded, other.graded);
 	}
@@ -520,6 +561,6 @@ public final class MovementRow
 	{
 		return Objects.hash(id, name, quantity, stackable, unitPrice, thenPrice, deltaGp, deltaPct,
 			holdingValue, source, parts, windowDays, bankQuantity, inventoryQuantity, wornQuantity,
-			exchangeQuantity, graded);
+			exchangeQuantity, pouchQuantity, graded);
 	}
 }

@@ -310,6 +310,7 @@ final class PanelState
 		map.put("live", options.livePrices());
 		map.put("inventory", options.countInventory());
 		map.put("ge", options.countGrandExchange());
+		map.put("bonds", options.countBonds());
 		return map;
 	}
 

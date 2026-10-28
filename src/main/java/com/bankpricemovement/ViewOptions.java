@@ -3,7 +3,7 @@ package com.bankpricemovement;
 import java.util.Objects;
 
 /**
- * The five view switches, carried as one immutable value the way {@link HeroVisibility} carries the card's three
+ * The six view switches, carried as one immutable value the way {@link HeroVisibility} carries the card's three
  * figures: the two addendum Q still has - whether coins and platinum tokens count in the bank value
  * ({@code countCash}, config item {@code countCash}, default on) and whether untradeable stacks are listed and
  * counted at their High Alchemy value when they have no tradeable parts ({@code countUntradeables}, default off;
@@ -11,8 +11,9 @@ import java.util.Objects;
  * traded item is priced from the wiki's live traded series ({@code livePrices}, default ON) - addendum Y's,
  * whether the stacks the player is CARRYING and WEARING are counted and listed beside the bank's
  * ({@code countInventory}, default ON) - and 1.0.9 part 3's, whether what the player has in the Grand Exchange's
- * offers is counted and listed beside them ({@code countGrandExchange}, default ON). The settings menu on the hero
- * card, RuneLite's settings page and the dev verb {@code opt=} all read and write the same five switches through
+ * offers is counted and listed beside them ({@code countGrandExchange}, default ON) - and 1.2.4's, whether bonds
+ * count in every place ({@code countBonds}, default ON). The settings menu on the hero
+ * card, RuneLite's settings page and the dev verb {@code opt=} all read and write the same six switches through
  * the plugin's config.
  *
  * <p><b>Addendum AO line AO1 took one away</b>: {@code holdingOnRows}, addendum Q's third, which chose
@@ -32,13 +33,14 @@ public final class ViewOptions
 	 * Every switch at its default: cash counted, untradeables left out, live prices on, the inventory and worn
 	 * gear counted, and the Grand Exchange offers counted.
 	 */
-	public static final ViewOptions DEFAULT = new ViewOptions(true, false, true, true, true);
+	public static final ViewOptions DEFAULT = new ViewOptions(true, false, true, true, true, true);
 
 	private final boolean countCash;
 	private final boolean countUntradeables;
 	private final boolean livePrices;
 	private final boolean countInventory;
 	private final boolean countGrandExchange;
+	private final boolean countBonds;
 
 	/**
 	 * The one constructor, and since addendum AO the ONLY one: this class carried a ladder of shorter overloads
@@ -52,13 +54,14 @@ public final class ViewOptions
 	 * shrank by its last argument, and a six-argument call no longer compiles.
 	 */
 	public ViewOptions(final boolean countCash, final boolean countUntradeables, final boolean livePrices,
-		final boolean countInventory, final boolean countGrandExchange)
+		final boolean countInventory, final boolean countGrandExchange, final boolean countBonds)
 	{
 		this.countCash = countCash;
 		this.countUntradeables = countUntradeables;
 		this.livePrices = livePrices;
 		this.countInventory = countInventory;
 		this.countGrandExchange = countGrandExchange;
+		this.countBonds = countBonds;
 	}
 
 	/** Coins and platinum tokens (1,000 gp each) count in the bank value and in the percentage's basis. */
@@ -109,29 +112,45 @@ public final class ViewOptions
 		return countGrandExchange;
 	}
 
+	/**
+	 * Bonds count (release 1.2.4): the tradeable and the untradeable Old School Bond, in the bank, the inventory, the
+	 * Grand Exchange offers and the bond pouch. The switch sits on top of the place switches - a bond in the inventory
+	 * also needs {@link #countInventory()}, one in an offer {@link #countGrandExchange()}; the bank and the pouch need
+	 * only this. Off, no bond counts anywhere.
+	 */
+	public boolean countBonds()
+	{
+		return countBonds;
+	}
+
 	public ViewOptions withCountCash(final boolean value)
 	{
-		return new ViewOptions(value, countUntradeables, livePrices, countInventory, countGrandExchange);
+		return new ViewOptions(value, countUntradeables, livePrices, countInventory, countGrandExchange, countBonds);
 	}
 
 	public ViewOptions withCountUntradeables(final boolean value)
 	{
-		return new ViewOptions(countCash, value, livePrices, countInventory, countGrandExchange);
+		return new ViewOptions(countCash, value, livePrices, countInventory, countGrandExchange, countBonds);
 	}
 
 	public ViewOptions withLivePrices(final boolean value)
 	{
-		return new ViewOptions(countCash, countUntradeables, value, countInventory, countGrandExchange);
+		return new ViewOptions(countCash, countUntradeables, value, countInventory, countGrandExchange, countBonds);
 	}
 
 	public ViewOptions withCountInventory(final boolean value)
 	{
-		return new ViewOptions(countCash, countUntradeables, livePrices, value, countGrandExchange);
+		return new ViewOptions(countCash, countUntradeables, livePrices, value, countGrandExchange, countBonds);
 	}
 
 	public ViewOptions withCountGrandExchange(final boolean value)
 	{
-		return new ViewOptions(countCash, countUntradeables, livePrices, countInventory, value);
+		return new ViewOptions(countCash, countUntradeables, livePrices, countInventory, value, countBonds);
+	}
+
+	public ViewOptions withCountBonds(final boolean value)
+	{
+		return new ViewOptions(countCash, countUntradeables, livePrices, countInventory, countGrandExchange, value);
 	}
 
 	@Override
@@ -150,12 +169,13 @@ public final class ViewOptions
 			&& countUntradeables == other.countUntradeables
 			&& livePrices == other.livePrices
 			&& countInventory == other.countInventory
-			&& countGrandExchange == other.countGrandExchange;
+			&& countGrandExchange == other.countGrandExchange
+			&& countBonds == other.countBonds;
 	}
 
 	@Override
 	public int hashCode()
 	{
-		return Objects.hash(countCash, countUntradeables, livePrices, countInventory, countGrandExchange);
+		return Objects.hash(countCash, countUntradeables, livePrices, countInventory, countGrandExchange, countBonds);
 	}
 }

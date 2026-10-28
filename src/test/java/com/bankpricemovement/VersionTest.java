@@ -56,7 +56,7 @@ public class VersionTest
 		final PluginDescriptor d = BankPriceMovementPlugin.class.getAnnotation(PluginDescriptor.class);
 		assertNotNull(d);
 		assertTrue(d.description(), d.description().endsWith(" (v" + Version.CURRENT + ")"));
-		assertTrue("and this build is the one the contract names", d.description().endsWith("(v1.2.3)"));
+		assertTrue("and this build is the one the contract names", d.description().endsWith("(v1.2.4)"));
 	}
 
 	@Test
@@ -160,7 +160,8 @@ public class VersionTest
 	 * Discord, X, GitHub for the 2hBuilds profile and GitHub again for this plugin's page (the two GitHub marks are the
 	 * same picture on purpose, told apart by their hovers) - with the hovers "Discord", "X", "2hBuilds on GitHub" and
 	 * "This plugin on GitHub", always on. The row lives
-	 * inside the header, so the menu's count is what the menu has: 26 since release 1.2.0 took the hover item out (27
+	 * inside the header, so the menu's count is what the menu has: 22 since release 1.2.4 moved the six switches into one
+	 * list (27 before it; 26 since release 1.2.0 took the hover item out, 27
 	 * since 1.1.0 part J's rule and Slot 1 rows, 24 with
 	 * part H's colour presets, 20 with part C's
 	 * Single chart colour row, 19
@@ -173,7 +174,7 @@ public class VersionTest
 		final BankPriceMovementPanel panel = panelWith(url -> { });
 		SwingUtilities.invokeAndWait(() ->
 		{
-			assertEquals("the links row lives inside the header: the menu's count is what the menu has", 26,
+			assertEquals("the links row lives inside the header: the menu's count is what the menu has", 22,
 				panel.heroMenu().getComponentCount());
 			final Container links = linksRowOf(panel);
 			final List<JLabel> marks = linkMarks(links);

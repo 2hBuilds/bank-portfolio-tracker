@@ -5655,6 +5655,34 @@ public class PriceServiceTest
 	}
 
 	/**
+	 * {@link #warmUpWith} for an account that has NO bank yet but has read its bond pouch (release 1.2.4): the pouch is the
+	 * first thing the service is told of this player.
+	 */
+	void warmUpWithPouchOnly(final int tradeable, final int untradeable)
+	{
+		service.start();
+		service.setPouch(ACCOUNT, PROFILE, tradeable, untradeable, T0);
+		service.setLoggedIn(true, ACCOUNT, PROFILE);
+		service.setVisible(true);
+		fireTick();
+		answerIndex();
+		answerTables(); // R0
+		answerTables(); // the windows
+	}
+
+	/** {@link #warmUpWith} for a service that is given no bank at all: the login loads it from the (mocked) disk. */
+	void warmUpFromDisk()
+	{
+		service.start();
+		service.setLoggedIn(true, ACCOUNT, PROFILE);
+		service.setVisible(true);
+		fireTick();
+		answerIndex();
+		answerTables(); // R0
+		answerTables(); // the windows
+	}
+
+	/**
 	 * Teaches the mapping and every revision body one extra name at a fixed price, for an id RuneLite would
 	 * answer another item's price for (B001).
 	 */
@@ -5707,6 +5735,19 @@ public class PriceServiceTest
 		service = new PriceService(wiki, store, itemManager, clientThread, scheduler, clock::get, edt,
 			live ? traded : null, zone);
 		listen();
+	}
+
+	/** The tradeable Old School Bond (release 1.2.4), the untradeable one, and the bond's guide prices on the fixture's days. */
+	static final int BOND = 13_190;
+	static final int BOND_UNTRADEABLE = 13_192;
+	static final String BOND_NAME = "Old school bond";
+	static final long BOND_NOW = 14_000_000L;
+	static final long BOND_THEN = 13_500_000L;
+
+	/** {@link #teachEveryTable} for the Old School Bond: priced now and on every earlier day, with or without one in the bank. */
+	void nameTheBond()
+	{
+		teachEveryTable(BOND, BOND_NAME, BOND_NOW, BOND_THEN);
 	}
 
 	/** {@link #teachEveryTable} for the crystal armour seed, the part of the addendum R examples. */

@@ -381,9 +381,9 @@ public class PriceStoreTest
 		assertEquals("2026-10-04", root.get("freshFrom").getAsString());
 		assertEquals("placeholders", root.get("freshWhy").getAsString());
 		assertEquals("2026-10-04", root.get("placeholdersChecked").getAsString());
-		assertEquals("still schema 2", 2, root.get("schema").getAsInt());
+		assertEquals("still schema 3", 3, root.get("schema").getAsInt());
 		assertTrue("schema, the fresh start, its reason, the judgement, then the days", TestFilepaths.read(
-			historyFile(store)).startsWith("{\"schema\":2,\"freshFrom\":\"2026-10-04\",\"freshWhy\":\"placeholders\","
+			historyFile(store)).startsWith("{\"schema\":3,\"freshFrom\":\"2026-10-04\",\"freshWhy\":\"placeholders\","
 			+ "\"placeholdersChecked\":\"2026-10-04\",\"points\":["));
 		final BankHistorySeries back = loadHistory().series();
 		assertEquals(oct(4), back.freshFrom());

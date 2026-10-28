@@ -507,7 +507,7 @@ public class SidebarHistorySeamTest
 		assertEquals(Collections.singletonList(today), BankHistorySeriesTest.days(series.fromFresh()));
 		// ...and the file says the same, with the old days still in it, padded to ten cells.
 		final JsonObject written = new Gson().fromJson(TestFilepaths.read(file), JsonObject.class);
-		assertEquals(2, written.get("schema").getAsInt());
+		assertEquals(3, written.get("schema").getAsInt());
 		assertEquals(today.toString(), written.get("freshFrom").getAsString());
 		assertEquals(9, written.getAsJsonArray("points").size());
 		assertEquals(series, disk.loadBankHistory(ACCOUNT, PROFILE).series());

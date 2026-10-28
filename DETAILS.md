@@ -238,7 +238,9 @@ shows its year. The days come in pages of 250, like the items.
 **It adds up the way the card does.** Every reading is saved in parts - what was in your bank and what you were
 carrying, each split into tradeable items, coins and platinum tokens, untradeables made from tradeable items,
 and alch-only untradeables, and since 1.0.9 the items and the coins in your Grand Exchange offers - so the Net
-Worth History always counts exactly what your settings count. Readings saved before 1.0.9 did not count offers,
+Worth History always counts exactly what your settings count. Since 1.2.4 bonds are four parts of their own (bank, carried,
+offers and pouch), so *Include bonds* and the place switches redraw the whole line without a jump. Days saved before 1.2.4 hold their bonds inside the older parts, so with *Include bonds* off those days still show them; the days
+from 1.2.4 on do not. Readings saved before 1.0.9 did not count offers,
 so the tracker hides them by default and your first bank read on 1.0.9 is day one. *Restore history* in *History options*
 (below) shows them again after a short confirmation (those days did not count open G.E. orders, so their totals may read
 low), and so does *Include days before v1.0.9* in the settings menu's *Net worth chart* section; it appears only if you have
@@ -431,6 +433,22 @@ and never on their own: an offer that fills with the bank closed shows at the ne
 your bank and in an offer is one row, and the split reads *"3 in bank, 2 in the Grand Exchange"*. This is what
 closed the gap where logging out with items on the Grand Exchange left the day's net worth short by their worth.
 
+**Bonds count too.** *Include bonds* is **on by default** (1.2.4) and covers both bonds, in every place: the bank, the
+inventory, the Grand Exchange offers and the bond pouch. It sits on top of the place switches: a bond in your inventory
+also needs *Include inventory and worn items*, one in an offer also needs *Include Grand Exchange offers*; the bank and the
+pouch need only *Include bonds*.
+
+- **An untradeable bond is worth 90% of a tradeable one**, the fee to convert it being 10%. Its price and every window's
+  move come from the tradeable bond's own figure, live or guide, whether or not you hold a tradeable bond; the open row
+  says so. *Include alch-only untradeables* does not touch it.
+- **The pouch is read from the *Your Bonds* screen**, on each game tick while it is open, and only then. What it showed
+  is saved with your bank, per account, and stands until you open the screen again - nothing is guessed in between, so
+  a bond you redeem or buy elsewhere shows in the pouch only after your next look at that screen. The row's split reads
+  *"2 in bank, 1 in bond pouch"*.
+- **Until you first open *Your Bonds***, the settings icon and the menu's *Prices and what counts* row each carry a small
+  gold dot, and *Include bonds* a gold border and an (i) whose hover reads *"Open your bond pouch once so its bonds count
+  too."* All of it goes once the pouch is read, for that account, for good.
+
 One consequence worth knowing: **RuneLite's own bank title bar will read lower than this card**, by roughly what
 you are carrying and wearing, because it counts the bank container and nothing else. Turn the switch off and
 every figure here is the bank alone, as the title bar's is.
@@ -541,6 +559,7 @@ follows.
 | Show alch-only items | Lists untradeables with no tradeable parts, at alch value, after the other rows. Off by default. Searching finds them either way. The tick is in the *List options* menu at the end of the search box. |
 | Include inventory and worn items | Items in your inventory and worn items count in the bank value and are listed with the bank's stacks. They are read when you open or close the bank, or press Refresh. On by default. |
 | Include Grand Exchange offers | Items in your Grand Exchange offers, and the coins committed to them or waiting to be collected, count in the bank value and are listed with the bank's stacks. They are read when you close the bank or press Refresh. On by default. |
+| Include bonds | Bonds count in the bank value and are listed with the bank's stacks: tradeable and untradeable, in the bank, the inventory, Grand Exchange offers and the bond pouch. An untradeable bond counts at 90% of a tradeable one. The pouch is read while the *Your Bonds* screen is open. On by default. |
 | Use live prices | Every item that has traded in the last 24 hours gets a figure from the wiki's live traded prices, solid or soft with a word under the percentage when it is soft; items with no trades keep the guide price. On by default. |
 | Up colour | The colour of a rise, on both tabs: the figures, the rows, the card's edge and the chart. Green by default. |
 | Down colour | The colour of a fall, on both tabs. Red by default. |
@@ -550,8 +569,8 @@ follows.
 
 Most of them are also controls in the panel's own **Options** menu, behind the settings icon in the card's
 top-right corner: the three that decide what the card draws, a line, and the *Up colour* and *Down colour* swatches,
-then *Colour presets* (see below), then *Use live prices* and the four that decide what the card counts and which stacks
-get a row, then *Preset price ranges* as three boxes, then a *Net worth chart* section with
+then *Colour presets* (see below), then one list, *Prices and what counts*, which opens on hover or click and holds *Use live
+prices* and the five *Include* switches that decide what the card counts and which stacks get a row (one list since 1.2.4), then *Preset price ranges* as three boxes, then a *Net worth chart* section with
 *Single chart colour* and, if you have days hidden by an automatic restart, *Include days before v1.0.9* (or *v1.1.1*; *Restore history* in
 the History options does the same, and is the only way back from a reset of yours). A swatch opens
 RuneLite's colour picker beside the sidebar, and the panel changes as you drag. *Reset to default* puts the preset
@@ -627,6 +646,8 @@ there the moment you open the sidebar.
   anyone would pay you for those parts. The ones it cannot are in it only when you ask for them, and then at
   their High Alchemy value, which is not what anyone would pay you for them. Whenever the total looks short, the
   stacks reading "-" in the list are the ones it is leaving out.
+- Bonds count while *Include bonds* is on. The pouch is as of the last time you opened *Your Bonds*, and an untradeable bond
+  is 90% of a tradeable one, not what anyone would pay you for it.
 - Your Grand Exchange offers count while *Include Grand Exchange offers* is on: unsold items, bought items waiting
   to be collected, and the coins committed to or waiting in an offer. They are read when the bank closes and on
   Refresh, not the moment an offer changes.

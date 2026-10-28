@@ -129,9 +129,14 @@ public class BankHistoryInvariantTest
 	{
 		f.service.setOptions(ViewOptions.DEFAULT.withCountUntradeables(true));
 		final BankHistoryPoint point = reading();
-		for (int cell = 0; cell < BankHistoryPoint.CELLS; cell++)
+		// The first ten: this fixture holds no bond (release 1.2.4's four bonds cells are filled by BondsTest's own).
+		for (int cell = 0; cell < BankHistoryPoint.BANK_BONDS; cell++)
 		{
 			assertTrue("cell " + cell + " holds something", point.card(cell) > 0L);
+		}
+		for (int cell = BankHistoryPoint.BANK_BONDS; cell < BankHistoryPoint.CELLS; cell++)
+		{
+			assertEquals("cell " + cell + " (bonds) is empty", 0L, point.card(cell));
 		}
 		assertTrue("a live row", f.lastStatus().live().liveRows() >= 1);
 		final MovementRow whip = PriceServiceTest.rowFor(f.lastRows(), PriceServiceTest.WHIP);

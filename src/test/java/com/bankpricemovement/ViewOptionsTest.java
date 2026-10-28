@@ -33,7 +33,7 @@ public class ViewOptionsTest
 	{
 		assertFalse("the bridge no longer echoes a hover key", PanelState.asMap(ViewOptions.DEFAULT).containsKey("hover"));
 		// The value now differs from another only by the five switches that remain: spelled out, the default IS DEFAULT.
-		assertEquals(ViewOptions.DEFAULT, new ViewOptions(true, false, true, true, true));
+		assertEquals(ViewOptions.DEFAULT, new ViewOptions(true, false, true, true, true, true));
 	}
 
 	@Test
@@ -59,7 +59,7 @@ public class ViewOptionsTest
 		// The value is shared - DEFAULT is a static every road in the plugin reads - so a with() that wrote through
 		// to the receiver would hand the whole client one user's answer. Pin the receiver, not just the copy.
 		assertEquals("and none of them touched the value they were called on", ViewOptions.DEFAULT,
-			new ViewOptions(true, false, true, true, true));
+			new ViewOptions(true, false, true, true, true, true));
 	}
 
 	/** Y1: the inventory switch is one more {@code with} of the same shape, and it moves nothing else. */
@@ -112,35 +112,41 @@ public class ViewOptionsTest
 	@Test
 	public void theOneConstructorTakesTheFiveSwitchesInThisOrder()
 	{
-		assertTrue("first: cash", new ViewOptions(true, false, false, false, false).countCash());
-		assertTrue("second: untradeables", new ViewOptions(false, true, false, false, false).countUntradeables());
-		assertTrue("third: live", new ViewOptions(false, false, true, false, false).livePrices());
-		assertTrue("fourth: inventory", new ViewOptions(false, false, false, true, false).countInventory());
-		assertTrue("fifth: Grand Exchange", new ViewOptions(false, false, false, false, true).countGrandExchange());
-		assertFalse("and the fourth is not the fifth", new ViewOptions(false, false, false, true, false)
+		assertTrue("first: cash", new ViewOptions(true, false, false, false, false, true).countCash());
+		assertTrue("second: untradeables", new ViewOptions(false, true, false, false, false, true).countUntradeables());
+		assertTrue("third: live", new ViewOptions(false, false, true, false, false, true).livePrices());
+		assertTrue("fourth: inventory", new ViewOptions(false, false, false, true, false, true).countInventory());
+		assertTrue("fifth: Grand Exchange", new ViewOptions(false, false, false, false, true, true).countGrandExchange());
+		assertFalse("and the fourth is not the fifth", new ViewOptions(false, false, false, true, false, true)
 			.countGrandExchange());
-		assertFalse(new ViewOptions(false, false, false, false, true).countInventory());
+		assertFalse(new ViewOptions(false, false, false, false, true, true).countInventory());
 
-		assertFalse("and nothing else came on with it", new ViewOptions(true, false, false, false, false)
+		assertFalse("and nothing else came on with it", new ViewOptions(true, false, false, false, false, true)
 			.countUntradeables());
-		assertFalse(new ViewOptions(false, false, false, false, true).countCash());
+		assertFalse(new ViewOptions(false, false, false, false, true, true).countCash());
+		assertTrue("sixth: bonds (release 1.2.4)", new ViewOptions(false, false, false, false, false, true).countBonds());
+		assertFalse("and the fifth is not the sixth", new ViewOptions(false, false, false, false, true, false).countBonds());
+		assertFalse(new ViewOptions(false, false, false, false, false, true).countGrandExchange());
 
 		assertEquals("so the default spelled out IS DEFAULT", ViewOptions.DEFAULT,
-			new ViewOptions(true, false, true, true, true));
+			new ViewOptions(true, false, true, true, true, true));
 	}
 
 	@Test
-	public void asMapPrintsTheFiveSwitchesInTheOrderTheBridgeUses()
+	public void asMapPrintsTheSixSwitchesInTheOrderTheBridgeUses()
 	{
-		final ViewOptions o = new ViewOptions(false, true, false, false, true);
-		assertEquals("[cash, untradeables, live, inventory, ge]", new ArrayList<>(PanelState.asMap(o).keySet()).toString());
-		assertEquals("[false, true, false, false, true]", new ArrayList<>(PanelState.asMap(o).values()).toString());
+		final ViewOptions o = new ViewOptions(false, true, false, false, true, true);
+		assertEquals("[cash, untradeables, live, inventory, ge, bonds]",
+			new ArrayList<>(PanelState.asMap(o).keySet()).toString());
+		assertEquals("[false, true, false, false, true, true]", new ArrayList<>(PanelState.asMap(o).values()).toString());
 		assertEquals("AO1: live moves up to THIRD, where holding used to sit", "live",
 			new ArrayList<>(PanelState.asMap(ViewOptions.DEFAULT).keySet()).get(2));
 		assertEquals("Y1: inventory is the FOURTH key", "inventory",
 			new ArrayList<>(PanelState.asMap(ViewOptions.DEFAULT).keySet()).get(3));
-		assertEquals("1.0.9 part 3: ge is the FIFTH and last, directly after inventory", "ge",
+		assertEquals("1.0.9 part 3: ge is the FIFTH, directly after inventory", "ge",
 			new ArrayList<>(PanelState.asMap(ViewOptions.DEFAULT).keySet()).get(4));
+		assertEquals("release 1.2.4: bonds is the SIXTH and last, directly after ge", "bonds",
+			new ArrayList<>(PanelState.asMap(ViewOptions.DEFAULT).keySet()).get(5));
 		assertFalse("AO1: and nothing prints the deleted holding switch any more",
 			PanelState.asMap(ViewOptions.DEFAULT).containsKey("holding"));
 		assertFalse("release 1.2.0: nor the deleted hover switch", PanelState.asMap(ViewOptions.DEFAULT).containsKey("hover"));
@@ -149,8 +155,8 @@ public class ViewOptionsTest
 	@Test
 	public void equalityIsByValue()
 	{
-		assertEquals(new ViewOptions(true, false, true, true, true), ViewOptions.DEFAULT);
-		assertEquals(ViewOptions.DEFAULT.hashCode(), new ViewOptions(true, false, true, true, true).hashCode());
+		assertEquals(new ViewOptions(true, false, true, true, true, true), ViewOptions.DEFAULT);
+		assertEquals(ViewOptions.DEFAULT.hashCode(), new ViewOptions(true, false, true, true, true, true).hashCode());
 		// Every remaining field on its own: the panel decides what to rebuild by comparing two of these values, so
 		// a field equals() skipped would be a switch the user pressed and the sidebar never followed.
 		assertNotEquals(ViewOptions.DEFAULT, ViewOptions.DEFAULT.withCountCash(false));
@@ -159,6 +165,8 @@ public class ViewOptionsTest
 		assertNotEquals(ViewOptions.DEFAULT, ViewOptions.DEFAULT.withCountInventory(false));
 		assertNotEquals(ViewOptions.DEFAULT, ViewOptions.DEFAULT.withCountGrandExchange(false));
 		assertNotEquals(ViewOptions.DEFAULT.hashCode(), ViewOptions.DEFAULT.withCountGrandExchange(false).hashCode());
+		assertNotEquals(ViewOptions.DEFAULT, ViewOptions.DEFAULT.withCountBonds(false));
+		assertNotEquals(ViewOptions.DEFAULT.hashCode(), ViewOptions.DEFAULT.withCountBonds(false).hashCode());
 	}
 
 	/**
@@ -170,9 +178,9 @@ public class ViewOptionsTest
 	 * followed - and a fifth going missing again would be a stored answer nothing reads.
 	 */
 	@Test
-	public void theValueCarriesFiveSwitchesAndNoMore()
+	public void theValueCarriesSixSwitchesAndNoMore()
 	{
-		assertEquals("AO1 and release 1.2.0 took holding and hover out, so the bridge prints five", 5,
+		assertEquals("AO1 and release 1.2.0 took holding and hover out and release 1.2.4 added bonds, so the bridge prints six", 6,
 			PanelState.asMap(ViewOptions.DEFAULT).size());
 		final ViewOptions d = ViewOptions.DEFAULT;
 		assertTrue(d.countCash());
@@ -180,5 +188,6 @@ public class ViewOptionsTest
 		assertTrue(d.livePrices());
 		assertTrue(d.countInventory());
 		assertTrue(d.countGrandExchange());
+		assertTrue("release 1.2.4: bonds count by default", d.countBonds());
 	}
 }

@@ -64,9 +64,23 @@ public class BankItem
 		 */
 		public String name;
 
+		/**
+		 * The divisor of the part's worth (release 1.2.4): ONE of the item is worth {@code quantity / per} of the part, so
+		 * the untradeable bond is nine tenths of a tradeable one - quantity 9, per 10 - without a fraction in a long.
+		 * 0 and 1 mean a whole part. {@code transient}: only the service makes a part with a divisor (the bond rule), at
+		 * the moment it prices, and no file ever holds one.
+		 */
+		public transient long per;
+
 		public Part()
 		{
 			name = "";
+		}
+
+		/** {@link #per} as a divisor: 1 for a whole part. */
+		public long divisor()
+		{
+			return per > 1L ? per : 1L;
 		}
 
 		/**
@@ -95,13 +109,13 @@ public class BankItem
 			}
 
 			final Part other = (Part) o;
-			return id == other.id && quantity == other.quantity && Objects.equals(name, other.name);
+			return id == other.id && quantity == other.quantity && per == other.per && Objects.equals(name, other.name);
 		}
 
 		@Override
 		public int hashCode()
 		{
-			return Objects.hash(id, quantity, name);
+			return Objects.hash(id, quantity, name, per);
 		}
 	}
 

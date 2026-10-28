@@ -33,6 +33,7 @@ import java.util.function.LongSupplier;
 import java.util.function.Supplier;
 import javax.annotation.Nullable;
 import net.runelite.api.ItemComposition;
+import net.runelite.api.gameval.ItemID;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.game.ItemManager;
 import net.runelite.client.game.ItemMapping;
@@ -256,6 +257,14 @@ public class PriceService
 	 * AS8, {@link #refreshNow(boolean)}).
 	 */
 	public static final long MANUAL_COOLDOWN_MS = 30L * 1000L;
+
+	/** The untradeable bond's rule (release 1.2.4): nine tenths of a tradeable bond - the numerator, over... */
+	private static final long BOND_RULE_NUMERATOR = 9L;
+	/** ...the denominator: one such bond = {@code figure x 9 / 10}, in integer gp, rounded down. */
+	private static final long BOND_RULE_DENOMINATOR = 10L;
+	/** The names the pouch's stacks and the bond rule's part carry when no bank stack has supplied them. */
+	private static final String BOND_NAME = "Old school bond";
+	private static final String BOND_UNTRADEABLE_NAME = "Old school bond (untradeable)";
 
 	/**
 	 * How many bank items must have BOTH a RuneLite price and an R0 value before their agreement is trusted to
@@ -1084,6 +1093,7 @@ public class PriceService
 		final long nowSeconds;
 		/** How the counted rows graded (contract 1.2.0, L3); {@link GradeSummary#NONE} when none is offered. */
 		private final GradeSummary grades;
+		private final boolean pouchUnread;
 
 		/**
 		 * @param pricesAtMillis          when the guide prices in the rows were read (the last computation that
@@ -1133,6 +1143,7 @@ public class PriceService
 		 *                                as 0
 		 * @param grades                  how the counted rows graded (contract 1.2.0, L3); null reads as
 		 *                                {@link GradeSummary#NONE}
+		 * @param pouchUnread             the logged-in account's held bank has never had its bond pouch read (1.2.4)
 		 */
 		public Status(final long pricesAtMillis, final long bankAtMillis, final boolean bankLoaded,
 			final boolean loggedIn, @Nullable final MovementRow.PriceSource source, @Nullable final String problem,
@@ -1145,8 +1156,9 @@ public class PriceService
 			@Nullable final PortfolioSummary portfolio, @Nullable final ViewOptions options,
 			@Nullable final LiveStatus live, @Nullable final BankHistorySeries bankHistory, final int alchStacks,
 			final int alchCounted, final int placeholderRestarts, final long nowSeconds,
-			@Nullable final GradeSummary grades)
+			@Nullable final GradeSummary grades, final boolean pouchUnread)
 		{
+			this.pouchUnread = pouchUnread;
 			this.live = live == null ? LiveStatus.OFF : live;
 			this.options = options == null ? ViewOptions.DEFAULT : options;
 			this.pricesAtMillis = pricesAtMillis;
@@ -1181,6 +1193,12 @@ public class PriceService
 			this.placeholderRestarts = Math.max(0, placeholderRestarts);
 			this.nowSeconds = Math.max(0L, nowSeconds);
 			this.grades = grades == null ? GradeSummary.NONE : grades;
+		}
+
+		/** The logged-in account's held bank has never had its bond pouch read (1.2.4, the pouch hint); false when logged out. */
+		public boolean pouchUnread()
+		{
+			return pouchUnread;
 		}
 
 		/**
@@ -1488,7 +1506,7 @@ public class PriceService
 		final List<BankItem> items;
 
 		/**
-		 * Canonical id to {bank, inventory, worn, exchange} - the four figures a row's hover names. EMPTY while no
+		 * Canonical id to {bank, inventory, worn, exchange, pouch} - the five figures a row's hover names. EMPTY while no
 		 * source beside the bank merges anything (both of "Include inventory and worn items" and "Include Grand
 		 * Exchange offers" off, or nothing in either), which leaves every row's split at zeros and so byte-identical
 		 * to the pre-Y one.
@@ -1706,7 +1724,7 @@ public class PriceService
 		MovementRow withSplit(final MovementRow row)
 		{
 			final int[] split = splits.get(row.id());
-			return split == null ? row : row.withSplit(split[0], split[1], split[2], split[3]);
+			return split == null ? row : row.withSplit(split[0], split[1], split[2], split[3]).withPouch(split[4]);
 		}
 
 		/**
@@ -2762,6 +2780,7 @@ public class PriceService
 		{
 			final BankSnapshot loadedRaw = store.loadBank(accountHash, profile);
 			final BankSnapshot loaded = loadedRaw == null ? BankSnapshot.EMPTY : loadedRaw;
+			BankSnapshot pouchKept = null;
 			synchronized (lock)
 			{
 				if (generation != loginGeneration)
@@ -2769,13 +2788,40 @@ public class PriceService
 					// A later login superseded this load; its own load is on the way.
 					return;
 				}
-				if (belongsTo(bank, accountHash, profile) && bank.capturedAtMillis >= loaded.capturedAtMillis)
+				// Release 1.2.4: a bank made of the pouch alone never beats a real file, only lends it the newer pouch.
+				final boolean heldPouchOnly = belongsTo(bank, accountHash, profile) && pouchOnly(bank)
+					&& loaded.capturedAtMillis > 0L && !pouchOnly(loaded);
+				if (!heldPouchOnly && belongsTo(bank, accountHash, profile) && bank.capturedAtMillis >= loaded.capturedAtMillis)
 				{
 					// setBank delivered this account's bank (from the container replay) while the disk was read.
-					return;
+					if (loaded.pouchAtMillis <= bank.pouchAtMillis || !bankPersist)
+					{
+						return;
+					}
+					// Release 1.2.4: the replay knew nothing of the bond pouch the file carries; keep the newer read.
+					pouchKept = bank.withPouch(loaded.pouchTradeable, loaded.pouchUntradeable, loaded.pouchAtMillis);
+					bank = pouchKept;
+					savedBank = pouchKept;
 				}
-				bank = loaded;
-				bankPersist = true;
+				else if (heldPouchOnly && bank.pouchAtMillis > loaded.pouchAtMillis)
+				{
+					pouchKept = loaded.withPouch(bank.pouchTradeable, bank.pouchUntradeable, bank.pouchAtMillis);
+					bank = pouchKept;
+					bankPersist = true;
+					savedBank = pouchKept;
+				}
+				else
+				{
+					bank = loaded;
+					bankPersist = !pouchOnly(loaded);
+				}
+			}
+			if (pouchKept != null)
+			{
+				final BankSnapshot toSave = pouchKept;
+				submitWrite("saving the bank", () -> store.saveBank(toSave));
+				scheduleRecompute();
+				return;
 			}
 			log.debug("bank-portfolio-tracker: loaded the persisted bank for {}/{} ({} stacks)", accountHash, profile, itemCount(loaded));
 			scheduleRecompute();
@@ -2865,12 +2911,19 @@ public class PriceService
 	 * @param persist whether the snapshot is written to disk; false is the synthetic, session-only path, and no
 	 *                computation over such a bank is ever a bank-history reading (addendum AU, plan 7.1 item 6)
 	 */
-	public void setBank(@Nullable final BankSnapshot snapshot, final boolean persist)
+	public void setBank(@Nullable final BankSnapshot incoming, final boolean persist)
 	{
-		if (snapshot == null)
+		setBank(incoming, persist, true);
+	}
+
+	/** @param keepPouch whether a newer pouch read the held bank carries replaces this one's older stamp ({@link #setPouch} says no) */
+	private void setBank(@Nullable final BankSnapshot incoming, final boolean persist, final boolean keepPouch)
+	{
+		if (incoming == null)
 		{
 			return;
 		}
+		final BankSnapshot snapshot;
 		final boolean save;
 		synchronized (lock)
 		{
@@ -2878,6 +2931,12 @@ public class PriceService
 			{
 				return;
 			}
+			// Release 1.2.4: the bond pouch is read apart from the bank (only while "Your Bonds" is open), so a bank read
+			// that knows nothing of it, or holds an older read of it, keeps the newer pouch the held bank of the same
+			// account carries.
+			snapshot = keepPouch && bank != null && incoming.pouchAtMillis < bank.pouchAtMillis
+				&& incoming.accountHash == bank.accountHash && Objects.equals(incoming.profileType, bank.profileType)
+				? incoming.withPouch(bank.pouchTradeable, bank.pouchUntradeable, bank.pouchAtMillis) : incoming;
 			// Review finding H10: the plugin's Refresh re-stamps the bank it is drawing with a fresh carried half
 			// (setBank(bank().withCarried(...)), persist true). When that bank is the dev verb's made-up one, the
 			// re-stamp - a NEW snapshot that keeps the held one's own item list (withCarried shares it), capture stamp
@@ -2885,10 +2944,12 @@ public class PriceService
 			// persist true is still a real capture (B021: the refusal is per call, not sticky).
 			final boolean restamp = !bankPersist && bank != null && snapshot != bank && snapshot.items == bank.items
 				&& bank.capturedAtMillis > 0L && snapshot.capturedAtMillis == bank.capturedAtMillis
-				&& snapshot.accountHash == bank.accountHash && Objects.equals(snapshot.profileType, bank.profileType);
+				&& snapshot.accountHash == bank.accountHash && Objects.equals(snapshot.profileType, bank.profileType)
+				&& !pouchOnly(snapshot);
 			final boolean real = persist && !restamp;
 			bank = snapshot;
-			bankPersist = real;
+			// A bank of the pouch alone is saved, but is no bank capture: never a history reading.
+			bankPersist = real && !pouchOnly(snapshot);
 			save = real && snapshot != BankSnapshot.EMPTY && snapshot.capturedAtMillis > 0L
 				&& !snapshot.sameContentAs(savedBank);
 			if (save)
@@ -2901,6 +2962,44 @@ public class PriceService
 			submitWrite("saving the bank", () -> store.saveBank(snapshot));
 		}
 		scheduleRecompute();
+	}
+
+	/**
+	 * The bond pouch as the "Your Bonds" screen showed it (release 1.2.4): the plugin hands the two counts here, from the
+	 * client thread, only when they differ from the ones it handed last. They are saved with the account's bank and
+	 * overwrite the earlier read. With no bank held for the account yet, an empty one carries them, stamped with the
+	 * read time, so the bonds count before the first bank visit.
+	 *
+	 * @param accountHash the account the screen belongs to - a real one, checked by the caller
+	 * @param profile     the RuneScape profile that goes with it
+	 */
+	public void setPouch(final long accountHash, final String profile, final int tradeable, final int untradeable,
+		final long atMillis)
+	{
+		final BankSnapshot next;
+		synchronized (lock)
+		{
+			if (stopped || !BankSnapshot.isAccount(accountHash))
+			{
+				return;
+			}
+			final boolean own = belongsTo(bank, accountHash, profile);
+			if (own ? bank.pouchAtMillis > 0L && bank.pouchTradeable == tradeable && bank.pouchUntradeable == untradeable
+				: tradeable <= 0 && untradeable <= 0)
+			{
+				return;
+			}
+			next = (own ? bank : new BankSnapshot(new ArrayList<BankItem>(), atMillis, accountHash, profile))
+				.withPouch(tradeable, untradeable, atMillis);
+		}
+		setBank(next, true, false);
+	}
+
+	/** A snapshot {@link #setPouch} made with no bank held: no stacks, no coins, no carried read - only the pouch. */
+	private static boolean pouchOnly(final BankSnapshot snapshot)
+	{
+		return snapshot != BankSnapshot.EMPTY && snapshot.isEmpty() && snapshot.currencyGp == 0L
+			&& snapshot.carriedAtMillis == 0L && snapshot.pouchAtMillis > 0L;
 	}
 
 	/**
@@ -4773,7 +4872,7 @@ public class PriceService
 			// the client-thread trip below reads.
 			final Stacks counted = stacksOf(bank, options);
 			final ViewOptions allOn = options.withCountCash(true).withCountUntradeables(true).withCountInventory(true)
-				.withCountGrandExchange(true);
+				.withCountGrandExchange(true).withCountBonds(true);
 			final Stacks everything = allOn.equals(options) ? counted : stacksOf(bank, allOn);
 			// 1.1.0 part G: the Items list can show the alch rows whatever "Include alch-only untradeables" says, so the
 			// alch-only stacks that switch keeps out of `counted` are handed to the rows as well - and to nothing else.
@@ -5059,6 +5158,14 @@ public class PriceService
 				bankCell = BankHistoryPoint.BANK_ALCH;
 				carriedCell = BankHistoryPoint.CARRIED_ALCH;
 			}
+			if (isBond(item.id))
+			{
+				// Release 1.2.4: a bond is filed in its own four cells, one per place, so "Include bonds" and the place
+				// switches can each take it out of the line later.
+				addBondHolding(card, positive(price.cardUnit), split, item.quantity);
+				addBondHolding(guide, positive(price.guideUnit), split, item.quantity);
+				continue;
+			}
 			addHolding(card, bankCell, carriedCell, positive(price.cardUnit), bankQty, carriedQty, item.quantity);
 			addHolding(guide, bankCell, carriedCell, positive(price.guideUnit), bankQty, carriedQty, item.quantity);
 		}
@@ -5087,6 +5194,31 @@ public class PriceService
 		cells[bankCell] = PortfolioMath.clampedAdd(cells[bankCell], inBank);
 		cells[carriedCell] = PortfolioMath.clampedAdd(cells[carriedCell], carried);
 		cells[BankHistoryPoint.GE_TRADEABLE] = PortfolioMath.clampedAdd(cells[BankHistoryPoint.GE_TRADEABLE], offers);
+	}
+
+	/**
+	 * One bond stack's holding into the four bond cells (release 1.2.4), each place cut from the running holding as
+	 * {@link #addHolding} cuts its three, so the bank, carried, offers and pouch cells add up to the stack's holding
+	 * exactly. A null split is a stack that is all in the bank.
+	 */
+	private static void addBondHolding(final long[] cells, @Nullable final Long unit, @Nullable final int[] split,
+		final int mergedQty)
+	{
+		final int bankQty = split == null ? mergedQty : split[0];
+		final int carriedQty = split == null ? 0 : BankReader.addClamped(split[1], split[2]);
+		final int offersQty = split == null ? 0 : split[3];
+		final long inBank = MovementMath.holdingValue(unit, bankQty);
+		final int withCarriedQty = BankReader.addClamped(bankQty, carriedQty);
+		final long withCarried = MovementMath.holdingValue(unit, withCarriedQty);
+		final long withOffers = MovementMath.holdingValue(unit, BankReader.addClamped(withCarriedQty, offersQty));
+		final long everything = MovementMath.holdingValue(unit, mergedQty);
+		cells[BankHistoryPoint.BANK_BONDS] = PortfolioMath.clampedAdd(cells[BankHistoryPoint.BANK_BONDS], inBank);
+		cells[BankHistoryPoint.CARRIED_BONDS] = PortfolioMath.clampedAdd(cells[BankHistoryPoint.CARRIED_BONDS],
+			Math.max(0L, withCarried - inBank));
+		cells[BankHistoryPoint.GE_BONDS] = PortfolioMath.clampedAdd(cells[BankHistoryPoint.GE_BONDS],
+			Math.max(0L, withOffers - withCarried));
+		cells[BankHistoryPoint.POUCH_BONDS] = PortfolioMath.clampedAdd(cells[BankHistoryPoint.POUCH_BONDS],
+			Math.max(0L, everything - withOffers));
 	}
 
 	/** A price that counts - present and positive - or null, the way {@link PortfolioMath} reads one. */
@@ -5624,7 +5756,7 @@ public class PriceService
 			{
 				return null;
 			}
-			sum = PortfolioMath.clampedAdd(sum, clampedMultiply(gp, part.quantity));
+			sum = PortfolioMath.clampedAdd(sum, clampedMultiply(gp, part.quantity) / part.divisor());
 		}
 		return sum <= 0L ? null : Long.valueOf(sum);
 	}
@@ -6596,7 +6728,10 @@ public class PriceService
 			// 1.1.2: the now time the windows counted back from, for the bridge's echo.
 			nowSeconds,
 			// 1.2.0: how the counted rows graded, and whether the card is soft (L3).
-			gradesUsed);
+			gradesUsed,
+			// 1.2.4: the pouch hint - this account's held bank, never read off the bond screen.
+			loggedIn && bank.accountHash == loginHash && loginProfile.equals(bank.profileType)
+				&& BankSnapshot.isAccount(loginHash) && bank.pouchAtMillis <= 0L);
 	}
 
 	/**
@@ -6945,31 +7080,105 @@ public class PriceService
 	 */
 	private static Stacks stacksOf(@Nullable final BankSnapshot snapshot, final ViewOptions options)
 	{
+		final boolean bonds = options.countBonds();
 		final boolean carried = carriedMerges(snapshot, options);
 		final boolean offered = exchangeMerges(snapshot, options);
-		if (snapshot == null || (!carried && !offered))
+		final boolean pouched = pouchMerges(snapshot, options);
+		if (snapshot == null || (!carried && !offered && !pouched))
 		{
-			return new Stacks(keep(itemsOf(snapshot), options), Collections.<Integer, int[]>emptyMap());
+			final List<BankItem> own = itemsOf(snapshot);
+			if (!bonds)
+			{
+				own.removeIf(item -> item != null && isBond(item.id));
+			}
+			return new Stacks(keep(ruled(own), options), Collections.<Integer, int[]>emptyMap());
 		}
 
 		final Map<Integer, BankItem> merged = new LinkedHashMap<>();
 		final Map<Integer, int[]> splits = new HashMap<>();
 		// The bank first, so a stack held in two places keeps the name, the stackable flag and the untradeable
 		// marks the BANK captured for it; the inventory before the worn gear and the Grand Exchange offers last, which
-		// is the order the hover reads.
-		fold(merged, splits, snapshot.items, 0);
+		// is the order the hover reads. Release 1.2.4: the bond pouch comes after them, and "Include bonds" is ON TOP of
+		// the place switches - a bond is folded from a place only while that place's own switch merges it.
+		fold(merged, splits, snapshot.items, 0, bonds);
 		if (carried)
 		{
-			fold(merged, splits, snapshot.inventory, 1);
-			fold(merged, splits, snapshot.worn, 2);
+			fold(merged, splits, snapshot.inventory, 1, bonds);
+			fold(merged, splits, snapshot.worn, 2, bonds);
 		}
 		if (offered)
 		{
-			fold(merged, splits, snapshot.exchange, 3);
+			fold(merged, splits, snapshot.exchange, 3, bonds);
+		}
+		if (pouched)
+		{
+			fold(merged, splits, pouchStacks(snapshot), 4, true);
 		}
 		final List<BankItem> rows = new ArrayList<>(merged.values());
 		rows.sort(BankReader.BY_NAME_THEN_ID);
-		return new Stacks(keep(rows, options), splits);
+		return new Stacks(keep(ruled(rows), options), splits);
+	}
+
+	/** Whether {@code id} is one of the two bonds the "Include bonds" switch covers (release 1.2.4). */
+	static boolean isBond(final int id)
+	{
+		return id == ItemID.OSRS_BOND || id == ItemID.OSRS_BOND_UNTRADEABLE;
+	}
+
+	/**
+	 * The untradeable bond's price rule (release 1.2.4): one such bond is nine tenths of a tradeable one - worth
+	 * {@code figure x 9 / 10} (integer, rounded down, on the "now" and on every window's "then" alike), the figure being
+	 * whatever the tradeable bond's row uses on that side, live or guide, held or not. It rides the parts machinery
+	 * (a part of quantity 9 and divisor 10 on the tradeable bond), so the row, the card, the windows and the history all
+	 * price it by the one path. A copy: the stacks belong to the snapshot.
+	 */
+	private static BankItem bondRule(final BankItem item)
+	{
+		final BankItem.Part part = new BankItem.Part(ItemID.OSRS_BOND, BOND_RULE_NUMERATOR, BOND_NAME);
+		part.per = BOND_RULE_DENOMINATOR;
+		return new BankItem(item.id, item.quantity, item.name, item.stackable, true, item.haPrice,
+			Collections.singletonList(part));
+	}
+
+	/** {@code stacks} with every untradeable bond put under the bond rule; the list itself when it holds none. */
+	private static List<BankItem> ruled(final List<BankItem> stacks)
+	{
+		List<BankItem> out = null;
+		for (int i = 0; i < stacks.size(); i++)
+		{
+			final BankItem item = stacks.get(i);
+			if (item != null && item.id == ItemID.OSRS_BOND_UNTRADEABLE)
+			{
+				if (out == null)
+				{
+					out = new ArrayList<>(stacks);
+				}
+				out.set(i, bondRule(item));
+			}
+		}
+		return out == null ? stacks : out;
+	}
+
+	/** The bond pouch as stacks (release 1.2.4): the tradeable and the untradeable bonds counted at the last read. */
+	private static List<BankItem> pouchStacks(final BankSnapshot snapshot)
+	{
+		final List<BankItem> stacks = new ArrayList<>(2);
+		if (snapshot.pouchTradeable > 0)
+		{
+			stacks.add(new BankItem(ItemID.OSRS_BOND, snapshot.pouchTradeable, BOND_NAME, false));
+		}
+		if (snapshot.pouchUntradeable > 0)
+		{
+			stacks.add(new BankItem(ItemID.OSRS_BOND_UNTRADEABLE, snapshot.pouchUntradeable, BOND_UNTRADEABLE_NAME, false,
+				true, 0));
+		}
+		return stacks;
+	}
+
+	/** The bond pouch merges into the stacks: bonds count and the pouch holds one. */
+	private static boolean pouchMerges(@Nullable final BankSnapshot snapshot, final ViewOptions options)
+	{
+		return snapshot != null && options.countBonds() && (snapshot.pouchTradeable > 0 || snapshot.pouchUntradeable > 0);
 	}
 
 	/** Whether a snapshot has a carried half worth merging - a pre-Y file, and a logged-out one, have none. */
@@ -7006,12 +7215,13 @@ public class PriceService
 	 * snapshot and a computation must never write to them.
 	 *
 	 * @param merged the fold map, keyed by canonical id and mutated in place
-	 * @param splits id to {bank, inventory, worn, exchange}, mutated in place
+	 * @param splits id to {bank, inventory, worn, exchange, pouch}, mutated in place
 	 * @param stacks one container's stacks; null or empty adds nothing
-	 * @param slot   which of the four figures these stacks count towards
+	 * @param slot   which of the five figures these stacks count towards
+	 * @param bonds  whether a bond stack is folded at all ("Include bonds")
 	 */
 	private static void fold(final Map<Integer, BankItem> merged, final Map<Integer, int[]> splits,
-		@Nullable final List<BankItem> stacks, final int slot)
+		@Nullable final List<BankItem> stacks, final int slot, final boolean bonds)
 	{
 		if (stacks == null)
 		{
@@ -7020,7 +7230,7 @@ public class PriceService
 
 		for (final BankItem item : stacks)
 		{
-			if (item == null || item.id <= 0 || item.quantity <= 0)
+			if (item == null || item.id <= 0 || item.quantity <= 0 || (!bonds && isBond(item.id)))
 			{
 				continue;
 			}
@@ -7032,7 +7242,7 @@ public class PriceService
 			final int[] split = splits.get(item.id);
 			if (split == null)
 			{
-				final int[] fresh = new int[4];
+				final int[] fresh = new int[5];
 				fresh[slot] = item.quantity;
 				splits.put(item.id, fresh);
 			}
@@ -7070,7 +7280,7 @@ public class PriceService
 	/** An untradeable stack with no tradeable parts - what AV's switch alone admits (AV1); null is not one. */
 	private static boolean alchOnly(@Nullable final BankItem item)
 	{
-		return item != null && item.untradeable && !item.hasParts();
+		return item != null && item.untradeable && !item.hasParts() && item.id != ItemID.OSRS_BOND_UNTRADEABLE;
 	}
 
 	/** The alch-only stacks of {@code stacks} (1.1.0 part G), in their order: what {@link #keep} drops while the switch is off. */
@@ -7139,7 +7349,8 @@ public class PriceService
 		{
 			return 0;
 		}
-		if (carriedMerges(snapshot, options) || exchangeMerges(snapshot, options))
+		if (carriedMerges(snapshot, options) || exchangeMerges(snapshot, options) || pouchMerges(snapshot, options)
+			|| !options.countBonds())
 		{
 			return stacksOf(snapshot, options).items.size();
 		}

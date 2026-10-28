@@ -136,6 +136,20 @@ public class BankSnapshot
 	public long carriedAtMillis;
 
 	/**
+	 * How many tradeable Old School Bonds the player's BOND POUCH held at the last read of the "Your Bonds" screen
+	 * (release 1.2.4), and {@link #pouchUntradeable} the untradeable ones. Read only while that screen is open, so
+	 * these are "as of {@link #pouchAtMillis}", never guessed between reads. 0 in every file written before 1.2.4,
+	 * which reads as an empty pouch.
+	 */
+	public int pouchTradeable;
+
+	/** The untradeable bonds in the pouch at the same read; see {@link #pouchTradeable}. */
+	public int pouchUntradeable;
+
+	/** When the pouch was last read, epoch millis; 0 means "never" - which every pre-1.2.4 file says. */
+	public long pouchAtMillis;
+
+	/**
 	 * The bank slots the read that made this snapshot dropped as placeholders although they held a quantity (1.1.1 part
 	 * B) - {@link BankReader#placeholdersSkipped()}, put here by {@link BankReader#read}. A count above 0 is what tells
 	 * the Net Worth History that the readings an older build recorded counted placeholders as items.
@@ -251,6 +265,25 @@ public class BankSnapshot
 		// 1.1.1 part B: the same bank, read the same way - a fresh read keeps its count through the carried half the
 		// plugin folds into it, and a bank from disk stays unjudged.
 		copy.placeholderSlots = placeholderSlots;
+		// 1.2.4: the pouch is read apart from every other part and survives a carried re-stamp.
+		copy.pouchTradeable = pouchTradeable;
+		copy.pouchUntradeable = pouchUntradeable;
+		copy.pouchAtMillis = pouchAtMillis;
+		return copy;
+	}
+
+	/**
+	 * This same snapshot with the bond pouch's counts and clock replaced (release 1.2.4). A copy, for
+	 * {@link #withCarried}'s reason; the stacks are shared.
+	 */
+	public BankSnapshot withPouch(final int tradeable, final int untradeable, final long atMillis)
+	{
+		final BankSnapshot copy = new BankSnapshot(items, capturedAtMillis, accountHash, profileType, currencyGp,
+			inventory, worn, exchange, carriedGp, exchangeGp, carriedAtMillis);
+		copy.placeholderSlots = placeholderSlots;
+		copy.pouchTradeable = Math.max(0, tradeable);
+		copy.pouchUntradeable = Math.max(0, untradeable);
+		copy.pouchAtMillis = atMillis;
 		return copy;
 	}
 
@@ -299,6 +332,10 @@ public class BankSnapshot
 			&& currencyGp == other.currencyGp
 			&& carriedGp == other.carriedGp
 			&& exchangeGp == other.exchangeGp
+			&& pouchTradeable == other.pouchTradeable
+			&& pouchUntradeable == other.pouchUntradeable
+			// 1.2.4: a first read of an empty pouch is content too, or the stamp is never saved and the pouch hint comes back.
+			&& (pouchAtMillis > 0L) == (other.pouchAtMillis > 0L)
 			&& Objects.equals(profileType, other.profileType)
 			&& Objects.equals(items, other.items)
 			// Y2: what the player carries is content too, or a Refresh that found a different inventory would leave
@@ -360,6 +397,14 @@ public class BankSnapshot
 		if (carriedAtMillis < 0)
 		{
 			carriedAtMillis = 0;
+		}
+
+		// 1.2.4: absent reads as 0 through Gson; a hand-edited negative count is nothing.
+		pouchTradeable = Math.max(0, pouchTradeable);
+		pouchUntradeable = Math.max(0, pouchUntradeable);
+		if (pouchAtMillis < 0)
+		{
+			pouchAtMillis = 0;
 		}
 	}
 
@@ -429,6 +474,8 @@ public class BankSnapshot
 		result = 31 * result + (int) (carriedGp ^ (carriedGp >>> 32));
 		result = 31 * result + (exchange == null ? 0 : exchange.hashCode());
 		result = 31 * result + (int) (exchangeGp ^ (exchangeGp >>> 32));
+		result = 31 * result + pouchTradeable;
+		result = 31 * result + pouchUntradeable;
 		return result;
 	}
 }

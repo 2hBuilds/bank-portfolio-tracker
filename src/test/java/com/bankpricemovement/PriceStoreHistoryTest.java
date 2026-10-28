@@ -169,20 +169,20 @@ public class PriceStoreHistoryTest
 	{
 		final PriceStore store = store();
 		final long read = 1_790_000_000_000L;
-		final long[] card = {10L, 1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L};
-		final long[] guide = {9L, 1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L};
+		final long[] card = {10L, 1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L, 10L, 11L, 12L, 13L};
+		final long[] guide = {9L, 1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 9L, 10L, 11L, 12L, 13L};
 		store.recordBankHistory(ACCOUNT, PROFILE, new BankHistoryPoint(sep(27), read, read - 5L, card, card), TODAY,
 			null);
-		assertEquals("{\"schema\":2,\"points\":[{\"day\":\"2026-09-27\",\"readAtMillis\":1790000000000,"
-				+ "\"bankAtMillis\":1789999999995,\"card\":[10,1,2,3,4,5,6,7,8,9]}]}",
+		assertEquals("{\"schema\":3,\"points\":[{\"day\":\"2026-09-27\",\"readAtMillis\":1790000000000,"
+				+ "\"bankAtMillis\":1789999999995,\"card\":[10,1,2,3,4,5,6,7,8,9,10,11,12,13]}]}",
 			TestFilepaths.read(file(store)));
 
 		store.recordBankHistory(ACCOUNT, PROFILE, new BankHistoryPoint(TODAY, read + 1L, read, card, guide), TODAY,
 			null);
-		assertEquals("{\"schema\":2,\"points\":[{\"day\":\"2026-09-27\",\"readAtMillis\":1790000000000,"
-				+ "\"bankAtMillis\":1789999999995,\"card\":[10,1,2,3,4,5,6,7,8,9]},"
+		assertEquals("{\"schema\":3,\"points\":[{\"day\":\"2026-09-27\",\"readAtMillis\":1790000000000,"
+				+ "\"bankAtMillis\":1789999999995,\"card\":[10,1,2,3,4,5,6,7,8,9,10,11,12,13]},"
 				+ "{\"day\":\"2026-09-28\",\"readAtMillis\":1790000000001,\"bankAtMillis\":1790000000000,"
-				+ "\"card\":[10,1,2,3,4,5,6,7,8,9],\"guide\":[9,1,2,3,4,5,6,7,8,9]}]}",
+				+ "\"card\":[10,1,2,3,4,5,6,7,8,9,10,11,12,13],\"guide\":[9,1,2,3,4,5,6,7,8,9,10,11,12,13]}]}",
 			TestFilepaths.read(file(store)));
 	}
 
@@ -460,7 +460,7 @@ public class PriceStoreHistoryTest
 
 			assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 3L, 3L), TODAY, null));
 			final String written = TestFilepaths.read(file(store));
-			assertTrue("rewritten at this build's schema", written.startsWith("{\"schema\":2,"));
+			assertTrue("rewritten at this build's schema", written.startsWith("{\"schema\":3,"));
 			assertEquals(3, store.loadBankHistory(ACCOUNT, PROFILE).series().size());
 			file(store).delete();
 		}
@@ -503,11 +503,11 @@ public class PriceStoreHistoryTest
 	}
 
 	/**
-	 * ...and the first recording after it writes schema 2 with ten cells in EVERY entry, the earlier ones padded, so
+	 * ...and the first recording after it writes schema 3 with fourteen cells in EVERY entry, the earlier ones padded, so
 	 * the document is one shape again.
 	 */
 	@Test
-	public void aRecordingAfterASchemaOneFileWritesSchemaTwoWithTenCellsInEveryEntry() throws IOException
+	public void aRecordingAfterASchemaOneFileWritesSchemaThreeWithFourteenCellsInEveryEntry() throws IOException
 	{
 		final PriceStore store = store();
 		TestFilepaths.write(file(store), "{\"schema\":1,\"points\":["
@@ -519,20 +519,21 @@ public class PriceStoreHistoryTest
 		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 9L, 30L), TODAY, null));
 
 		final JsonObject root = new JsonParser().parse(TestFilepaths.read(file(store))).getAsJsonObject();
-		assertEquals(2, root.get("schema").getAsInt());
+		assertEquals(3, root.get("schema").getAsInt());
 		final JsonArray points = root.getAsJsonArray("points");
 		assertEquals(3, points.size());
 		for (final JsonElement entry : points)
 		{
-			assertEquals(10, entry.getAsJsonObject().getAsJsonArray("card").size());
+			assertEquals(14, entry.getAsJsonObject().getAsJsonArray("card").size());
 			if (entry.getAsJsonObject().has("guide"))
 			{
-				assertEquals(10, entry.getAsJsonObject().getAsJsonArray("guide").size());
+				assertEquals(14, entry.getAsJsonObject().getAsJsonArray("guide").size());
 			}
 		}
 		final JsonArray firstCard = points.get(0).getAsJsonObject().getAsJsonArray("card");
 		assertEquals(0L, firstCard.get(8).getAsLong());
 		assertEquals(0L, firstCard.get(9).getAsLong());
+		assertEquals(0L, firstCard.get(13).getAsLong());
 		assertEquals(10L, firstCard.get(0).getAsLong());
 		assertTrue("an earlier day padded in memory is not a reason to copy the file aside",
 			namesContaining(".corrupt-").isEmpty());
@@ -542,18 +543,20 @@ public class PriceStoreHistoryTest
 		assertEquals(39L, back.on(TODAY).card(9));
 	}
 
-	/** A schema 2 file with the offers' two cells filled round-trips whole, through a fresh store. */
+	/** A schema 3 file with the offers' two cells and the bonds' four filled round-trips whole, through a fresh store. */
 	@Test
-	public void aTenCellSchemaTwoFileRoundTrips() throws IOException
+	public void aFourteenCellSchemaThreeFileRoundTrips() throws IOException
 	{
 		final PriceStore store = store();
-		final long[] card = {1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 52_000_000L, 1_300_000L};
-		final long[] guide = {1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 51_000_000L, 1_300_000L};
+		final long[] card = {1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 52_000_000L, 1_300_000L, 14_000_000L, 28_000_000L, 0L,
+			42_000_000L};
+		final long[] guide = {1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L, 51_000_000L, 1_300_000L, 13_900_000L, 27_800_000L, 0L,
+			41_700_000L};
 		final BankHistoryPoint p = new BankHistoryPoint(sep(27), 100L, 90L, card, guide);
 		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, p, TODAY, null));
 		final String written = TestFilepaths.read(file(store));
-		assertTrue(written, written.contains("\"card\":[1,2,3,4,5,6,7,8,52000000,1300000]"));
-		assertTrue(written, written.contains("\"guide\":[1,2,3,4,5,6,7,8,51000000,1300000]"));
+		assertTrue(written, written.contains("\"card\":[1,2,3,4,5,6,7,8,52000000,1300000,14000000,28000000,0,42000000]"));
+		assertTrue(written, written.contains("\"guide\":[1,2,3,4,5,6,7,8,51000000,1300000,13900000,27800000,0,41700000]"));
 
 		final PriceStore.BankHistoryLoad load = store().loadBankHistory(ACCOUNT, PROFILE);
 
@@ -562,6 +565,41 @@ public class PriceStoreHistoryTest
 		assertEquals(p, load.series().on(sep(27)));
 		assertEquals(52_000_000L, load.series().on(sep(27)).card(BankHistoryPoint.GE_TRADEABLE));
 		assertEquals(51_000_000L, load.series().on(sep(27)).guide(BankHistoryPoint.GE_TRADEABLE));
+		assertEquals(42_000_000L, load.series().on(sep(27)).card(BankHistoryPoint.POUCH_BONDS));
+		assertEquals(13_900_000L, load.series().on(sep(27)).guide(BankHistoryPoint.BANK_BONDS));
+	}
+
+	/**
+	 * Release 1.2.4, schema 2 -> 3: a file of ten-cell entries - every history written between 1.0.9 and 1.2.3 - loads with
+	 * the four bonds cells at zero, is not lossy, is not touched by the load, and NONE of its days becomes a legacy day (only a
+	 * schema 1 file's days did not count the offers). Its stored fresh start is kept.
+	 */
+	@Test
+	public void aSchemaTwoFileOfTenCellEntriesLoadsPaddedUnchangedAndHidesNoDay() throws IOException
+	{
+		final PriceStore store = store();
+		final String old = "{\"schema\":2,\"freshFrom\":\"2026-09-26\",\"points\":["
+			+ "{\"day\":\"2026-09-26\",\"readAtMillis\":5,\"bankAtMillis\":4,\"card\":[10,1,2,3,4,5,6,7,8,9]},"
+			+ "{\"day\":\"2026-09-27\",\"readAtMillis\":7,\"bankAtMillis\":6,\"card\":[20,1,2,3,4,5,6,7,8,9],"
+			+ "\"guide\":[19,1,2,3,4,5,6,7,8,9]}]}";
+		TestFilepaths.write(file(store), old);
+
+		final PriceStore.BankHistoryLoad load = store.loadBankHistory(ACCOUNT, PROFILE);
+
+		assertEquals(PriceStore.BankHistoryLoad.State.LOADED, load.state());
+		assertFalse("padding loses nothing", load.lossy());
+		assertEquals(2, load.series().size());
+		assertEquals(sep(26), load.series().freshFrom());
+		assertFalse("no day is made legacy by the step", load.series().hasLegacyDays());
+		final BankHistoryPoint second = load.series().on(sep(27));
+		assertEquals(9L, second.card(BankHistoryPoint.GE_CASH));
+		for (int cell = BankHistoryPoint.BANK_BONDS; cell < BankHistoryPoint.CELLS; cell++)
+		{
+			assertEquals("bonds cell " + cell, 0L, second.card(cell));
+			assertEquals("bonds guide cell " + cell, 0L, second.guide(cell));
+		}
+		assertEquals("a read never writes", old, TestFilepaths.read(file(store)));
+		assertTrue(namesContaining(".corrupt-").isEmpty());
 	}
 
 	/** A nine-cell entry - neither schema's shape - is skipped, and every other entry of the file is kept. */
@@ -591,7 +629,7 @@ public class PriceStoreHistoryTest
 	public void aNewerSchemaIsFailedAndLeftAlone() throws IOException
 	{
 		final PriceStore store = store();
-		final String newer = "{\"schema\":3,\"points\":[" + entry("2026-09-01", 1L, CELLS_1) + "]}";
+		final String newer = "{\"schema\":4,\"points\":[" + entry("2026-09-01", 1L, CELLS_1) + "]}";
 		TestFilepaths.write(file(store), newer);
 
 		assertEquals(PriceStore.BankHistoryLoad.State.FAILED, store.loadBankHistory(ACCOUNT, PROFILE).state());
@@ -660,7 +698,7 @@ public class PriceStoreHistoryTest
 		}
 	}
 
-	/** The first recording after a migration writes schema 2 with the day of that reading as {@code freshFrom}. */
+	/** The first recording after a migration writes schema 3 with the day of that reading as {@code freshFrom}. */
 	@Test
 	public void theFirstRecordingAfterAMigrationStampsItsDayAsTheFreshStart() throws IOException
 	{
@@ -670,13 +708,13 @@ public class PriceStoreHistoryTest
 		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, point(TODAY, 9L, 30L), TODAY, null));
 
 		final JsonObject root = writtenRoot(store);
-		assertEquals(2, root.get("schema").getAsInt());
+		assertEquals(3, root.get("schema").getAsInt());
 		assertEquals("the day of this first 1.0.9 reading", "2026-09-28", root.get("freshFrom").getAsString());
 		assertTrue("schema, then the fresh start, then the days",
-			TestFilepaths.read(file(store)).startsWith("{\"schema\":2,\"freshFrom\":\"2026-09-28\",\"points\":["));
+			TestFilepaths.read(file(store)).startsWith("{\"schema\":3,\"freshFrom\":\"2026-09-28\",\"points\":["));
 		final JsonArray points = root.getAsJsonArray("points");
 		assertEquals("the old days stay in the file", 3, points.size());
-		assertEquals(10, points.get(0).getAsJsonObject().getAsJsonArray("card").size());
+		assertEquals(14, points.get(0).getAsJsonObject().getAsJsonArray("card").size());
 		assertEquals(10L, points.get(0).getAsJsonObject().getAsJsonArray("card").get(0).getAsLong());
 
 		final BankHistorySeries back = store().loadBankHistory(ACCOUNT, PROFILE).series();
@@ -733,7 +771,7 @@ public class PriceStoreHistoryTest
 		final PriceStore store = store();
 		writeSchemaOne(store);
 		final BankHistoryPoint same = new BankHistoryPoint(sep(27), 7L, 6L,
-			new long[]{20L, 1L, 2L, 3L, 4L, 5L, 6L, 7L, 0L, 0L}, null);
+			new long[]{20L, 1L, 2L, 3L, 4L, 5L, 6L, 7L, 0L, 0L, 0L, 0L, 0L, 0L}, null);
 
 		assertTrue(store.recordBankHistory(ACCOUNT, PROFILE, same, sep(27), null));
 

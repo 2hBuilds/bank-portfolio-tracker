@@ -556,8 +556,8 @@ final class GradeMath
 				return new GradedMove(Grade.NONE, GradeWords.NO_TRADES, null, null, null, false, null, null, null, null,
 					null);
 			}
-			then = PortfolioMath.clampedAdd(then, clampedMultiply(move.thenMark(), part.quantity));
-			now = PortfolioMath.clampedAdd(now, clampedMultiply(move.price(), part.quantity));
+			then = PortfolioMath.clampedAdd(then, clampedMultiply(move.thenMark(), part.quantity) / part.divisor());
+			now = PortfolioMath.clampedAdd(now, clampedMultiply(move.price(), part.quantity) / part.divisor());
 			if (move.grade() == Grade.SOFT && grade == Grade.SOLID)
 			{
 				grade = Grade.SOFT;

@@ -224,7 +224,7 @@ public class SettingsMenuTidyTest
 			// part C: Single chart colour stands under the caption - one more; part H: the presets' caption and its three
 			// rows stand under the colour rows - four more; part J: a rule above the colour rows, and Slot 1 and the save
 			// row under the presets - three more.
-			assertEquals(26, c.length);
+			assertEquals("release 1.2.4 moved the six switches into one list: 22, not 27", 22, c.length);
 			assertFalse("the header is neither a rule nor an item", c[0] instanceof JSeparator
 				|| c[0] instanceof AbstractButton);
 			assertTrue(c[1] instanceof JSeparator);
@@ -238,15 +238,20 @@ public class SettingsMenuTidyTest
 			assertTrue(c[9] instanceof SetRow && c[10] instanceof SetRow && c[11] instanceof SetRow && c[12] instanceof SetRow
 				&& c[13] instanceof SetRow);
 			assertTrue(c[14] instanceof JSeparator);
-			assertSame(panel.livePricesItem(), c[15]);
-			assertSame(panel.countCashItem(), c[16]);
-			assertSame(panel.countUntradeablesItem(), c[17]);
-			assertSame(panel.countInventoryItem(), c[18]);
-			assertSame(panel.countGrandExchangeItem(), c[19]);
-			assertTrue(c[20] instanceof JSeparator);
-			assertSame(panel.presetRow(), c[21]);
-			assertTrue(c[22] instanceof JSeparator);
-			final JLabel caption = find(c[23], JLabel.class);
+			// Release 1.2.4: the six switches are the one list's items, in that order.
+			assertTrue(c[15] instanceof javax.swing.JMenu);
+			final Component[] six = ((javax.swing.JMenu) c[15]).getMenuComponents();
+			assertEquals(6, six.length);
+			assertSame(panel.livePricesItem(), six[0]);
+			assertSame(panel.countCashItem(), six[1]);
+			assertSame(panel.countUntradeablesItem(), six[2]);
+			assertSame(panel.countInventoryItem(), six[3]);
+			assertSame(panel.countGrandExchangeItem(), six[4]);
+			assertEquals(BankPriceMovementPanel.COUNT_BONDS_TEXT, ((JCheckBoxMenuItem) six[5]).getText());
+			assertTrue(c[16] instanceof JSeparator);
+			assertSame(panel.presetRow(), c[17]);
+			assertTrue(c[18] instanceof JSeparator);
+			final JLabel caption = find(c[19], JLabel.class);
 			assertNotNull(caption);
 			assertEquals("Net worth chart", caption.getText());
 			assertEquals(BankPriceMovementPanel.NET_WORTH_CHART_TEXT, caption.getText());
@@ -255,8 +260,8 @@ public class SettingsMenuTidyTest
 			assertEquals(ColorScheme.LIGHT_GRAY_COLOR, caption.getForeground());
 			assertEquals(presets.getForeground(), caption.getForeground());
 			assertNull("no hover of its own", caption.getToolTipText());
-			assertEquals(BankPriceMovementPanel.SINGLE_CHART_COLOUR_TEXT, ((JCheckBoxMenuItem) c[24]).getText());
-			assertSame(panel.okRow(), c[25]);
+			assertEquals(BankPriceMovementPanel.SINGLE_CHART_COLOUR_TEXT, ((JCheckBoxMenuItem) c[20]).getText());
+			assertSame(panel.okRow(), c[21]);
 			assertNull("no item yet", legacyItem());
 		});
 
@@ -264,13 +269,13 @@ public class SettingsMenuTidyTest
 		onEdt(() ->
 		{
 			final Component[] c = panel.heroMenu().getComponents();
-			assertEquals(27, c.length);
-			assertEquals("Net worth chart", find(c[23], JLabel.class).getText());
-			assertEquals(BankPriceMovementPanel.SINGLE_CHART_COLOUR_TEXT, ((JCheckBoxMenuItem) c[24]).getText());
-			assertSame(legacyItem(), c[25]);
-			assertEquals(BankPriceMovementPanel.LEGACY_TEXT, ((JCheckBoxMenuItem) c[25]).getText());
-			assertEquals(Widgets.sans(12), c[25].getFont());
-			assertSame("the OK row is still last", panel.okRow(), c[26]);
+			assertEquals(23, c.length);
+			assertEquals("Net worth chart", find(c[19], JLabel.class).getText());
+			assertEquals(BankPriceMovementPanel.SINGLE_CHART_COLOUR_TEXT, ((JCheckBoxMenuItem) c[20]).getText());
+			assertSame(legacyItem(), c[21]);
+			assertEquals(BankPriceMovementPanel.LEGACY_TEXT, ((JCheckBoxMenuItem) c[21]).getText());
+			assertEquals(Widgets.sans(12), c[21].getFont());
+			assertSame("the OK row is still last", panel.okRow(), c[22]);
 		});
 	}
 
@@ -445,7 +450,7 @@ public class SettingsMenuTidyTest
 			assertNotNull("nothing has told the menu yet", legacyItem());
 			opens();
 			assertNull("the open synced it", legacyItem());
-			assertEquals(26, panel.heroMenu().getComponentCount());
+			assertEquals(22, panel.heroMenu().getComponentCount());
 		});
 
 		when(s.bankHistory()).thenReturn(withLegacyDays());
@@ -453,7 +458,7 @@ public class SettingsMenuTidyTest
 		{
 			opens();
 			assertNotNull(legacyItem());
-			assertEquals(27, panel.heroMenu().getComponentCount());
+			assertEquals(23, panel.heroMenu().getComponentCount());
 		});
 	}
 

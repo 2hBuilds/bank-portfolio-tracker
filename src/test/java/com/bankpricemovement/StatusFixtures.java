@@ -83,7 +83,7 @@ final class StatusFixtures
 			false,
 			null,
 			portfolio,
-			options, null, null, 0, 0, 0, 0L, null);
+			options, null, null, 0, 0, 0, 0L, null, false);
 	}
 
 	/**
@@ -102,28 +102,35 @@ final class StatusFixtures
 		return new PriceService.Status(pricesAtMillis, bankAtMillis, bankLoaded, loggedIn, source, problem, problemKind,
 			totalRows, bankItems, window, baselineLoaded, baselineRevisionSeconds, baselineRevId, mappingAtMillis,
 			indexAtMillis, anchorDay, agree, agreeSamples, r0Day, r0RevId, degraded, anchorDegraded, degradedReason,
-			portfolio, options, live, null, 0, 0, 0, 0L, null);
+			portfolio, options, live, null, 0, 0, 0, 0L, null, false);
 	}
 
 	/** {@code base} with {@code series} as its bank history (null reads as EMPTY), every other figure copied. */
 	static PriceService.Status withBankHistory(PriceService.Status base, @Nullable BankHistorySeries series)
 	{
-		return copy(base, series, base.nowSeconds);
+		return copy(base, series, base.nowSeconds, base.pouchUnread());
 	}
 
 	/** {@code base} with {@code seconds} as its now time (negative reads as 0), every other figure copied. */
 	static PriceService.Status withNowSeconds(PriceService.Status base, long seconds)
 	{
-		return copy(base, base.bankHistory(), seconds);
+		return copy(base, base.bankHistory(), seconds, base.pouchUnread());
 	}
 
-	private static PriceService.Status copy(PriceService.Status base, @Nullable BankHistorySeries series, long nowSeconds)
+	/** {@code base} with the pouch hint's flag set to {@code unread} (1.2.4), every other figure copied. */
+	static PriceService.Status withPouchUnread(PriceService.Status base, boolean unread)
+	{
+		return copy(base, base.bankHistory(), base.nowSeconds, unread);
+	}
+
+	private static PriceService.Status copy(PriceService.Status base, @Nullable BankHistorySeries series, long nowSeconds,
+		boolean pouchUnread)
 	{
 		return new PriceService.Status(base.pricesAtMillis(), base.bankAtMillis(), base.bankLoaded(), base.loggedIn(),
 			base.source, base.problem(), base.problemKind(), base.totalRows, base.bankItems(), base.window(),
 			base.baselineLoaded, base.baselineRevisionSeconds(), base.baselineRevId(), base.mappingAtMillis,
 			base.indexAtMillis, base.anchorDay, base.agree, base.agreeSamples, base.r0Day, base.r0RevId, base.degraded(),
 			base.anchorDegraded(), base.degradedReason(), base.portfolio(), base.options(), base.live(), series,
-			base.alchStacks(), base.alchCounted(), base.placeholderRestarts(), nowSeconds, base.grades());
+			base.alchStacks(), base.alchCounted(), base.placeholderRestarts(), nowSeconds, base.grades(), pouchUnread);
 	}
 }

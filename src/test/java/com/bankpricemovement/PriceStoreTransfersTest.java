@@ -187,7 +187,7 @@ public class PriceStoreTransfersTest
 		final PriceStore store = withHistory();
 		store.recordTransfer(ACCOUNT, PROFILE, sep(20), SENT);
 		final String doc = TestFilepaths.read(history(store));
-		TestFilepaths.write(history(store), doc.replace("\"schema\":2,", "\"schema\":2,\"extra\":1,"));
+		TestFilepaths.write(history(store), doc.replace("\"schema\":3,", "\"schema\":3,\"extra\":1,"));
 		assertTrue("a key this build does not know is lossy, with the notes attached too",
 			store.loadBankHistory(ACCOUNT, PROFILE).lossy());
 		TestFilepaths.write(history(store), doc);
@@ -453,7 +453,7 @@ public class PriceStoreTransfersTest
 		assertTrue(store.recordFreshStart(ACCOUNT, PROFILE, sep(24)));
 
 		final String doc = TestFilepaths.read(history(store));
-		assertTrue(doc, doc.startsWith("{\"schema\":2,\"freshFrom\":\"2026-09-24\",\"freshWhy\":\"player\",\"points\":["));
+		assertTrue(doc, doc.startsWith("{\"schema\":3,\"freshFrom\":\"2026-09-24\",\"freshWhy\":\"player\",\"points\":["));
 		final BankHistorySeries series = store.loadBankHistory(ACCOUNT, PROFILE).series();
 		assertEquals(sep(24), series.freshFrom());
 		assertEquals(BankHistorySeries.WHY_PLAYER, series.freshWhy());
@@ -544,7 +544,7 @@ public class PriceStoreTransfersTest
 		final BankHistorySeries series = store.loadBankHistory(ACCOUNT, PROFILE).series();
 		assertEquals(sep(22), series.freshFrom());
 		assertEquals(2, series.size());
-		assertTrue(TestFilepaths.read(history(store)).startsWith("{\"schema\":2,\"freshFrom\":\"2026-09-22\""));
+		assertTrue(TestFilepaths.read(history(store)).startsWith("{\"schema\":3,\"freshFrom\":\"2026-09-22\""));
 	}
 
 	@Test
@@ -552,7 +552,7 @@ public class PriceStoreTransfersTest
 	{
 		final PriceStore store = withHistory();
 		final String doc = TestFilepaths.read(history(store));
-		TestFilepaths.write(history(store), doc.replace("\"schema\":2,", "\"schema\":2,\"extra\":1,"));
+		TestFilepaths.write(history(store), doc.replace("\"schema\":3,", "\"schema\":3,\"extra\":1,"));
 		assertTrue(store.recordFreshStart(ACCOUNT, PROFILE, sep(24)));
 		assertEquals(1, namesContaining("history-42-STANDARD.json.corrupt-").size());
 		assertEquals(sep(24), store.loadBankHistory(ACCOUNT, PROFILE).series().freshFrom());
@@ -735,7 +735,7 @@ public class PriceStoreTransfersTest
 	{
 		final PriceStore store = withHistory();
 		final String doc = TestFilepaths.read(history(store));
-		TestFilepaths.write(history(store), doc.replace("\"schema\":2,", "\"schema\":2,\"freshFrom\":\"2026-09-22\","
+		TestFilepaths.write(history(store), doc.replace("\"schema\":3,", "\"schema\":3,\"freshFrom\":\"2026-09-22\","
 			+ (placeholders ? "\"freshWhy\":\"placeholders\"," : "")));
 		final BankHistorySeries record = store.loadBankHistory(ACCOUNT, PROFILE).series();
 		assertEquals(sep(22), record.freshFrom());
@@ -816,8 +816,8 @@ public class PriceStoreTransfersTest
 			assertTrue(store.recordBankHistory(account, PROFILE, point(sep(day), day, day), TODAY, null));
 		}
 		final String doc = TestFilepaths.read(store.historyFile(account, PROFILE));
-		TestFilepaths.write(store.historyFile(account, PROFILE), doc.replace("\"schema\":2,",
-			"\"schema\":2,\"freshFrom\":\"2026-09-22\",\"freshWhy\":\"placeholders\","));
+		TestFilepaths.write(store.historyFile(account, PROFILE), doc.replace("\"schema\":3,",
+			"\"schema\":3,\"freshFrom\":\"2026-09-22\",\"freshWhy\":\"placeholders\","));
 		return store;
 	}
 

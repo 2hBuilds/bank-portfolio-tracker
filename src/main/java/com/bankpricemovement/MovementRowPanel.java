@@ -262,6 +262,8 @@ public class MovementRowPanel extends JPanel
 	 * sentence opens with, because the two are the same fact told about two different valuations.
 	 */
 	public static final String PARTS_PREFIX = "Untradeable - valued as its parts: ";
+	/** The open block's line for an untradeable bond (release 1.2.4): the one rule that prices it. */
+	public static final String BOND_NOTE = "Untradeable - valued at 90% of a tradeable bond";
 	/**
 	 * The places a merged stack can be, as the split line names them (addendum Y, line Y3;
 	 * {@code docs/bank-price-movement-addendum-Y-2026-09-13.md}). Each is a suffix on its own figure, so the line
@@ -273,6 +275,7 @@ public class MovementRowPanel extends JPanel
 	public static final String IN_INVENTORY = " in inventory";
 	public static final String WORN = " worn";
 	public static final String IN_EXCHANGE = " in the Grand Exchange";
+	public static final String IN_POUCH = " in bond pouch";
 
 	/**
 	 * The card's padding inside the coloured edge (N section 3.4): 213 - 3 - 3 - 6 = 201 px of inner width.
@@ -966,7 +969,7 @@ public class MovementRowPanel extends JPanel
 
 		final List<String> notes = new ArrayList<>(4);
 		addNote(notes, alch ? ALCH_NOTE : partsLine(row));
-		addNote(notes, view.countInventory() || view.countGrandExchange() ? splitLine(row, hide) : "");
+		addNote(notes, view.countInventory() || view.countGrandExchange() || row.pouchQuantity() > 0 ? splitLine(row, hide) : "");
 		// Contract 1.2.0, L5: what the live figure was made of, in one sentence about both sides, and the last print of each.
 		if (graded != null)
 		{
@@ -1628,11 +1631,12 @@ public class MovementRowPanel extends JPanel
 		{
 			return "";
 		}
-		final List<String> parts = new ArrayList<>(4);
+		final List<String> parts = new ArrayList<>(5);
 		addWhere(parts, row.bankQuantity(), IN_BANK, hide);
 		addWhere(parts, row.inventoryQuantity(), IN_INVENTORY, hide);
 		addWhere(parts, row.wornQuantity(), WORN, hide);
 		addWhere(parts, row.exchangeQuantity(), IN_EXCHANGE, hide);
+		addWhere(parts, row.pouchQuantity(), IN_POUCH, hide);
 		return String.join(", ", parts);
 	}
 
@@ -1665,6 +1669,10 @@ public class MovementRowPanel extends JPanel
 		if (parts == null || parts.isEmpty())
 		{
 			return "";
+		}
+		if (parts.size() == 1 && parts.get(0) != null && parts.get(0).per > 1L)
+		{
+			return BOND_NOTE;
 		}
 		final StringBuilder sb = new StringBuilder(64).append(PARTS_PREFIX);
 		boolean first = true;

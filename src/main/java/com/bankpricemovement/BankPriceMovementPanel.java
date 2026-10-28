@@ -27,10 +27,14 @@ import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
+import java.awt.event.HierarchyEvent;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.awt.geom.Ellipse2D;
+import java.awt.geom.Rectangle2D;
 import java.awt.geom.RoundRectangle2D;
+import java.awt.image.BufferedImage;
 import java.text.ParseException;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -58,6 +62,7 @@ import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JLayer;
+import javax.swing.JMenu;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
@@ -72,6 +77,7 @@ import javax.swing.Timer;
 import javax.swing.ToolTipManager;
 import javax.swing.border.CompoundBorder;
 import javax.swing.border.EmptyBorder;
+import javax.swing.border.LineBorder;
 import javax.swing.border.MatteBorder;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
@@ -784,6 +790,8 @@ public class BankPriceMovementPanel extends PluginPanel
 	 * bank) and takes the same "Include" verb.
 	 */
 	public static final String COUNT_GRAND_EXCHANGE_TEXT = "Include Grand Exchange offers";
+	/** The group's sixth item since release 1.2.4, directly after the Grand Exchange's: whether bonds count. */
+	public static final String COUNT_BONDS_TEXT = "Include bonds";
 	/**
 	 * The group's FIRST item since addendum T (line T1;
 	 * {@code docs/bank-price-movement-addendum-T-2026-09-12.md}), named as its config item is: which PRICE SERIES
@@ -815,6 +823,17 @@ public class BankPriceMovementPanel extends PluginPanel
 	 */
 	public static final String COUNT_GRAND_EXCHANGE_TIP = "Items you are selling or have bought, and the coins "
 		+ "committed to or waiting in your offers, count in the bank value.";
+	/** The bonds item's hover (release 1.2.4): what counts and the one price rule. */
+	public static final String COUNT_BONDS_TIP = "Bonds count in the bank value, including the bond pouch. An untradeable "
+		+ "bond counts at 90% of a tradeable one.";
+	/**
+	 * The bonds item's hover while the pouch has never been read (release 1.2.4, the pouch hint): the action in the hint's
+	 * gold, the rest as any hover (the user's pick B, 2026-10-28).
+	 */
+	public static final String POUCH_HINT_TIP = String.format("<html><font color='#%06X'>Open your bond pouch</font>"
+		+ " once so its bonds count too.</html>", Widgets.CHART_COLOUR_DEFAULT.getRGB() & 0xFFFFFF);
+	/** The settings menu's one list of the price switch and the five Include switches (1.2.4, the user's layout 1). */
+	public static final String COUNTS_MENU_TEXT = "Prices and what counts";
 	/**
 	 * The menu's last caption (1.1.0 part A), in the look of {@link #PRESETS_TEXT}: the net worth chart's own settings
 	 * stand under it. It has no hover - the words say what the group is.
@@ -1204,6 +1223,11 @@ public class BankPriceMovementPanel extends PluginPanel
 	private JCheckBoxMenuItem countInventoryItem;
 	/** The group's fifth item and its last since 1.0.9 part 3: the Grand Exchange offers. */
 	private JCheckBoxMenuItem countGrandExchangeItem;
+	private CheckItem countBondsItem;
+	/** The list that holds the six switches above (1.2.4); it carries the pouch hint's dot while the hint is on. */
+	private HintMenu countsMenu;
+	/** The pouch hint (1.2.4): this account's pouch has never been read while bonds are counted - the item, the icon and the cog's dot show it. */
+	private boolean pouchHint;
 	/** The menu's "Net worth chart" caption (1.1.0 part A), the group's first row. */
 	private JPanel chartCaption;
 	/**
@@ -2041,14 +2065,22 @@ public class BankPriceMovementPanel extends PluginPanel
 			on -> setOptions(options.withCountInventory(on)));
 		countGrandExchangeItem = checkItem(COUNT_GRAND_EXCHANGE_TEXT, COUNT_GRAND_EXCHANGE_TIP,
 			on -> setOptions(options.withCountGrandExchange(on)));
+		countBondsItem = checkItem(COUNT_BONDS_TEXT, COUNT_BONDS_TIP, on -> setOptions(options.withCountBonds(on)));
 		// T1: first of the group, before the two of addendum Q - the series the figures are read from, then what
 		// is counted. Y1's switch is the third thing COUNTED, so it lands directly after the untradeables, and
 		// 1.0.9 part 3's Grand Exchange switch, the fourth, directly after it and last of them.
-		menu.add(livePricesItem);
-		menu.add(countCashItem);
-		menu.add(countUntradeablesItem);
-		menu.add(countInventoryItem);
-		menu.add(countGrandExchangeItem);
+		// 1.2.4: the six live in ONE list that opens on hover or click (the user's layout 1, 2026-10-28), so the menu is
+		// six rows shorter.
+		countsMenu = new HintMenu(COUNTS_MENU_TEXT);
+		countsMenu.setFont(Widgets.sans(12));
+		countsMenu.getPopupMenu().setBorder(new EmptyBorder(5, 5, 5, 5));
+		countsMenu.add(livePricesItem);
+		countsMenu.add(countCashItem);
+		countsMenu.add(countUntradeablesItem);
+		countsMenu.add(countInventoryItem);
+		countsMenu.add(countGrandExchangeItem);
+		countsMenu.add(countBondsItem);
+		menu.add(countsMenu);
 		// Z2: a third group, and the only one that is not a list of switches - the three quick bands, in boxes,
 		// with the way back to 100k / 1m / 10m now a button in the bottom row (AH2).
 		// (Addendum AH's "Show hover text" item stood here, the last ITEM in the menu, until release 1.2.0 deleted it:
@@ -2456,9 +2488,9 @@ public class BankPriceMovementPanel extends PluginPanel
 	 * in the listener is the NEW state; {@code setSelected} from {@link #syncHeroMenu} fires no action, which is
 	 * what keeps the config round trip from writing the config back.
 	 */
-	private JCheckBoxMenuItem checkItem(String text, String tooltip, Consumer<Boolean> onToggle)
+	private CheckItem checkItem(String text, String tooltip, Consumer<Boolean> onToggle)
 	{
-		final JCheckBoxMenuItem item = new JCheckBoxMenuItem(text);
+		final CheckItem item = new CheckItem(text);
 		// Every menu item in this sidebar sets its face: one that does not is drawn by the look and feel in the
 		// 16 px bitmap RuneScape default, and this menu would then look nothing like the sort menu one control
 		// row away. The TICK stays the look and feel's - it is what a reader expects of a settings toggle.
@@ -2466,6 +2498,240 @@ public class BankPriceMovementPanel extends PluginPanel
 		setHover(item, tooltip);
 		item.addActionListener(e -> onToggle.accept(item.isSelected()));
 		return item;
+	}
+
+	/**
+	 * A check item that can carry the pouch hint (1.2.4): a thin gold border drawn over the row, so the words stay where they
+	 * were, and an info icon 6 px after the words, which stand wherever the look and feel puts them - their end is found on a
+	 * scratch picture of the item's own painting. While the hint is on, the row's hover opens at once (the user, 2026-10-28)
+	 * in a box with the same gold border.
+	 */
+	private static final class CheckItem extends JCheckBoxMenuItem
+	{
+		/** The hint's icon, or null while the hint is off. */
+		private ImageIcon hint;
+		/**
+		 * The client's hover delay, held while the pointer is on this row with the hint on; -1 while not held. The delay is
+		 * one setting the whole client shares, so it is put back the moment the pointer leaves or the row stops showing.
+		 */
+		private int heldDelay = -1;
+
+		CheckItem(String text)
+		{
+			super(text);
+			addMouseListener(new MouseAdapter()
+			{
+				@Override
+				public void mouseEntered(MouseEvent e)
+				{
+					if (hint != null && heldDelay < 0)
+					{
+						heldDelay = ToolTipManager.sharedInstance().getInitialDelay();
+						ToolTipManager.sharedInstance().setInitialDelay(0);
+					}
+				}
+
+				@Override
+				public void mouseExited(MouseEvent e)
+				{
+					restoreDelay();
+				}
+			});
+			addHierarchyListener(e ->
+			{
+				if ((e.getChangeFlags() & HierarchyEvent.SHOWING_CHANGED) != 0 && !isShowing())
+				{
+					restoreDelay();
+				}
+			});
+		}
+
+		private void restoreDelay()
+		{
+			if (heldDelay >= 0)
+			{
+				ToolTipManager.sharedInstance().setInitialDelay(heldDelay);
+				heldDelay = -1;
+			}
+		}
+
+		@Override
+		public JToolTip createToolTip()
+		{
+			final JToolTip tip = super.createToolTip();
+			if (hint != null)
+			{
+				final Insets was = tip.getBorder() == null ? new Insets(1, 1, 1, 1) : tip.getBorder().getBorderInsets(tip);
+				tip.setBorder(new GoldLine(was));
+			}
+			return tip;
+		}
+
+		@Override
+		protected void paintComponent(Graphics g)
+		{
+			super.paintComponent(g);
+			if (hint != null && getWidth() > 0)
+			{
+				final int end = wordsEnd(this, g, super::paintComponent, getWidth());
+				hint.paintIcon(this, g, end + 7, (getHeight() - hint.getIconHeight()) / 2);
+			}
+		}
+
+		@Override
+		protected void paintBorder(Graphics g)
+		{
+			super.paintBorder(g);
+			if (hint != null)
+			{
+				g.setColor(Widgets.CHART_COLOUR_DEFAULT);
+				g.drawRect(0, 0, getWidth() - 1, getHeight() - 1);
+			}
+		}
+	}
+
+	/**
+	 * The hint hover's gold edge, keeping the box's own padding. It must BE a {@link LineBorder}: on Windows 11 the look and
+	 * feel shows a hover in a native rounded window whose own border covers the box's outer pixel, and it colours that border
+	 * from the box's border only when the box's border is a line border.
+	 */
+	private static final class GoldLine extends LineBorder
+	{
+		private final Insets pad;
+
+		GoldLine(Insets pad)
+		{
+			super(Widgets.CHART_COLOUR_DEFAULT, 1);
+			this.pad = pad;
+		}
+
+		@Override
+		public Insets getBorderInsets(Component c, Insets insets)
+		{
+			insets.set(pad.top, pad.left, pad.bottom, pad.right);
+			return insets;
+		}
+	}
+
+	/**
+	 * The last column a row's own painting reaches before {@code limit}, found on a scratch picture: where its words end, which
+	 * stand wherever the look and feel puts them.
+	 */
+	private static int wordsEnd(JComponent row, Graphics g, Consumer<Graphics> paint, int limit)
+	{
+		final int w = row.getWidth();
+		final int h = row.getHeight();
+		final BufferedImage scratch = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+		final Graphics2D s = scratch.createGraphics();
+		try
+		{
+			s.setRenderingHints(((Graphics2D) g).getRenderingHints());
+			paint.accept(s);
+		}
+		finally
+		{
+			s.dispose();
+		}
+		final int[] px = scratch.getRGB(0, 0, w, h, null, 0, w);
+		for (int end = limit - 1; end > 0; end--)
+		{
+			for (int y = 0; y < h; y++)
+			{
+				if (px[y * w + end] != px[w - 1])
+				{
+					return end;
+				}
+			}
+		}
+		return 0;
+	}
+
+	/**
+	 * The list row of the six switches (1.2.4): a gold dot 7 px after its words while the pouch hint is on, so the trail
+	 * runs from the cog's dot to the row to the bonds item. Its list opens to the LEFT, over the game, as the sidebar
+	 * stands at the client's right edge.
+	 */
+	private static final class HintMenu extends JMenu
+	{
+		private boolean dot;
+
+		HintMenu(String text)
+		{
+			super(text);
+		}
+
+		@Override
+		protected Point getPopupMenuOrigin()
+		{
+			return new Point(-getPopupMenu().getPreferredSize().width - 3, super.getPopupMenuOrigin().y);
+		}
+
+		@Override
+		protected void paintComponent(Graphics g)
+		{
+			super.paintComponent(g);
+			if (dot && getWidth() > 0)
+			{
+				// The arrow stands at the row's right end; the words end well before the row's middle-right.
+				final int end = wordsEnd(this, g, super::paintComponent, getWidth() - 20);
+				final Graphics2D d = (Graphics2D) g.create();
+				try
+				{
+					d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+					d.setColor(Widgets.CHART_COLOUR_DEFAULT);
+					d.fillOval(end + 7, (getHeight() - 6) / 2, 6, 6);
+				}
+				finally
+				{
+					d.dispose();
+				}
+			}
+		}
+	}
+
+	/** A 12 px gold info icon: a circle outline with a lower-case "i", anti-aliased. */
+	private static ImageIcon infoIcon()
+	{
+		final int s = 12;
+		final BufferedImage img = new BufferedImage(s, s, BufferedImage.TYPE_INT_ARGB);
+		final Graphics2D g = img.createGraphics();
+		try
+		{
+			g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+			g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
+			g.setColor(Widgets.CHART_COLOUR_DEFAULT);
+			g.setStroke(new BasicStroke(1.2f));
+			g.draw(new Ellipse2D.Double(0.6, 0.6, s - 1.2, s - 1.2));
+			g.fill(new Ellipse2D.Double(s / 2.0 - 0.95, 2.5, 1.9, 1.9));
+			g.fill(new Rectangle2D.Double(s / 2.0 - 0.8, 5.1, 1.6, 3.7));
+		}
+		finally
+		{
+			g.dispose();
+		}
+		return new ImageIcon(img);
+	}
+
+	/**
+	 * The pouch hint (1.2.4): on while bonds are counted and the status says this account's pouch was never read.
+	 * It gives the bonds item its gold border, the info icon after its words and the other hover, and the card's
+	 * settings icon its dot; off, all four are as they were.
+	 */
+	private void syncPouchHint()
+	{
+		final boolean on = options.countBonds() && status != null && status.pouchUnread();
+		countBondsItem.hint = on ? infoIcon() : null;
+		setHover(countBondsItem, on ? POUCH_HINT_TIP : COUNT_BONDS_TIP);
+		if (countsMenu.dot != on)
+		{
+			countsMenu.dot = on;
+			countsMenu.repaint();
+		}
+		if (on != pouchHint)
+		{
+			pouchHint = on;
+			hero.repaint();
+		}
 	}
 
 	/**
@@ -4334,6 +4600,8 @@ public class BankPriceMovementPanel extends PluginPanel
 		countUntradeablesItem.setSelected(options.countUntradeables());
 		countInventoryItem.setSelected(options.countInventory());
 		countGrandExchangeItem.setSelected(options.countGrandExchange());
+		countBondsItem.setSelected(options.countBonds());
+		syncPouchHint();
 		renderLegacy();
 		// 1.1.0 part C: "Single chart colour" is ticked to the panel's belief, which a ConfigChanged from the settings page
 		// may have moved under an open menu.
@@ -5648,6 +5916,27 @@ public class BankPriceMovementPanel extends PluginPanel
 			if (glowRunning())
 			{
 				paintRing(g, glowBox(), glowLevel());
+			}
+		}
+
+		@Override
+		protected void paintChildren(Graphics g)
+		{
+			super.paintChildren(g);
+			if (pouchHint)
+			{
+				final Graphics2D g2 = (Graphics2D) g.create();
+				try
+				{
+					g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+					g2.setColor(Widgets.CHART_COLOUR_DEFAULT);
+					final Rectangle b = SwingUtilities.convertRectangle(gearLabel.getParent(), gearLabel.getBounds(), hero);
+					g2.fillOval(b.x + b.width - 4, b.y, 6, 6);
+				}
+				finally
+				{
+					g2.dispose();
+				}
 			}
 		}
 	}
@@ -7028,6 +7317,7 @@ public class BankPriceMovementPanel extends PluginPanel
 		// deposit, a withdrawal, new prices, a new baseline day - is the same list restated (B107).
 		final boolean newList = list.asksDifferentList(next);
 		status = newStatus;
+		syncPouchHint();
 		if (rebuild)
 		{
 			rows = safe;

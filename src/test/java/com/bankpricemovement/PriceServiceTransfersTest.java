@@ -602,7 +602,7 @@ public class PriceServiceTransfersTest
 		seedWeek(ACCOUNT);
 		// A 1.0.9 cut at 2 Sep, and the player's reset over it from 4 Sep: the notes keep the cut that was replaced.
 		TestFilepaths.write(disk.historyFile(ACCOUNT, PROFILE), TestFilepaths.read(disk.historyFile(ACCOUNT, PROFILE))
-			.replace("\"schema\":2,", "\"schema\":2,\"freshFrom\":\"2026-09-02\","));
+			.replace("\"schema\":3,", "\"schema\":3,\"freshFrom\":\"2026-09-02\","));
 		assertTrue(disk.recordFreshStart(ACCOUNT, PROFILE, sep(4)));
 		final BankHistorySeries.AutoCut under = new BankHistorySeries.AutoCut(sep(2), null);
 		assertEquals(under, onDisk(ACCOUNT).autoCut());
