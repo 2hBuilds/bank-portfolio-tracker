@@ -55,8 +55,8 @@ import net.runelite.client.ui.ColorScheme;
  * {@link BankHistoryMath.Day#drawnGp() drawn} total, so a day the player marked as a transfer leaves no cliff. When shifting the days
  * would draw one below zero ({@link BankHistoryMath#drawsBelowZero}) the view hands in the marked days instead and the chart draws
  * the REAL totals, the step into each marked day dotted in grey with a small orange mark at the point. A point drawn at a
- * total that is not the real one (a day before a marked transfer) carries one hover, {@link #tipAt}: "<exact total> gp at the
- * time", the amount masked while amounts are hidden; every other point has none.
+ * total that is not the real one (a day before a marked transfer) carries one hover, {@link #tipAt}: "Your total that day: <exact total> gp",
+ * the amount masked while amounts are hidden; every other point has none.
  */
 final class BankHistoryChart extends JComponent
 {
@@ -101,8 +101,8 @@ final class BankHistoryChart extends JComponent
 	/** The orange mark on a day the player marked as a transfer, when the chart draws the real totals (1.2.2). */
 	private static final double TRANSFER_RADIUS = 2;
 	private static final double RING_RADIUS = 4.5;
-	/** What follows the real total in the hover on a shifted point (1.2.2). */
-	static final String AT_THE_TIME = " gp at the time";
+	/** What the hover on a shifted point opens with (1.2.5). */
+	static final String TOTAL_THAT_DAY = "Your total that day: ";
 
 	/** Told whenever the hovered point changes: its index, or -1 when the pointer left. */
 	interface HoverListener
@@ -206,7 +206,7 @@ final class BankHistoryChart extends JComponent
 	}
 
 	/**
-	 * The hover of drawn point {@code index} (1.2.2): its REAL total, exact, and " gp at the time" - or its mask while amounts are
+	 * The hover of drawn point {@code index} (1.2.2): "Your total that day: " and its REAL total, exact, in gp - or its mask while amounts are
 	 * hidden - when the chart draws that point at another total (a day before a marked transfer); null for a point drawn at its
 	 * own total, for the real-totals fallback, and for an index that names no point.
 	 */
@@ -217,7 +217,7 @@ final class BankHistoryChart extends JComponent
 		{
 			return null;
 		}
-		return AmountMask.amount(hideAmounts, MovementMath.formatExact(days.get(index).valueGp())) + AT_THE_TIME;
+		return TOTAL_THAT_DAY + AmountMask.amount(hideAmounts, MovementMath.formatExact(days.get(index).valueGp())) + BankPriceMovementPanel.GP_SUFFIX;
 	}
 
 	/**

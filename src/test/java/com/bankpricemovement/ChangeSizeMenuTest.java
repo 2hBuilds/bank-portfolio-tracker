@@ -33,6 +33,7 @@ import static com.bankpricemovement.SidebarViewPanelTest.series;
 import static com.bankpricemovement.SidebarViewPanelTest.status;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
@@ -833,26 +834,19 @@ public class ChangeSizeMenuTest
 
 	/** S3: one-line hovers, always on - the bars and the box, on the control and on every part of it that is a mouse target. */
 	@Test
-	public void s3_theHoversAreOneLineEachAndAlwaysOn() throws Exception
+	public void s3_theBarsAndTheOpacityBoxHaveNoHover() throws Exception
 	{
 		build(null);
 		onEdt(() ->
 		{
-			assertEquals("Size of the gp change on each row", gpBar().getToolTipText());
-			assertEquals("Size of the % change on each row", pctBar().getToolTipText());
-			assertEquals("How solid the gp change is - 100 is the same colour as the %", box().getToolTipText());
-			assertEquals(BankPriceMovementPanel.OPACITY_TIP, box().getTextField().getToolTipText());
-			assertEquals(BankPriceMovementPanel.GP_SIZE_TIP, gpBar().getToolTipText());
-			assertEquals(BankPriceMovementPanel.PCT_SIZE_TIP, pctBar().getToolTipText());
+			assertNull(gpBar().getToolTipText());
+			assertNull(pctBar().getToolTipText());
+			assertNull(box().getToolTipText());
+			assertNull(box().getTextField().getToolTipText());
 			for (int i = 0; i < 4; i++)
 			{
-				assertEquals("a cell is a mouse target, so it speaks too", gpBar().getToolTipText(), cell(gpBar(), i).getToolTipText());
-				assertEquals(pctBar().getToolTipText(), cell(pctBar(), i).getToolTipText());
-			}
-			for (String tip : Arrays.asList(gpBar().getToolTipText(), pctBar().getToolTipText(), box().getToolTipText()))
-			{
-				assertFalse("one line: " + tip, tip.contains("\n") || tip.contains("<br"));
-				assertFalse("plain text, no markup", tip.startsWith("<html"));
+				assertNull(cell(gpBar(), i).getToolTipText());
+				assertNull(cell(pctBar(), i).getToolTipText());
 			}
 		});
 	}

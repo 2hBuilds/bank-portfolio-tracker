@@ -309,8 +309,7 @@ public class ListOptionsTest
 				1.0);
 			assertEquals("the hover", "List options", gears.getToolTipText());
 			assertEquals(BankPriceMovementPanel.LIST_OPTIONS_TIP, gears.getToolTipText());
-			assertEquals("the box has a hover of its own", BankPriceMovementPanel.SEARCH_TIP,
-				panel.searchField().getToolTipText());
+			assertNull("the box has none (1.2.5)", panel.searchField().getToolTipText());
 
 			// Grey at rest: every opaque pixel is the placeholder's grey; white under the pointer; grey again after.
 			assertEquals("the placeholder's grey", Color.GRAY, Widgets.PLACEHOLDER_COLOR);
@@ -774,114 +773,5 @@ public class ListOptionsTest
 		final int y = in.top + (img.getHeight() - in.top - in.bottom - BankPriceMovementPanel.SWATCH_HEIGHT) / 2;
 		assertEquals(row.getText() + ": the swatch's colour", colour.getRGB(),
 			img.getRGB(x + BankPriceMovementPanel.SWATCH_WIDTH / 2, y + BankPriceMovementPanel.SWATCH_HEIGHT / 2));
-	}
-
-	// ---------------------------------------------------------------- G9: the counts
-
-	/**
-	 * G9: an alch row the list keeps out is in neither n nor m of "n of m items"; one it lists is in both. The service's real
-	 * status carries the stack counts (its m is unchanged by part G: the bank's stacks as the switch counts them) and the panel
-	 * says the sentence over the alch stacks it answers for - with the tick off, over none; with it on, over all; with a search
-	 * that found one, over that one.
-	 */
-	@Test
-	public void g9_aHiddenAlchRowCountsInNeitherNNorM() throws Exception
-	{
-		f.warmUpWith(bankWithAlchStacks());
-		build(new Memory(), null);
-
-		// The switch off (the default), the tick off: the bank's 31 stacks, 30 of them with a row.
-		final int nonAlch = PriceServiceTest.defaultList(f.lastRows()).size();
-		final int stacks = f.lastStatus().bankItems();
-		assertEquals("the status's m is the pre-G one", 31, stacks);
-		assertEquals("two alch stacks, uncounted", 2, f.lastStatus().alchStacks());
-		assertEquals(0, f.lastStatus().alchCounted());
-		final PriceService.Status off = f.lastStatus();
-		final List<MovementRow> offRows = f.lastRows();
-		onEdt(() -> listener.onRows(offRows, off));
-		onEdt(() ->
-		{
-			assertEquals(says(nonAlch, 31), countSentenceEnd());
-			// The tick on: both alch stacks are in n and in m.
-			tick().doClick();
-			assertEquals(says(nonAlch + 2, 33), countSentenceEnd());
-			tick().doClick();
-			// A search that finds one of them, tick off: that row is in n and in m, the other is in neither.
-			panel.applySearch("dramen");
-			assertEquals(says(1, 32), countSentenceEnd());
-			panel.applySearch("");
-		});
-
-		// The switch ON counts the alch stacks in the bank's m; the list still keeps its alch rows out of both numbers.
-		f.service.setOptions(ViewOptions.DEFAULT.withCountUntradeables(true));
-		final PriceService.Status on = f.lastStatus();
-		final List<MovementRow> onRows = f.lastRows();
-		assertEquals("the service's m counts the alch stacks the switch counts", 33, on.bankItems());
-		assertEquals(2, on.alchStacks());
-		assertEquals(2, on.alchCounted());
-		onEdt(() ->
-		{
-			listener.onRows(onRows, on);
-			assertEquals("the tick off: neither n nor m has them", says(nonAlch, 31), countSentenceEnd());
-			tick().doClick();
-			assertEquals("the tick on: both have them", says(nonAlch + 2, 33), countSentenceEnd());
-		});
-	}
-
-	/**
-	 * G9, the rest of the sentence: an alch stack the list keeps out is not "with no guide price" either, and an untradeable
-	 * with no alch value - a row with no price, which no list shows - is not an alch stack in "n of m" (the reviewer's two
-	 * findings on part G).
-	 */
-	@Test
-	public void g9b_theNoGuidePriceClauseAndAZeroAlchUntradeable() throws Exception
-	{
-		final BankSnapshot bank = bankWithAlchStacks();
-		bank.items.add(new BankItem(99_001, 1, "Pet rock", false, true, 0));
-		f.warmUpWith(bank);
-		build(new Memory(), null);
-		assertEquals("the zero-alch stack is no alch stack", 2, f.lastStatus().alchStacks());
-
-		// The switch off, the tick on: the two alch rows are listed, and the zero-alch stack is in neither number.
-		final PriceService.Status off = f.lastStatus();
-		final List<MovementRow> offRows = f.lastRows();
-		final int nonAlch = PriceServiceTest.defaultList(offRows).size();
-		onEdt(() ->
-		{
-			listener.onRows(offRows, off);
-			tick().doClick();
-			assertEquals(says(nonAlch + 2, off.bankItems() + 2), countSentenceEnd());
-			tick().doClick();
-		});
-
-		// The switch on, the tick off: the hidden alch stacks are not named as "with no guide price"; the fixture's one unpriced
-		// stack and the zero-alch one are.
-		f.service.setOptions(ViewOptions.DEFAULT.withCountUntradeables(true));
-		final PriceService.Status on = f.lastStatus();
-		final List<MovementRow> onRows = f.lastRows();
-		onEdt(() ->
-		{
-			listener.onRows(onRows, on);
-			final String tip = panel.bandTarget().getToolTipText();
-			assertTrue(tip, tip.endsWith(", 2 with no guide price"));
-			tick().doClick();
-			assertTrue(panel.bandTarget().getToolTipText(), panel.bandTarget().getToolTipText().endsWith(", 4 with no guide price"));
-		});
-	}
-
-	/** The count sentence in the band button's hover - "n of m items", or "n items" when n is all of m - without what may follow it. */
-	private String countSentenceEnd()
-	{
-		final String tip = panel.bandTarget().getToolTipText();
-		assertNotNull(tip);
-		final java.util.regex.Matcher found = java.util.regex.Pattern.compile("\\d+ (of \\d+ )?items").matcher(tip);
-		assertTrue(tip, found.find());
-		return found.group();
-	}
-
-	/** What the sentence says for {@code n} rows listed of {@code m} stacks. */
-	private static String says(int n, int m)
-	{
-		return n + (m > n ? " of " + m : "") + " items";
 	}
 }

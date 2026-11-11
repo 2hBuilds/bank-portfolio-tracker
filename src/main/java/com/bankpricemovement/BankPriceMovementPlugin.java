@@ -7,8 +7,6 @@ import javax.annotation.Nullable;
 import javax.inject.Inject;
 import javax.inject.Named;
 import javax.swing.SwingUtilities;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -471,12 +469,8 @@ public class BankPriceMovementPlugin extends Plugin
 	private volatile ExchangeOffers lastOffers;
 	/** Whether the "Your Bonds" screen is on show (release 1.2.4): set by its load, cleared by its close - the only time the pouch is read. */
 	private boolean bondsOpen;
-	/** Whether the "Old School Bonds" screen is on show (1.2.4, rule 3c): its totals give the pouch when "Your Bonds" is shut. */
-	private boolean bondMainOpen;
 	/** A bond screen read threw (1.2.4): no bond screen is read again until the plugin starts again. */
 	private boolean bondReadsOff;
-	/** Whether a real bank read was made since this login (1.2.4, rule 3c): the held bank is then one the pouch sum can lean on. */
-	private boolean bankReadThisLogin;
 	/** The last bond pouch pair handed to the service, and for whom (release 1.2.4); 0 / -1 before any. */
 	private long pouchHandedKey;
 	private int pouchHandedTradeable = -1;
@@ -1140,8 +1134,8 @@ public class BankPriceMovementPlugin extends Plugin
 		}
 		if (!BankReader.isBank(event))
 		{
-			// 1.2.4, rule 3b: while a bond screen is on show the inventory is followed; at any other time it is not read here.
-			if (event != null && event.getContainerId() == InventoryID.INV && (bondsOpen || bondMainOpen))
+			// 1.2.4, rule 3b: while "Your Bonds" is on show the inventory is followed; at any other time it is not read here.
+			if (event != null && event.getContainerId() == InventoryID.INV && bondsOpen)
 			{
 				readCarriedOnClientThread();
 			}
@@ -1191,16 +1185,6 @@ public class BankPriceMovementPlugin extends Plugin
 			// tells the live run to look for this line, and "unchanged" now means all three containers.
 			log.debug("bank-portfolio-tracker: bank hold - bank event unchanged since the last read (open={}),"
 				+ " skipped", bankOpen);
-			// 1.2.4: the held bank IS the bank on screen, so it counts as read this login for "Old School Bonds" (rule 3c).
-			// A logout dropped lastBank; the service kept this account's bank (F2), which is the read this matched.
-			if (lastBank == null && s != null)
-			{
-				lastBank = ownBank(s.bank(), hash);
-			}
-			if (lastBank != null)
-			{
-				bankReadThisLogin = true;
-			}
 			return;
 		}
 		if (bankOpen && readBefore)
@@ -1280,7 +1264,6 @@ public class BankPriceMovementPlugin extends Plugin
 			log.info("bank-portfolio-tracker: {} bank placeholders with a quantity skipped", placeholders);
 		}
 		lastBank = snapshot;
-		bankReadThisLogin = true;
 		s.setBank(snapshot);
 		lastFingerprint = fingerprint(items, inventory, worn);
 		lastFingerprintHash = hash;
@@ -1563,11 +1546,6 @@ public class BankPriceMovementPlugin extends Plugin
 			bondsOpen = true;
 			return;
 		}
-		if (event.getGroupId() == InterfaceID.BOND_MAIN)
-		{
-			bondMainOpen = true;
-			return;
-		}
 		if (event.getGroupId() != InterfaceID.BANKMAIN)
 		{
 			return;
@@ -1594,12 +1572,11 @@ public class BankPriceMovementPlugin extends Plugin
 	@Subscribe
 	public void onWidgetClosed(WidgetClosed event)
 	{
-		if (event.getGroupId() == InterfaceID.BOND_MANAGEMENT || event.getGroupId() == InterfaceID.BOND_MAIN)
+		if (event.getGroupId() == InterfaceID.BOND_MANAGEMENT)
 		{
 			if (event.isUnload())
 			{
-				bondsOpen &= event.getGroupId() != InterfaceID.BOND_MANAGEMENT;
-				bondMainOpen &= event.getGroupId() != InterfaceID.BOND_MAIN;
+				bondsOpen = false;
 				// 1.2.4, rule 3b: once more at the close, for an inventory event that came first or not at all.
 				readCarriedOnClientThread();
 			}
@@ -1632,20 +1609,13 @@ public class BankPriceMovementPlugin extends Plugin
 	@Subscribe
 	public void onGameTick(GameTick tick)
 	{
-		if ((bondsOpen || bondMainOpen) && !bondReadsOff)
+		if (bondsOpen && !bondReadsOff)
 		{
 			// 1.2.4 (rsbfox on the Hub pull request: the bond screen is being changed): a read that throws is reported once
-			// and the bond screens are left alone until the plugin starts again; the saved pouch stands.
+			// and the bond screen is left alone until the plugin starts again; the saved pouch stands.
 			try
 			{
-				if (bondsOpen)
-				{
-					readBondPouch();
-				}
-				else
-				{
-					readBondTotals();
-				}
+				readBondPouch();
 			}
 			catch (RuntimeException e)
 			{
@@ -1694,11 +1664,9 @@ public class BankPriceMovementPlugin extends Plugin
 		{
 			return;
 		}
-		final List<BankItem> none = new ArrayList<>();
-		final int tradeable = BankReader.pouchCount(tradeableColumn, ItemID.OSRS_BOND,
-			bondsIn(inventory, none, ItemID.OSRS_BOND));
+		final int tradeable = BankReader.pouchCount(tradeableColumn, ItemID.OSRS_BOND, bondsIn(inventory, ItemID.OSRS_BOND));
 		final int untradeable = BankReader.pouchCount(untradeableColumn, ItemID.OSRS_BOND_UNTRADEABLE,
-			bondsIn(inventory, none, ItemID.OSRS_BOND_UNTRADEABLE));
+			bondsIn(inventory, ItemID.OSRS_BOND_UNTRADEABLE));
 		if (tradeable < 0 || untradeable < 0)
 		{
 			return;
@@ -1711,60 +1679,13 @@ public class BankPriceMovementPlugin extends Plugin
 		handPouch(s, hash, tradeable, untradeable);
 	}
 
-	/**
-	 * CLIENT THREAD. While "Old School Bonds" is open ({@link #bondMainOpen}), one look per game tick at the bond totals it
-	 * shows (1.2.4, rule 3c): the pouch is each total less what the inventory holds now and what the bank held at its
-	 * last read this login. Handed on only when both results are 0 or more and that bank was a real read made since
-	 * this login with no change held; "Your Bonds" is the exact source and is read instead while it is open.
-	 */
-	private void readBondTotals()
-	{
-		final Client c = client;
-		final PriceService s = service;
-		if (c == null || s == null || c.getGameState() != GameState.LOGGED_IN)
-		{
-			return;
-		}
-		final Widget box = c.getWidget(InterfaceID.BondMain.QUANTITY_CONTAINER);
-		if (box == null)
-		{
-			bondMainOpen = false;
-			return;
-		}
-		final int totalTradeable = BankReader.bondTotal(box, ItemID.OSRS_BOND);
-		final int totalUntradeable = BankReader.bondTotal(box, ItemID.OSRS_BOND_UNTRADEABLE);
-		final long hash = rememberAccount();
-		if (totalTradeable == 0 && totalUntradeable == 0)
-		{
-			// No bonds anywhere: the pouch is empty whatever the bank held (the user's live test, 2026-10-28).
-			handPouch(s, hash, 0, 0);
-			return;
-		}
-		final BankSnapshot bank = ownBank(lastBank, hash);
-		final Item[] inventory = inventoryOf(c);
-		if (bank == null || inventory == null || !bankReadThisLogin || bankPending)
-		{
-			return;
-		}
-		final int tradeable = totalTradeable - bondsIn(inventory, bank.items, ItemID.OSRS_BOND);
-		final int untradeable = totalUntradeable - bondsIn(inventory, bank.items, ItemID.OSRS_BOND_UNTRADEABLE);
-		if (tradeable >= 0 && untradeable >= 0)
-		{
-			handPouch(s, hash, tradeable, untradeable);
-		}
-	}
-
-	/** One bond's count in the live inventory and the held bank together. */
-	private static int bondsIn(final Item[] inventory, final List<BankItem> bank, final int bondId)
+	/** One bond's count in the live inventory. */
+	private static int bondsIn(final Item[] inventory, final int bondId)
 	{
 		int n = 0;
 		for (final Item item : inventory)
 		{
 			n += item != null && item.getId() == bondId ? item.getQuantity() : 0;
-		}
-		for (final BankItem item : bank)
-		{
-			n += item != null && item.id == bondId ? item.quantity : 0;
 		}
 		return n;
 	}
@@ -1832,8 +1753,6 @@ public class BankPriceMovementPlugin extends Plugin
 		}
 		bankOpen = false;
 		bondsOpen = false;
-		bondMainOpen = false;
-		bankReadThisLogin = false;
 		endHold();
 		// 1.0.9 part 3: the offers belong to the account that has just left, and the read above was the last that
 		// could want them. Cleared AFTER it, so the logout read still sees them.
@@ -1988,8 +1907,6 @@ public class BankPriceMovementPlugin extends Plugin
 	{
 		bankOpen = false;
 		bondsOpen = false;
-		bondMainOpen = false;
-		bankReadThisLogin = false;
 		endHold();
 		lastFingerprint = null;
 		lastFingerprintHash = 0L;

@@ -420,7 +420,7 @@ public class UntradeablePartsAlwaysCountTest
 	public void theSwitchReadsInTheUsersWords()
 	{
 		assertEquals("Include alch-only untradeables", BankPriceMovementPanel.COUNT_UNTRADEABLES_TEXT);
-		assertEquals("Counts untradeables with no tradeable parts, at alch value.",
+		assertEquals("Untradeables with no tradeable parts, at alch value.",
 			BankPriceMovementPanel.COUNT_UNTRADEABLES_TIP);
 	}
 

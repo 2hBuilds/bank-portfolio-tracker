@@ -63,13 +63,10 @@ final class ChangeSettings
 		this.text = initial;
 		this.press = press;
 		this.pitch = pitch;
-		gpBar = bar(BankPriceMovementPanel.GP_SIZE_TIP, size -> this.text.withGp(size));
-		pctBar = bar(BankPriceMovementPanel.PCT_SIZE_TIP, size -> this.text.withPct(size));
+		gpBar = bar(size -> this.text.withGp(size));
+		pctBar = bar(size -> this.text.withPct(size));
 		box = Widgets.gpField("");
 		Widgets.fixed(box, FIELD_WIDTH, box.getPreferredSize().height);
-		// On the panel AND the text field, as every box in this sidebar does: the field is the mouse target inside its panel.
-		box.setToolTipText(BankPriceMovementPanel.OPACITY_TIP);
-		box.getTextField().setToolTipText(BankPriceMovementPanel.OPACITY_TIP);
 		box.addActionListener(e -> commit());
 		box.getTextField().addFocusListener(new FocusAdapter()
 		{
@@ -97,11 +94,9 @@ final class ChangeSettings
 		render();
 	}
 
-	private SizeBar bar(final String tip, final Function<ChangeSize, ChangeText> with)
+	private SizeBar bar(final Function<ChangeSize, ChangeText> with)
 	{
-		final SizeBar bar = new SizeBar(size -> press.accept(with.apply(size)), this::drop);
-		bar.setToolTipText(tip);
-		return bar;
+		return new SizeBar(size -> press.accept(with.apply(size)), this::drop);
 	}
 
 	/** The settings in force: what the bars light and the box prints. */

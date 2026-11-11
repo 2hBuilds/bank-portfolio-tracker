@@ -251,11 +251,11 @@ public class HistoryCardTest
 	}
 
 	/**
-	 * Ruling 9.7: in History the second line ("n days recorded since d") carries no hover - the guide-price sentence
-	 * would describe a line that is not there - and in Items the guide-price hover comes back.
+	 * Ruling 9.7: in History the second line ("n days recorded since d") carries no hover; since 1.2.5 the Items update line
+	 * has none either.
 	 */
 	@Test
-	public void theRecordLineCarriesNoHoverAndItemsGetsItsOwnBack() throws Exception
+	public void theRecordLineAndTheItemsUpdateLineCarryNoHover() throws Exception
 	{
 		draw(readings(TODAY.minusDays(1), TODAY));
 		onEdt(() ->
@@ -263,7 +263,7 @@ public class HistoryCardTest
 			assertEquals(SidebarView.HISTORY, panel.view);
 			assertNull("no hover on the record line", panel.updateLabel().getToolTipText());
 			panel.pressView(SidebarView.ITEMS);
-			assertNotNull("Items' update line has its hover back", panel.updateLabel().getToolTipText());
+			assertNull("Items' update line has none either (1.2.5)", panel.updateLabel().getToolTipText());
 			panel.pressView(SidebarView.HISTORY);
 			assertNull("...and loses it again in History", panel.updateLabel().getToolTipText());
 		});

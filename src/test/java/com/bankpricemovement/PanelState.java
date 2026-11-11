@@ -359,7 +359,7 @@ final class PanelState
 	 */
 	static boolean soft(final GradeSummary g)
 	{
-		if (!g.graded())
+		if (!g.graded)
 		{
 			return false;
 		}

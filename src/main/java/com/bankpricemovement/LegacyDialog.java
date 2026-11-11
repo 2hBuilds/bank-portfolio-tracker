@@ -81,8 +81,8 @@ final class LegacyDialog
 		textArea.setPreferredSize(new Dimension(TEXT_WIDTH, textArea.getPreferredSize().height));
 		content.add(textArea, BorderLayout.CENTER);
 
-		includeButton = Widgets.smallButton(yes, null, e -> answer(true));
-		cancelButton = Widgets.smallButton(CANCEL_TEXT, null, e -> answer(false));
+		includeButton = Widgets.smallButton(yes, e -> answer(true));
+		cancelButton = Widgets.smallButton(CANCEL_TEXT, e -> answer(false));
 		final JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
 		buttons.setOpaque(false);
 		buttons.setBorder(new EmptyBorder(PADDING, 0, 0, 0));

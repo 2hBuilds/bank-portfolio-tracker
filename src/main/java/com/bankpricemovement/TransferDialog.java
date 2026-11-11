@@ -92,8 +92,8 @@ final class TransferDialog
 		}
 		content.add(text, BorderLayout.CENTER);
 
-		okButton = Widgets.smallButton(OK_TEXT, null, e -> ok());
-		cancelButton = Widgets.smallButton(LegacyDialog.CANCEL_TEXT, null, e -> close());
+		okButton = Widgets.smallButton(OK_TEXT, e -> ok());
+		cancelButton = Widgets.smallButton(LegacyDialog.CANCEL_TEXT, e -> close());
 		final JPanel buttons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
 		buttons.setOpaque(false);
 		buttons.setBorder(new EmptyBorder(PADDING, 0, 0, 0));

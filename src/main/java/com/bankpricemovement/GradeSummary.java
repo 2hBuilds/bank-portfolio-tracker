@@ -18,10 +18,14 @@ public final class GradeSummary
 	/** Nothing graded: live prices off or unusable. Never soft. */
 	public static final GradeSummary NONE = new GradeSummary(false, 0, 0, 0, 0L, 0L, 0L, 0L);
 
-	private final boolean graded;
-	private final int solidRows;
-	private final int softRows;
-	private final int noneRows;
+	/** Whether the computation graded its rows at all - live prices on, with a usable snapshot. */
+	public final boolean graded;
+	/** Counted rows whose figure on the window on screen is SOLID. */
+	public final int solidRows;
+	/** Counted rows whose figure is SOFT. */
+	public final int softRows;
+	/** Counted rows with no figure (NONE). */
+	public final int noneRows;
 	/** What the SOLID rows' stacks are worth, gp. */
 	final long solidValue;
 	/** What every counted stack is worth, gp, cash left out - the bank value's stacks. */
@@ -109,36 +113,6 @@ public final class GradeSummary
 		{
 			return gp == Long.MIN_VALUE ? Long.MAX_VALUE : Math.abs(gp);
 		}
-	}
-
-	/** Whether the computation graded its rows at all - live prices on, with a usable snapshot. */
-	public boolean graded()
-	{
-		return graded;
-	}
-
-	/** Counted rows whose figure on the window on screen is SOLID. */
-	public int solidRows()
-	{
-		return solidRows;
-	}
-
-	/** Counted rows whose figure is SOFT. */
-	public int softRows()
-	{
-		return softRows;
-	}
-
-	/** Counted rows with no figure (NONE). */
-	public int noneRows()
-	{
-		return noneRows;
-	}
-
-	/** Every graded counted row - the m of "n of m rows solid". */
-	public int gradedRows()
-	{
-		return solidRows + softRows + noneRows;
 	}
 
 	@Override

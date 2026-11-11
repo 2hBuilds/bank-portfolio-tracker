@@ -527,33 +527,6 @@ public class BondsTest
 			BankReader.pouchCount(column(pouch, inventory, bank), bond, 4));
 	}
 
-	/** The "Old School Bonds" totals: the picture whose item is the bond, found by item whatever the child order. */
-	@Test
-	public void aBondTotalIsFoundByItemWhateverTheChildOrder()
-	{
-		final int bond = PriceServiceTest.BOND;
-		final Widget tradeable = picture(bond, WidgetPositionMode.ABSOLUTE_LEFT, 0, 4);
-		final Widget untradeable = picture(PriceServiceTest.BOND_UNTRADEABLE, WidgetPositionMode.ABSOLUTE_LEFT, 0, 0);
-		final Widget stranger = picture(bond + 5, WidgetPositionMode.ABSOLUTE_LEFT, 0, 99);
-		for (final Widget[] order : new Widget[][]{{tradeable, untradeable, stranger}, {stranger, untradeable, tradeable},
-			{untradeable, tradeable}})
-		{
-			assertEquals(4, BankReader.bondTotal(column(order), bond));
-			assertEquals("a count of 0 is a count", 0, BankReader.bondTotal(column(order), PriceServiceTest.BOND_UNTRADEABLE));
-		}
-	}
-
-	@Test
-	public void aBondTotalThatCannotBeFoundIsNoCount()
-	{
-		final int bond = PriceServiceTest.BOND;
-		assertEquals(-1, BankReader.bondTotal(null, bond));
-		assertEquals(-1, BankReader.bondTotal(column(), bond));
-		assertEquals(-1, BankReader.bondTotal(mock(Widget.class), bond));
-		assertEquals("the other bond's picture is not this one's", -1, BankReader.bondTotal(
-			column(picture(PriceServiceTest.BOND_UNTRADEABLE, WidgetPositionMode.ABSOLUTE_LEFT, 0, 3)), bond));
-	}
-
 	// ---------------------------------------------------------------- the files
 
 	/** An old bank file - no pouch fields - loads, as an empty pouch never read. */

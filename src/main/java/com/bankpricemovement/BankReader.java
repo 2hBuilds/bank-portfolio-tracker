@@ -415,25 +415,6 @@ public class BankReader
 	}
 
 	/**
-	 * One bond's total in the inventory, bank and pouch together, read off the "Old School Bonds" quantity container
-	 * (1.2.4, rule 3c, CLIENT THREAD): the picture whose item is the bond, found by item and never by child index.
-	 *
-	 * @return the total, or -1 when the container or the bond's picture is not there
-	 */
-	static int bondTotal(@Nullable final Widget container, final int bondId)
-	{
-		final Widget[] children = container == null ? null : container.getDynamicChildren();
-		for (final Widget child : children == null ? new Widget[0] : children)
-		{
-			if (child != null && child.getItemId() == bondId)
-			{
-				return Math.max(0, child.getItemQuantity());
-			}
-		}
-		return -1;
-	}
-
-	/**
 	 * Reads the player's INVENTORY and WORN containers into the carried half of a snapshot (addendum Y, line Y2).
 	 * CLIENT THREAD ONLY, for the reason {@link #read} is - it is the same cache lookups over two more containers.
 	 *

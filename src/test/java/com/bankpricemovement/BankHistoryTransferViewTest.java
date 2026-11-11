@@ -105,7 +105,7 @@ public class BankHistoryTransferViewTest
 	}
 
 	/**
-	 * Release 1.2.2 part 4 (R3): hovering a point drawn at a shifted total shows exactly "<real total> gp at the time"; a point drawn at
+	 * Release 1.2.2 part 4 (R3): hovering a point drawn at a shifted total shows exactly "Your total that day: <real total> gp"; a point drawn at
 	 * its own total shows nothing. The readout line keeps the drawn figure ({@link #theReadoutNamesTheFigureTheHoveredPointIsDrawnAt}).
 	 */
 	@Test
@@ -118,7 +118,7 @@ public class BankHistoryTransferViewTest
 			final BankHistoryChart chart = chart(view);
 			final int n = chart.days().size();
 			final int nineteenth = indexOf(chart, SEP_19);
-			assertEquals("931,000,000 gp at the time", chart.tipAt(nineteenth));
+			assertEquals("Your total that day: 931,000,000 gp", chart.tipAt(nineteenth));
 			assertEquals("the 20th is drawn at its own total", null, chart.tipAt(indexOf(chart, SEP_20)));
 			assertEquals("so is today, which is never shifted", null, chart.tipAt(n - 1));
 			assertEquals(null, chart.tipAt(-1));
@@ -127,7 +127,7 @@ public class BankHistoryTransferViewTest
 			// Swing asks the chart per pointer place - and the chart is registered, or it would never be asked.
 			assertTrue("registered with the tooltip manager", Arrays.stream(chart.getMouseListeners())
 				.anyMatch(l -> l instanceof javax.swing.ToolTipManager));
-			assertEquals("931,000,000 gp at the time", chart.getToolTipText(at(chart, (int) Math.round(
+			assertEquals("Your total that day: 931,000,000 gp", chart.getToolTipText(at(chart, (int) Math.round(
 				BankHistoryChart.xAt(nineteenth, n, chart.getWidth())))));
 			assertEquals("no fixed text on the chart itself", null, chart.getToolTipText());
 			assertEquals("the pointer over today: no tip", null, chart.getToolTipText(at(chart, chart.getWidth() - 10)));
@@ -145,12 +145,12 @@ public class BankHistoryTransferViewTest
 			view.show(sent(), ViewOptions.DEFAULT);
 			layOut(view, 213);
 			final BankHistoryChart hidden = chart(view);
-			assertEquals("the amount's mask in its place", AmountMask.amount(true, "931,000,000") + " gp at the time",
+			assertEquals("the amount's mask in its place", "Your total that day: " + AmountMask.amount(true, "931,000,000") + " gp",
 				hidden.tipAt(indexOf(hidden, SEP_19)));
-			assertNotEquals("931,000,000 gp at the time", hidden.tipAt(indexOf(hidden, SEP_19)));
+			assertNotEquals("Your total that day: 931,000,000 gp", hidden.tipAt(indexOf(hidden, SEP_19)));
 			view.setAmountsHidden(false);
 			layOut(view, 213);
-			assertEquals("931,000,000 gp at the time", chart(view).tipAt(indexOf(chart(view), SEP_19)));
+			assertEquals("Your total that day: 931,000,000 gp", chart(view).tipAt(indexOf(chart(view), SEP_19)));
 
 			final BankHistoryView plain = view(unmarked(), BankHistoryRange.ALL);
 			layOut(plain, 213);

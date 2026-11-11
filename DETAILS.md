@@ -22,22 +22,18 @@ total, one reading a day.
 - the **window chips** `1d | 7d | 30d | 90d | 180d` - click one and the whole panel follows it;
 - a **provenance footnote** ("1d vs 08 Sep - bank 09:00") saying which day the figures are measured against and
   when the bank was last read;
-- **hover the card** and you get the total written out to the last gp, commas and all - *"446,901,681 gp"* -
-  which is the one figure the rounding on the card takes away, and under it which guide table the window is
-  measured against, by its time: *"1d vs 06 Oct 21:32 UTC (table)"* (the footnote has room for the day only, and
-  the wiki now saves several tables a day). With *Use live prices* on, when some of the rows are soft (see *Live
-  prices*) the hover also says how many are solid - *"412 of 497 rows solid"*. Everything else is already on the
-  card or one chip away, so the hover does not repeat it;
+- **hover the big number** and you get the total written out to the last gp, commas and all - *"446,901,681 gp"* -
+  which is the one figure the rounding on the card takes away. Nothing else, because the rest is already on the card;
 - a last line reading **"Guide prices update every few hours"**, because Jagex publishes the guide price several times a day
-  and that is how often any of these figures can move - hover it for why, and for when the plugin last checked;
+  and that is how often any of these figures can move;
 - a **Refresh** link, and one click refreshes everything: **your items at once** - your bank as it is now if it
   is open (see *While you bank*, below), and what you are carrying and wearing - and **the prices in the
   background**. The prices are re-checked at most once every 30 seconds, so a click sooner than that updates only
   your items: with the bank open it does so quietly, and with the bank closed a line under the controls says
   *"Refreshed n s ago - wait"* - that line, like any other problem, prints there rather than interrupting
   anything. Guide prices only move several times a day, so a refresh usually brings the same figures back -
-  hovering the line above tells you when the prices on screen were last read, so you can tell "nothing changed"
-  from "nothing happened". A click is answered in two words: *Refreshing...*, then **Up to
+  hovering the link tells you when the prices on screen were last read (*"Last checked 18:39"*), so you can tell
+  "nothing changed" from "nothing happened". A click is answered in two words: *Refreshing...*, then **Up to
   date**, which fades back to *Refresh* on its own a minute later;
 - a small **settings icon**, in the top-right corner of the card, with a **Discord mark** beside it on every card
   that opens the 2hBuilds Discord, which opens the panel's **Options** menu: *Refresh
@@ -252,11 +248,11 @@ nothing is hidden. Turn off
 up as a one-day loss. The options icon at the right end of the *Bank net worth history* line opens *History
 options* - *Single chart colour*, the same as in the settings menu, then the tab's own *GP change size*, *Opacity* and
 *Percent change size* (below), then one row with *Reset history* hard left and *Restore history* hard right (see *Reset
-history* below) - and while the days before v1.1.1 are hidden, a small *i* disc beside the icon says on hover that they
-might read high because of the bank placeholder bug and that *Restore history* in the History options brings them back;
+history* below) - and while the days before v1.1.1 are hidden, a small *i* disc beside the icon says on hover that older days
+counted placeholders as items and that *Restore history* brings them back;
 pressing it asks the same *Include* question as the settings menu item, and it goes away once you restore them. The same
-disc stands there while days *you* hid (see *Reset history*) are hidden, and says so: *Days before 26 Sep are hidden because
-you reset your history. Restore history in the History options brings them back.* A reading is priced the way the card priced it that day, and the guide-price figure is
+disc stands there while days *you* hid (see *Reset history*) are hidden, and says so: *Days before 26 Sep are hidden by your
+reset. Restore history brings them back.* A reading is priced the way the card priced it that day, and the guide-price figure is
 saved beside it, so turning *Use live prices* off redraws the line on guide prices alone. A day saved with live
 prices off has only its guide figure, so turning them on later can show a small step at the first live day.
 
@@ -287,7 +283,7 @@ tokens* is on, as the dip it explains would not show otherwise. If shifting the 
 earned the gold it sent - the chart draws your real totals instead, with the step into the marked day dotted and a small orange
 mark; the figures are corrected either way. Hovering the chart names the figure the point is drawn at in the line above it; and a
 point drawn at a shifted total - a day before a transfer - also shows a hover with what you really had that day, the exact
-total and *gp at the time* (*931,224,820 gp at the time*; a mask in its place while amounts are hidden). A point drawn at its own
+total (*Your total that day: 931,224,820 gp*; a mask in its place while amounts are hidden). A point drawn at its own
 total has no hover.
 
 **Reset history** (1.2.2). *Reset history*, hard left on the bottom row of *History options* (hover: *Start the chart again from
@@ -344,14 +340,18 @@ different - it is simply part of why the list redraws quickly.
 
 ## Hover text
 
-**Hover text is always on.** Rest the pointer on something and the panel explains itself: the bank value gives you
-the exact total to the last gp, and the sort button, the band button, the Refresh link, the *"Guide prices update
-every few hours"* line and every item in the Options menu say what they do. Each one is a single short line. The
-Refresh link's hover reads *"Re-read your items and re-check the prices. Jagex publishes guide prices several times
-a day."* - the same wherever you are, because a click does the same thing everywhere.
+**A hover says only what the screen cannot.** Rest the pointer on the bank value and you get the exact total to the last
+gp. The Refresh link says when the prices were last checked (*"Last checked 18:39"*), on both tabs. The three price chips
+say what they cut at (*"Items worth 100k+ each"*). The icons say their name. A point on the net worth chart that was shifted
+for a transfer says what you had that day. Four items in the menus keep one short line: *Use live prices* (*"Prices from the
+last 24 hours of trades."*), *Include bonds* (*"An untradeable bond counts at 90% of a tradeable one."*), and *Include
+alch-only untradeables* and *Show alch-only items* (both *"Untradeables with no tradeable parts, at alch value."*). A name cut
+short with "..." still shows the whole name. Everything else - the window chips, the price range button, the Min and Max
+boxes, the sort button and its menu, the search box, *Show more*, the other menu items and the size and opacity controls -
+has no hover, because its name already says it.
 
-Version 1.2.0 took away the **Show hover text** switch that used to sit in the Options menu, off by default: every
-hover is one short line, so a setting to hide them was one more than the panel needs.
+Version 1.2.0 took away the **Show hover text** switch that used to sit in the Options menu; there is no switch to bring
+hovers back.
 
 **An item row never opens a hover.** Its detail is not a tooltip - you **click the row** and it opens on the page,
 under the row's own line, and stays there until you close it. That is also where you read an item's name when it is
@@ -376,7 +376,7 @@ hours before, and so on. So a 1d move is always a day's move, never the hour or 
 saves. When RuneLite already has a table the wiki has not listed yet, "now" is the current time instead, and the
 plugin checks the wiki's list again on its next half-hourly check rather than waiting the usual six hours; when
 RuneLite is a step behind the wiki, the windows count back from the table RuneLite holds. The labels show the
-date of the table each window uses ("1d vs 06 Oct"); the card's hover and an opened row add its time. The plugin
+date of the table each window uses ("1d vs 06 Oct"); an opened row adds its time. The plugin
 fetches the tables it needs in a single batched request - **a few small requests a day whatever your bank
 holds**, and there is no per-item lookup, ever. Item names are joined to item ids through the wiki's
 `prices.runescape.wiki/api/v1/osrs/mapping` table, fetched at most weekly.
@@ -519,8 +519,7 @@ A row on `last 1d ago` is priced at yesterday's average, since that is all there
 no figure (the dash) come last. The word under the percentage is what says how much to lean on a figure; the order
 does not.
 
-**The card.** It looks the same. Hovering it adds how many rows are solid (*"412 of 497
-rows solid"*) when some are soft, so you can tell a bank whose move rests on solid rows from one that does not.
+**The card.** It looks the same. The big number's hover is the exact total; the rest of the card has none.
 
 **If the traded prices are out of date.** When the plugin cannot reach the wiki and its latest traded snapshot is
 more than six hours old, nothing is graded and every row is on the guide price, as with the switch off. A window
@@ -629,8 +628,7 @@ there the moment you open the sidebar.
 
 - The guide price moves at Jagex's pace, several times a day, and an item with no trades stays on it: for
   those rows, refreshing more often than that changes nothing.
-  The line at the foot of the card says why when you hover it, along with the time
-  the prices on screen were last checked. The guide price is the one shown on the Grand Exchange website, so
+  The Refresh link says when the prices on screen were last checked. The guide price is the one shown on the Grand Exchange website, so
   **the plugin agrees with that site only with *Use live prices* off**. RuneLite's own item hover uses the
   wiki's traded price by default, which differs most on thinly traded items - so a guide row here can sit a long
   way from that hover on something rarely traded, and a live row will usually sit close to it. Jagex moves a
@@ -658,7 +656,7 @@ Tell us in the 2hBuilds Discord - the mark beside the settings icon opens it. Th
 
 - **Which version you run.** The settings menu's header shows it.
 - **What the sidebar shows.** A screenshot of the card and the list. When prices could not be fetched, the card's
-  status line says so, and its hover says why.
+  status line says so.
 - **The plugin's log lines.** RuneLite keeps one log for the whole client. To find it, right-click the camera icon
   at the top of the RuneLite window, click *Open screenshot folder...*, go up one folder and open `logs`. The file
   is `client.log` (Windows may show it as just `client`). Search it for `bank-portfolio-tracker` and for

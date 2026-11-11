@@ -339,10 +339,8 @@ public class UpDownColoursTest
 		load();
 		onEdt(() ->
 		{
-			assertEquals("The colour of a rise, on both tabs.", row(true).getToolTipText());
-			assertEquals("The colour of a fall, on both tabs.", row(false).getToolTipText());
-			assertEquals(BankPriceMovementPanel.UP_COLOUR_TIP, row(true).getToolTipText());
-			assertEquals(BankPriceMovementPanel.DOWN_COLOUR_TIP, row(false).getToolTipText());
+			assertNull(row(true).getToolTipText());
+			assertNull(row(false).getToolTipText());
 
 			row(true).doClick(0);
 			assertEquals(1, picker.titles.size());

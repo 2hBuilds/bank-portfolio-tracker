@@ -787,10 +787,10 @@ public class GradeMathTest
 	public void theCardCountsTheRowsOfEachGrade()
 	{
 		final GradeSummary summary = card(90L, 10L, 5L, 90L, 10L);
-		assertEquals(1, summary.solidRows());
-		assertEquals(1, summary.softRows());
-		assertEquals(1, summary.noneRows());
-		assertEquals(3, summary.gradedRows());
+		assertEquals(1, summary.solidRows);
+		assertEquals(1, summary.softRows);
+		assertEquals(1, summary.noneRows);
+		assertEquals(3, summary.solidRows + summary.softRows + summary.noneRows);
 		assertEquals(105L, summary.countedValue);
 	}
 

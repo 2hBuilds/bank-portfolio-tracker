@@ -757,7 +757,6 @@ public class BankPriceMovementConfigTest
 		assertEquals(BankPriceMovementPanel.SINGLE_CHART_COLOUR_TEXT, single.name());
 		assertEquals("Draw the net worth chart in one colour instead of the up and down colours.",
 			single.description());
-		assertEquals(BankPriceMovementPanel.SINGLE_CHART_COLOUR_TIP, single.description());
 		assertEquals(20, single.position());
 		assertFalse("listed on the settings page", single.hidden());
 		assertTrue("on for a fresh profile (part D)", new BankPriceMovementConfig() {}.singleChartColour());
@@ -828,7 +827,6 @@ public class BankPriceMovementConfigTest
 		assertEquals(BankPriceMovementPanel.SHOW_ALCH_TEXT, alch.name());
 		assertEquals("Lists untradeables with no tradeable parts, at alch value. Searching finds them either way.",
 			alch.description());
-		assertEquals(BankPriceMovementPanel.SHOW_ALCH_TIP, alch.description());
 		assertEquals(23, alch.position());
 		assertFalse("listed on the settings page", alch.hidden());
 		assertFalse("off for a fresh profile", new BankPriceMovementConfig() {}.showAlchRows());

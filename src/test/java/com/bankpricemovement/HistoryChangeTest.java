@@ -35,6 +35,7 @@ import static com.bankpricemovement.SidebarViewPanelTest.status;
 import static com.bankpricemovement.SidebarViewPanelTest.walk;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertSame;
@@ -558,12 +559,11 @@ public class HistoryChangeTest
 			assertSame("the keyboard is parked on the row, never the box", items[4], panel.historyMenuFocusTarget());
 			assertTrue(items[4].isFocusable());
 			assertFalse(box().getTextField().isFocusOwner());
-			// The three hovers, one line each.
-			assertEquals(BankPriceMovementPanel.GP_SIZE_TIP, gpBar().getToolTipText());
-			assertEquals(BankPriceMovementPanel.PCT_SIZE_TIP, pctBar().getToolTipText());
-			assertEquals(BankPriceMovementPanel.OPACITY_TIP, box().getToolTipText());
-			assertEquals(BankPriceMovementPanel.OPACITY_TIP, box().getTextField().getToolTipText());
-			assertEquals("How solid the gp change is - 100 is the same colour as the %", BankPriceMovementPanel.OPACITY_TIP);
+			// No hover on the bars or the box (1.2.5).
+			assertNull(gpBar().getToolTipText());
+			assertNull(pctBar().getToolTipText());
+			assertNull(box().getToolTipText());
+			assertNull(box().getTextField().getToolTipText());
 		});
 	}
 

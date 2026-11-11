@@ -3762,7 +3762,7 @@ public class PriceServiceTest
 		assertEquals(2, whip.graded().buy().observations);
 		assertEquals("the median of the 860,000 print and the hour's 861,000", Long.valueOf(860_500L),
 			whip.graded().buy().now());
-		assertEquals(1, lastStatus().grades().solidRows());
+		assertEquals(1, lastStatus().grades().solidRows);
 		assertEquals(hourStart, lastStatus().live().hourAtSeconds);
 		assertEquals(java.time.Instant.ofEpochSecond(hourStart).toString(), PanelState.asMap(lastStatus().live()).get("hourAt"));
 	}
@@ -3847,15 +3847,15 @@ public class PriceServiceTest
 		answerDay(SEP_7, tradedSep7());
 
 		final GradeSummary grades = lastStatus().grades();
-		assertTrue(grades.graded());
-		assertEquals(1, grades.solidRows());
-		assertEquals(1, grades.softRows());
+		assertTrue(grades.graded);
+		assertEquals(1, grades.solidRows);
+		assertEquals(1, grades.softRows);
 		int none = 0;
 		for (final MovementRow row : service.currentRows())
 		{
 			none += row.graded() != null && row.graded().grade() == Grade.NONE ? 1 : 0;
 		}
-		assertEquals("every other priced stack has no trades", none, grades.noneRows());
+		assertEquals("every other priced stack has no trades", none, grades.noneRows);
 		assertTrue("the solid rows hold under nine tenths of the counted value: the card is soft", PanelState.soft(grades));
 	}
 

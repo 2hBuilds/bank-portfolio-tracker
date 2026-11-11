@@ -562,8 +562,7 @@ public class TransferMenuTest
 		{
 			final JLabel info = infoIcon();
 			assertNotNull("the player's reset shows the \"i\" like a restart does", info);
-			assertEquals("<html>Days before 26 Sep are hidden because<br>you reset your history. Restore history<br>"
-				+ "in the History options brings them back.</html>", info.getToolTipText());
+			assertEquals("<html>Days before 26 Sep are hidden by your reset.<br>Restore history brings them back.</html>", info.getToolTipText());
 		});
 		open(cutAt(SEP_27));
 		onEdt(() -> assertTrue("and follows the day", infoIcon().getToolTipText().contains("27 Sep")));
@@ -828,23 +827,21 @@ public class TransferMenuTest
 	public void theIIconNamesTheReasonThatHidesTheDaysNow() throws Exception
 	{
 		open(overPlaceholders());
-		onEdt(() -> assertTrue(infoTexts().contains("<html>Days before 27 Sep are hidden because<br>you reset your history. Restore history<br>"
-			+ "in the History options brings them back.</html>")));
+		onEdt(() -> assertTrue(infoTexts().contains("<html>Days before 27 Sep are hidden by your reset.<br>Restore history brings them back.</html>")));
 		open(overPlaceholders().withRestored(true));
 		onEdt(() ->
 		{
 			assertTrue("restored: the placeholder reason", infoTexts().contains(BankPriceMovementPanel.LEGACY_INFO_TIP));
 			for (final String text : infoTexts())
 			{
-				assertFalse("and no longer the player's words: " + text, text.contains("you reset your history"));
+				assertFalse("and no longer the player's words: " + text, text.contains("by your reset"));
 			}
 		});
 		onEdt(() -> panel.setIncludeLegacy(true));
 		onEdt(() ->
 		{
 			assertFalse("shown by the box: no icon", infoTexts().contains(BankPriceMovementPanel.LEGACY_INFO_TIP));
-			assertFalse(infoTexts().contains("<html>Days before 27 Sep are hidden because<br>you reset your history. Restore history<br>"
-				+ "in the History options brings them back.</html>"));
+			assertFalse(infoTexts().contains("<html>Days before 27 Sep are hidden by your reset.<br>Restore history brings them back.</html>"));
 		});
 	}
 
@@ -885,7 +882,7 @@ public class TransferMenuTest
 	{
 		for (final Component c : panel.viewCaptionRow().getComponents())
 		{
-			if (c instanceof JLabel && ((JLabel) c).getToolTipText() != null && ((JLabel) c).getToolTipText().contains("reset your history"))
+			if (c instanceof JLabel && ((JLabel) c).getToolTipText() != null && ((JLabel) c).getToolTipText().contains("by your reset"))
 			{
 				return (JLabel) c;
 			}

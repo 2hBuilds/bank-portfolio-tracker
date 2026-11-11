@@ -39,6 +39,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
@@ -650,7 +651,7 @@ public class HideAmountsTest
 			shown[1] = panel.deltaLabel().getText();
 			shown[2] = panel.pctLabel().getText();
 			shown[3] = panel.totalLabel().getToolTipText();
-			shown[4] = panel.hero().getToolTipText();
+			shown[4] = panel.totalLabel().getToolTipText();
 			assertEquals("736m", shown[0]);
 			assertEquals("-950k", shown[1]);
 			assertTrue("the percentage is there to compare", shown[2].endsWith("%"));
@@ -664,8 +665,7 @@ public class HideAmountsTest
 			final String tip = panel.totalLabel().getToolTipText();
 			assertEquals("the hover says the mask", AmountMask.AMOUNT + " gp", tip);
 			assertFalse("...and holds no digit of the total: " + tip, Pattern.compile("[0-9]").matcher(tip).find());
-			assertEquals("on every target of the card", tip, panel.hero().getToolTipText());
-			assertEquals(tip, panel.deltaLabel().getToolTipText());
+			assertNull("the big number alone carries it (1.2.5)", panel.deltaLabel().getToolTipText());
 			assertEquals("the mask is five dots and three", "•••••", AmountMask.AMOUNT);
 			assertEquals("•••", AmountMask.SHORT);
 
@@ -674,7 +674,7 @@ public class HideAmountsTest
 			assertEquals("the gp move", shown[1], panel.deltaLabel().getText());
 			assertEquals("the percentage", shown[2], panel.pctLabel().getText());
 			assertEquals("the total's hover", shown[3], panel.totalLabel().getToolTipText());
-			assertEquals("the card's hover", shown[4], panel.hero().getToolTipText());
+			assertEquals("the card's hover", shown[4], panel.totalLabel().getToolTipText());
 		});
 	}
 

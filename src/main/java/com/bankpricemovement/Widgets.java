@@ -523,10 +523,9 @@ final class Widgets
 	 * {@link #segment}), and this one is deliberately a button - it is the way out of a filter that hid
 	 * everything, and it should look like the platform's own control.
 	 */
-	static JButton smallButton(String text, @Nullable String tooltip, ActionListener onClick)
+	static JButton smallButton(String text, ActionListener onClick)
 	{
 		final JButton b = new JButton(text);
-		b.setToolTipText(tooltip);
 		b.setFocusPainted(false);
 		b.addActionListener(onClick);
 		b.setFont(FontManager.getRunescapeSmallFont());
@@ -558,12 +557,11 @@ final class Widgets
 	 *
 	 * @param onClick run on a left press of an UNLIT segment; may be null for a segment that is only a light
 	 */
-	static JLabel segment(String text, @Nullable String tooltip, @Nullable Runnable onClick)
+	static JLabel segment(String text, @Nullable Runnable onClick)
 	{
 		final JLabel cell = new JLabel(text == null ? "" : text);
 		cell.setHorizontalAlignment(SwingConstants.CENTER);
 		cell.setVerticalAlignment(SwingConstants.CENTER);
-		cell.setToolTipText(tooltip);
 		cell.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
 		chip(cell, false);
 		cell.addMouseListener(new MouseAdapter()

@@ -746,8 +746,6 @@ public class ChartColourTest
 			chartRow().doClick(0);
 			assertEquals(GOLD, chart().lineColour());
 		});
-		assertTrue("the hover says what it puts back",
-			BankPriceMovementPanel.RESET_PRESETS_TIP.contains("single chart colour"));
 		verifyNoInteractions(service);
 	}
 
@@ -853,7 +851,6 @@ public class ChartColourTest
 			onEdt(() -> panel.stop());
 			panel = null;
 		}
-		assertTrue(BankPriceMovementPanel.RESET_PRESETS_TIP.contains("single chart colour"));
 	}
 
 	// ---------------------------------------------------------------- C6: from outside
@@ -909,10 +906,10 @@ public class ChartColourTest
 
 	// ---------------------------------------------------------------- C7: the version
 
-	/** C7: this build is 1.2.4. */
+	/** C7: this build is 1.2.5. */
 	@Test
 	public void c7_theVersionIs110()
 	{
-		assertEquals("1.2.4", Version.CURRENT);
+		assertEquals("1.2.5", Version.CURRENT);
 	}
 }

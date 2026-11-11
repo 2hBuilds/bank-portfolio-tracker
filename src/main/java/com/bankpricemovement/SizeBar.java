@@ -109,18 +109,4 @@ final class SizeBar extends JPanel
 		}
 		repaint();
 	}
-
-	/**
-	 * The hover goes on the bar AND on every cell: a cell carries a mouse listener, so it is its own mouse target and a hover on
-	 * the bar alone would be lost the moment the pointer crossed onto one (playbook 7.5).
-	 */
-	@Override
-	public void setToolTipText(@Nullable String text)
-	{
-		super.setToolTipText(text);
-		for (final JLabel cell : cells)
-		{
-			cell.setToolTipText(text);
-		}
-	}
 }

@@ -131,8 +131,8 @@ public class BankPriceMovementPanelTest
 	 */
 	private static final String VALUE_TIP = MovementMath.formatExact(summary().valueNow())
 		+ BankPriceMovementPanel.GP_SUFFIX;
-	/** The update line's hover as the fixtures' price clock stamps it (S2). */
-	private static final String UPDATE_TIP = BankPriceMovementPanel.updateTooltip(PRICES_AT);
+	/** The Refresh link's hover as the fixtures' price clock stamps it (1.2.5). */
+	private static final String REFRESH_HOVER = "Last checked " + MovementMath.formatTime(PRICES_AT);
 	/**
 	 * The view switches with addendum T's live prices OFF - the guide-only sidebar of addenda K to S
 	 * ({@code docs/bank-price-movement-addendum-T-2026-09-12.md}, line T8).
@@ -1068,14 +1068,14 @@ public class BankPriceMovementPanelTest
 	 * moves either off {@code valueNow()}, turns this red.
 	 */
 	@Test
-	public void heroTooltipIsTheExactBankValueOnEveryChildOfTheCard() throws Exception
+	public void theBigNumbersHoverIsTheExactBankValueAndTheRestOfTheCardHasNone() throws Exception
 	{
 		// T8: this test pins the guide-only card, so it names the switch it is drawing rather than
 		// inheriting today's default.
 		prefs.storedOptions = LIVE_OFF;
 		build();
 		publish(rows(3), listedWith(summary()));
-		final String tip = panel.hero().getToolTipText();
+		final String tip = panel.totalLabel().getToolTipText();
 		assertEquals("the gp figure, with thousands separators and its unit", "1,234,567,890 gp", tip);
 		assertEquals(VALUE_TIP, tip);
 		assertFalse("one line, so no HTML wrapper round it", tip.contains("<html>"));
@@ -1093,19 +1093,15 @@ public class BankPriceMovementPanelTest
 		assertEquals(tip, BankPriceMovementPanel.valueTooltip(summary(), HeroVisibility.ALL, null));
 		assertEquals("a null visibility reads as every figure shown", tip,
 			BankPriceMovementPanel.valueTooltip(summary(), null, null));
-		for (JComponent c : new JComponent[]{panel.hero(), panel.captionRow(), panel.captionLabel(), panel.totalLabel(),
-			panel.moveLine(), panel.triangleLabel(), panel.deltaLabel(), panel.pctLabel(), panel.stripHolder(), panel.footnoteLabel()})
-		{
-			assertEquals(c.getClass().getSimpleName(), tip, c.getToolTipText());
-		}
-		assertEquals("the link keeps its own tooltip", BankPriceMovementPanel.REFRESH_TIP, panel.refreshLabel().getToolTipText());
-		assertEquals("and the update line keeps its own (S2)", UPDATE_TIP, panel.updateLabel().getToolTipText());
-		assertTrue("a chip keeps its own tooltip", panel.windowChip(MovementWindow.D1).getToolTipText().startsWith("Guide-price change"));
+		onEdt(() -> assertValueHoverOnTheTotalAlone("on a plain card"));
+		assertEquals("the link keeps its own tooltip", REFRESH_HOVER, panel.refreshLabel().getToolTipText());
+		assertNull("the update line has none (1.2.5)", panel.updateLabel().getToolTipText());
+		assertNull("nor has a chip", panel.windowChip(MovementWindow.D1).getToolTipText());
 
 		// The lit window is no longer anything to the hover: the figure is the whole bank, whichever chip is on.
 		onEdt(() -> panel.selectWindow(MovementWindow.D180));
 		assertEquals("a window with no baseline leaves the total - and so the hover - alone", tip,
-			panel.hero().getToolTipText());
+			panel.totalLabel().getToolTipText());
 	}
 
 	/**
@@ -1200,20 +1196,19 @@ public class BankPriceMovementPanelTest
 				// The hover (AF): the exact total while the total is drawn, and nothing at all when it is not.
 				// It follows v.value() ALONE - the gp and percent switches decide what is on the move line, and
 				// the move line's figures were never what this hover explained.
-				final String tip = panel.hero().getToolTipText();
+				final String tip = panel.totalLabel().getToolTipText();
 				assertEquals(PanelState.asMap(v).toString(), v.value() ? VALUE_TIP : null, tip);
 				assertEquals(PanelState.asMap(v).toString(), v.value() ? VALUE_TIP : "",
 					BankPriceMovementPanel.valueTooltip(summary(), v, null));
-				for (JComponent c : new JComponent[]{panel.captionRow(), panel.captionLabel(), panel.totalRow(),
-					panel.totalLabel(), panel.moveLine(), panel.deltaLabel(), panel.pctLabel(), panel.stripHolder(),
-					panel.footnoteLabel()})
+				// 1.2.5: the big number alone carries it; the rest of the card has no hover in any combination.
+				for (JComponent c : new JComponent[]{panel.hero(), panel.captionRow(), panel.captionLabel(), panel.totalRow(),
+					panel.moveLine(), panel.deltaLabel(), panel.pctLabel(), panel.stripHolder(), panel.footnoteLabel()})
 				{
-					assertEquals(PanelState.asMap(v) + ": " + c.getClass().getSimpleName(), tip, c.getToolTipText());
+					assertNull(PanelState.asMap(v) + ": " + c.getClass().getSimpleName(), c.getToolTipText());
 				}
 				assertEquals(PanelState.asMap(v) + ": the gear keeps its own word", SupportLinks.SETTINGS_TIP,
 					panel.gearLabel().getToolTipText());
-				assertEquals(PanelState.asMap(v) + ": the update line keeps its own hover (S2)", UPDATE_TIP,
-					panel.updateLabel().getToolTipText());
+				assertNull(PanelState.asMap(v) + ": the update line has no hover", panel.updateLabel().getToolTipText());
 				assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains("\"hero\":{\"value\":" + v.value() + ",\"gp\":" + v.gp() + ",\"pct\":" + v.pct() + "}"));
 			});
 
@@ -1233,7 +1228,7 @@ public class BankPriceMovementPanelTest
 				assertEquals("-99.9%", panel.pctLabel().getText());
 				assertFalse(panel.deltaLabel().getText().endsWith(Widgets.ELLIPSIS));
 				// The widest total there is: the hover spells all twelve digits, however the card had to fit it.
-				assertEquals(PanelState.asMap(v).toString(), v.value() ? "999,999,999,999 gp" : null, panel.hero().getToolTipText());
+				assertEquals(PanelState.asMap(v).toString(), v.value() ? "999,999,999,999 gp" : null, panel.totalLabel().getToolTipText());
 			});
 			publish(rows(3), listedWith(summary()));
 		}
@@ -1268,7 +1263,7 @@ public class BankPriceMovementPanelTest
 			assertTrue(Widgets.isLit(panel.windowChip(MovementWindow.D1)));
 			assertTrue(panel.footnoteLabel().getText(), panel.footnoteLabel().getText().startsWith("1d vs 07 Sep - bank "));
 			assertEquals("the edge stays", ColorScheme.PROGRESS_COMPLETE_COLOR.darker(), edgeOf(panel.hero()));
-			assertNull("AF: no figure under the pointer, so no hover to explain one", panel.hero().getToolTipText());
+			assertNull("AF: no figure under the pointer, so no hover to explain one", panel.totalLabel().getToolTipText());
 			assertEquals(BankPriceMovementPanel.UPDATE_TEXT, panel.updateLabel().getText());
 			final String d = PanelState.describe(panel);
 			assertTrue(d, d.contains("\"hero\":{\"value\":false,\"gp\":false,\"pct\":false},\"bankValueShowing\":true,\"bankValue\":\"\",\"bankMove\":\"1d   +12.4m   +1.0%\",\"bankWindow\":\"1d\",\"heroGp\":\"\",\"heroPct\":\"\",\"heroSub\":\"1d vs 07 Sep - bank "));
@@ -1279,20 +1274,21 @@ public class BankPriceMovementPanelTest
 			assertEquals(ColorScheme.DARKER_GRAY_COLOR, edgeOf(panel.hero()));
 			assertTrue(panel.footnoteLabel().getText().startsWith("Guide prices - bank "));
 		});
-		// Nothing ever fetched and everything hidden: no tooltip at all rather than an empty box - and the update
-		// line still carries its own, because its first two sentences are true before any fetch (S2).
+		// Nothing ever fetched and everything hidden: no tooltip at all rather than an empty box - and none on the
+		// Refresh link either, because there is no time to name before a fetch (1.2.5).
 		final PriceService.Status bare = status(true, true, 3, 3, MovementWindow.D1, null, "", 0L);
 		publish(rows(3), bare);
-		assertNull(panel.hero().getToolTipText());
+		assertNull(panel.totalLabel().getToolTipText());
 		assertNull(panel.footnoteLabel().getToolTipText());
-		assertEquals(BankPriceMovementPanel.updateTooltip(0L), panel.updateLabel().getToolTipText());
+		assertNull(panel.refreshLabel().getToolTipText());
+		assertNull(panel.updateLabel().getToolTipText());
 
 		// ...and once prices have been read, the card says no more than it did - the clock is the update line's
 		// business (S3), and the hover is the total's, which is hidden.
 		final PriceService.Status fetched = status(true, true, 3, 3, MovementWindow.D1, null, "", PRICES_AT);
 		publish(rows(3), fetched);
-		assertNull("S3: the card has nothing left to say when every figure is hidden", panel.hero().getToolTipText());
-		assertEquals(UPDATE_TIP, panel.updateLabel().getToolTipText());
+		assertNull("S3: the card has nothing left to say when every figure is hidden", panel.totalLabel().getToolTipText());
+		assertEquals(REFRESH_HOVER, panel.refreshLabel().getToolTipText());
 	}
 
 	/** N 4.6 under O3: a window with no baseline prints ONE dash on the move line, whichever figure carries it. */
@@ -1389,30 +1385,6 @@ public class BankPriceMovementPanelTest
 	 * while there is one line to say, {@code ""} while the total is hidden, and the degraded sentence on a second
 	 * line under the figure when there is one - which is the only thing that ever puts HTML round it.
 	 */
-	/**
-	 * Contract 1.1.2: the card's hover names the lit window's baseline TABLE by its time under the figure - the footnote
-	 * keeps the day in its 191 px - only while the status was computed for that window and has a baseline; the figure
-	 * stays the first line and a degraded sentence the last, and with no figure there is no hover at all.
-	 */
-	@Test
-	public void theCardHoverAddsTheBaselineTablesTime()
-	{
-		final PriceService.Status real = StatusFixtures.listed(PRICES_AT, PRICES_AT - 60_000L, MovementWindow.D7,
-			null, THEN_DAY, summary(), 538, 519);
-		assertEquals("7d vs 07 Sep 00:00 UTC (table)", BankPriceMovementPanel.tableTimeLine(real, MovementWindow.D7));
-		assertNull("computed for another window: no line", BankPriceMovementPanel.tableTimeLine(real, MovementWindow.D1));
-		assertNull(BankPriceMovementPanel.tableTimeLine(null, MovementWindow.D7));
-		assertNull("no baseline, no table", BankPriceMovementPanel.tableTimeLine(StatusFixtures.listed(PRICES_AT,
-			PRICES_AT, MovementWindow.D7, null, null, summary(), 1, 1), MovementWindow.D7));
-
-		final String line = "7d vs 07 Sep 00:00 UTC (table)";
-		assertEquals("<html>1,234 gp<br>" + line + "</html>", BankPriceMovementPanel.withTableTime("1,234 gp", line));
-		assertEquals("<html>1,234 gp<br>" + line + "<br>the wiki is down</html>",
-			BankPriceMovementPanel.withTableTime("<html>1,234 gp<br>the wiki is down</html>", line));
-		assertEquals("no figure, no hover", "", BankPriceMovementPanel.withTableTime("", line));
-		assertEquals("1,234 gp", BankPriceMovementPanel.withTableTime("1,234 gp", null));
-	}
-
 	@Test
 	public void valueTooltipIsTheExactBankValueAndNothingElse()
 	{
@@ -1459,12 +1431,12 @@ public class BankPriceMovementPanelTest
 		prefs.storedOptions = LIVE_OFF;
 		build();
 		publish(rows(3), listedWith(summaryWithCash(791_078L)));
-		assertEquals("the stacks plus the cash, to the gp", "1,235,358,968 gp", panel.hero().getToolTipText());
+		assertEquals("the stacks plus the cash, to the gp", "1,235,358,968 gp", panel.totalLabel().getToolTipText());
 		assertEquals("1.23b", panel.totalLabel().getText());
 
 		// The same bank with no cash: the hover is short by exactly the 791,078 gp that left it.
 		publish(rows(3), listedWith(summary()));
-		assertEquals("1,234,567,890 gp", panel.hero().getToolTipText());
+		assertEquals("1,234,567,890 gp", panel.totalLabel().getToolTipText());
 		assertEquals("and the difference is the cash", 791_078L,
 			summaryWithCash(791_078L).valueNow() - summary().valueNow());
 
@@ -1473,7 +1445,7 @@ public class BankPriceMovementPanelTest
 		onEdt(() ->
 		{
 			assertEquals("200m", panel.totalLabel().getText());
-			assertEquals("200,000,000 gp", panel.hero().getToolTipText());
+			assertEquals("200,000,000 gp", panel.totalLabel().getToolTipText());
 		});
 		publish(rows(3), listedWith(summaryWithCash(791_078L)));
 		onEdt(() -> assertEquals("the stacks plus the cash, in stack form", "1.23b", panel.totalLabel().getText()));
@@ -1537,55 +1509,30 @@ public class BankPriceMovementPanelTest
 	}
 
 	/**
-	 * S2: the hover behind that line - why the figures sit still, and when this client last looked. Three plain
-	 * sentences in the card's own tooltip HTML; the clock is {@code Status.pricesAtMillis()} through
-	 * {@link MovementMath#formatTime}, the path the card's tooltip printed it by until S3, and its whole sentence
-	 * is absent while nothing was ever fetched rather than stamping a dash where a time belongs.
+	 * 1.2.5: the update line has no hover; the Refresh link's is "Last checked 18:39" - the clock is {@code Status.pricesAtMillis()}
+	 * through {@link MovementMath#formatTime}, on this tab and on the Net Worth History tab, and absent while nothing was ever fetched.
 	 */
 	@Test
-	public void theUpdateLinesHoverSaysWhyTheDataStepsSeveralTimesADayAndWhenItWasLastChecked() throws Exception
+	public void theRefreshLinkSaysWhenThePricesWereLastChecked() throws Exception
 	{
-		// The clock is the viewer's own (MovementMath.formatTime reads in the default zone), so it is composed
-		// rather than quoted; every other character of the three sentences is pinned.
-		assertEquals("the wording addendum S asks for, pinned",
-			"<html>2h Bank Portfolio Tracker uses the Grand Exchange guide price, which Jagex publishes several times"
-				+ " a day.<br>It is the price shown on the Grand Exchange website.<br>RuneLite's own item hover uses the wiki's traded price by default, which differs most on thinly traded items.<br>Jagex moves a guide price by at most about 5% a day, so a large move shows over several days.<br>Refresh re-checks for it, and the plugin re-checks by itself every 30 minutes."
-				+ "<br>Last checked " + MovementMath.formatTime(PRICES_AT) + ".</html>",
-			BankPriceMovementPanel.updateTooltip(PRICES_AT));
-		assertEquals("nothing ever fetched: five sentences, no clock",
-			"<html>2h Bank Portfolio Tracker uses the Grand Exchange guide price, which Jagex publishes several times"
-				+ " a day.<br>It is the price shown on the Grand Exchange website.<br>RuneLite's own item hover uses the wiki's traded price by default, which differs most on thinly traded items.<br>Jagex moves a guide price by at most about 5% a day, so a large move shows over several days.<br>Refresh re-checks for it, and the plugin re-checks by itself every 30 minutes."
-				+ "</html>",
-			BankPriceMovementPanel.updateTooltip(0L));
-		assertEquals("and a clock is never invented", BankPriceMovementPanel.updateTooltip(0L),
-			BankPriceMovementPanel.updateTooltip(-1L));
+		assertEquals("Last checked ", BankPriceMovementPanel.UPDATE_LAST_CHECKED);
 		assertEquals("the half-hour is the service's own tick", 30L * 60L * 1000L, PriceService.TICK_MS);
-
-		// T8: this test pins the guide-only card, so it names the switch it is drawing rather than
-		// inheriting today's default.
 		prefs.storedOptions = LIVE_OFF;
 		build();
 		publish(rows(3), listedWith(summary()));
-		assertEquals(UPDATE_TIP, panel.updateLabel().getToolTipText());
-		assertTrue(UPDATE_TIP, UPDATE_TIP.contains(MovementMath.formatTime(PRICES_AT)));
-		assertNotEquals("it is the line's own hover, not the card's", panel.hero().getToolTipText(),
-			panel.updateLabel().getToolTipText());
+		assertEquals(REFRESH_HOVER, panel.refreshLabel().getToolTipText());
+		assertFalse("no full stop", REFRESH_HOVER.endsWith("."));
+		assertNull("the update line has none", panel.updateLabel().getToolTipText());
+		onEdt(() -> panel.applyOptions(ViewOptions.DEFAULT));
+		assertNull("nor with live prices on", panel.updateLabel().getToolTipText());
+		assertEquals(REFRESH_HOVER, panel.refreshLabel().getToolTipText());
 
 		// The clock follows the status, and goes away with it.
 		final PriceService.Status fresh = status(true, true, 3, 3, MovementWindow.D1, null, STATUS_TEXT, 0L);
 		when(fresh.portfolio()).thenReturn(summary());
 		publish(rows(3), fresh);
-		assertEquals(BankPriceMovementPanel.updateTooltip(0L), panel.updateLabel().getToolTipText());
-		assertFalse(panel.updateLabel().getToolTipText(), panel.updateLabel().getToolTipText().contains("Last checked"));
-
-		// S2: the Refresh link says how often Jagex publishes, which is what decides whether a second tap is worth
-		// making - the 30 s cooldown it used to name is answered in the problem row instead. Re-pointed by AS8, which
-		// reworded the FIRST half when a click came to re-read the items as well as re-check the prices ("Re-check the
-		// guide prices." before it); the publishing-rate half is S2's (worded "once a day" until 1.1.2 T4), and is pinned with the rest.
-		assertEquals("the wording addendum S asks for, as AS8 reworded it, pinned",
-			"Re-read your items and re-check the prices. Jagex publishes guide prices several times a day.",
-			BankPriceMovementPanel.REFRESH_TIP);
-		assertEquals(BankPriceMovementPanel.REFRESH_TIP, panel.refreshLabel().getToolTipText());
+		assertNull(panel.refreshLabel().getToolTipText());
+		assertNull(panel.updateLabel().getToolTipText());
 	}
 
 	/**
@@ -1604,7 +1551,7 @@ public class BankPriceMovementPanelTest
 		prefs.storedOptions = LIVE_OFF;
 		build();
 		publish(rows(3), listedWith(summary()));
-		final String tip = panel.hero().getToolTipText();
+		final String tip = panel.totalLabel().getToolTipText();
 		assertEquals(VALUE_TIP, tip);
 		assertFalse(tip, tip.contains("last checked"));
 		assertFalse(tip, tip.contains(MovementMath.formatTime(PRICES_AT)));
@@ -1614,65 +1561,47 @@ public class BankPriceMovementPanelTest
 		when(blind.degraded()).thenReturn(true);
 		when(blind.degradedReason()).thenReturn(UNAVAILABLE);
 		publish(rows(3), blind);
-		assertEquals("<html>" + VALUE_TIP + "<br>" + UNAVAILABLE + "</html>", panel.hero().getToolTipText());
-		assertFalse(panel.hero().getToolTipText(), panel.hero().getToolTipText().contains("last checked"));
+		assertEquals("<html>" + VALUE_TIP + "<br>" + UNAVAILABLE + "</html>", panel.totalLabel().getToolTipText());
+		assertFalse(panel.totalLabel().getToolTipText(), panel.totalLabel().getToolTipText().contains("last checked"));
 		assertFalse("the status sentence is the footnote's, degraded or not",
-			panel.hero().getToolTipText().contains(STATUS_TEXT));
+			panel.totalLabel().getToolTipText().contains(STATUS_TEXT));
 
-		// ...and the clock it used to print is on the update line's hover, off the same status field.
-		assertEquals(UPDATE_TIP, panel.updateLabel().getToolTipText());
+		// ...and the clock it used to print is on the Refresh link's hover, off the same status field.
+		assertEquals(REFRESH_HOVER, panel.refreshLabel().getToolTipText());
 
 		// A confident status takes the second line back off, and the hover is the bare figure again.
 		publish(rows(3), listedWith(summary()));
-		assertEquals(VALUE_TIP, panel.hero().getToolTipText());
+		assertEquals(VALUE_TIP, panel.totalLabel().getToolTipText());
 	}
 
 	/**
-	 * Contract 1.2.0, L5: the card's hover gains one line, "n of m rows solid", under the figure - and only when some graded row
-	 * is soft or has no figure. m is every graded row. A computation that graded nothing (live prices off), one whose graded rows
-	 * are all solid, and a status computed for another window than the lit one say nothing extra; a degraded sentence stays
-	 * last; with the amounts hidden the line stays (a count of rows is no amount).
+	 * Contract 1.2.5: the card's hover is the value alone - the "n of m rows solid" line of 1.2.0 is gone, whatever the grades say,
+	 * with a degraded sentence still last and the amount masked while amounts are hidden.
 	 */
 	@Test
-	public void theCardHoverCountsTheSolidRowsOnlyWhenARowIsNotSolid() throws Exception
+	public void theCardHoverIsTheValueAloneWhateverTheGradesSay() throws Exception
 	{
 		build();
 		publish(rows(3), listedWith(summary()));
-		assertEquals("nothing graded: the bare figure", VALUE_TIP, panel.hero().getToolTipText());
+		assertEquals("nothing graded: the bare figure", VALUE_TIP, panel.totalLabel().getToolTipText());
 
 		final PriceService.Status mixed = listedWith(summary());
 		when(mixed.grades()).thenReturn(new GradeSummary(true, 410, 60, 10, 900L, 1_000L, 10L, 100L));
 		publish(rows(3), mixed);
-		assertEquals("<html>" + VALUE_TIP + "<br>410 of 480 rows solid</html>", panel.hero().getToolTipText());
-		assertEquals("410 of 480 rows solid", BankPriceMovementPanel.gradeLine(mixed, MovementWindow.D1));
+		assertEquals("some rows soft: still the bare figure", VALUE_TIP, panel.totalLabel().getToolTipText());
 
-		final PriceService.Status allSolid = listedWith(summary());
-		when(allSolid.grades()).thenReturn(new GradeSummary(true, 480, 0, 0, 1_000L, 1_000L, 0L, 100L));
-		publish(rows(3), allSolid);
-		assertEquals("every graded row solid: nothing to add", VALUE_TIP, panel.hero().getToolTipText());
-		assertNull(BankPriceMovementPanel.gradeLine(allSolid, MovementWindow.D1));
-
-		final PriceService.Status ungraded = listedWith(summary());
-		when(ungraded.grades()).thenReturn(GradeSummary.NONE);
-		assertNull("live prices off grades nothing", BankPriceMovementPanel.gradeLine(ungraded, MovementWindow.D1));
-		assertNull("a mock that answers no summary", BankPriceMovementPanel.gradeLine(listedWith(summary()), MovementWindow.D1));
-		assertNull("another window than the status was computed for", BankPriceMovementPanel.gradeLine(mixed, MovementWindow.D30));
-		assertNull(BankPriceMovementPanel.gradeLine(null, MovementWindow.D1));
-		assertNull(BankPriceMovementPanel.gradeLine(mixed, null));
-
-		// A degraded status: the figure, the count, the sentence - the sentence stays last.
+		// A degraded status: the figure, the sentence.
 		final PriceService.Status blind = listedWith(summary());
 		when(blind.grades()).thenReturn(new GradeSummary(true, 410, 60, 10, 900L, 1_000L, 10L, 100L));
 		when(blind.degraded()).thenReturn(true);
 		when(blind.degradedReason()).thenReturn(UNAVAILABLE);
 		publish(rows(3), blind);
-		assertEquals("<html>" + VALUE_TIP + "<br>410 of 480 rows solid<br>" + UNAVAILABLE + "</html>",
-			panel.hero().getToolTipText());
+		assertEquals("<html>" + VALUE_TIP + "<br>" + UNAVAILABLE + "</html>", panel.totalLabel().getToolTipText());
 
-		// The eye: a row count says nothing about how much there is, so it stays while the amount is a mask.
+		// The eye: the mask and its unit, nothing else.
 		publish(rows(3), mixed);
 		onEdt(() -> panel.applyHideAmounts(true));
-		assertEquals("<html>" + AmountMask.AMOUNT + BankPriceMovementPanel.GP_SUFFIX + "<br>410 of 480 rows solid</html>", panel.hero().getToolTipText());
+		assertEquals(AmountMask.AMOUNT + BankPriceMovementPanel.GP_SUFFIX, panel.totalLabel().getToolTipText());
 	}
 
 	/**
@@ -1689,9 +1618,8 @@ public class BankPriceMovementPanelTest
 		// Y4 gave it a verb: the switch addendum T named "Live prices" reads "Use live prices" in the menu and on
 		// the settings page, and nothing else about it moved.
 		assertEquals("the name addendum Y asks for, pinned", "Use live prices", BankPriceMovementPanel.LIVE_PRICES_TEXT);
-		assertEquals("the description addendum T asked for, as contract 1.2.0 rewords it, pinned",
-			"Actively traded items are priced from the last 24 hours of trades; a word under the percentage says why a"
-				+ " figure is uncertain. Items with no trades keep the guide price", BankPriceMovementPanel.LIVE_PRICES_TIP);
+		assertEquals("the hover of 1.2.5, pinned", "Prices from the last 24 hours of trades.",
+			BankPriceMovementPanel.LIVE_PRICES_TIP);
 		assertEquals(BankPriceMovementPanel.LIVE_PRICES_TIP, panel.livePricesItem().getToolTipText());
 		assertSame(panel.livePricesItem(), item(panel.heroMenu(), BankPriceMovementPanel.LIVE_PRICES_TEXT));
 		assertTrue("live prices are on by default (T1)", panel.livePricesItem().isSelected());
@@ -1741,29 +1669,12 @@ public class BankPriceMovementPanelTest
 			assertTrue("and it fits the card: " + panel.updateLabel().getPreferredSize().width,
 				panel.updateLabel().getPreferredSize().width <= BankPriceMovementPanel.CARD_INNER);
 
-			final String tip = panel.updateLabel().getToolTipText();
-			// Contract 1.2.0 rewrote both sentences: the five checks are retired, so the hover says how the figure is made
-			// (each side against the same side of yesterday) and what the word under a percentage means.
-			assertEquals("the hover addendum T asked for, as contract 1.2.0 rewrites it, pinned",
-				"<html>Actively traded items are priced from the last 24 hours of trades, re-read on Refresh and every 30"
-					+ " minutes,<br>with buyers' prices compared against yesterday's average buying price and sellers' against"
-					+ " its average selling price."
-					+ "<br>A word under a percentage says why that figure is uncertain: how long since the last trade when"
-					+ " nothing has traded in the last 24 hours (yesterday's move),<br>very few traded on the day it is compared"
-					+ " with, or a wide spread between the buy and sell prices.<br>Items with no trades keep the Grand Exchange"
-					+ " guide price."
-					+ "<br>Last checked " + MovementMath.formatTime(PRICES_AT) + ".</html>", tip);
-			assertFalse("the GE-site sentence is true of the guide series and not of this one",
-				tip.contains("Grand Exchange website"));
-			assertFalse("nothing fetched yet: no clock invented",
-				BankPriceMovementPanel.updateTooltip(0L, ViewOptions.DEFAULT).contains("Last checked"));
-			assertNotEquals("it is the line's own hover, not the card's", panel.hero().getToolTipText(), tip);
+			assertNull("the line has no hover (1.2.5)", panel.updateLabel().getToolTipText());
 
-			// T8: off is addendum S's line and hover, to the character.
+			// T8: off is addendum S's line.
 			panel.applyOptions(LIVE_OFF);
 			assertEquals(BankPriceMovementPanel.UPDATE_TEXT, panel.updateLabel().getText());
-			assertEquals(UPDATE_TIP, panel.updateLabel().getToolTipText());
-			assertEquals(BankPriceMovementPanel.updateTooltip(PRICES_AT), panel.updateLabel().getToolTipText());
+			assertNull(panel.updateLabel().getToolTipText());
 
 			// ...and back, without a publish: the line is the panel's own switch.
 			panel.applyOptions(ViewOptions.DEFAULT);
@@ -1776,7 +1687,7 @@ public class BankPriceMovementPanelTest
 		// The line is drawn before any fetch and with the wiki down, exactly as it is after one (T5).
 		publish(rows(3), status(true, true, 3, 3, MovementWindow.D1, null, STATUS_TEXT, 0L));
 		assertEquals(BankPriceMovementPanel.UPDATE_LIVE_TEXT, panel.updateLabel().getText());
-		assertFalse(panel.updateLabel().getToolTipText(), panel.updateLabel().getToolTipText().contains("Last checked"));
+		assertNull(panel.updateLabel().getToolTipText());
 		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains(
 			"\"updateLine\":\"Live prices on - others from the guide\","));
 	}
@@ -1793,14 +1704,14 @@ public class BankPriceMovementPanelTest
 	{
 		build();
 		publish(rows(3), listedWithLive(summaryWithLive(123), 123, LocalDate.of(2026, 9, 9), null));
-		assertEquals(VALUE_TIP, panel.hero().getToolTipText());
+		assertEquals(VALUE_TIP, panel.totalLabel().getToolTipText());
 		assertEquals("the switch is drawn on the line under the figure, not in the hover over it",
 			BankPriceMovementPanel.UPDATE_LIVE_TEXT, panel.updateLabel().getText());
 		assertTrue("and the count is still readable from a terminal",
 			PanelState.describe(panel).contains("\"liveRows\":123"));
 
 		onEdt(() -> panel.applyOptions(LIVE_OFF));
-		assertEquals("the same bank, live or not: the hover is the total", VALUE_TIP, panel.hero().getToolTipText());
+		assertEquals("the same bank, live or not: the hover is the total", VALUE_TIP, panel.totalLabel().getToolTipText());
 		assertEquals(BankPriceMovementPanel.UPDATE_TEXT, panel.updateLabel().getText());
 	}
 
@@ -1874,10 +1785,6 @@ public class BankPriceMovementPanelTest
 		assertEquals("100k+", BankPriceMovementPanel.bandLabel(100_000L, 0L));
 		assertEquals("up to 5m", BankPriceMovementPanel.bandLabel(0L, 5_000_000L));
 		assertEquals("100k - 5m", BankPriceMovementPanel.bandLabel(100_000L, 5_000_000L));
-		assertEquals("", BankPriceMovementPanel.bandSentence(0L, 0L));
-		assertEquals("from 1m", BankPriceMovementPanel.bandSentence(1_000_000L, 0L));
-		assertEquals("up to 5m", BankPriceMovementPanel.bandSentence(0L, 5_000_000L));
-		assertEquals("from 100k to 5m", BankPriceMovementPanel.bandSentence(100_000L, 5_000_000L));
 		assertEquals("Your band is 1m and up", BankPriceMovementPanel.bandDescription(1_000_000L, 0L));
 		assertEquals("Your band is up to 5m", BankPriceMovementPanel.bandDescription(0L, 5_000_000L));
 		assertEquals("Your band is from 100k to 5m", BankPriceMovementPanel.bandDescription(100_000L, 5_000_000L));
@@ -1965,12 +1872,9 @@ public class BankPriceMovementPanelTest
 		for (JCheckBoxMenuItem item : new JCheckBoxMenuItem[]{panel.showValueItem(), panel.showGpItem(), panel.showPctItem()})
 		{
 			assertTrue(item.getText() + " is ticked while its figure is shown", item.isSelected());
-			assertNotNull(item.getText() + " carries the config item's description", item.getToolTipText());
+			assertNull(item.getText() + " has no hover (1.2.5)", item.getToolTipText());
 		}
 		assertSame(panel.showValueItem(), item(menu, BankPriceMovementPanel.SHOW_VALUE_TEXT));
-		assertEquals(BankPriceMovementPanel.SHOW_VALUE_TIP, panel.showValueItem().getToolTipText());
-		assertEquals(BankPriceMovementPanel.SHOW_GP_TIP, panel.showGpItem().getToolTipText());
-		assertEquals(BankPriceMovementPanel.SHOW_PCT_TIP, panel.showPctItem().getToolTipText());
 
 		// 1.1.0 part A: the gear's "Refresh prices now" item is gone, so the price check it pressed is pressed on the
 		// panel itself. Re-pointed by AS8: the price re-check is the boolean overload now, and it is pressed out loud -
@@ -1984,7 +1888,7 @@ public class BankPriceMovementPanelTest
 		assertEquals(HeroVisibility.of(false, true, true), panel.heroVisibility());
 		assertFalse("the tick follows the click", panel.showValueItem().isSelected());
 		assertFalse("the total left the card at once", PanelState.shows(panel, panel.totalLabel()));
-		assertNull("AF: the hover goes with the figure it explains", panel.hero().getToolTipText());
+		assertNull("AF: the hover goes with the figure it explains", panel.totalLabel().getToolTipText());
 		assertEquals("the pref is written so the config panel follows", Arrays.asList(HeroVisibility.of(false, true, true)), prefs.heroSaves);
 		assertTrue("the filter is not touched", prefs.saves.isEmpty());
 		verify(service, never()).setFilter(any());
@@ -2582,12 +2486,12 @@ public class BankPriceMovementPanelTest
 		onEdt(() ->
 		{
 			assertNamedOnHero("hero");
-			assertEquals("the sentence hover is there beside them", BankPriceMovementPanel.REFRESH_TIP,
+			assertEquals("the sentence hover is there beside them", REFRESH_HOVER,
 				panel.refreshLabel().getToolTipText());
 			// Changing a view switch on this very panel: the words stay, and so does the sentence.
 			panel.applyOptions(ViewOptions.DEFAULT.withCountCash(false));
 			assertNamedOnHero("after the switch moved");
-			assertEquals(BankPriceMovementPanel.REFRESH_TIP, panel.refreshLabel().getToolTipText());
+			assertEquals(REFRESH_HOVER, panel.refreshLabel().getToolTipText());
 			panel.stop();
 		});
 	}
@@ -2666,12 +2570,7 @@ public class BankPriceMovementPanelTest
 	{
 		build();
 		publish(rows(3), listedWith(summary()));
-		for (JCheckBoxMenuItem item : new JCheckBoxMenuItem[]{panel.countCashItem(), panel.countUntradeablesItem(),
-			panel.livePricesItem()})
-		{
-			assertNotNull(item.getText() + " carries the config item's description", item.getToolTipText());
-		}
-		assertEquals(BankPriceMovementPanel.COUNT_CASH_TIP, panel.countCashItem().getToolTipText());
+		assertNull("coins have no hover (1.2.5)", panel.countCashItem().getToolTipText());
 		assertEquals(BankPriceMovementPanel.COUNT_UNTRADEABLES_TIP, panel.countUntradeablesItem().getToolTipText());
 		assertEquals(BankPriceMovementPanel.LIVE_PRICES_TIP, panel.livePricesItem().getToolTipText());
 		assertTrue("cash is counted by default", panel.countCashItem().isSelected());
@@ -2792,11 +2691,7 @@ public class BankPriceMovementPanelTest
 		assertTrue("the list's row has the separator under it", menu.getComponent(16) instanceof JSeparator);
 		assertEquals("the name addendum Y asks for, pinned", "Include inventory and worn items",
 			BankPriceMovementPanel.COUNT_INVENTORY_TEXT);
-		assertEquals("the description addendum Y asks for, its moment the close since addendum AS, pinned",
-			"Items in your inventory and worn items count in the bank value and are listed with the bank's stacks."
-				+ " They are read when you close the bank or press Refresh.",
-			BankPriceMovementPanel.COUNT_INVENTORY_TIP);
-		assertEquals(BankPriceMovementPanel.COUNT_INVENTORY_TIP, panel.countInventoryItem().getToolTipText());
+		assertNull("no hover (1.2.5)", panel.countInventoryItem().getToolTipText());
 		assertTrue("on by default (Y1)", panel.countInventoryItem().isSelected());
 		assertTrue(panel.options().countInventory());
 		assertEquals("construction saves nothing", Collections.emptyList(), prefs.optionSaves);
@@ -2845,10 +2740,7 @@ public class BankPriceMovementPanelTest
 		assertSame(panel.countInventoryItem(), ((JMenu) menu.getComponent(15)).getMenuComponent(3));
 		assertEquals("the name, pinned", "Include Grand Exchange offers",
 			BankPriceMovementPanel.COUNT_GRAND_EXCHANGE_TEXT);
-		assertEquals("the sentence, pinned",
-			"Items you are selling or have bought, and the coins committed to or waiting in your offers, count in the"
-				+ " bank value.", BankPriceMovementPanel.COUNT_GRAND_EXCHANGE_TIP);
-		assertEquals(BankPriceMovementPanel.COUNT_GRAND_EXCHANGE_TIP, panel.countGrandExchangeItem().getToolTipText());
+		assertNull("no hover (1.2.5)", panel.countGrandExchangeItem().getToolTipText());
 		assertTrue("on by default", panel.countGrandExchangeItem().isSelected());
 		assertTrue(panel.options().countGrandExchange());
 		assertEquals("construction saves nothing", Collections.emptyList(), prefs.optionSaves);
@@ -2867,7 +2759,7 @@ public class BankPriceMovementPanelTest
 		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains(
 			",\"options\":{\"cash\":true,\"untradeables\":false,\"live\":true,\"inventory\":true,\"ge\":false,\"bonds\":true}"));
 		assertEquals("the card's hover is the same exact-gp string as before (AF)", VALUE_TIP,
-			panel.hero().getToolTipText());
+			panel.totalLabel().getToolTipText());
 
 		// The settings page's own change comes back through applyOptions: it ticks and writes nothing more.
 		onEdt(() -> panel.applyOptions(ViewOptions.DEFAULT));
@@ -2877,7 +2769,7 @@ public class BankPriceMovementPanelTest
 		onEdt(() -> panel.applyOptions(ViewOptions.DEFAULT.withCountGrandExchange(false)));
 		assertFalse(panel.countGrandExchangeItem().isSelected());
 		assertEquals(1, prefs.optionSaves.size());
-		assertEquals(VALUE_TIP, panel.hero().getToolTipText());
+		assertEquals(VALUE_TIP, panel.totalLabel().getToolTipText());
 	}
 
 	/**
@@ -2978,7 +2870,7 @@ public class BankPriceMovementPanelTest
 		onEdt(() ->
 		{
 			assertEquals(BankPriceMovementPanel.REFRESH_TEXT, panel.refreshLabel().getText());
-			assertEquals(BankPriceMovementPanel.REFRESH_TIP, panel.refreshLabel().getToolTipText());
+			assertEquals(REFRESH_HOVER, panel.refreshLabel().getToolTipText());
 			assertEquals(11f, panel.refreshLabel().getFont().getSize2D(), 0f);
 			assertEquals(ColorScheme.LIGHT_GRAY_COLOR, panel.refreshLabel().getForeground());
 			hover(panel.refreshLabel(), true);
@@ -3099,16 +2991,59 @@ public class BankPriceMovementPanelTest
 		});
 	}
 
-	/** N 3.2: "Guide-price change over the last 30d", plus " - baseline 10 Aug" when the window has one. */
+	/**
+	 * 1.2.5: the four menu items that keep a hover say one short line each (pinned word for word), the pouch hint's gold hover
+	 * stays on Include bonds while the pouch is unread, and no other item of the three menus - settings, List options, History
+	 * options - has any.
+	 */
 	@Test
-	public void chipTooltipsNameTheBaselineDay() throws Exception
+	public void theFourMenuHoversAreOneShortLineEachAndTheRestHaveNone() throws Exception
 	{
 		build();
-		assertEquals("Guide-price change over the last 1d", panel.windowChip(MovementWindow.D1).getToolTipText());
 		publish(rows(3), listedWith(summary()));
-		assertEquals("Guide-price change over the last 1d - baseline 07 Sep", panel.windowChip(MovementWindow.D1).getToolTipText());
-		assertEquals("Guide-price change over the last 30d - baseline 09 Aug", panel.windowChip(MovementWindow.D30).getToolTipText());
-		assertEquals("Guide-price change over the last 180d", panel.windowChip(MovementWindow.D180).getToolTipText());
+		onEdt(() ->
+		{
+			final JMenu counts = (JMenu) panel.heroMenu().getComponent(15);
+			assertEquals("Prices from the last 24 hours of trades.", panel.livePricesItem().getToolTipText());
+			assertEquals("Untradeables with no tradeable parts, at alch value.",
+				panel.countUntradeablesItem().getToolTipText());
+			final JMenuItem bonds = (JMenuItem) counts.getMenuComponent(5);
+			assertEquals(BankPriceMovementPanel.COUNT_BONDS_TEXT, bonds.getText());
+			assertEquals("An untradeable bond counts at 90% of a tradeable one.", bonds.getToolTipText());
+			final JMenuItem alch = item(panel.listMenu(), BankPriceMovementPanel.SHOW_ALCH_TEXT);
+			assertEquals("Untradeables with no tradeable parts, at alch value.", alch.getToolTipText());
+			for (JMenuItem it : items(panel.listMenu()))
+			{
+				if (it != alch)
+				{
+					assertNull(it.getText(), it.getToolTipText());
+				}
+			}
+			for (JMenuItem it : items(panel.historyMenu()))
+			{
+				assertNull(it.getText(), it.getToolTipText());
+			}
+			for (JMenuItem it : items(panel.heroMenu()))
+			{
+				if (it != panel.livePricesItem() && it != panel.countUntradeablesItem() && it != bonds)
+				{
+					assertNull(it.getText(), it.getToolTipText());
+				}
+			}
+		});
+	}
+
+	/** 1.2.5: the window chips have no hover, with or without a baseline. */
+	@Test
+	public void windowChipsHaveNoHover() throws Exception
+	{
+		build();
+		assertNull(panel.windowChip(MovementWindow.D1).getToolTipText());
+		publish(rows(3), listedWith(summary()));
+		for (MovementWindow w : MovementWindow.values())
+		{
+			assertNull(w.label(), panel.windowChip(w).getToolTipText());
+		}
 	}
 
 	// ---- addendum AM: which end of the control row each control stands at
@@ -3211,7 +3146,7 @@ public class BankPriceMovementPanelTest
 	 * column.
 	 */
 	@Test
-	public void theSortMenuEntriesSayToggleTheLitColumnAndSortByTheOthers() throws Exception
+	public void theSortMenuEntriesHaveNoHoverAndKeepTheirNames() throws Exception
 	{
 		build();
 		onEdt(() ->
@@ -3225,26 +3160,10 @@ public class BankPriceMovementPanelTest
 					assertEquals(4, entries.size());
 					for (JMenuItem entry : entries)
 					{
-						final boolean lit = entry.getText().equals(column.label());
-						assertEquals(column + " lit, hovering " + entry.getText(),
-							(lit ? "Toggle " : "Sort by ") + entry.getText(), entry.getToolTipText());
+						assertNull(column + " lit, hovering " + entry.getText(), entry.getToolTipText());
 					}
 				}
 			}
-
-			// The sentences in full, so the exact words are pinned and not only their shape.
-			panel.setSort(SortMode.STACK_VALUE, true);
-			assertEquals("Toggle Stack price", item(panel.buildSortMenu(), "Stack price").getToolTipText());
-			assertEquals("Sort by Percent change", item(panel.buildSortMenu(), "Percent change").getToolTipText());
-			assertEquals("Sort by gp change", item(panel.buildSortMenu(), "gp change").getToolTipText());
-			assertEquals("Sort by Item price", item(panel.buildSortMenu(), "Item price").getToolTipText());
-
-			// ...and they follow the lit column, which is what the rebuild on each open is for.
-			panel.setSort(SortMode.PERCENT_MOVE, true);
-			assertEquals("Toggle Percent change", item(panel.buildSortMenu(), "Percent change").getToolTipText());
-			assertEquals("Sort by Stack price", item(panel.buildSortMenu(), "Stack price").getToolTipText());
-
-			// The names themselves did not change with the hover (X1).
 			assertEquals(Arrays.asList("Percent change", "gp change", "Item price", "Stack price"),
 				itemTexts(panel.buildSortMenu()));
 		});
@@ -3259,14 +3178,12 @@ public class BankPriceMovementPanelTest
 	 * switch now, which is the one that remains and that changes what the columns are computed from.
 	 */
 	@Test
-	public void theSortButtonsHoverIsOnePhraseUnderEveryColumnAndSwitch() throws Exception
+	public void theSortButtonHasNoHoverUnderEveryColumnAndSwitch() throws Exception
 	{
-		assertEquals("Change sorting", BankPriceMovementPanel.SORT_BUTTON_TIP);
 		build();
 		onEdt(() ->
 		{
-			assertEquals("set before the panel is ever shown", "Change sorting",
-				panel.sortButton().getToolTipText());
+			assertNull("none before the panel is ever shown", panel.sortButton().getToolTipText());
 			for (boolean live : new boolean[]{false, true})
 			{
 				panel.applyOptions(ViewOptions.DEFAULT.withLivePrices(live));
@@ -3275,8 +3192,7 @@ public class BankPriceMovementPanelTest
 					for (boolean descending : new boolean[]{true, false})
 					{
 						panel.setSort(column, descending);
-						assertEquals(column + " " + descending + " live=" + live, "Change sorting",
-							panel.sortButton().getToolTipText());
+						assertNull(column + " " + descending + " live=" + live, panel.sortButton().getToolTipText());
 					}
 				}
 			}
@@ -3376,8 +3292,7 @@ public class BankPriceMovementPanelTest
 			assertEquals(ColorScheme.TEXT_COLOR, panel.bandTarget().getForeground());
 			assertTrue(sameIcon(Widgets.triangle(true), panel.bandTarget().getIcon()));
 			assertEquals(SwingConstants.LEFT, panel.bandTarget().getHorizontalTextPosition());
-			assertTrue(panel.bandTarget().getToolTipText(), panel.bandTarget().getToolTipText()
-				.startsWith(BankPriceMovementPanel.BAND_TIP));
+			assertNull(panel.bandTarget().getToolTipText());
 			assertEquals(12f, panel.bandTarget().getFont().getSize2D(), 0f);
 			hover(panel.bandTarget(), true);
 			assertEquals(ColorScheme.BRAND_ORANGE, panel.bandTarget().getForeground());
@@ -3386,16 +3301,13 @@ public class BankPriceMovementPanelTest
 		});
 		onEdt(() -> panel.applyMin("100k"));
 		assertEquals("100k+", panel.bandTarget().getText());
-		assertTrue(panel.bandTarget().getToolTipText(), panel.bandTarget().getToolTipText()
-			.startsWith("Showing items from 100k -"));
+		assertNull(panel.bandTarget().getToolTipText());
 		onEdt(() -> panel.applyMax("5m"));
 		assertEquals("100k - 5m", panel.bandTarget().getText());
-		assertTrue(panel.bandTarget().getToolTipText(), panel.bandTarget().getToolTipText()
-			.startsWith("Showing items from 100k to 5m -"));
+		assertNull(panel.bandTarget().getToolTipText());
 		onEdt(() -> panel.applyMin(""));
 		assertEquals("up to 5m", panel.bandTarget().getText());
-		assertTrue(panel.bandTarget().getToolTipText(), panel.bandTarget().getToolTipText()
-			.startsWith("Showing items up to 5m -"));
+		assertNull(panel.bandTarget().getToolTipText());
 		assertEquals(ColorScheme.TEXT_COLOR, panel.bandTarget().getForeground());
 
 		publish(Collections.emptyList(), listed(529, 0));
@@ -3404,8 +3316,7 @@ public class BankPriceMovementPanelTest
 
 		onEdt(() -> panel.applyBand(0L, 0L));
 		assertEquals("All items", panel.bandTarget().getText());
-		assertTrue(panel.bandTarget().getToolTipText(), panel.bandTarget().getToolTipText()
-			.startsWith(BankPriceMovementPanel.BAND_TIP));
+		assertNull(panel.bandTarget().getToolTipText());
 	}
 
 	// ---- the price fold
@@ -3768,7 +3679,7 @@ public class BankPriceMovementPanelTest
 			{
 				assertEquals(new Dimension(BankPriceMovementPanel.PRESET_WIDTH, BankPriceMovementPanel.PRESET_HEIGHT),
 					panel.presetCell(i).getPreferredSize());
-				assertNotNull(panel.presetCell(i).getToolTipText());
+				assertEquals(i == 0 ? null : "Items worth " + panel.presetLabel(i) + " each", panel.presetCell(i).getToolTipText());
 			}
 			assertLit("All lit on a fresh filter", 0);
 
@@ -3927,13 +3838,13 @@ public class BankPriceMovementPanelTest
 		assertTrue(texts(panel.presetRow()).contains(BankPriceMovementPanel.PRESETS_TEXT));
 		// AH2: the same text and the same line, on a button in the bottom row instead of an item of its own.
 		assertEquals(BankPriceMovementPanel.RESET_PRESETS_TEXT, panel.resetPresetsButton().getText());
-		assertEquals(BankPriceMovementPanel.RESET_PRESETS_TIP, panel.resetPresetsButton().getToolTipText());
-		assertEquals(BankPriceMovementPanel.PRESETS_TIP, panel.presetRow().getToolTipText());
+		assertNull(panel.resetPresetsButton().getToolTipText());
+		assertNull(panel.presetRow().getToolTipText());
 		for (int i = 0; i < BankPriceMovementPanel.BANDS; i++)
 		{
 			assertTrue("box " + i + " is in the row", SwingUtilities.isDescendingFrom(panel.presetField(i), panel.presetRow()));
 			assertEquals(BankPriceMovementPanel.PRESET_FIELD_WIDTH, panel.presetField(i).getPreferredSize().width);
-			assertNotNull("box " + i + " says what it is", panel.presetField(i).getToolTipText());
+			assertNull("box " + i + " has no hover (1.2.5)", panel.presetField(i).getToolTipText());
 			assertFalse(PanelState.isMarkedInvalid(panel.presetField(i)));
 		}
 		assertEquals("the boxes open on the bands in force, in gp shorthand", Arrays.asList("100k", "1m", "10m"),
@@ -4168,9 +4079,9 @@ public class BankPriceMovementPanelTest
 
 			panel.applyPresets(BandPresets.of(500_000L, 10_000_000L, 100_000_000L));
 			assertEquals(Arrays.asList("All", "500k+", "10m+", "100m+"), cellTexts());
-			assertEquals("Every item, whatever its price", panel.presetCell(0).getToolTipText());
-			assertEquals("Items priced 500k and up", panel.presetCell(1).getToolTipText());
-			assertEquals("Items priced 100m and up", panel.presetCell(3).getToolTipText());
+			assertNull("All has no hover", panel.presetCell(0).getToolTipText());
+			assertEquals("Items worth 500k+ each", panel.presetCell(1).getToolTipText());
+			assertEquals("Items worth 100m+ each", panel.presetCell(3).getToolTipText());
 			assertEquals("the reader's band is untouched by a preset change", 1_000_000L, panel.filter().gpMin());
 			assertLit("1m is no longer one of the three", -1);
 
@@ -4272,8 +4183,8 @@ public class BankPriceMovementPanelTest
 		{
 			panel.toggleFold();
 			assertEquals(Arrays.asList("All", "100k+", "1m+", "10m+"), cellTexts());
-			assertEquals(Arrays.asList("Every item, whatever its price", "Items priced 100k and up",
-				"Items priced 1m and up", "Items priced 10m and up"),
+			assertEquals(Arrays.asList(null, "Items worth 100k+ each",
+				"Items worth 1m+ each", "Items worth 10m+ each"),
 				Arrays.asList(panel.presetCell(0).getToolTipText(), panel.presetCell(1).getToolTipText(),
 					panel.presetCell(2).getToolTipText(), panel.presetCell(3).getToolTipText()));
 			for (int i = 0; i < BankPriceMovementPanel.PRESET_COUNT; i++)
@@ -4494,7 +4405,7 @@ public class BankPriceMovementPanelTest
 				panel.okRow() instanceof MenuElement);
 			assertEquals("the word addendum AB line AB2 asks for, pinned", "OK", BankPriceMovementPanel.OK_TEXT);
 			assertEquals(BankPriceMovementPanel.OK_TEXT, panel.okButton().getText());
-			assertEquals(BankPriceMovementPanel.OK_TIP, panel.okButton().getToolTipText());
+			assertNull(panel.okButton().getToolTipText());
 			assertEquals("in the menu's own face, not the button default", Widgets.sans(12),
 				panel.okButton().getFont());
 			assertEquals("and no ButtonUI may stretch it", panel.okButton().getPreferredSize(),
@@ -4594,9 +4505,8 @@ public class BankPriceMovementPanelTest
 			// The same words and the same line addendum Z gave the item it replaces.
 			assertEquals("Reset to default", BankPriceMovementPanel.RESET_PRESETS_TEXT);
 			assertEquals(BankPriceMovementPanel.RESET_PRESETS_TEXT, panel.resetPresetsButton().getText());
-			assertEquals(BankPriceMovementPanel.RESET_PRESETS_TIP,
-				panel.resetPresetsButton().getToolTipText());
-			assertEquals(BankPriceMovementPanel.OK_TIP, panel.okButton().getToolTipText());
+			assertNull(panel.resetPresetsButton().getToolTipText());
+			assertNull(panel.okButton().getToolTipText());
 
 			// ...and the same action: 100k / 1m / 10m back in the boxes, on the chips and in the config.
 			panel.toggleFold();
@@ -4615,8 +4525,8 @@ public class BankPriceMovementPanelTest
 		onEdt(() ->
 		{
 			panel.applyOptions(ViewOptions.DEFAULT.withCountCash(false));
-			assertEquals(BankPriceMovementPanel.RESET_PRESETS_TIP, panel.resetPresetsButton().getToolTipText());
-			assertEquals(BankPriceMovementPanel.OK_TIP, panel.okButton().getToolTipText());
+			assertNull(panel.resetPresetsButton().getToolTipText());
+			assertNull(panel.okButton().getToolTipText());
 		});
 	}
 
@@ -5394,21 +5304,13 @@ public class BankPriceMovementPanelTest
 		publish(rows(3), listedWith(summary()));
 		onEdt(() ->
 		{
-			for (JComponent c : heroTipTargets())
-			{
-				assertEquals(c.getClass().getSimpleName() + " carries the card's hover from the first publish", VALUE_TIP,
-					c.getToolTipText());
-			}
+			assertValueHoverOnTheTotalAlone("from the first publish");
 		});
 
 		publish(repriced(3), listedWith(summary()));
 		onEdt(() ->
 		{
-			for (JComponent c : heroTipTargets())
-			{
-				assertEquals(c.getClass().getSimpleName() + " keeps it across the next publish", VALUE_TIP,
-					c.getToolTipText());
-			}
+			assertValueHoverOnTheTotalAlone("across the next publish");
 		});
 	}
 
@@ -5506,10 +5408,7 @@ public class BankPriceMovementPanelTest
 
 			assertNoRowHovers("the hovers on everywhere else");
 			assertNoBlankHovers("the sidebar");
-			for (JComponent c : heroTipTargets())
-			{
-				assertEquals(name(c), VALUE_TIP, c.getToolTipText());
-			}
+			assertValueHoverOnTheTotalAlone("with a row in the list");
 
 			// An OPEN row is the description's own state, and it must be as silent as a shut one.
 			clickRow(first);
@@ -5527,8 +5426,7 @@ public class BankPriceMovementPanelTest
 			assertTrue("the empty card is showing its button", panel.clearBandShowing());
 			assertTrue(everyHoverTarget().containsKey(panel.clearBandButton()));
 			assertNoBlankHovers("on the empty card");
-			assertEquals("and it explains itself", "Show every item again, whatever its price",
-				panel.clearBandButton().getToolTipText());
+			assertNull("and it has no hover (1.2.5)", panel.clearBandButton().getToolTipText());
 		});
 	}
 
@@ -5596,8 +5494,8 @@ public class BankPriceMovementPanelTest
 		onEdt(() ->
 		{
 			assertEquals("the bank total (AF)", VALUE_TIP, panel.totalLabel().getToolTipText());
-			assertEquals("the provenance footnote", VALUE_TIP, panel.footnoteLabel().getToolTipText());
-			assertNotNull("the band button", panel.bandTarget().getToolTipText());
+			assertNull("the provenance footnote has none while nothing is wrong (1.2.5)", panel.footnoteLabel().getToolTipText());
+			assertNull("the band button has none (1.2.5)", panel.bandTarget().getToolTipText());
 			assertTrue("the fixture really is cut, so there is a fitter's hover here to read",
 				panel.problemLabel().getText().endsWith(Widgets.ELLIPSIS));
 			assertFitted(panel.problemLabel(), longProblem);
@@ -6759,7 +6657,7 @@ public class BankPriceMovementPanelTest
 			press(panel.refreshLabel());
 			assertTrue(panel.refreshAcknowledging());
 			assertEquals(BankPriceMovementPanel.REFRESHING_TEXT, panel.refreshLabel().getText());
-			assertEquals("the tooltip still says what the control does", BankPriceMovementPanel.REFRESH_TIP,
+			assertEquals("the tooltip still says what the control does", REFRESH_HOVER,
 				panel.refreshLabel().getToolTipText());
 			// The total's row is a fixed 191 px and the acknowledgement is the longer word: measure it.
 			assertTrue(panel.totalRow().getPreferredSize().width + " px of " + BankPriceMovementPanel.CARD_INNER,
@@ -6779,7 +6677,7 @@ public class BankPriceMovementPanelTest
 			assertFalse(panel.refreshAcknowledging());
 			assertEquals("the same face", face, panel.refreshLabel().getFont());
 			assertEquals("the same grey - it is not a failure", grey, panel.refreshLabel().getForeground());
-			assertEquals(BankPriceMovementPanel.REFRESH_TIP, panel.refreshLabel().getToolTipText());
+			assertEquals(REFRESH_HOVER, panel.refreshLabel().getToolTipText());
 			assertTrue(panel.totalRow().getPreferredSize().width + " px of " + BankPriceMovementPanel.CARD_INNER,
 				panel.totalRow().getPreferredSize().width <= BankPriceMovementPanel.CARD_INNER);
 			assertEquals("the minute the user asked for", 60_000, BankPriceMovementPanel.UP_TO_DATE_MILLIS);
@@ -6875,9 +6773,8 @@ public class BankPriceMovementPanelTest
 		assertEquals("+12.4m", panel.deltaLabel().getText());
 		assertEquals("1d vs 07 Sep - bank " + MovementMath.formatTime(real.bankAtMillis()),
 			panel.footnoteLabel().getText());
-		assertEquals("a real status draws the mocked one's hover (AF) with its baseline table's time under the figure"
-				+ " (contract 1.1.2; a mock's baselineRevisionSeconds is 0, so it has none)",
-			"<html>" + VALUE_TIP + "<br>1d vs 07 Sep 00:00 UTC (table)</html>", panel.hero().getToolTipText());
+		assertEquals("a real status draws the same hover as the mocked one: the value alone (1.2.5)",
+			VALUE_TIP, panel.totalLabel().getToolTipText());
 		assertEquals("no problem: the sentence is the header line", PanelState.text(real), PanelState.statusText(panel));
 		assertFalse(panel.problemShowing());
 
@@ -6889,8 +6786,8 @@ public class BankPriceMovementPanelTest
 		assertEquals(UNAVAILABLE, panel.problemLabel().getToolTipText());
 		assertTrue(panel.problemShowing());
 		assertEquals(ColorScheme.PROGRESS_ERROR_COLOR, panel.problemLabel().getForeground());
-		assertEquals("a problem is the problem row's sentence; the hover is still the figure (AF) and its table's time",
-			"<html>" + VALUE_TIP + "<br>1d vs 07 Sep 00:00 UTC (table)</html>", panel.hero().getToolTipText());
+		assertEquals("a problem is the problem row's sentence; the hover is still the figure alone (AF, 1.2.5)",
+			VALUE_TIP, panel.totalLabel().getToolTipText());
 
 		// The coercion the mock cannot show: a real status with no summary answers EMPTY, never null.
 		final PriceService.Status none = StatusFixtures.listed(PRICES_AT, PRICES_AT - 60_000L, MovementWindow.D1,
@@ -6899,7 +6796,7 @@ public class BankPriceMovementPanelTest
 		publish(Collections.emptyList(), none);
 		assertEquals("0", panel.totalLabel().getText());
 		assertEquals("a bank worth nothing still answers a figure, never a blank hover",
-			"<html>0 gp<br>1d vs 07 Sep 00:00 UTC (table)</html>", panel.hero().getToolTipText());
+			"0 gp", panel.totalLabel().getToolTipText());
 	}
 
 	/**
@@ -6993,32 +6890,20 @@ public class BankPriceMovementPanelTest
 		});
 	}
 
-	/**
-	 * B051: the band button says in its tooltip what its face has no room for - the COUNT of what is listed,
-	 * which addendum N's deleted count line otherwise left nowhere on the panel.
-	 *
-	 * <p>B048's other half, the sort button's tooltip, is no longer a sentence of its own: addendum X made it
-	 * the one phrase pinned by {@link #theSortButtonsHoverIsOnePhraseUnderEveryColumnAndSwitch}, and what a
-	 * press will do moved onto the menu entries (X1).
-	 */
+	/** 1.2.5: the band button has no hover, whatever band is set and however many rows it lists. */
 	@Test
-	public void theBandTooltipCarriesTheCount() throws Exception
+	public void theBandButtonHasNoHover() throws Exception
 	{
 		build();
 		publish(rows(3), listed(10, 3));
 		onEdt(() ->
 		{
-			assertTrue(panel.bandTarget().getToolTipText(), panel.bandTarget().getToolTipText()
-				.startsWith(BankPriceMovementPanel.BAND_TIP));
-			assertTrue(panel.bandTarget().getToolTipText(), panel.bandTarget().getToolTipText().endsWith("3 of 10 items"));
-
+			assertNull(panel.bandTarget().getToolTipText());
 			panel.applyBand(100_000L, 0L);
-			assertTrue(panel.bandTarget().getToolTipText(), panel.bandTarget().getToolTipText()
-				.startsWith("Showing items from 100k"));
-			assertTrue(panel.bandTarget().getToolTipText(), panel.bandTarget().getToolTipText().endsWith("3 of 10 items"));
+			assertNull(panel.bandTarget().getToolTipText());
 		});
 		publish(rows(1), listed(1, 1));
-		assertTrue(panel.bandTarget().getToolTipText(), panel.bandTarget().getToolTipText().endsWith("1 item"));
+		assertNull(panel.bandTarget().getToolTipText());
 	}
 
 	// ---- 1.0.9 part 4: the search box above the item list
@@ -7172,30 +7057,26 @@ public class BankPriceMovementPanelTest
 	}
 
 	/**
-	 * Typing "rune" through the box's document narrows the pages to the one row whose name holds it, the count sentence
-	 * reads "1 of 13 items", "run" finds two, a trailing space changes nothing and nothing is built for it, and emptying
+	 * Typing "rune" through the box's document narrows the pages to the one row whose name holds it, "run" finds two, a trailing space changes nothing and nothing is built for it, and emptying
 	 * the box brings the whole list back. The service is never asked: no filter change, no recompute.
 	 */
 	@Test
-	public void typingNarrowsThePagesToTheMatchingRowsAndTheCountSentenceFollows() throws Exception
+	public void typingNarrowsThePagesToTheMatchingRows() throws Exception
 	{
 		build();
 		publish(searchBank(), listed(13, 6));
 		assertEquals(6, panel.rowPanels().size());
-		assertTrue(panel.bandTarget().getToolTipText(), panel.bandTarget().getToolTipText().endsWith("6 of 13 items"));
 		final int built = panel.rebuilds();
 
 		type("rune");
 		assertEquals(Arrays.asList("Rune platebody"), shownNames());
 		assertEquals(1, panel.shownRows());
 		assertEquals("the published rows are what they were", 6, panel.totalRows());
-		assertTrue(panel.bandTarget().getToolTipText(), panel.bandTarget().getToolTipText().endsWith("1 of 13 items"));
 		assertEquals(BankPriceMovementPanel.CARD_LIST, panel.card());
 
 		onEdt(() -> panel.searchField().setText("RUN"));
 		assertEquals("any part of the name, whatever the case", Arrays.asList("Rune platebody", "Runite ore"),
 			shownNames());
-		assertTrue(panel.bandTarget().getToolTipText(), panel.bandTarget().getToolTipText().endsWith("2 of 13 items"));
 
 		final int narrowed = panel.rebuilds();
 		type(" ");
@@ -7204,29 +7085,10 @@ public class BankPriceMovementPanelTest
 
 		onEdt(() -> panel.searchField().setText(""));
 		assertEquals("emptying the box brings the whole list back", 6, panel.rowPanels().size());
-		assertTrue(panel.bandTarget().getToolTipText(), panel.bandTarget().getToolTipText().endsWith("6 of 13 items"));
 		assertTrue("each change of the text built the list again", panel.rebuilds() > built);
 
 		verify(service, never()).setFilter(any());
 		assertTrue("a search is not a filter: nothing is saved", prefs.saves.isEmpty());
-	}
-
-	/**
-	 * The count sentence names the rows shown against the bank's total, and the noun agrees with the last number said:
-	 * "1 of 6 items", where a lone row of a lone item is still "1 item".
-	 */
-	@Test
-	public void theCountSentenceReadsTheRowsShownAgainstTheBanksItems() throws Exception
-	{
-		build();
-		publish(searchBank(), listed(6, 6));
-		type("zul");
-		assertTrue(panel.bandTarget().getToolTipText(), panel.bandTarget().getToolTipText().endsWith("1 of 6 items"));
-		type("rah's scales");
-		assertEquals(Arrays.asList("Zulrah's scales"), shownNames());
-		publish(rows(1), listed(1, 1));
-		onEdt(() -> panel.searchField().setText(""));
-		assertTrue(panel.bandTarget().getToolTipText(), panel.bandTarget().getToolTipText().endsWith("1 item"));
 	}
 
 	/**
@@ -7366,7 +7228,6 @@ public class BankPriceMovementPanelTest
 		publish(searchBank(), listed(13, 6));
 		type("rune");
 		assertEquals(Arrays.asList("Rune platebody"), shownNames());
-		assertTrue(panel.bandTarget().getToolTipText(), panel.bandTarget().getToolTipText().endsWith("1 of 13 items"));
 		onEdt(() ->
 		{
 			final Widgets.ClearX x = panel.searchField().clearX();
@@ -7387,23 +7248,21 @@ public class BankPriceMovementPanelTest
 		assertEquals("every fixture row shows again", 6, panel.rowPanels().size());
 		assertEquals(6, panel.shownRows());
 		assertTrue(PanelState.describe(panel), PanelState.describe(panel).contains("\"search\":\"\",\"matching\":6"));
-		assertTrue(panel.bandTarget().getToolTipText(), panel.bandTarget().getToolTipText().endsWith("6 of 13 items"));
 		verify(service, never()).setFilter(any());
 		assertTrue("a search is not a filter: nothing is saved", prefs.saves.isEmpty());
 	}
 
-	/** 1.1.1 part X: the x's hover is one sentence, "Clear the search", the box's own hover untouched. */
+	/** 1.2.5: the search box and its clear x have no hover. */
 	@Test
-	public void theClearXHoverIsOneSentence() throws Exception
+	public void theSearchBoxAndItsClearXHaveNoHover() throws Exception
 	{
 		build();
 		publish(searchBank(), listed(13, 6));
 		onEdt(() ->
 		{
-			assertEquals("Clear the search", BankPriceMovementPanel.CLEAR_SEARCH_TIP);
-			assertEquals(BankPriceMovementPanel.CLEAR_SEARCH_TIP, panel.searchField().clearX().getToolTipText());
-			assertEquals("the box's own hover is untouched", BankPriceMovementPanel.SEARCH_TIP,
-				panel.searchField().getToolTipText());
+			assertNull(panel.searchField().clearX().getToolTipText());
+			assertNull(panel.searchField().getToolTipText());
+			assertNull(panel.searchField().getTextField().getToolTipText());
 		});
 	}
 
@@ -7465,19 +7324,6 @@ public class BankPriceMovementPanelTest
 			shown.contains(BankPriceMovementPanel.EMPTY_TEXT));
 		assertFalse(shown, shown.contains(BankPriceMovementPanel.NO_MATCH_TEXT));
 		assertTrue(panel.clearBandShowing());
-	}
-
-	/** The box's hover is one sentence (1.0.9 part 4), on the field AND its text field, as the Min / Max boxes carry theirs. */
-	@Test
-	public void theSearchBoxHoverIsOneSentence() throws Exception
-	{
-		build();
-		publish(searchBank(), listed(13, 6));
-		onEdt(() ->
-		{
-			assertEquals("Type part of an item's name to show only the matching rows.", panel.searchField().getToolTipText());
-			assertEquals(panel.searchField().getToolTipText(), panel.searchField().getTextField().getToolTipText());
-		});
 	}
 
 	/** {@code describe()} carries the typed text and the rows shown, after gpMax; {@code total} stays the published rows. */
@@ -7602,33 +7448,33 @@ public class BankPriceMovementPanelTest
 		onEdt(() ->
 		{
 			panel.setSort(SortMode.GP_MOVE, true);
-			assertEquals("Change sorting", panel.sortButton().getToolTipText());
+			assertNull(panel.sortButton().getToolTipText());
 			assertEquals("gp change", item(panel.buildSortMenu(), "gp change").getText());
-			assertEquals("Toggle gp change", item(panel.buildSortMenu(), "gp change").getToolTipText());
-			assertEquals("Sort by Stack price", item(panel.buildSortMenu(), "Stack price").getToolTipText());
+			assertNull(item(panel.buildSortMenu(), "gp change").getToolTipText());
+			assertNull(item(panel.buildSortMenu(), "Stack price").getToolTipText());
 
 			// A switch moves and the control row does not: same column, same face, same hovers, same menu.
 			panel.applyOptions(ViewOptions.DEFAULT.withLivePrices(false));
 			assertEquals("gp change", panel.sortButton().getText());
-			assertEquals("Change sorting", panel.sortButton().getToolTipText());
+			assertNull(panel.sortButton().getToolTipText());
 			assertEquals("no qualifier in the menu, under either switch (W3)", "gp change",
 				item(panel.buildSortMenu(), "gp change").getText());
-			assertEquals("Toggle gp change", item(panel.buildSortMenu(), "gp change").getToolTipText());
-			assertEquals("Sort by Stack price", item(panel.buildSortMenu(), "Stack price").getToolTipText());
-			assertEquals("Sort by Item price", item(panel.buildSortMenu(), "Item price").getToolTipText());
-			assertEquals("Sort by Percent change", item(panel.buildSortMenu(), "Percent change").getToolTipText());
+			assertNull(item(panel.buildSortMenu(), "gp change").getToolTipText());
+			assertNull(item(panel.buildSortMenu(), "Stack price").getToolTipText());
+			assertNull(item(panel.buildSortMenu(), "Item price").getToolTipText());
+			assertNull(item(panel.buildSortMenu(), "Percent change").getToolTipText());
 
 			// The other three columns read the same under every switch, as they always did.
 			panel.setSort(SortMode.STACK_VALUE, false);
-			assertEquals("Change sorting", panel.sortButton().getToolTipText());
-			assertEquals("Toggle Stack price", item(panel.buildSortMenu(), "Stack price").getToolTipText());
+			assertNull(panel.sortButton().getToolTipText());
+			assertNull(item(panel.buildSortMenu(), "Stack price").getToolTipText());
 			panel.applyOptions(ViewOptions.DEFAULT);
-			assertEquals("Change sorting", panel.sortButton().getToolTipText());
-			assertEquals("Toggle Stack price", item(panel.buildSortMenu(), "Stack price").getToolTipText());
+			assertNull(panel.sortButton().getToolTipText());
+			assertNull(item(panel.buildSortMenu(), "Stack price").getToolTipText());
 
 			// ...and a switch that was never read leaves the row exactly as it was.
 			panel.applyOptions(ViewOptions.DEFAULT.withCountCash(false));
-			assertEquals("Change sorting", panel.sortButton().getToolTipText());
+			assertNull(panel.sortButton().getToolTipText());
 			assertEquals("Stack price", panel.sortButton().getText());
 		});
 	}
@@ -7724,27 +7570,6 @@ public class BankPriceMovementPanelTest
 	}
 
 	/**
-	 * B105 (checker): a stack the guide table cannot price is dropped by {@code MovementMath.apply} BEFORE the
-	 * band is considered, so a newly released item vanishes from the list with no band set - and addendum N
-	 * deleted the count line that would have shown the shortfall. The band tooltip names them.
-	 */
-	@Test
-	public void theBandTooltipNamesTheStacksWithNoGuidePrice() throws Exception
-	{
-		build();
-		publish(rows(3), listedWith(summary()));
-		final String tip = panel.bandTarget().getToolTipText();
-		assertTrue(tip, tip.endsWith("3 of 538 items, 19 with no guide price"));
-
-		// Nothing to explain when every stack is priced: the clause is absent, not "0 with no guide price".
-		final PortfolioSummary allPriced = new PortfolioSummary(1_000L, 3, 3, new EnumMap<>(MovementWindow.class));
-		publish(rows(3), listedWith(allPriced));
-		final String clean = panel.bandTarget().getToolTipText();
-		assertTrue(clean, clean.endsWith("3 of 538 items"));
-		assertFalse(clean, clean.contains("guide price"));
-	}
-
-	/**
 	 * B005 / B101 (checker): {@code PriceService} publishes {@code degraded} + {@code degradedReason} for the two
 	 * states the figures on screen cannot show - the last history fetch failed so the baselines are whatever was
 	 * stored (L11), and too few stacks compare for the anchor day to be derived, so the wiki's newest table
@@ -7770,9 +7595,10 @@ public class BankPriceMovementPanelTest
 		assertTrue(panel.footnoteLabel().getText(), panel.footnoteLabel().getText().startsWith("1d vs 07 Sep - bank "));
 		assertNull("L11: a window with a stored baseline still never complains", panel.status().problem());
 		assertFalse("the problem row stays out - the warning is on the card", panel.problemShowing());
-		// AF: the figure, a break, the sentence - on the total and on every other child of the card alike.
+		// AF: the figure, a break, the sentence - on the total; 1.2.5: the reddened footnote says why too, the card nothing.
 		assertEquals("<html>" + VALUE_TIP + "<br>" + reason + "</html>", panel.totalLabel().getToolTipText());
-		assertEquals(panel.totalLabel().getToolTipText(), panel.hero().getToolTipText());
+		assertEquals(reason, panel.footnoteLabel().getToolTipText());
+		assertNull(panel.hero().getToolTipText());
 
 		// ...and a confident status takes both back off, leaving the figure on its own.
 		publish(rows(3), listedWith(summary()));
@@ -7780,22 +7606,22 @@ public class BankPriceMovementPanelTest
 		assertEquals(VALUE_TIP, panel.totalLabel().getToolTipText());
 	}
 
-	/** B049: the Show-more tooltip counts the rows it will really build - every bank's last click is a short one. */
+	/** 1.2.5: the Show-more link has no hover; its words say how many rows it will build. */
 	@Test
-	public void theShowMoreTooltipCountsTheRowsItWillBuild() throws Exception
+	public void theShowMoreLinkHasNoHoverAndItsWordsCountTheRows() throws Exception
 	{
 		build();
 		publish(rows(262), listed(262, 262));
 		onEdt(() ->
 		{
 			assertEquals("Show 12 more", panel.showMoreLabel().getText());
-			assertEquals("Build the next 12 rows", panel.showMoreLabel().getToolTipText());
+			assertNull(panel.showMoreLabel().getToolTipText());
 		});
 		publish(rows(600), listed(600, 600));
 		onEdt(() ->
 		{
 			assertEquals("Show 350 more", panel.showMoreLabel().getText());
-			assertEquals("Build the next 250 rows", panel.showMoreLabel().getToolTipText());
+			assertNull(panel.showMoreLabel().getToolTipText());
 		});
 	}
 
@@ -8756,7 +8582,7 @@ public class BankPriceMovementPanelTest
 	/**
 	 * F5, re-pointed by AS8: the Refresh link's hover says what a click on it WILL do - and since AS8 a click does the
 	 * same thing whatever the bank is doing (it re-reads the items and re-checks the prices), so the hover is ONE
-	 * sentence, {@code REFRESH_TIP}, through the plugin's every word: the bank opening, a change owed (the link
+	 * sentence, {@code REFRESH_HOVER} (1.2.5: "Last checked 10:05"), through the plugin's every word: the bank opening, a change owed (the link
 	 * glowing), a click, the bank closing and the next visit. F5 had switched it to "Update the list with your bank as
 	 * it is now." while the bank was open, because a click then was the local update alone; that sentence went with the
 	 * difference it described.
@@ -8770,27 +8596,24 @@ public class BankPriceMovementPanelTest
 		build();
 		try
 		{
-			assertEquals("the words AS8 asks for, pinned",
-				"Re-read your items and re-check the prices. Jagex publishes guide prices several times a day.",
-				BankPriceMovementPanel.REFRESH_TIP);
 			publish(rows(3), listed(3, 3));
 			final AtomicInteger reads = new AtomicInteger();
 			onEdt(() -> panel.setBankRefresh(reads::incrementAndGet));
-			assertEquals("the bank shut", BankPriceMovementPanel.REFRESH_TIP, refreshHover());
+			assertEquals("the bank shut", REFRESH_HOVER, refreshHover());
 
 			bank(true, false, 0, 1);
-			assertEquals("the bank open: the same sentence", BankPriceMovementPanel.REFRESH_TIP, refreshHover());
+			assertEquals("the bank open: the same sentence", REFRESH_HOVER, refreshHover());
 			bank(true, true, 1, 1);
 			assertTrue(panel.glowRunning());
-			assertEquals("glowing, the same", BankPriceMovementPanel.REFRESH_TIP, refreshHover());
+			assertEquals("glowing, the same", REFRESH_HOVER, refreshHover());
 			onEdt(() -> press(panel.refreshLabel()));
 			assertEquals(1, reads.get());
-			assertEquals("clicked, the same", BankPriceMovementPanel.REFRESH_TIP, refreshHover());
+			assertEquals("clicked, the same", REFRESH_HOVER, refreshHover());
 
 			bank(false, false, 1, 2);
-			assertEquals("the bank shut again, the same", BankPriceMovementPanel.REFRESH_TIP, refreshHover());
+			assertEquals("the bank shut again, the same", REFRESH_HOVER, refreshHover());
 			bank(true, false, 1, 2);
-			assertEquals("and the next visit, the same", BankPriceMovementPanel.REFRESH_TIP, refreshHover());
+			assertEquals("and the next visit, the same", REFRESH_HOVER, refreshHover());
 		}
 		finally
 		{
@@ -8817,19 +8640,19 @@ public class BankPriceMovementPanelTest
 			publish(rows(3), listed(3, 3));
 			final AtomicInteger reads = new AtomicInteger();
 			onEdt(() -> panel.setBankRefresh(reads::incrementAndGet));
-			assertEquals("the bank shut, from the first build", BankPriceMovementPanel.REFRESH_TIP, refreshHover());
+			assertEquals("the bank shut, from the first build", REFRESH_HOVER, refreshHover());
 			bank(true, true, 1, 1);
-			assertEquals("the bank open", BankPriceMovementPanel.REFRESH_TIP, refreshHover());
+			assertEquals("the bank open", REFRESH_HOVER, refreshHover());
 
 			onEdt(() -> panel.applyOptions(LIVE_OFF));
-			assertEquals("a view switch moved at the open bank", BankPriceMovementPanel.REFRESH_TIP, refreshHover());
+			assertEquals("a view switch moved at the open bank", REFRESH_HOVER, refreshHover());
 			onEdt(() -> panel.applyOptions(ViewOptions.DEFAULT));
-			assertEquals("and moved back", BankPriceMovementPanel.REFRESH_TIP, refreshHover());
+			assertEquals("and moved back", REFRESH_HOVER, refreshHover());
 
 			bank(false, false, 1, 2);
-			assertEquals("the bank shut again, the same sentence", BankPriceMovementPanel.REFRESH_TIP, refreshHover());
+			assertEquals("the bank shut again, the same sentence", REFRESH_HOVER, refreshHover());
 			onEdt(() -> panel.applyOptions(LIVE_OFF));
-			assertEquals("a view switch moved at the shut bank", BankPriceMovementPanel.REFRESH_TIP, refreshHover());
+			assertEquals("a view switch moved at the shut bank", REFRESH_HOVER, refreshHover());
 		}
 		finally
 		{
@@ -8859,14 +8682,14 @@ public class BankPriceMovementPanelTest
 			final AtomicInteger reads = new AtomicInteger();
 
 			bank(true, false, 0, 1);
-			assertEquals("open, no hook", BankPriceMovementPanel.REFRESH_TIP, refreshHover());
+			assertEquals("open, no hook", REFRESH_HOVER, refreshHover());
 			onEdt(() -> press(panel.refreshLabel()));
 			verify(service, times(1)).refreshNow(false);
 			verify(service, never()).refreshNow(true);
 			assertEquals(0, reads.get());
 
 			onEdt(() -> panel.setBankRefresh(reads::incrementAndGet));
-			assertEquals("the hook handed over: the same sentence", BankPriceMovementPanel.REFRESH_TIP,
+			assertEquals("the hook handed over: the same sentence", REFRESH_HOVER,
 				refreshHover());
 			onEdt(() -> press(panel.refreshLabel()));
 			assertEquals("the click runs the hook", 1, reads.get());
@@ -8875,14 +8698,14 @@ public class BankPriceMovementPanelTest
 
 			onEdt(() -> panel.setBankRefresh(null));
 			assertEquals("the hook taken away, the bank still open: the same sentence",
-				BankPriceMovementPanel.REFRESH_TIP, refreshHover());
+				REFRESH_HOVER, refreshHover());
 			onEdt(() -> press(panel.refreshLabel()));
 			verify(service, times(2)).refreshNow(false);
 			assertEquals(1, reads.get());
 
 			onEdt(() -> panel.setBankRefresh(reads::incrementAndGet));
 			bank(false, false, 0, 2);
-			assertEquals("the hook back and the bank shut: the same sentence", BankPriceMovementPanel.REFRESH_TIP,
+			assertEquals("the hook back and the bank shut: the same sentence", REFRESH_HOVER,
 				refreshHover());
 			onEdt(() -> press(panel.refreshLabel()));
 			verify(service, times(3)).refreshNow(false);
@@ -8912,10 +8735,11 @@ public class BankPriceMovementPanelTest
 	public void setBankRefreshFromAnotherThreadTakesTheHookAtOnce() throws Exception
 	{
 		build();
+		publish(rows(3), listed(3, 3));
 		final AtomicInteger reads = new AtomicInteger();
 		bank(true, false, 0, 1);
 		onEdt(() -> panel.setBankRefresh(reads::incrementAndGet));
-		assertEquals("the hook handed over at the open bank: the one sentence", BankPriceMovementPanel.REFRESH_TIP,
+		assertEquals("the hook handed over at the open bank: the one sentence", REFRESH_HOVER,
 			refreshHover());
 
 		final CountDownLatch busy = new CountDownLatch(1);
@@ -8940,7 +8764,7 @@ public class BankPriceMovementPanelTest
 			assertFalse(SwingUtilities.isEventDispatchThread());
 			panel.setBankRefresh(null);
 			assertEquals("the hover, read on the calling thread, is the one sentence",
-				BankPriceMovementPanel.REFRESH_TIP, panel.refreshLabel().getToolTipText());
+				REFRESH_HOVER, panel.refreshLabel().getToolTipText());
 		}
 		finally
 		{
@@ -8955,7 +8779,7 @@ public class BankPriceMovementPanelTest
 			assertEquals("the waiting click did not run the hook taken away", 0, reads.get());
 			verify(service, times(1)).refreshNow(false);
 			verify(service, never()).refreshNow(true);
-			assertEquals("and the hover never moved", BankPriceMovementPanel.REFRESH_TIP, refreshHover());
+			assertEquals("and the hover never moved", REFRESH_HOVER, refreshHover());
 		}
 		finally
 		{
@@ -10341,16 +10165,18 @@ public class BankPriceMovementPanelTest
 	}
 
 	/**
-	 * Every component of the hero card that carries the CARD's own hover - the {@code heroTipTargets} list inside
-	 * the panel, read back through its accessors.
-	 *
-	 * <p>The gear and the update line are deliberately not among them: each keeps a tooltip of its own.
+	 * 1.2.5 (the user: "just have it be the large bank value numbers"): the exact value is the hover of the big number
+	 * and of nothing else on the card - not the card itself, its caption, its move line, its strip or its footnote.
 	 */
-	private List<JComponent> heroTipTargets()
+	private void assertValueHoverOnTheTotalAlone(String when)
 	{
-		return Arrays.<JComponent>asList(panel.hero(), panel.captionRow(), panel.captionLabel(), panel.totalRow(),
-			panel.totalLabel(), panel.moveLine(), panel.triangleLabel(), panel.deltaLabel(), panel.pctLabel(),
-			panel.stripHolder(), panel.footnoteLabel());
+		assertEquals("the total " + when, VALUE_TIP, panel.totalLabel().getToolTipText());
+		for (JComponent c : Arrays.<JComponent>asList(panel.hero(), panel.captionRow(), panel.captionLabel(), panel.totalRow(),
+			panel.moveLine(), panel.triangleLabel(), panel.deltaLabel(), panel.pctLabel(), panel.stripHolder(),
+			panel.footnoteLabel()))
+		{
+			assertNull(name(c) + " has no hover " + when, c.getToolTipText());
+		}
 	}
 
 	/**
@@ -10475,42 +10301,62 @@ public class BankPriceMovementPanelTest
 	}
 
 	/**
-	 * AH3, as release 1.2.0 leaves it: everything in the sidebar that explains a CONTROL says exactly what it said
-	 * before addendum AH's switch existed. Taking the switch away is no licence to change WHAT a control says, so every
-	 * literal here is the one the pre-AH tests pinned.
+	 * Release 1.2.5, the user's hover review: every control that explains NOTHING a screen cannot has no hover at all, and the few
+	 * that stay say one short line. This is the sweep - one place that lists them, run across publishes and switches.
 	 */
 	private void assertControlTooltipsIntact(String why)
 	{
-		assertEquals(why + ": the words addendum X asks for, pinned", "Change sorting",
-			BankPriceMovementPanel.SORT_BUTTON_TIP);
-		assertEquals(why + ": the sort button", BankPriceMovementPanel.SORT_BUTTON_TIP,
-			panel.sortButton().getToolTipText());
-		assertEquals(why + ": the Refresh link", BankPriceMovementPanel.REFRESH_TIP,
-			panel.refreshLabel().getToolTipText());
-		// The update line's own hover (S2, T5): whichever of the two sentences the live switch has it on.
-		assertEquals(why + ": the update line",
-			BankPriceMovementPanel.updateTooltip(PRICES_AT, panel.options()),
-			panel.updateLabel().getToolTipText());
-		assertEquals(why + ": the gear", SupportLinks.SETTINGS_TIP, panel.gearLabel().getToolTipText());
-		assertNotNull(why + ": the band button", panel.bandTarget().getToolTipText());
+		// Table 1: the sidebar.
+		assertEquals(why + ": the Refresh link", REFRESH_HOVER, panel.refreshLabel().getToolTipText());
+		assertNull(why + ": the update line", panel.updateLabel().getToolTipText());
 		for (MovementWindow w : MovementWindow.values())
 		{
-			assertTrue(why + ": the " + w + " chip", panel.windowChip(w).getToolTipText()
-				.startsWith("Guide-price change"));
+			assertNull(why + ": the " + w + " chip", panel.windowChip(w).getToolTipText());
 		}
-		// Every gear item that carries a line of its own says it here.
-		assertEquals(why, BankPriceMovementPanel.SHOW_VALUE_TIP, panel.showValueItem().getToolTipText());
-		assertEquals(why, BankPriceMovementPanel.SHOW_GP_TIP, panel.showGpItem().getToolTipText());
-		assertEquals(why, BankPriceMovementPanel.SHOW_PCT_TIP, panel.showPctItem().getToolTipText());
-		assertEquals(why, BankPriceMovementPanel.LIVE_PRICES_TIP, panel.livePricesItem().getToolTipText());
-		assertEquals(why, BankPriceMovementPanel.COUNT_CASH_TIP, panel.countCashItem().getToolTipText());
-		assertEquals(why, BankPriceMovementPanel.COUNT_UNTRADEABLES_TIP,
+		assertNull(why + ": the band button", panel.bandTarget().getToolTipText());
+		assertNull(why + ": the All chip", panel.presetCell(0).getToolTipText());
+		for (int i = 1; i <= BankPriceMovementPanel.BANDS; i++)
+		{
+			assertEquals(why + ": preset chip " + i, "Items worth " + panel.presetLabel(i) + " each",
+				panel.presetCell(i).getToolTipText());
+		}
+		assertNull(why + ": Min", panel.minField().getToolTipText());
+		assertNull(why + ": Min box", panel.minField().getTextField().getToolTipText());
+		assertNull(why + ": Max", panel.maxField().getToolTipText());
+		assertNull(why + ": Max box", panel.maxField().getTextField().getToolTipText());
+		assertNull(why + ": the clear price range button", panel.clearBandButton().getToolTipText());
+		assertNull(why + ": the sort button", panel.sortButton().getToolTipText());
+		assertNull(why + ": the search box", panel.searchField().getToolTipText());
+		assertNull(why + ": the search text", panel.searchField().getTextField().getToolTipText());
+		assertNull(why + ": the search clear x", panel.searchField().clearX().getToolTipText());
+		assertNull(why + ": Show more", panel.showMoreLabel().getToolTipText());
+		assertEquals(why + ": the gear", SupportLinks.SETTINGS_TIP, panel.gearLabel().getToolTipText());
+		// Table 2: the settings menu.
+		assertEquals(why, "Prices from the last 24 hours of trades.", panel.livePricesItem().getToolTipText());
+		assertEquals(why, "Untradeables with no tradeable parts, at alch value.",
 			panel.countUntradeablesItem().getToolTipText());
-		assertEquals(why, BankPriceMovementPanel.COUNT_INVENTORY_TIP, panel.countInventoryItem().getToolTipText());
-		assertEquals(why, BankPriceMovementPanel.PRESETS_TIP, panel.presetRow().getToolTipText());
-		// AH2 moved this one out of the entries and into the bottom row; its line went with it, unchanged.
-		assertEquals(why, BankPriceMovementPanel.RESET_PRESETS_TIP, panel.resetPresetsButton().getToolTipText());
-		assertEquals(why, BankPriceMovementPanel.OK_TIP, panel.okButton().getToolTipText());
+		assertNull(why + ": coins", panel.countCashItem().getToolTipText());
+		assertNull(why + ": inventory", panel.countInventoryItem().getToolTipText());
+		assertNull(why + ": Grand Exchange", panel.countGrandExchangeItem().getToolTipText());
+		assertNull(why + ": bank value", panel.showValueItem().getToolTipText());
+		assertNull(why + ": gp change", panel.showGpItem().getToolTipText());
+		assertNull(why + ": % change", panel.showPctItem().getToolTipText());
+		assertNull(why + ": Up colour", item(panel.heroMenu(), BankPriceMovementPanel.UP_COLOUR_TEXT).getToolTipText());
+		assertNull(why + ": Down colour", item(panel.heroMenu(), BankPriceMovementPanel.DOWN_COLOUR_TEXT).getToolTipText());
+		assertNull(why + ": Single chart colour",
+			item(panel.heroMenu(), BankPriceMovementPanel.SINGLE_CHART_COLOUR_TEXT).getToolTipText());
+		assertNull(why + ": the preset row", panel.presetRow().getToolTipText());
+		for (Component c : panel.presetRow().getComponents())
+		{
+			assertNull(why + ": the preset caption and boxes", ((JComponent) c).getToolTipText());
+		}
+		for (int i = 0; i < BankPriceMovementPanel.BANDS; i++)
+		{
+			assertNull(why + ": preset box " + i, panel.presetField(i).getToolTipText());
+			assertNull(why + ": preset text " + i, panel.presetField(i).getTextField().getToolTipText());
+		}
+		assertNull(why + ": Reset to default", panel.resetPresetsButton().getToolTipText());
+		assertNull(why + ": OK", panel.okButton().getToolTipText());
 	}
 
 	/** The label shows {@code full} whole, or cut with "..." and the whole text as its tooltip (Widgets.setFitted). */

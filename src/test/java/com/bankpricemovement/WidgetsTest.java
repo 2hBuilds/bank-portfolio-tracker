@@ -124,9 +124,9 @@ public class WidgetsTest
 	{
 		onEdt(() ->
 		{
-			final JLabel cell = Widgets.segment("30d", "Guide-price change over the last 30d", null);
+			final JLabel cell = Widgets.segment("30d", null);
 			assertEquals("30d", cell.getText());
-			assertEquals("Guide-price change over the last 30d", cell.getToolTipText());
+			assertNull(cell.getToolTipText());
 			assertEquals(SwingConstants.CENTER, cell.getHorizontalAlignment());
 			assertFalse(Widgets.isLit(cell));
 			assertFalse("the hero card's ground shows through a chip", cell.isOpaque());
@@ -142,7 +142,7 @@ public class WidgetsTest
 	{
 		onEdt(() ->
 		{
-			final JLabel cell = Widgets.segment("180d", null, null);
+			final JLabel cell = Widgets.segment("180d", null);
 
 			Widgets.chip(cell, true);
 			assertFalse("the hero card's ground shows through a lit chip too", cell.isOpaque());
@@ -170,7 +170,7 @@ public class WidgetsTest
 	{
 		onEdt(() ->
 		{
-			final JLabel cell = Widgets.segment("180d", null, null);
+			final JLabel cell = Widgets.segment("180d", null);
 
 			Widgets.chip(cell, false);
 			final Insets unlit = cell.getBorder().getBorderInsets(cell);
@@ -197,8 +197,8 @@ public class WidgetsTest
 	{
 		onEdt(() ->
 		{
-			final JLabel lit = Widgets.segment("30d", null, null);
-			final JLabel other = Widgets.segment("90d", null, null);
+			final JLabel lit = Widgets.segment("30d", null);
+			final JLabel other = Widgets.segment("90d", null);
 			Widgets.chip(lit, true);
 			Widgets.chip(other, true);
 			assertSame("one lit face for every chip", lit.getFont(), other.getFont());
@@ -240,7 +240,7 @@ public class WidgetsTest
 	{
 		onEdt(() ->
 		{
-			final JLabel cell = Widgets.segment("7d", null, null);
+			final JLabel cell = Widgets.segment("7d", null);
 			Widgets.hoverChip(cell, true);
 			assertEquals(ColorScheme.BRAND_ORANGE, cell.getForeground());
 			assertFalse("hover is a colour, not a light", Widgets.isLit(cell));
@@ -263,9 +263,8 @@ public class WidgetsTest
 		onEdt(() ->
 		{
 			final AtomicInteger clicks = new AtomicInteger();
-			final JLabel cell = Widgets.segment("90d", "the 90 day window", clicks::incrementAndGet);
+			final JLabel cell = Widgets.segment("90d", clicks::incrementAndGet);
 			assertEquals("90d", cell.getText());
-			assertEquals("the 90 day window", cell.getToolTipText());
 
 			press(cell);
 			assertEquals(1, clicks.get());
@@ -291,7 +290,7 @@ public class WidgetsTest
 		onEdt(() ->
 		{
 			final AtomicInteger clicks = new AtomicInteger();
-			final JLabel cell = Widgets.segment("7d", null, clicks::incrementAndGet);
+			final JLabel cell = Widgets.segment("7d", clicks::incrementAndGet);
 			final JLabel link = link("Refresh", clicks::incrementAndGet);
 			rightPress(cell);
 			rightPress(link);
@@ -318,7 +317,7 @@ public class WidgetsTest
 		{
 			for (String text : WINDOW_LABELS)
 			{
-				final JLabel cell = Widgets.segment(text, null, null);
+				final JLabel cell = Widgets.segment(text, null);
 				Widgets.chip(cell, true);
 				assertTrue(text + " overflows the " + CELL + " px cell: " + cell.getPreferredSize().width,
 					cell.getPreferredSize().width <= CELL);
@@ -329,7 +328,7 @@ public class WidgetsTest
 			}
 			for (String text : new String[]{"All", "100k+", "1m+", "10m+"})
 			{
-				final JLabel cell = Widgets.segment(text, null, null);
+				final JLabel cell = Widgets.segment(text, null);
 				Widgets.chip(cell, true);
 				assertTrue(text + " overflows the " + PRESET + " px preset cell: " + cell.getPreferredSize().width,
 					cell.getPreferredSize().width <= PRESET);
@@ -347,7 +346,7 @@ public class WidgetsTest
 			final JLabel[] cells = new JLabel[labels.length];
 			for (int i = 0; i < labels.length; i++)
 			{
-				cells[i] = Widgets.fixed(Widgets.segment(labels[i], null, null), PRESET, 24);
+				cells[i] = Widgets.fixed(Widgets.segment(labels[i], null), PRESET, 24);
 				Widgets.chip(cells[i], i == 0);
 			}
 
@@ -1097,9 +1096,8 @@ public class WidgetsTest
 			// The one JButton the Ticker sidebar still makes: the EMPTY card's way out of a band that hid
 			// everything. Small face, tight margins, no focus ring, and it does what it was given.
 			final AtomicInteger clicks = new AtomicInteger();
-			final JButton clear = Widgets.smallButton("Clear price range", "a tooltip", e -> clicks.incrementAndGet());
+			final JButton clear = Widgets.smallButton("Clear price range", e -> clicks.incrementAndGet());
 			assertEquals("Clear price range", clear.getText());
-			assertEquals("a tooltip", clear.getToolTipText());
 			assertFalse(clear.isFocusPainted());
 			assertEquals(new Insets(1, 5, 1, 5), clear.getMargin());
 			clear.doClick(0);

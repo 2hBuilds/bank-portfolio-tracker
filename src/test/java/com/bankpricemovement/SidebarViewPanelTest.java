@@ -1183,10 +1183,10 @@ public class SidebarViewPanelTest
 	@Test
 	public void g2_theWordsAreVerbatimAndNeverSayGear()
 	{
-		assertEquals("Days before v1.1.1 counted bank placeholders as items, so they may read high."
-			+ " Restore history in the History options brings them back.", BankPriceMovementPanel.LEGACY_INFO_TIP_TEXT);
+		assertEquals("<html>Older days counted placeholders as items.<br>Restore history brings them back.</html>",
+			BankPriceMovementPanel.LEGACY_INFO_TIP);
 		assertEquals("History options", BankPriceMovementPanel.HISTORY_OPTIONS_TIP);
-		for (String said : new String[]{BankPriceMovementPanel.LEGACY_INFO_TIP, BankPriceMovementPanel.LEGACY_INFO_TIP_TEXT,
+		for (String said : new String[]{BankPriceMovementPanel.LEGACY_INFO_TIP,
 			BankPriceMovementPanel.HISTORY_OPTIONS_TIP, BankPriceMovementPanel.LEGACY_TEXT,
 			BankPriceMovementPanel.LEGACY_PLACEHOLDERS_TEXT, BankPriceMovementPanel.RESET_TEXT, BankPriceMovementPanel.RESET_TIP,
 			BankPriceMovementPanel.RESET_ASK, BankPriceMovementPanel.RESET_YES, BankPriceMovementPanel.RESTORE_TEXT,
@@ -1643,11 +1643,11 @@ public class SidebarViewPanelTest
 	}
 
 	/**
-	 * I1: the hover is the user's sentence (set as three short rows, see {@link #i3_theHoverIsThreeShortRowsOfTheSameWords}),
-	 * ALWAYS on - set on the label directly - and the icon wears the hand cursor like the gears.
+	 * I1, as 1.2.5 words it: the hover is two short rows, ALWAYS on - set on the label directly - and the icon wears the hand
+	 * cursor like the gears.
 	 */
 	@Test
-	public void i2_theHoverIsTheUsersSentenceAndIsAlwaysOn() throws Exception
+	public void i2_theHoverIsTwoShortRowsAndIsAlwaysOn() throws Exception
 	{
 		build(new Asked(true));
 		publish(rows(3), status(withPlaceholderDays(), VALUE_NOW, NOW - 60_000L));
@@ -1656,13 +1656,8 @@ public class SidebarViewPanelTest
 			panel.pressView(SidebarView.HISTORY);
 			assertEquals("the caption, the icon, the gears", 3, panel.viewCaptionRow().getComponentCount());
 			final JLabel info = (JLabel) panel.viewCaptionRow().getComponent(1);
-			final String sentence = "Days before v1.1.1 counted bank placeholders as items, so they may read high."
-				+ " Restore history in the History options brings them back.";
-			final String tip = "<html>Days before v1.1.1 counted bank placeholders<br>as items, so they may read high.<br>"
-				+ "Restore history in the History options<br>brings them back.</html>";
-			assertEquals("the words, on one line of plain text", sentence, BankPriceMovementPanel.LEGACY_INFO_TIP_TEXT);
-			assertFalse(sentence.contains("<") || sentence.contains("\n"));
-			assertEquals("the sentence, as three short rows", tip, info.getToolTipText());
+			assertEquals("<html>Older days counted placeholders as items.<br>Restore history brings them back.</html>",
+				info.getToolTipText());
 			assertEquals(BankPriceMovementPanel.LEGACY_INFO_TIP, info.getToolTipText());
 			assertEquals("the hand, like the gears", java.awt.Cursor.HAND_CURSOR, info.getCursor().getType());
 			assertEquals(java.awt.Cursor.HAND_CURSOR, panel.historyOptionsLabel().getCursor().getType());
@@ -1670,12 +1665,11 @@ public class SidebarViewPanelTest
 	}
 
 	/**
-	 * I3: the hover is FOUR short rows - Swing HTML with exactly three line breaks, after "placeholders", "high." and "options" - and
-	 * says the very words of the one-line sentence; it is taller and narrower than the same words on one line, and the dialog's
-	 * own sentence is untouched.
+	 * I3, as 1.2.5 words it: the hover is TWO short rows - Swing HTML with exactly one line break - and the dialog's own sentence
+	 * is untouched.
 	 */
 	@Test
-	public void i3_theHoverIsFourShortRowsOfTheSameWords() throws Exception
+	public void i3_theHoverIsTwoShortRows() throws Exception
 	{
 		build(new Asked(true));
 		publish(rows(3), status(withPlaceholderDays(), VALUE_NOW, NOW - 60_000L));
@@ -1683,25 +1677,12 @@ public class SidebarViewPanelTest
 		{
 			panel.pressView(SidebarView.HISTORY);
 			final JLabel info = infoIcon();
-			assertEquals("<html>Days before v1.1.1 counted bank placeholders<br>as items, so they may read high.<br>"
-				+ "Restore history in the History options<br>brings them back.</html>", info.getToolTipText());
 			final String inner = info.getToolTipText().substring("<html>".length(),
 				info.getToolTipText().length() - "</html>".length());
 			final String[] lines = inner.split("<br>");
-			assertEquals("four rows", 4, lines.length);
-			assertEquals("Days before v1.1.1 counted bank placeholders", lines[0]);
-			assertEquals("as items, so they may read high.", lines[1]);
-			assertEquals("Restore history in the History options", lines[2]);
-			assertEquals("brings them back.", lines[3]);
-			assertEquals("the same words as the plain sentence", BankPriceMovementPanel.LEGACY_INFO_TIP_TEXT,
-				String.join(" ", lines));
-			final JToolTip threeRows = info.createToolTip();
-			threeRows.setTipText(info.getToolTipText());
-			final JToolTip oneRow = info.createToolTip();
-			oneRow.setTipText(BankPriceMovementPanel.LEGACY_INFO_TIP_TEXT);
-			assertTrue("four rows are taller and narrower than one",
-				threeRows.getPreferredSize().height > oneRow.getPreferredSize().height
-					&& threeRows.getPreferredSize().width < oneRow.getPreferredSize().width);
+			assertEquals("two rows", 2, lines.length);
+			assertEquals("Older days counted placeholders as items.", lines[0]);
+			assertEquals("Restore history brings them back.", lines[1]);
 			assertEquals("the dialog's own sentence is unchanged",
 				"Days before v1.1.1 counted bank placeholders as items, so their net worth totals may read high."
 					+ " Include them anyway?", BankPriceMovementPanel.LEGACY_PLACEHOLDERS_ASK);
@@ -1747,7 +1728,8 @@ public class SidebarViewPanelTest
 
 			// A tip wider than the panel is aligned to the panel's left edge.
 			info.setToolTipText("<html>Days before v1.1.1 counted bank placeholders as items, so they may read high. "
-				+ "Restore history in the History options brings them back, Restore history in the History options.</html>");
+				+ "Restore history in the History options brings them back, Restore history in the History options, and so on"
+				+ " and on until the line is wider than the sidebar itself, which is 248 px wide.</html>");
 			final JToolTip wide = info.createToolTip();
 			wide.setTipText(info.getToolTipText());
 			assertTrue("the premise: wider than the panel", wide.getPreferredSize().width > LookRenderer.WIDTH);
