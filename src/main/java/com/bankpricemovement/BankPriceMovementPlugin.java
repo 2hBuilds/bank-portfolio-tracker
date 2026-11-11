@@ -41,6 +41,7 @@ import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.ClientToolbar;
 import net.runelite.client.ui.ClientUI;
 import net.runelite.client.ui.NavigationButton;
+import net.runelite.client.ui.overlay.OverlayManager;
 import net.runelite.client.ui.components.colorpicker.ColorPickerManager;
 import okhttp3.OkHttpClient;
 import org.slf4j.Logger;
@@ -265,6 +266,10 @@ public class BankPriceMovementPlugin extends Plugin
 	@Inject
 	private ClientToolbar clientToolbar;
 
+	/** 1.2.5: carries {@link BondHintOverlay}, the outline round the "View Your Bonds" buttons while the pouch hint is on. */
+	@Inject
+	private OverlayManager overlayManager;
+
 	/**
 	 * RuneLite's own window: {@code requestFocus()} is what its Notifier calls to hand the keyboard back to the game's
 	 * canvas, and what the sidebar's text boxes use to let go of it ({@link BankPriceMovementPanel#setGameFocus}).
@@ -469,6 +474,8 @@ public class BankPriceMovementPlugin extends Plugin
 	private volatile ExchangeOffers lastOffers;
 	/** Whether the "Your Bonds" screen is on show (release 1.2.4): set by its load, cleared by its close - the only time the pouch is read. */
 	private boolean bondsOpen;
+	/** The outline round the "View Your Bonds" buttons while the pouch hint is on (1.2.5); null outside startUp..shutDown. */
+	private BondHintOverlay bondHint;
 	/** A bond screen read threw (1.2.4): no bond screen is read again until the plugin starts again. */
 	private boolean bondReadsOff;
 	/** The last bond pouch pair handed to the service, and for whom (release 1.2.4); 0 / -1 before any. */
@@ -660,6 +667,8 @@ public class BankPriceMovementPlugin extends Plugin
 			.panel(panel)
 			.build();
 		clientToolbar.addNavigation(navButton);
+		bondHint = new BondHintOverlay(client, this::bondHintWanted, () -> System.nanoTime() / 1_000_000L);
+		overlayManager.add(bondHint);
 		service.start();
 
 		clientThread.invoke(() ->
@@ -713,6 +722,11 @@ public class BankPriceMovementPlugin extends Plugin
 		{
 			clientToolbar.removeNavigation(navButton);
 			navButton = null;
+		}
+		if (bondHint != null)
+		{
+			overlayManager.remove(bondHint);
+			bondHint = null;
 		}
 		if (panel != null)
 		{
@@ -1677,6 +1691,22 @@ public class BankPriceMovementPlugin extends Plugin
 			return;
 		}
 		handPouch(s, hash, tradeable, untradeable);
+	}
+
+	/**
+	 * CLIENT THREAD. Whether the pouch hint is on, by the panel's own rule ({@code Status.pouchUnread}): "Include bonds" is
+	 * ticked and this account's held bank has never had its pouch read. Asked only while "Old School Bonds" is drawn.
+	 */
+	boolean bondHintWanted()
+	{
+		final PriceService s = service;
+		if (s == null || client == null || !s.options().countBonds())
+		{
+			return false;
+		}
+		final long hash = rememberAccount();
+		final BankSnapshot held = ownBank(s.bank(), hash);
+		return held != null && BankSnapshot.isAccount(hash) && held.pouchAtMillis <= 0L;
 	}
 
 	/** One bond's count in the live inventory. */

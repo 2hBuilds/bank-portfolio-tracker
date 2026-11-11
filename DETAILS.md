@@ -447,7 +447,9 @@ pouch need only *Include bonds*.
   *"2 in bank, 1 in bond pouch"*.
 - **Until you first open *Your Bonds***, the settings icon and the menu's *Prices and what counts* row each carry a small
   gold dot, and *Include bonds* a gold border and an (i) whose hover reads *"Open your bond pouch once so its bonds count
-  too."* All of it goes once the pouch is read, for that account, for good.
+  too."* The bond pouch opens the *Old School Bonds* screen; while the hint is on, a gold outline pulses round its two
+  *View Your Bonds* buttons, which open the screen the pouch is read from. All of it goes once the pouch is read, for
+  that account, for good.
 
 One consequence worth knowing: **RuneLite's own bank title bar will read lower than this card**, by roughly what
 you are carrying and wearing, because it counts the bank container and nothing else. Turn the switch off and

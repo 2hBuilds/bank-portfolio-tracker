@@ -75,6 +75,8 @@ import net.runelite.client.ui.ClientToolbar;
 import net.runelite.client.ui.ColorScheme;
 import net.runelite.client.ui.ClientUI;
 import net.runelite.client.ui.NavigationButton;
+import net.runelite.client.ui.overlay.Overlay;
+import net.runelite.client.ui.overlay.OverlayManager;
 import net.runelite.client.ui.components.colorpicker.ColorPickerManager;
 import net.runelite.client.util.Filepath;
 import okhttp3.OkHttpClient;
@@ -481,8 +483,14 @@ public class BankPriceMovementWiringTest
 			nav.getValue().getIcon());
 		assertNull("a client that is not in developer mode installs no bridge", BpmDevBridge.handler);
 
+		// 1.2.5: the bond hint's outline comes and goes with the plugin.
+		final ArgumentCaptor<Overlay> hint = ArgumentCaptor.forClass(Overlay.class);
+		verify(f.overlayManager).add(hint.capture());
+		assertTrue(hint.getValue() instanceof BondHintOverlay);
+
 		onEdt(f.plugin::shutDown);
 		verify(f.clientToolbar).removeNavigation(nav.getValue());
+		verify(f.overlayManager).remove(hint.getValue());
 		// The fields the handlers read are nulled, so an event that arrives after shutDown is a no-op.
 		assertNull(field(f.plugin, "panel"));
 		assertNull(field(f.plugin, "service"));
@@ -5112,6 +5120,37 @@ public class BankPriceMovementWiringTest
 	}
 
 	/**
+	 * 1.2.5: the outline round the "View Your Bonds" buttons is wanted by the panel's own rule - "Include bonds" ticked and this
+	 * account's held bank never read for its pouch - and by nothing else.
+	 */
+	@Test
+	public void theBondHintIsWantedOnlyWhileThisAccountsPouchWasNeverRead() throws Exception
+	{
+		final BankRig r = bondsRig(0, 0);
+		final String profile = (String) field(r.plugin, "profileType");
+		when(r.service.options()).thenReturn(ViewOptions.DEFAULT);
+		when(r.service.bank()).thenReturn(null);
+		assertFalse("no bank held", r.plugin.bondHintWanted());
+
+		final BankSnapshot unread = new BankSnapshot(new ArrayList<BankItem>(), 1L, ACCOUNT, profile);
+		when(r.service.bank()).thenReturn(unread);
+		assertTrue("a held bank, its pouch never read", r.plugin.bondHintWanted());
+
+		when(r.service.options()).thenReturn(ViewOptions.DEFAULT.withCountBonds(false));
+		assertFalse("Include bonds is off", r.plugin.bondHintWanted());
+		when(r.service.options()).thenReturn(ViewOptions.DEFAULT);
+
+		final BankSnapshot other = new BankSnapshot(new ArrayList<BankItem>(), 1L, ACCOUNT + 1, profile);
+		when(r.service.bank()).thenReturn(other);
+		assertFalse("another account's bank", r.plugin.bondHintWanted());
+
+		final BankSnapshot read = new BankSnapshot(new ArrayList<BankItem>(), 1L, ACCOUNT, profile);
+		read.pouchAtMillis = 5L;
+		when(r.service.bank()).thenReturn(read);
+		assertFalse("the pouch was read (an empty pouch is a read pouch)", r.plugin.bondHintWanted());
+	}
+
+	/**
 	 * 1.2.5: "Old School Bonds" is not read at all. The game update of November 2026 replaced its two bond totals with one
 	 * line of text, so nothing there can give the pouch; opening it follows no inventory and hands no pouch.
 	 */
@@ -6752,6 +6791,7 @@ public class BankPriceMovementWiringTest
 		private final Client client = mock(Client.class);
 		private final ClientThread clientThread = mock(ClientThread.class);
 		private final ClientToolbar clientToolbar = mock(ClientToolbar.class);
+		private final OverlayManager overlayManager = mock(OverlayManager.class);
 		private final ClientUI clientUI = mock(ClientUI.class);
 		private final ColorPickerManager colorPickerManager = mock(ColorPickerManager.class);
 		private final ItemManager itemManager = mock(ItemManager.class);
@@ -6784,6 +6824,7 @@ public class BankPriceMovementWiringTest
 			set(plugin, "client", client);
 			set(plugin, "clientThread", clientThread);
 			set(plugin, "clientToolbar", clientToolbar);
+			set(plugin, "overlayManager", overlayManager);
 			set(plugin, "clientUI", clientUI);
 			set(plugin, "colorPickerManager", colorPickerManager);
 			set(plugin, "itemManager", itemManager);
